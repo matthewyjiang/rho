@@ -73,7 +73,12 @@ struct App {
 enum Entry {
     User(String),
     Assistant(String),
-    Tool { name: String, content: String },
+    Tool {
+        name: String,
+        command: Option<String>,
+        ok: bool,
+        content: String,
+    },
     Notice(String),
     Error(String),
 }
@@ -406,7 +411,17 @@ impl App {
                 self.reasoning_buffer.push_str(&text);
                 None
             }
-            AgentEvent::ToolFinished { name, content } => Some(Entry::Tool { name, content }),
+            AgentEvent::ToolFinished {
+                name,
+                command,
+                ok,
+                content,
+            } => Some(Entry::Tool {
+                name,
+                command,
+                ok,
+                content,
+            }),
         }
     }
 
@@ -435,22 +450,24 @@ impl App {
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
         let mut content = Vec::new();
         if !self.reasoning_buffer.is_empty() {
-            push_wrapped_entry(
+            push_wrapped_text(
                 &mut content,
-                "reasoning",
-                Color::Magenta,
                 &self.reasoning_buffer,
                 width,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+                false,
             );
             content.push(Line::raw(""));
         }
         if self.running || !self.stream_buffer.is_empty() {
-            push_wrapped_entry(
+            push_wrapped_text(
                 &mut content,
-                "rho",
-                Color::Cyan,
                 visible_assistant_stream(&self.stream_buffer),
                 width,
+                Style::default(),
+                false,
             );
             content.push(Line::raw(""));
         }
@@ -660,74 +677,103 @@ fn compact_cwd(path: &Path) -> String {
 fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     match entry {
-        Entry::User(text) => push_wrapped_entry(&mut lines, "you", Color::Green, text, width),
-        Entry::Assistant(text) => push_wrapped_entry(&mut lines, "rho", Color::Cyan, text, width),
-        Entry::Tool { name, content } => push_wrapped_entry(
+        Entry::User(text) => push_wrapped_text(
             &mut lines,
-            &format!("tool:{name}"),
-            Color::Yellow,
-            content,
+            text,
             width,
+            Style::default().fg(Color::White).bg(Color::Rgb(36, 44, 54)),
+            true,
         ),
-        Entry::Notice(text) => {
-            push_wrapped_entry(&mut lines, "notice", Color::DarkGray, text, width)
+        Entry::Assistant(text) => {
+            push_wrapped_text(&mut lines, text, width, Style::default(), false)
         }
-        Entry::Error(text) => push_wrapped_entry(&mut lines, "error", Color::Red, text, width),
+        Entry::Tool {
+            name,
+            command,
+            ok,
+            content,
+        } => push_tool_block(&mut lines, name, command.as_deref(), *ok, content, width),
+        Entry::Notice(text) => push_wrapped_text(
+            &mut lines,
+            text,
+            width,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+            false,
+        ),
+        Entry::Error(text) => push_wrapped_text(
+            &mut lines,
+            text,
+            width,
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            false,
+        ),
     }
     lines.push(Line::raw(""));
     lines
 }
 
-fn push_wrapped_entry(
+fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    label: &str,
-    color: Color,
-    text: &str,
+    name: &str,
+    command: Option<&str>,
+    ok: bool,
+    content: &str,
     width: usize,
 ) {
-    let prefix = format!("{label}> ");
-    let first_width = width.saturating_sub(prefix.chars().count()).max(1);
-    let continuation_width = first_width;
+    let style = if name == "bash" {
+        if ok {
+            Style::default().fg(Color::White).bg(Color::Rgb(25, 75, 45))
+        } else {
+            Style::default().fg(Color::White).bg(Color::Rgb(95, 36, 36))
+        }
+    } else {
+        Style::default()
+            .fg(Color::Yellow)
+            .bg(Color::Rgb(48, 45, 30))
+    };
 
+    push_wrapped_text(lines, name, width, style, true);
+    if name == "bash" {
+        if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
+            push_wrapped_text(lines, command, width, style, true);
+        } else if !content.trim().is_empty() {
+            push_wrapped_text(lines, content, width, style, true);
+        }
+    }
+}
+
+fn push_wrapped_text(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    style: Style,
+    fill_width: bool,
+) {
+    let width = width.max(1);
     let mut emitted = false;
     for raw_line in text.lines() {
-        let mut chunks = wrap_line(raw_line, first_width);
-        if chunks.is_empty() {
-            chunks.push(String::new());
+        let chunks = wrap_line(raw_line, width);
+        for chunk in chunks {
+            lines.push(styled_line(chunk, width, style, fill_width));
+            emitted = true;
         }
-        for (index, chunk) in chunks.into_iter().enumerate() {
-            if !emitted && index == 0 {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        prefix.clone(),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(chunk),
-                ]));
-            } else {
-                for continuation_chunk in wrap_line(&chunk, continuation_width) {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            prefix.clone(),
-                            Style::default().fg(color).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(continuation_chunk),
-                    ]));
-                }
-            }
-        }
-        emitted = true;
     }
 
     if !emitted {
-        lines.push(Line::from(vec![
-            Span::styled(
-                prefix,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(""),
-        ]));
+        lines.push(styled_line(String::new(), width, style, fill_width));
     }
+}
+
+fn styled_line(mut text: String, width: usize, style: Style, fill_width: bool) -> Line<'static> {
+    if fill_width {
+        let len = text.chars().count();
+        if len < width {
+            text.push_str(&" ".repeat(width - len));
+        }
+    }
+    Line::from(Span::styled(text, style))
 }
 
 fn wrap_line(line: &str, width: usize) -> Vec<String> {
@@ -752,6 +798,61 @@ fn wrap_line(line: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn transcript_entries_render_without_prefix_labels() {
+        let entries = [
+            Entry::User("hello?".into()),
+            Entry::Assistant("hi".into()),
+            Entry::Tool {
+                name: "read_file".into(),
+                command: None,
+                ok: true,
+                content: "read src/main.rs".into(),
+            },
+            Entry::Notice("note".into()),
+            Entry::Error("bad".into()),
+        ];
+
+        let rendered = entries
+            .iter()
+            .flat_map(|entry| entry_lines(entry, 40))
+            .map(|line| line_text(&line))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for label in ["you>", "rho>", "reasoning>", "tool:", "notice>", "error>"] {
+            assert!(
+                !rendered.contains(label),
+                "rendered label {label}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn bash_tool_block_shows_command() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                name: "bash".into(),
+                command: Some("cargo test".into()),
+                ok: true,
+                content: "ignored output".into(),
+            },
+            40,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("bash"));
+        assert!(rendered.contains("cargo test"));
+        assert!(!rendered.contains("tool:"));
+    }
 
     #[test]
     fn paste_burst_treats_enter_as_newline() {

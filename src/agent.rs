@@ -21,7 +21,12 @@ pub enum AgentEvent {
     StepStarted(usize),
     OutputDelta(String),
     ReasoningDelta(String),
-    ToolFinished { name: String, content: String },
+    ToolFinished {
+        name: String,
+        command: Option<String>,
+        ok: bool,
+        content: String,
+    },
 }
 
 pub struct Agent<P: ModelProvider> {
@@ -104,10 +109,14 @@ impl<P: ModelProvider> Agent<P> {
                             return Err(AgentError::UnknownTool(call.name));
                         };
                         let name = call.name.clone();
+                        let command = tool_command(&name, &call.arguments);
+                        let event_content = tool_event_content(&name, &call.arguments);
                         let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
                         on_event(AgentEvent::ToolFinished {
                             name,
-                            content: result.content.clone(),
+                            command,
+                            ok: result.ok,
+                            content: event_content.unwrap_or_else(|| result.content.clone()),
                         })?;
                         self.messages.push(Message::ToolResult(result));
                     }
@@ -115,6 +124,26 @@ impl<P: ModelProvider> Agent<P> {
             }
             step += 1;
         }
+    }
+}
+
+fn tool_command(name: &str, arguments: &serde_json::Value) -> Option<String> {
+    match name {
+        "bash" => arguments
+            .get("command")
+            .and_then(|command| command.as_str())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn tool_event_content(name: &str, arguments: &serde_json::Value) -> Option<String> {
+    match name {
+        "read_file" => arguments
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| format!("read {path}")),
+        _ => None,
     }
 }
 

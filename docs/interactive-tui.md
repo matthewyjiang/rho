@@ -13,6 +13,7 @@ Rho's primary interface is an interactive Ratatui application. The command-line 
 - Finalized conversation output is inserted into normal terminal scrollback.
 - There is no bordered conversation pane and no internal conversation scroll state.
 - The active assistant response and reasoning deltas render inline above the composer while a turn is running.
+- Transcript blocks are styled without text prefixes: user messages use a shaded block, assistant output is plain text, reasoning is dim text, and tool blocks show the tool name.
 - The composer is a wrapping prompt between simple horizontal divider lines, with no section labels.
 
 ## Current keybindings

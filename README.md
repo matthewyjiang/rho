@@ -54,7 +54,7 @@ https://chatgpt.com/backend-api/codex/responses
 
 ### Interactive TUI
 
-Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as tokens arrive, and reasoning deltas are shown when the model provides them.
+Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as plain text, reasoning deltas render as dim text, user messages render as shaded blocks, and tool blocks show the tool name.
 
 Useful keys:
 
