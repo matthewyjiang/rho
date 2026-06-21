@@ -40,10 +40,12 @@ pub struct TuiInfo {
     pub session_id: Option<String>,
 }
 
-pub async fn run(
-    agent: &mut Agent<OpenAiProvider>,
-    info: TuiInfo,
-) -> anyhow::Result<Option<String>> {
+pub struct TuiResult {
+    pub resume_session_id: Option<String>,
+    pub transcript: String,
+}
+
+pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
@@ -73,6 +75,7 @@ struct App {
     running: bool,
     paste_burst: PasteBurst,
     last_inserted_was_tool: bool,
+    transcript: Vec<Entry>,
 }
 
 #[derive(Clone, Debug)]
@@ -144,6 +147,7 @@ impl App {
             running: false,
             paste_burst: PasteBurst::default(),
             last_inserted_was_tool: false,
+            transcript: Vec::new(),
         }
     }
 
@@ -151,7 +155,7 @@ impl App {
         mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent<OpenAiProvider>,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<TuiResult> {
         self.insert_session_intro(terminal)?;
         while !self.should_quit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -169,7 +173,10 @@ impl App {
                 }
             }
         }
-        Ok(self.info.session_id)
+        Ok(TuiResult {
+            resume_session_id: self.info.session_id.clone(),
+            transcript: render_plain_transcript(&self.info, &self.transcript),
+        })
     }
 
     async fn handle_key(
@@ -536,6 +543,7 @@ impl App {
             })?;
         }
 
+        self.transcript.push(entry.clone());
         let lines = entry_lines(entry, width);
         let height = lines.len().max(1) as u16;
         terminal.insert_before(height, |buf| {
@@ -595,6 +603,61 @@ fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
         Line::styled(divider, Style::default().fg(Color::DarkGray)),
         Line::raw(""),
     ]
+}
+
+fn render_plain_transcript(info: &TuiInfo, entries: &[Entry]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str(&format!("rho v{}\n", env!("CARGO_PKG_VERSION")));
+    out.push_str(&format!(
+        "provider: {}  •  model: {}\n",
+        info.provider, info.model
+    ));
+    out.push_str(&format!("cwd: {}\n\n", compact_cwd(&info.cwd)));
+    for entry in entries {
+        match entry {
+            Entry::User(text) => {
+                out.push_str("> ");
+                out.push_str(text);
+                out.push_str("\n\n");
+            }
+            Entry::Assistant(text) => {
+                out.push_str(text);
+                out.push_str("\n\n");
+            }
+            Entry::Tool {
+                name,
+                command,
+                ok,
+                content,
+            } => {
+                out.push_str(if *ok { "tool: " } else { "tool failed: " });
+                out.push_str(name);
+                if let Some(command) = command {
+                    out.push_str(" $");
+                    out.push_str(command);
+                }
+                if !content.is_empty() {
+                    out.push('\n');
+                    out.push_str(content);
+                }
+                out.push_str("\n\n");
+            }
+            Entry::Notice(text) => {
+                out.push_str("notice: ");
+                out.push_str(text);
+                out.push_str("\n\n");
+            }
+            Entry::Error(text) => {
+                out.push_str("error: ");
+                out.push_str(text);
+                out.push_str("\n\n");
+            }
+        }
+    }
+    out
 }
 
 fn previous_word_boundary(input: &str, cursor: usize) -> usize {

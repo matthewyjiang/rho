@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
-            let resume_session_id = tui::run(
+            let tui_result = tui::run(
                 &mut agent,
                 TuiInfo {
                     cwd,
@@ -106,8 +106,11 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
-            if let Some(session_id) = resume_session_id {
-                println!("\nResume this session:\n  rho --resume {session_id}\n");
+            if !tui_result.transcript.is_empty() {
+                println!("\n{}", tui_result.transcript);
+            }
+            if let Some(session_id) = tui_result.resume_session_id {
+                println!("Resume this session:\n  rho --resume {session_id}\n");
             }
         }
     }
