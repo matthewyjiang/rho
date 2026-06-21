@@ -15,7 +15,7 @@ pub fn system_prompt(tools: &[ToolSpec]) -> String {
         ));
     }
     out.push_str(r#"
-To call a tool, output exactly one JSON object in a fenced json code block.
+To call a tool, output exactly one valid JSON object in a fenced json code block. Escape newlines inside JSON string values as `\n`; do not put raw multiline strings inside JSON.
 
 Example:
 
@@ -38,12 +38,14 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
         return Ok(None);
     };
     let after = &content[start + "```json".len()..];
-    let Some(end) = after.find("```") else {
+    let Some(end) = after.rfind("```") else {
         return Ok(None);
     };
     let json = after[..end].trim();
-    let value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| ModelError::InvalidResponse(format!("invalid tool call json: {e}")))?;
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        let snippet: String = json.chars().take(500).collect();
+        ModelError::InvalidResponse(format!("invalid tool call json: {e}; snippet: {snippet}"))
+    })?;
     let obj = value
         .as_object()
         .ok_or_else(|| ModelError::InvalidResponse("expected JSON object".into()))?;
