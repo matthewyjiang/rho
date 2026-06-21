@@ -37,11 +37,13 @@ pub struct TuiInfo {
     pub model: String,
     pub reasoning_effort: String,
     pub reasoning_summary: String,
-    pub session_path: Option<PathBuf>,
     pub session_id: Option<String>,
 }
 
-pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<()> {
+pub async fn run(
+    agent: &mut Agent<OpenAiProvider>,
+    info: TuiInfo,
+) -> anyhow::Result<Option<String>> {
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
@@ -149,7 +151,7 @@ impl App {
         mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent<OpenAiProvider>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<String>> {
         self.insert_session_intro(terminal)?;
         while !self.should_quit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -167,10 +169,7 @@ impl App {
                 }
             }
         }
-        if self.info.session_id.is_some() {
-            self.insert_exit_notice(terminal)?;
-        }
-        Ok(())
+        Ok(self.info.session_id)
     }
 
     async fn handle_key(
@@ -196,7 +195,6 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 agent.reset();
                 self.info.session_id = None;
-                self.info.session_path = None;
                 agent.clear_session();
                 self.insert_entry(
                     terminal,
@@ -346,7 +344,6 @@ impl App {
         if self.info.session_id.is_none() {
             let session = Session::create(&self.info.cwd)?;
             self.info.session_id = Some(session.id().to_string());
-            self.info.session_path = Some(session.path().to_path_buf());
             agent.set_session(session);
         }
         Ok(())
@@ -517,35 +514,6 @@ impl App {
         let width = terminal.size()?.width as usize;
         let lines = session_header_lines(&self.info, width);
         let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
-        Ok(())
-    }
-
-    fn insert_exit_notice(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let width = terminal.size()?.width as usize;
-        let lines = vec![
-            Line::raw(""),
-            Line::styled(
-                "Resume this session:",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Line::raw(format!(
-                "  rho --resume {}",
-                self.info.session_id.as_deref().unwrap_or_default()
-            )),
-            Line::styled(
-                "─".repeat(width.max(1)),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Line::raw(""),
-        ];
-        let height = lines.len() as u16;
         terminal.insert_before(height, |buf| {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })

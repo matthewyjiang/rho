@@ -35,7 +35,15 @@ enum SessionEntry {
 
 impl Session {
     pub fn open_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<(Self, Vec<Message>)> {
-        let dir = session_dir(cwd)?;
+        Self::open_by_id_in_root(&session_root()?, cwd, id_prefix)
+    }
+
+    fn open_by_id_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<(Self, Vec<Message>)> {
+        let dir = session_dir_in_root(session_root, cwd);
         fs::create_dir_all(&dir)?;
         let matches = matching_session_files(&dir, id_prefix)?;
         match matches.as_slice() {
@@ -58,7 +66,11 @@ impl Session {
     }
 
     pub fn create(cwd: &Path) -> anyhow::Result<Self> {
-        let dir = session_dir(cwd)?;
+        Self::create_in_root(&session_root()?, cwd)
+    }
+
+    fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
+        let dir = session_dir_in_root(session_root, cwd);
         fs::create_dir_all(&dir)?;
         let id = Uuid::new_v4().to_string();
         let path = dir.join(format!("{}_{}.jsonl", timestamp_for_filename(), id));
@@ -142,11 +154,19 @@ fn session_id_from_path(path: &Path) -> Option<String> {
         .map(|(_, id)| id.to_string())
 }
 
-fn session_dir(cwd: &Path) -> anyhow::Result<PathBuf> {
+fn session_root() -> anyhow::Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    Ok(home.join(".rho").join("sessions").join(encode_cwd(cwd)))
+    Ok(home.join(".rho").join("sessions"))
+}
+
+fn session_dir_in_root(session_root: &Path, cwd: &Path) -> PathBuf {
+    session_root.join(workspace_key(cwd))
+}
+
+fn workspace_key(cwd: &Path) -> String {
+    format!("{}-{:016x}", encode_cwd(cwd), stable_path_hash(cwd))
 }
 
 fn encode_cwd(cwd: &Path) -> String {
@@ -154,6 +174,18 @@ fn encode_cwd(cwd: &Path) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect()
+}
+
+fn stable_path_hash(path: &Path) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    path.to_string_lossy()
+        .as_bytes()
+        .iter()
+        .fold(FNV_OFFSET, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+        })
 }
 
 fn timestamp() -> String {
@@ -177,8 +209,9 @@ mod tests {
 
     #[test]
     fn persists_and_loads_messages() {
+        let root = temp_session_root();
         let cwd = temp_cwd();
-        let session = Session::create(&cwd).unwrap();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
         session
             .append_message(&Message::user_text("hello"))
             .unwrap();
@@ -186,7 +219,7 @@ mod tests {
             .append_message(&Message::assistant_text("hi"))
             .unwrap();
 
-        let (_session, messages) = Session::open_by_id(&cwd, session.id()).unwrap();
+        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
         assert_eq!(messages.len(), 2);
         assert!(matches!(&messages[0], Message::User(_)));
         assert!(matches!(&messages[1], Message::Assistant(_)));
@@ -194,14 +227,15 @@ mod tests {
 
     #[test]
     fn opens_session_by_uuid_prefix() {
+        let root = temp_session_root();
         let cwd = temp_cwd();
-        let session = Session::create(&cwd).unwrap();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
         session
             .append_message(&Message::user_text("prefix match"))
             .unwrap();
 
         let prefix = &session.id()[..8];
-        let (opened, messages) = Session::open_by_id(&cwd, prefix).unwrap();
+        let (opened, messages) = Session::open_by_id_in_root(&root, &cwd, prefix).unwrap();
 
         assert_eq!(opened.id(), session.id());
         assert_eq!(messages.len(), 1);
@@ -209,32 +243,49 @@ mod tests {
 
     #[test]
     fn errors_when_uuid_prefix_is_ambiguous() {
+        let root = temp_session_root();
         let cwd = temp_cwd();
-        write_minimal_session_file(&cwd, "aaaaaaaa-1111-4111-8111-111111111111");
-        write_minimal_session_file(&cwd, "aaaaaaaa-2222-4222-8222-222222222222");
+        write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
+        write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
 
-        let err = Session::open_by_id(&cwd, "aaaaaaaa").unwrap_err();
+        let err = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
 
         assert!(err.to_string().contains("multiple sessions match"));
     }
 
     #[test]
     fn errors_when_uuid_prefix_is_missing() {
+        let root = temp_session_root();
         let cwd = temp_cwd();
 
-        let err = Session::open_by_id(&cwd, "missing").unwrap_err();
+        let err = Session::open_by_id_in_root(&root, &cwd, "missing").unwrap_err();
 
         assert!(err.to_string().contains("no session found"));
     }
 
     #[test]
-    fn stores_sessions_under_home_rho_sessions_encoded_cwd() {
+    fn stores_sessions_under_session_root_workspace_key() {
+        let root = temp_session_root();
         let cwd = temp_cwd();
-        let session = Session::create(&cwd).unwrap();
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
-        let expected_parent = home.join(".rho").join("sessions").join(encode_cwd(&cwd));
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        let expected_parent = root.join(workspace_key(&cwd));
 
         assert_eq!(session.path().parent(), Some(expected_parent.as_path()));
+    }
+
+    #[test]
+    fn workspace_key_avoids_separator_collisions() {
+        let slash_path = PathBuf::from("/tmp/rho-workspace/a/b");
+        let dash_path = PathBuf::from("/tmp/rho-workspace/a-b");
+
+        assert_eq!(encode_cwd(&slash_path), encode_cwd(&dash_path));
+        assert_ne!(workspace_key(&slash_path), workspace_key(&dash_path));
+    }
+
+    fn temp_session_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("rho-session-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 
     fn temp_cwd() -> PathBuf {
@@ -243,8 +294,8 @@ mod tests {
         cwd
     }
 
-    fn write_minimal_session_file(cwd: &Path, id: &str) {
-        let dir = session_dir(cwd).unwrap();
+    fn write_minimal_session_file(root: &Path, cwd: &Path, id: &str) {
+        let dir = session_dir_in_root(root, cwd);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("test_{id}.jsonl"));
         fs::write(

@@ -19,7 +19,7 @@ rho
 
 Rho uses the current working directory as the workspace for file reads, edits, and shell commands.
 
-Sessions persist automatically under `~/.rho/sessions/<encoded-cwd>/`, where `<encoded-cwd>` is the absolute working directory with non-alphanumeric characters replaced by `-`. Starting `rho` creates a new session file only after you send the first message. To resume an existing session for the current workspace, pass its UUID or UUID prefix with `--resume` / `-R`:
+Sessions persist automatically under `~/.rho/sessions/<workspace-key>/`, where `<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Starting `rho` creates a new session file only after you send the first message. To resume an existing session for the current workspace, pass its UUID or UUID prefix with `--resume` / `-R`:
 
 ```bash
 rho --resume <session-uuid>

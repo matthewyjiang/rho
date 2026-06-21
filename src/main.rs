@@ -24,6 +24,7 @@ use tui::TuiInfo;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    validate_cli(&cli)?;
     let config_path = cli.config.clone();
     let mut cfg = Config::load(config_path.clone())?;
     let mut save_config = false;
@@ -59,9 +60,6 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Run { prompt, stdin }) => Some(automation_prompt(prompt.clone(), *stdin)?),
         None => None,
     };
-    if cli.resume.is_some() && run_prompt.is_some() {
-        anyhow::bail!("--resume is only supported for interactive sessions");
-    }
 
     let auth_mode = match cfg.auth.as_str() {
         "codex" => AuthMode::Codex,
@@ -87,17 +85,16 @@ async fn main() -> anyhow::Result<()> {
             println!("{answer}");
         }
         None => {
-            let (session_id, session_path) = if let Some(id) = &cli.resume {
+            let session_id = if let Some(id) = &cli.resume {
                 let (session, history) = Session::open_by_id(&cwd, id)?;
                 let session_id = Some(session.id().to_string());
-                let session_path = Some(session.path().to_path_buf());
                 agent = agent.with_history(history);
                 agent.set_session(session);
-                (session_id, session_path)
+                session_id
             } else {
-                (None, None)
+                None
             };
-            tui::run(
+            let resume_session_id = tui::run(
                 &mut agent,
                 TuiInfo {
                     cwd,
@@ -105,12 +102,21 @@ async fn main() -> anyhow::Result<()> {
                     model: cfg.model,
                     reasoning_effort: cfg.reasoning_effort,
                     reasoning_summary: cfg.reasoning_summary,
-                    session_path,
                     session_id,
                 },
             )
             .await?;
+            if let Some(session_id) = resume_session_id {
+                println!("\nResume this session:\n  rho --resume {session_id}\n");
+            }
         }
+    }
+    Ok(())
+}
+
+fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
+    if cli.resume.is_some() && matches!(&cli.command, Some(Command::Run { .. })) {
+        anyhow::bail!("--resume is only supported for interactive sessions");
     }
     Ok(())
 }
@@ -157,6 +163,25 @@ fn automation_prompt_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            resume: Some("session-id".into()),
+            command: Some(Command::Run {
+                stdin: true,
+                prompt: Vec::new(),
+            }),
+        };
+
+        let err = validate_cli(&cli).unwrap_err();
+
+        assert!(err.to_string().contains("--resume is only supported"));
+    }
 
     #[test]
     fn automation_prompt_joins_inline_parts() {
