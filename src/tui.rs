@@ -37,6 +37,7 @@ const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
 const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
 const PASTE_BURST_MIN_CHARS: usize = 2;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
 
 pub struct TuiInfo {
     pub cwd: PathBuf,
@@ -1166,7 +1167,11 @@ impl App {
             ComposerMode::Input => input_cursor_position(&self.input, self.input_cursor, width),
             ComposerMode::Picker(picker) => Position {
                 x: 0,
-                y: picker.selected.saturating_add(1).min(picker.items.len()) as u16,
+                y: picker
+                    .selected
+                    .saturating_sub(visible_picker_item_start(picker))
+                    .saturating_add(1)
+                    .min(picker.items.len()) as u16,
             },
         }
     }
@@ -1340,7 +1345,14 @@ fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
         Style::default().fg(Color::DarkGray),
         false,
     ));
-    for (index, item) in picker.items.iter().enumerate() {
+    let start = visible_picker_item_start(picker);
+    for (index, item) in picker
+        .items
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(MAX_PICKER_ITEMS)
+    {
         let selected = index == picker.selected;
         let marker = if selected { ">" } else { " " };
         let text = if item.description.is_empty() {
@@ -1358,6 +1370,13 @@ fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
         lines.push(styled_line(text, width, style, false));
     }
     lines
+}
+
+fn visible_picker_item_start(picker: &UiPicker) -> usize {
+    picker
+        .selected
+        .saturating_add(1)
+        .saturating_sub(MAX_PICKER_ITEMS)
 }
 
 fn byte_index_after_visual_lines(text: &str, width: usize, target_lines: usize) -> Option<usize> {
