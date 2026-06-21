@@ -27,9 +27,6 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cwd) = cli.cwd {
         cfg.cwd = cwd;
     }
-    if let Some(max_steps) = cli.max_steps {
-        cfg.max_steps = max_steps;
-    }
     if let Some(auth) = cli.auth {
         cfg.auth = auth;
     }
@@ -44,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         cwd: cfg.cwd.clone(),
         max_output_bytes: cfg.max_output_bytes,
     };
-    let mut agent = Agent::new(provider, registry, ctx, cfg.max_steps);
+    let mut agent = Agent::new(provider, registry, ctx);
 
     println!(
         "rho: cwd={} model={} auth={}",
@@ -57,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         io::stdout().flush()?;
         let mut line = String::new();
         if io::stdin().read_line(&mut line)? == 0 {
+            eprintln!("[rho] stopped: stdin closed");
             break;
         }
         let prompt = line.trim();
@@ -64,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
             continue;
         }
         if prompt == "exit" || prompt == "quit" {
+            eprintln!("[rho] stopped: user requested exit");
             break;
         }
         if prompt == "/reset" {
@@ -73,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         }
         match agent.run(prompt.to_string()).await {
             Ok(answer) => println!("{answer}"),
-            Err(err) => eprintln!("{err}"),
+            Err(err) => eprintln!("[rho] stopped: {err}"),
         }
     }
     Ok(())

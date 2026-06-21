@@ -6,7 +6,6 @@ use serde::Deserialize;
 pub struct Config {
     pub model: String,
     pub api_base: String,
-    pub max_steps: usize,
     pub max_output_bytes: usize,
     pub cwd: PathBuf,
     pub auth: String,
@@ -15,9 +14,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            model: "gpt-4.1-mini".into(),
+            model: "gpt-5.5".into(),
             api_base: "https://api.openai.com/v1".into(),
-            max_steps: 8,
             max_output_bytes: 12000,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             auth: "api-key".into(),
@@ -37,9 +35,6 @@ impl Config {
             if let Some(v) = file.api_base {
                 cfg.api_base = v;
             }
-            if let Some(v) = file.max_steps {
-                cfg.max_steps = v;
-            }
             if let Some(v) = file.max_output_bytes {
                 cfg.max_output_bytes = v;
             }
@@ -58,7 +53,6 @@ impl Config {
 struct PartialConfig {
     model: Option<String>,
     api_base: Option<String>,
-    max_steps: Option<usize>,
     max_output_bytes: Option<usize>,
     cwd: Option<PathBuf>,
     auth: Option<String>,

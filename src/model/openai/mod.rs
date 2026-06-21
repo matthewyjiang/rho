@@ -2,60 +2,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use thiserror::Error;
 
-use crate::tool::{ToolCall, ToolResult, ToolSpec};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Message {
-    System(String),
-    User(String),
-    Assistant(String),
-    AssistantToolCall(ToolCall),
-    ToolResult(ToolResult),
-}
-
-#[derive(Clone, Debug)]
-pub struct ModelRequest {
-    pub messages: Vec<Message>,
-    pub tools: Vec<ToolSpec>,
-}
-
-#[derive(Clone, Debug)]
-pub enum ModelResponse {
-    FinalAnswer(String),
-    ToolCall(ToolCall),
-}
-
-#[derive(Debug, Error)]
-pub enum ModelError {
-    #[error("missing OPENAI_API_KEY")]
-    MissingApiKey,
-    #[error("missing Codex OAuth credentials; run `codex login` or set CODEX_ACCESS_TOKEN")]
-    MissingCodexAuth,
-    #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("request failed: HTTP {status}: {body}")]
-    HttpStatus {
-        status: reqwest::StatusCode,
-        body: String,
-    },
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("provider returned invalid response: {0}")]
-    InvalidResponse(String),
-}
-
-#[async_trait::async_trait]
-pub trait ModelProvider: Send + Sync {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;
-}
-
-#[derive(Clone, Debug)]
-pub enum AuthMode {
-    ApiKey,
-    Codex,
-}
+use crate::model::{
+    AuthMode, ContentBlock, Message, ModelError, ModelProvider, ModelRequest, ModelResponse,
+};
+use crate::tool::{ToolCall, ToolSpec};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -97,53 +48,11 @@ impl OpenAiProvider {
     }
 }
 
-#[derive(Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    message: ChatMessage,
-}
-
-#[derive(Deserialize)]
-struct ResponsesResponse {
-    output_text: Option<String>,
-    output: Option<Vec<ResponseOutput>>,
-}
-
-#[derive(Deserialize)]
-struct ResponseOutput {
-    content: Option<Vec<ResponseContent>>,
-}
-
-#[derive(Deserialize)]
-struct ResponseContent {
-    text: Option<String>,
-}
-
 #[async_trait::async_trait]
 impl ModelProvider for OpenAiProvider {
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-        let ModelRequest {
-            messages,
-            tools: _tools,
-        } = request;
-        let content = match &self.auth {
-            Auth::ApiKey(key) => self.send_chat_completions(messages, key).await?,
+        match &self.auth {
+            Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
             Auth::Codex {
                 access_token,
                 refresh_token,
@@ -165,32 +74,101 @@ impl ModelProvider for OpenAiProvider {
                         account_id.clone(),
                     )
                 };
-                self.send_codex_responses(
-                    messages,
-                    &access_token,
-                    refresh_token.as_deref(),
-                    account_id.as_deref(),
-                    auth_path_for_request.as_deref(),
-                )
-                .await?
+                let content = self
+                    .send_codex_responses(
+                        request.messages,
+                        &access_token,
+                        refresh_token.as_deref(),
+                        account_id.as_deref(),
+                        auth_path_for_request.as_deref(),
+                    )
+                    .await?;
+                if let Some(call) = crate::prompt::parse_tool_call(&content)? {
+                    Ok(ModelResponse::tool_call(call))
+                } else {
+                    Ok(ModelResponse::final_answer(content))
+                }
             }
-        };
-
-        if let Some(call) = crate::prompt::parse_tool_call(&content)? {
-            Ok(ModelResponse::ToolCall(call))
-        } else {
-            Ok(ModelResponse::FinalAnswer(content))
         }
     }
+}
+
+#[derive(Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<OpenAiMessage>,
+    tools: Vec<OpenAiTool>,
+    tool_choice: &'static str,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OpenAiMessage {
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OpenAiToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    function: OpenAiFunctionCall,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OpenAiFunctionCall {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Serialize)]
+struct OpenAiTool {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: OpenAiToolFunction,
+}
+
+#[derive(Serialize)]
+struct OpenAiToolFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+    strict: bool,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<Choice>,
+}
+
+#[derive(Deserialize)]
+struct Choice {
+    message: ChatResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatResponseMessage {
+    content: Option<String>,
+    tool_calls: Option<Vec<OpenAiToolCall>>,
 }
 
 impl OpenAiProvider {
     async fn send_chat_completions(
         &self,
-        messages: Vec<Message>,
+        request: ModelRequest,
         key: &str,
-    ) -> Result<String, ModelError> {
-        let messages = messages.into_iter().map(to_chat_message).collect();
+    ) -> Result<ModelResponse, ModelError> {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(to_openai_message)
+            .collect::<Result<Vec<_>, _>>()?;
+        let tools = request.tools.into_iter().map(to_openai_tool).collect();
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
         let response: ChatResponse = self
             .client
@@ -199,19 +177,44 @@ impl OpenAiProvider {
             .json(&ChatRequest {
                 model: self.model.clone(),
                 messages,
+                tools,
+                tool_choice: "auto",
             })
             .send()
             .await?
             .error_for_status()?
             .json()
             .await?;
-        Ok(response
+        let message = response
             .choices
             .into_iter()
             .next()
             .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
-            .message
-            .content)
+            .message;
+        let mut blocks = Vec::new();
+        if let Some(content) = message.content.filter(|s| !s.is_empty()) {
+            blocks.push(ContentBlock::Text(content));
+        }
+        for call in message.tool_calls.unwrap_or_default() {
+            let arguments = serde_json::from_str(&call.function.arguments).map_err(|e| {
+                ModelError::InvalidResponse(format!(
+                    "invalid tool call arguments for {}: {e}",
+                    call.function.name
+                ))
+            })?;
+            blocks.push(ContentBlock::ToolCall(ToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments,
+            }));
+        }
+        if blocks.is_empty() {
+            Err(ModelError::InvalidResponse(
+                "assistant message had no content or tool calls".into(),
+            ))
+        } else {
+            Ok(ModelResponse::Assistant(blocks))
+        }
     }
 
     async fn send_codex_responses(
@@ -278,44 +281,133 @@ impl OpenAiProvider {
     }
 }
 
-fn to_chat_message(message: Message) -> ChatMessage {
-    ChatMessage {
-        role: chat_role(&message).to_string(),
-        content: render_message_content(&message),
+fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
+    OpenAiTool {
+        kind: "function",
+        function: OpenAiToolFunction {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.input_schema,
+            strict: false,
+        },
     }
 }
 
-fn chat_role(message: &Message) -> &'static str {
+fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
     match message {
-        Message::System(_) => "system",
-        Message::User(_) => "user",
-        Message::Assistant(_) | Message::AssistantToolCall(_) => "assistant",
-        Message::ToolResult(_) => "user",
+        Message::System(content) => Ok(openai_text_message("system", content)),
+        Message::User(blocks) => Ok(openai_text_message("user", render_blocks(&blocks))),
+        Message::Assistant(blocks) => {
+            let content = blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text(text) => Some(text.as_str()),
+                    ContentBlock::ToolCall(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let tool_calls = blocks
+                .into_iter()
+                .filter_map(|b| match b {
+                    ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
+                    ContentBlock::Text(_) => None,
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(OpenAiMessage {
+                role: "assistant".into(),
+                content: if content.is_empty() {
+                    None
+                } else {
+                    Some(content)
+                },
+                tool_calls: if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls)
+                },
+                tool_call_id: None,
+            })
+        }
+        Message::ToolResult(result) => Ok(OpenAiMessage {
+            role: "tool".into(),
+            content: Some(result.content),
+            tool_calls: None,
+            tool_call_id: Some(result.id),
+        }),
     }
+}
+
+fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
+    OpenAiMessage {
+        role: role.into(),
+        content: Some(content),
+        tool_calls: None,
+        tool_call_id: None,
+    }
+}
+
+fn tool_call_to_openai(call: ToolCall) -> Result<OpenAiToolCall, ModelError> {
+    let arguments = serde_json::to_string(&call.arguments)
+        .map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?;
+    Ok(OpenAiToolCall {
+        id: call.id,
+        kind: "function".into(),
+        function: OpenAiFunctionCall {
+            name: call.name,
+            arguments,
+        },
+    })
+}
+
+fn render_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text(text) => text.clone(),
+            ContentBlock::ToolCall(call) => render_tool_call(call),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn codex_role(message: &Message) -> &'static str {
     match message {
-        Message::Assistant(_) | Message::AssistantToolCall(_) => "assistant",
+        Message::Assistant(_) => "assistant",
         Message::System(_) | Message::User(_) | Message::ToolResult(_) => "user",
     }
 }
 
 fn render_message_content(message: &Message) -> String {
     match message {
-        Message::System(content) | Message::User(content) | Message::Assistant(content) => {
-            content.clone()
-        }
-        Message::AssistantToolCall(call) => {
-            let arguments = serde_json::to_string_pretty(&call.arguments)
-                .unwrap_or_else(|_| call.arguments.to_string());
-            format!("Tool call: {}\n{}", call.name, arguments)
-        }
+        Message::System(content) => content.clone(),
+        Message::User(blocks) | Message::Assistant(blocks) => render_blocks(blocks),
         Message::ToolResult(result) => format!(
             "Tool result for {} (ok={}):\n{}",
             result.id, result.ok, result.content
         ),
     }
+}
+
+fn render_tool_call(call: &ToolCall) -> String {
+    let arguments = serde_json::to_string_pretty(&call.arguments)
+        .unwrap_or_else(|_| call.arguments.to_string());
+    format!("Tool call: {}\n{}", call.name, arguments)
+}
+
+#[derive(Deserialize)]
+struct ResponsesResponse {
+    output_text: Option<String>,
+    output: Option<Vec<ResponseOutput>>,
+}
+
+#[derive(Deserialize)]
+struct ResponseOutput {
+    content: Option<Vec<ResponseContent>>,
+}
+
+#[derive(Deserialize)]
+struct ResponseContent {
+    text: Option<String>,
 }
 
 fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelError> {
@@ -479,6 +571,7 @@ async fn refresh_codex_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::ToolResult;
 
     #[test]
     fn extracts_sse_delta_text() {
@@ -489,44 +582,42 @@ mod tests {
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n",
             "data: [DONE]\n"
         );
-
-        let text = extract_sse_text(body).unwrap();
-
-        assert_eq!(text, "Hello world");
+        assert_eq!(extract_sse_text(body).unwrap(), "Hello world");
     }
 
     #[test]
     fn extracts_completed_response_text_when_no_deltas() {
         let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
 "#;
-
-        let text = extract_sse_text(body).unwrap();
-
-        assert_eq!(text, "done");
+        assert_eq!(extract_sse_text(body).unwrap(), "done");
     }
 
     #[test]
-    fn renders_explicit_tool_history_as_text() {
-        let call = Message::AssistantToolCall(ToolCall {
+    fn renders_explicit_tool_history_as_text_for_codex_fallback() {
+        let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
             id: "call-1".into(),
             name: "bash".into(),
             arguments: json!({ "command": "pwd" }),
-        });
+        })]);
         let result = Message::ToolResult(ToolResult {
             id: "call-1".into(),
             ok: true,
             content: "/tmp\n".into(),
         });
+        assert!(render_message_content(&call).contains("Tool call: bash"));
+        assert!(render_message_content(&result).contains("Tool result for call-1 (ok=true):"));
+    }
 
-        let rendered_call = to_chat_message(call);
-        let rendered_result = to_chat_message(result);
-
-        assert_eq!(rendered_call.role, "assistant");
-        assert!(rendered_call.content.contains("Tool call: bash"));
-        assert!(rendered_call.content.contains("\"command\": \"pwd\""));
-        assert_eq!(rendered_result.role, "user");
-        assert!(rendered_result
-            .content
-            .contains("Tool result for call-1 (ok=true):"));
+    #[test]
+    fn serializes_openai_native_tool_result() {
+        let message = to_openai_message(Message::ToolResult(ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: "done".into(),
+        }))
+        .unwrap();
+        assert_eq!(message.role, "tool");
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(message.content.as_deref(), Some("done"));
     }
 }

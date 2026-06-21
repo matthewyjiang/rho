@@ -1,0 +1,83 @@
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::tool::{ToolCall, ToolResult, ToolSpec};
+
+pub mod openai;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Message {
+    System(String),
+    User(Vec<ContentBlock>),
+    Assistant(Vec<ContentBlock>),
+    ToolResult(ToolResult),
+}
+
+impl Message {
+    pub fn user_text(content: impl Into<String>) -> Self {
+        Self::User(vec![ContentBlock::Text(content.into())])
+    }
+
+    pub fn assistant_text(content: impl Into<String>) -> Self {
+        Self::Assistant(vec![ContentBlock::Text(content.into())])
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ContentBlock {
+    Text(String),
+    ToolCall(ToolCall),
+}
+
+#[derive(Clone, Debug)]
+pub struct ModelRequest {
+    pub messages: Vec<Message>,
+    pub tools: Vec<ToolSpec>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ModelResponse {
+    Assistant(Vec<ContentBlock>),
+}
+
+impl ModelResponse {
+    pub fn final_answer(answer: impl Into<String>) -> Self {
+        Self::Assistant(vec![ContentBlock::Text(answer.into())])
+    }
+
+    pub fn tool_call(call: ToolCall) -> Self {
+        Self::Assistant(vec![ContentBlock::ToolCall(call)])
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ModelError {
+    #[error("missing OPENAI_API_KEY")]
+    MissingApiKey,
+    #[error("missing Codex OAuth credentials; run `codex login` or set CODEX_ACCESS_TOKEN")]
+    MissingCodexAuth,
+    #[error("request failed: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("request failed: HTTP {status}: {body}")]
+    HttpStatus {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("provider returned invalid response: {0}")]
+    InvalidResponse(String),
+}
+
+#[async_trait::async_trait]
+pub trait ModelProvider: Send + Sync {
+    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;
+}
+
+#[derive(Clone, Debug)]
+pub enum AuthMode {
+    ApiKey,
+    Codex,
+}
+
+pub use openai::OpenAiProvider;

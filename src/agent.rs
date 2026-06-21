@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::model::{Message, ModelError, ModelProvider, ModelRequest, ModelResponse};
+use crate::model::{ContentBlock, Message, ModelError, ModelProvider, ModelRequest, ModelResponse};
 use crate::prompt::system_prompt;
 use crate::tool::{ToolContext, ToolError, ToolRegistry};
 
@@ -12,26 +12,22 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
-    #[error("Stopped: maximum step count reached")]
-    MaxStepsExceeded,
 }
 
 pub struct Agent<P: ModelProvider> {
     provider: P,
     tools: ToolRegistry,
     ctx: ToolContext,
-    max_steps: usize,
     messages: Vec<Message>,
 }
 
 impl<P: ModelProvider> Agent<P> {
-    pub fn new(provider: P, tools: ToolRegistry, ctx: ToolContext, max_steps: usize) -> Self {
+    pub fn new(provider: P, tools: ToolRegistry, ctx: ToolContext) -> Self {
         let messages = initial_messages(&tools);
         Self {
             provider,
             tools,
             ctx,
-            max_steps,
             messages,
         }
     }
@@ -42,10 +38,11 @@ impl<P: ModelProvider> Agent<P> {
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
         let specs = self.tools.specs();
-        self.messages.push(Message::User(user_prompt));
+        self.messages.push(Message::user_text(user_prompt));
 
-        for step in 1..=self.max_steps {
-            eprintln!("[rho] step {step}/{}", self.max_steps);
+        let mut step = 1usize;
+        loop {
+            eprintln!("[rho] step {step}");
             let response = self
                 .provider
                 .send_turn(ModelRequest {
@@ -54,22 +51,40 @@ impl<P: ModelProvider> Agent<P> {
                 })
                 .await?;
             match response {
-                ModelResponse::FinalAnswer(answer) => {
-                    self.messages.push(Message::Assistant(answer.clone()));
-                    return Ok(answer);
-                }
-                ModelResponse::ToolCall(call) => {
-                    self.messages.push(Message::AssistantToolCall(call.clone()));
-                    let Some(tool) = self.tools.get(&call.name) else {
-                        return Err(AgentError::UnknownTool(call.name));
-                    };
-                    let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
-                    println!("[tool:{}]\n{}", call.name, result.content);
-                    self.messages.push(Message::ToolResult(result));
+                ModelResponse::Assistant(blocks) => {
+                    let tool_calls: Vec<_> = blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::ToolCall(call) => Some(call.clone()),
+                            ContentBlock::Text(_) => None,
+                        })
+                        .collect();
+                    if tool_calls.is_empty() {
+                        let answer = blocks
+                            .into_iter()
+                            .filter_map(|block| match block {
+                                ContentBlock::Text(text) => Some(text),
+                                ContentBlock::ToolCall(_) => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.messages.push(Message::assistant_text(answer.clone()));
+                        return Ok(answer);
+                    }
+
+                    self.messages.push(Message::Assistant(blocks));
+                    for call in tool_calls {
+                        let Some(tool) = self.tools.get(&call.name) else {
+                            return Err(AgentError::UnknownTool(call.name));
+                        };
+                        let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
+                        println!("[tool:{}]\n{}", call.name, result.content);
+                        self.messages.push(Message::ToolResult(result));
+                    }
                 }
             }
+            step += 1;
         }
-        Err(AgentError::MaxStepsExceeded)
     }
 }
 
@@ -95,7 +110,7 @@ mod tests {
     impl ModelProvider for RecordingProvider {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
             self.requests.lock().unwrap().push(request.messages);
-            Ok(ModelResponse::FinalAnswer("ok".into()))
+            Ok(ModelResponse::final_answer("ok"))
         }
     }
 
@@ -107,7 +122,6 @@ mod tests {
                 cwd: std::env::current_dir().unwrap(),
                 max_output_bytes: 12000,
             },
-            8,
         )
     }
 
@@ -123,9 +137,15 @@ mod tests {
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(matches!(requests[1][0], Message::System(_)));
-        assert!(matches!(requests[1][1], Message::User(ref s) if s == "first"));
-        assert!(matches!(requests[1][2], Message::Assistant(ref s) if s == "ok"));
-        assert!(matches!(requests[1][3], Message::User(ref s) if s == "second"));
+        assert!(
+            matches!(requests[1][1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "first"))
+        );
+        assert!(
+            matches!(requests[1][2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "ok"))
+        );
+        assert!(
+            matches!(requests[1][3], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "second"))
+        );
     }
 
     #[tokio::test]
@@ -142,6 +162,8 @@ mod tests {
         let last = requests.last().unwrap();
         assert_eq!(last.len(), 2);
         assert!(matches!(last[0], Message::System(_)));
-        assert!(matches!(last[1], Message::User(ref s) if s == "after reset"));
+        assert!(
+            matches!(last[1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "after reset"))
+        );
     }
 }
