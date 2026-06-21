@@ -3,6 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Rho',
   description: 'A lightweight agent harness inspired by Pi',
+  base: '/rho/',
   cleanUrls: true,
   themeConfig: {
     nav: [
