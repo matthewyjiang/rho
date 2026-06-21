@@ -26,7 +26,7 @@ enum Auth {
 }
 
 impl OpenAiProvider {
-    pub fn new(model: String, api_base: String, mode: AuthMode) -> Result<Self, ModelError> {
+    pub fn new(model: String, mode: AuthMode) -> Result<Self, ModelError> {
         let auth = match mode {
             AuthMode::ApiKey => Auth::ApiKey(
                 std::env::var("OPENAI_API_KEY").map_err(|_| ModelError::MissingApiKey)?,
@@ -34,10 +34,8 @@ impl OpenAiProvider {
             AuthMode::Codex => load_codex_auth()?,
         };
         let api_base = match auth {
-            Auth::Codex { .. } if api_base == "https://api.openai.com/v1" => {
-                "https://chatgpt.com/backend-api/codex".into()
-            }
-            _ => api_base,
+            Auth::Codex { .. } => "https://chatgpt.com/backend-api/codex".into(),
+            Auth::ApiKey(_) => "https://api.openai.com/v1".into(),
         };
         Ok(Self {
             client: reqwest::Client::new(),

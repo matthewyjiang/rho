@@ -20,32 +20,48 @@ use tool::ToolContext;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let mut cfg = Config::load(cli.config)?;
+    let config_path = cli.config.clone();
+    let mut cfg = Config::load(config_path.clone())?;
+    let mut save_config = false;
+    if let Some(provider) = cli.provider {
+        cfg.provider = provider;
+        save_config = true;
+    }
     if let Some(model) = cli.model {
         cfg.model = model;
-    }
-    if let Some(cwd) = cli.cwd {
-        cfg.cwd = cwd;
+        save_config = true;
     }
     if let Some(auth) = cli.auth {
         cfg.auth = auth;
+    }
+    if save_config {
+        cfg.save(config_path)?;
+    }
+
+    if cfg.provider != "openai" {
+        anyhow::bail!(
+            "unsupported provider '{}': only 'openai' is implemented",
+            cfg.provider
+        );
     }
 
     let auth_mode = match cfg.auth.as_str() {
         "codex" => AuthMode::Codex,
         _ => AuthMode::ApiKey,
     };
-    let provider = OpenAiProvider::new(cfg.model.clone(), cfg.api_base.clone(), auth_mode)?;
+    let provider = OpenAiProvider::new(cfg.model.clone(), auth_mode)?;
     let registry = tools::registry();
+    let cwd = std::env::current_dir()?;
     let ctx = ToolContext {
-        cwd: cfg.cwd.clone(),
+        cwd: cwd.clone(),
         max_output_bytes: cfg.max_output_bytes,
     };
     let mut agent = Agent::new(provider, registry, ctx);
 
     println!(
-        "rho: cwd={} model={} auth={}",
-        cfg.cwd.display(),
+        "rho: cwd={} provider={} model={} auth={}",
+        cwd.display(),
+        cfg.provider,
         cfg.model,
         cfg.auth
     );

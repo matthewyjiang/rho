@@ -15,7 +15,7 @@ impl Tool for Bash {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "bash".into(),
-            description: "Runs a bash command in the configured cwd.".into(),
+            description: "Runs a bash command in the current working directory.".into(),
             input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
         }
     }
