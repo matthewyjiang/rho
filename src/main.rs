@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         cwd: cfg.cwd.clone(),
         max_output_bytes: cfg.max_output_bytes,
     };
-    let agent = Agent::new(provider, registry, ctx, cfg.max_steps);
+    let mut agent = Agent::new(provider, registry, ctx, cfg.max_steps);
 
     println!(
         "rho: cwd={} model={} auth={}",
@@ -65,6 +65,11 @@ async fn main() -> anyhow::Result<()> {
         }
         if prompt == "exit" || prompt == "quit" {
             break;
+        }
+        if prompt == "/reset" {
+            agent.reset();
+            println!("history reset");
+            continue;
         }
         match agent.run(prompt.to_string()).await {
             Ok(answer) => println!("{answer}"),
