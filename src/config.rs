@@ -30,29 +30,25 @@ impl Config {
     }
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
+        let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
+        if !path.exists() {
+            Config::default().save(Some(path.clone()))?;
+        }
+
         let mut cfg = Config::default();
-        let path = match path {
-            Some(path) => Some(path),
-            None => {
-                let default_path = Self::default_path()?;
-                default_path.exists().then_some(default_path)
-            }
-        };
-        if let Some(path) = path {
-            let text = fs::read_to_string(path)?;
-            let file: PartialConfig = toml::from_str(&text)?;
-            if let Some(v) = file.provider {
-                cfg.provider = v;
-            }
-            if let Some(v) = file.model {
-                cfg.model = v;
-            }
-            if let Some(v) = file.max_output_bytes {
-                cfg.max_output_bytes = v;
-            }
-            if let Some(v) = file.auth {
-                cfg.auth = v;
-            }
+        let text = fs::read_to_string(path)?;
+        let file: PartialConfig = toml::from_str(&text)?;
+        if let Some(v) = file.provider {
+            cfg.provider = v;
+        }
+        if let Some(v) = file.model {
+            cfg.model = v;
+        }
+        if let Some(v) = file.max_output_bytes {
+            cfg.max_output_bytes = v;
+        }
+        if let Some(v) = file.auth {
+            cfg.auth = v;
         }
         Ok(cfg)
     }
