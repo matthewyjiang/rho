@@ -66,7 +66,7 @@ impl<P: ModelProvider> Agent<P> {
         let mut step = 1usize;
         loop {
             on_event(AgentEvent::StepStarted(step))?;
-            let response = self
+            let response = match self
                 .provider
                 .send_turn_stream(
                     ModelRequest {
@@ -80,7 +80,18 @@ impl<P: ModelProvider> Agent<P> {
                         }
                     },
                 )
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
+                Err(err) => {
+                    self.messages.push(Message::user_text(format!(
+                        "The previous assistant response could not be processed by the client. Error: {err}\n\nPlease continue from the last request. If you attempted a tool call, emit valid tool-call JSON that exactly matches the required schema."
+                    )));
+                    step += 1;
+                    continue;
+                }
+            };
             match response {
                 ModelResponse::Assistant(blocks) => {
                     let tool_calls: Vec<_> = blocks
@@ -110,7 +121,7 @@ impl<P: ModelProvider> Agent<P> {
                         };
                         let name = call.name.clone();
                         let command = tool_command(&name, &call.arguments);
-                        let event_content = tool_event_content(&name, &call.arguments);
+                        let event_content = tool_event_content(&name, &call.arguments, &self.ctx);
                         let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
                         on_event(AgentEvent::ToolFinished {
                             name,
@@ -137,14 +148,27 @@ fn tool_command(name: &str, arguments: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn tool_event_content(name: &str, arguments: &serde_json::Value) -> Option<String> {
+fn tool_event_content(
+    name: &str,
+    arguments: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Option<String> {
     match name {
-        "read_file" => arguments
+        "read_file" | "edit_file" | "write_file" => arguments
             .get("path")
             .and_then(|path| path.as_str())
-            .map(|path| format!("read {path}")),
+            .map(|path| compact_display_path(&ctx.cwd, path)),
         _ => None,
     }
+}
+
+fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
+    let path = crate::tool::resolve_path(cwd, path);
+    path.strip_prefix(cwd)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn initial_messages(tools: &ToolRegistry) -> Vec<Message> {
@@ -169,7 +193,9 @@ mod tests {
     impl ModelProvider for RecordingProvider {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
             self.requests.lock().unwrap().push(request.messages);
-            Ok(ModelResponse::final_answer("ok"))
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "ok".into(),
+            )]))
         }
     }
 

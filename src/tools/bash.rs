@@ -26,6 +26,7 @@ impl Tool for Bash {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
+        let start = std::time::Instant::now();
         let fut = Command::new("bash")
             .arg("-lc")
             .arg(&args.command)
@@ -38,15 +39,18 @@ impl Tool for Bash {
         } else {
             fut.await?
         };
+        let elapsed_secs = start.elapsed().as_secs_f64();
+        let exit_code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".into());
         let mut content = format!(
-            "exit code: {}\n\nstdout:\n{}\n\nstderr:\n{}",
-            output
-                .status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".into()),
+            "stdout:\n{}\n\nstderr:\n{}\n\ntime: {:.1}s  exit code: {}",
             String::from_utf8(output.stdout)?,
-            String::from_utf8(output.stderr)?
+            String::from_utf8(output.stderr)?,
+            elapsed_secs,
+            exit_code
         );
         content = truncate(content, ctx.max_output_bytes);
         Ok(ToolResult {

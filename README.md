@@ -54,7 +54,7 @@ https://chatgpt.com/backend-api/codex/responses
 
 ### Interactive TUI
 
-Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as plain text, reasoning deltas render as dim text, user messages render as shaded blocks, and tool blocks show the tool name.
+Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as plain text, reasoning deltas render as dim text, and user messages render as shaded blocks. Tool blocks are compact: shell commands show the command and output, file tools show the affected path, and consecutive tool calls are visually separated.
 
 Useful keys:
 
@@ -148,7 +148,7 @@ edit_file
 bash
 ```
 
-These tools can read and modify files and run shell commands in the working directory. Rho does not currently sandbox or prompt for approval before tool calls.
+These tools can read and modify files and run shell commands in the working directory. File write results include a unified diff so the model and transcript can inspect what changed. Rho does not currently sandbox or prompt for approval before tool calls.
 
 ## Development
 

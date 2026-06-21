@@ -83,20 +83,14 @@ impl ModelProvider for OpenAiProvider {
                         account_id.clone(),
                     )
                 };
-                let content = self
-                    .send_codex_responses(
-                        request.messages,
-                        &access_token,
-                        refresh_token.as_deref(),
-                        account_id.as_deref(),
-                        auth_path_for_request.as_deref(),
-                    )
-                    .await?;
-                if let Some(call) = crate::prompt::parse_tool_call(&content)? {
-                    Ok(ModelResponse::tool_call(call))
-                } else {
-                    Ok(ModelResponse::final_answer(content))
-                }
+                self.send_codex_responses(
+                    request,
+                    &access_token,
+                    refresh_token.as_deref(),
+                    account_id.as_deref(),
+                    auth_path_for_request.as_deref(),
+                )
+                .await
             }
         }
     }
@@ -125,21 +119,15 @@ impl ModelProvider for OpenAiProvider {
                         auth_path.clone(),
                     )
                 };
-                let content = self
-                    .send_codex_responses_stream(
-                        request.messages,
-                        &access_token,
-                        refresh_token.as_deref(),
-                        account_id.as_deref(),
-                        auth_path_for_request.as_deref(),
-                        on_event,
-                    )
-                    .await?;
-                if let Some(call) = crate::prompt::parse_tool_call(&content)? {
-                    Ok(ModelResponse::tool_call(call))
-                } else {
-                    Ok(ModelResponse::final_answer(content))
-                }
+                self.send_codex_responses_stream(
+                    request,
+                    &access_token,
+                    refresh_token.as_deref(),
+                    account_id.as_deref(),
+                    auth_path_for_request.as_deref(),
+                    on_event,
+                )
+                .await
             }
         }
     }
@@ -463,27 +451,27 @@ impl OpenAiProvider {
 
     async fn send_codex_responses(
         &self,
-        messages: Vec<Message>,
+        request: ModelRequest,
         token: &str,
         refresh_token: Option<&str>,
         account_id: Option<&str>,
         auth_path: Option<&std::path::Path>,
-    ) -> Result<String, ModelError> {
-        self.send_codex_responses_inner(messages, token, refresh_token, account_id, auth_path, None)
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_codex_responses_inner(request, token, refresh_token, account_id, auth_path, None)
             .await
     }
 
     async fn send_codex_responses_stream(
         &self,
-        messages: Vec<Message>,
+        request: ModelRequest,
         token: &str,
         refresh_token: Option<&str>,
         account_id: Option<&str>,
         auth_path: Option<&std::path::Path>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
-    ) -> Result<String, ModelError> {
+    ) -> Result<ModelResponse, ModelError> {
         self.send_codex_responses_inner(
-            messages,
+            request,
             token,
             refresh_token,
             account_id,
@@ -495,27 +483,16 @@ impl OpenAiProvider {
 
     async fn send_codex_responses_inner(
         &self,
-        messages: Vec<Message>,
+        request: ModelRequest,
         token: &str,
         refresh_token: Option<&str>,
         account_id: Option<&str>,
         auth_path: Option<&std::path::Path>,
         mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-    ) -> Result<String, ModelError> {
+    ) -> Result<ModelResponse, ModelError> {
         let mut instructions = Vec::new();
-        let input: Vec<_> = messages
-            .into_iter()
-            .filter_map(|m| match m {
-                Message::System(content) => {
-                    instructions.push(content);
-                    None
-                }
-                message => Some(json!({
-                    "role": codex_role(&message),
-                    "content": render_message_content(&message),
-                })),
-            })
-            .collect();
+        let input = codex_input_items(request.messages, &mut instructions)?;
+        let tools: Vec<_> = request.tools.into_iter().map(to_responses_tool).collect();
         let instructions = instructions.join("\n\n");
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_body = || {
@@ -523,6 +500,8 @@ impl OpenAiProvider {
                 "model": self.model,
                 "instructions": instructions,
                 "input": input,
+                "tools": tools,
+                "tool_choice": "auto",
                 "store": false,
                 "stream": true
             });
@@ -598,6 +577,61 @@ fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
             strict: false,
         },
     }
+}
+
+fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
+    json!({
+        "type": "function",
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": tool.input_schema,
+        "strict": false,
+    })
+}
+
+fn codex_input_items(
+    messages: Vec<Message>,
+    instructions: &mut Vec<String>,
+) -> Result<Vec<serde_json::Value>, ModelError> {
+    let mut input = Vec::new();
+    for message in messages {
+        match message {
+            Message::System(content) => instructions.push(content),
+            Message::User(blocks) => input.push(json!({
+                "role": "user",
+                "content": render_blocks(&blocks),
+            })),
+            Message::Assistant(blocks) => {
+                let text = blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text(text) => Some(text.as_str()),
+                        ContentBlock::ToolCall(_) => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    input.push(json!({ "role": "assistant", "content": text }));
+                }
+                for block in blocks {
+                    if let ContentBlock::ToolCall(call) = block {
+                        input.push(json!({
+                            "type": "function_call",
+                            "call_id": call.id,
+                            "name": call.name,
+                            "arguments": serde_json::to_string(&call.arguments).map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?,
+                        }));
+                    }
+                }
+            }
+            Message::ToolResult(result) => input.push(json!({
+                "type": "function_call_output",
+                "call_id": result.id,
+                "output": result.content,
+            })),
+        }
+    }
+    Ok(input)
 }
 
 fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
@@ -677,24 +711,6 @@ fn render_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-fn codex_role(message: &Message) -> &'static str {
-    match message {
-        Message::Assistant(_) => "assistant",
-        Message::System(_) | Message::User(_) | Message::ToolResult(_) => "user",
-    }
-}
-
-fn render_message_content(message: &Message) -> String {
-    match message {
-        Message::System(content) => content.clone(),
-        Message::User(blocks) | Message::Assistant(blocks) => render_blocks(blocks),
-        Message::ToolResult(result) => format!(
-            "Tool result for {} (ok={}):\n{}",
-            result.id, result.ok, result.content
-        ),
-    }
-}
-
 fn render_tool_call(call: &ToolCall) -> String {
     let arguments = serde_json::to_string_pretty(&call.arguments)
         .unwrap_or_else(|_| call.arguments.to_string());
@@ -739,9 +755,8 @@ fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelErr
 async fn collect_codex_sse_response(
     response: reqwest::Response,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-) -> Result<String, ModelError> {
-    let mut text = String::new();
-    let mut completed_text = None;
+) -> Result<ModelResponse, ModelError> {
+    let mut state = CodexSseState::default();
     let mut buffer = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -754,7 +769,7 @@ async fn collect_codex_sse_response(
                     "streamed response contained invalid utf-8: {err}"
                 ))
             })?;
-            handle_codex_sse_line(line, &mut text, &mut completed_text, on_event)?;
+            handle_codex_sse_line(line, &mut state, on_event)?;
         }
     }
     if !buffer.is_empty() {
@@ -762,17 +777,9 @@ async fn collect_codex_sse_response(
         let line = std::str::from_utf8(&buffer).map_err(|err| {
             ModelError::InvalidResponse(format!("streamed response contained invalid utf-8: {err}"))
         })?;
-        handle_codex_sse_line(line, &mut text, &mut completed_text, on_event)?;
+        handle_codex_sse_line(line, &mut state, on_event)?;
     }
-    if !text.is_empty() {
-        Ok(text)
-    } else if let Some(text) = completed_text {
-        Ok(text)
-    } else {
-        Err(ModelError::InvalidResponse(
-            "missing response text in SSE".into(),
-        ))
-    }
+    state.into_response()
 }
 
 fn sse_data(line: &str) -> Option<&str> {
@@ -805,10 +812,69 @@ fn extract_reasoning_delta(value: &serde_json::Value) -> Option<String> {
     None
 }
 
+#[derive(Default)]
+struct CodexSseState {
+    text: String,
+    completed_text: Option<String>,
+    tool_calls: Vec<ToolCall>,
+}
+
+impl CodexSseState {
+    fn into_response(self) -> Result<ModelResponse, ModelError> {
+        let mut blocks = Vec::new();
+        let text = if self.text.is_empty() {
+            self.completed_text.unwrap_or_default()
+        } else {
+            self.text
+        };
+        if !text.is_empty() {
+            blocks.push(ContentBlock::Text(text));
+        }
+        blocks.extend(self.tool_calls.into_iter().map(ContentBlock::ToolCall));
+        if blocks.is_empty() {
+            Err(ModelError::InvalidResponse(
+                "missing response content in SSE".into(),
+            ))
+        } else {
+            Ok(ModelResponse::Assistant(blocks))
+        }
+    }
+}
+
+fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCall>, ModelError> {
+    if item.get("type").and_then(|v| v.as_str()) != Some("function_call") {
+        return Ok(None);
+    }
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ModelError::InvalidResponse("function_call missing name".into()))?
+        .to_string();
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            ModelError::InvalidResponse(format!("function_call {name} missing call_id"))
+        })?
+        .to_string();
+    let arguments_text = item
+        .get("arguments")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
+    let arguments = serde_json::from_str(arguments_text).map_err(|e| {
+        ModelError::InvalidResponse(format!("invalid function_call arguments for {name}: {e}"))
+    })?;
+    Ok(Some(ToolCall {
+        id,
+        name,
+        arguments,
+    }))
+}
+
 fn handle_codex_sse_line(
     line: &str,
-    text: &mut String,
-    completed_text: &mut Option<String>,
+    state: &mut CodexSseState,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
 ) -> Result<(), ModelError> {
     let Some(data) = sse_data(line) else {
@@ -826,21 +892,42 @@ fn handle_codex_sse_line(
         .unwrap_or_default();
     if event_type == "response.output_text.delta" {
         if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
-            text.push_str(delta);
+            state.text.push_str(delta);
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::OutputDelta(delta.to_string()))?;
             }
         }
-    } else if event_type.contains("reasoning") {
+    } else if event_type.contains("reasoning") && event_type.ends_with(".delta") {
         if let Some(delta) = extract_reasoning_delta(&value) {
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ReasoningDelta(delta))?;
             }
         }
-    } else if event_type == "response.completed" && text.is_empty() {
-        if let Ok(response) = serde_json::from_value::<ResponsesResponse>(value["response"].clone())
+    } else if event_type == "response.output_item.done" {
+        if let Some(call) = extract_codex_function_call(value.get("item").unwrap_or(&value))? {
+            state.tool_calls.push(call);
+        }
+    } else if event_type == "response.completed"
+        && state.text.is_empty()
+        && state.tool_calls.is_empty()
+    {
+        if let Some(output) = value
+            .get("response")
+            .and_then(|response| response.get("output"))
+            .and_then(|output| output.as_array())
         {
-            *completed_text = Some(extract_response_text(response)?);
+            for item in output {
+                if let Some(call) = extract_codex_function_call(item)? {
+                    state.tool_calls.push(call);
+                }
+            }
+        }
+        if state.tool_calls.is_empty() {
+            if let Ok(response) =
+                serde_json::from_value::<ResponsesResponse>(value["response"].clone())
+            {
+                state.completed_text = Some(extract_response_text(response)?);
+            }
         }
     }
     Ok(())
@@ -1014,13 +1101,11 @@ mod tests {
 
     #[test]
     fn codex_sse_line_emits_output_delta() {
-        let mut text = String::new();
-        let mut completed_text = None;
+        let mut state = CodexSseState::default();
         let mut deltas = Vec::new();
         handle_codex_sse_line(
             r#"data: {"type":"response.output_text.delta","delta":"hi"}"#,
-            &mut text,
-            &mut completed_text,
+            &mut state,
             &mut Some(&mut |event| {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
@@ -1031,20 +1116,18 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(text, "hi");
+        assert_eq!(state.text, "hi");
         assert_eq!(deltas, vec!["hi"]);
-        assert!(completed_text.is_none());
+        assert!(state.completed_text.is_none());
     }
 
     #[test]
     fn codex_sse_line_emits_reasoning_summary_delta() {
-        let mut text = String::new();
-        let mut completed_text = None;
+        let mut state = CodexSseState::default();
         let mut deltas = Vec::new();
         handle_codex_sse_line(
             r#"data:{"type":"response.reasoning_summary_text.delta","delta":"thinking","summary_index":0}"#,
-            &mut text,
-            &mut completed_text,
+            &mut state,
             &mut Some(&mut |event| {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
@@ -1055,19 +1138,17 @@ mod tests {
         )
         .unwrap();
 
-        assert!(text.is_empty());
+        assert!(state.text.is_empty());
         assert_eq!(deltas, vec!["thinking"]);
     }
 
     #[test]
     fn codex_sse_line_emits_reasoning_text_delta() {
-        let mut text = String::new();
-        let mut completed_text = None;
+        let mut state = CodexSseState::default();
         let mut deltas = Vec::new();
         handle_codex_sse_line(
             r#"data: {"type":"response.reasoning_text.delta","delta":"raw","content_index":0}"#,
-            &mut text,
-            &mut completed_text,
+            &mut state,
             &mut Some(&mut |event| {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
@@ -1078,7 +1159,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(text.is_empty());
+        assert!(state.text.is_empty());
         assert_eq!(deltas, vec!["raw"]);
     }
 
@@ -1087,6 +1168,25 @@ mod tests {
         let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
 "#;
         assert_eq!(extract_sse_text(body).unwrap(), "done");
+    }
+
+    #[test]
+    fn codex_sse_line_collects_function_call() {
+        let mut state = CodexSseState::default();
+        handle_codex_sse_line(
+            r#"data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"pwd\"}"}}"#,
+            &mut state,
+            &mut None,
+        )
+        .unwrap();
+
+        let response = state.into_response().unwrap();
+        let ModelResponse::Assistant(blocks) = response;
+        assert!(matches!(
+            blocks.as_slice(),
+            [ContentBlock::ToolCall(ToolCall { id, name, arguments })]
+                if id == "call-1" && name == "bash" && arguments == &json!({ "command": "pwd" })
+        ));
     }
 
     #[test]
@@ -1171,22 +1271,6 @@ mod tests {
         trim_sse_line_end(&mut line);
 
         assert_eq!(std::str::from_utf8(&line).unwrap(), "data: hé");
-    }
-
-    #[test]
-    fn renders_explicit_tool_history_as_text_for_codex_fallback() {
-        let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "bash".into(),
-            arguments: json!({ "command": "pwd" }),
-        })]);
-        let result = Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "/tmp\n".into(),
-        });
-        assert!(render_message_content(&call).contains("Tool call: bash"));
-        assert!(render_message_content(&result).contains("Tool result for call-1 (ok=true):"));
     }
 
     #[test]

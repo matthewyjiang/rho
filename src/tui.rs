@@ -67,6 +67,7 @@ struct App {
     reasoning_buffer: String,
     running: bool,
     paste_burst: PasteBurst,
+    last_inserted_was_tool: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +138,7 @@ impl App {
             reasoning_buffer: String::new(),
             running: false,
             paste_burst: PasteBurst::default(),
+            last_inserted_was_tool: false,
         }
     }
 
@@ -500,8 +502,16 @@ impl App {
         Ok(())
     }
 
-    fn insert_entry(&self, terminal: &mut DefaultTerminal, entry: &Entry) -> std::io::Result<()> {
+    fn insert_entry(&mut self, terminal: &mut DefaultTerminal, entry: &Entry) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
+        if self.last_inserted_was_tool && matches!(entry, Entry::Tool { .. }) {
+            terminal.insert_before(1, |buf| {
+                Paragraph::new(vec![Line::raw("")])
+                    .wrap(Wrap { trim: false })
+                    .render(buf.area, buf);
+            })?;
+        }
+
         let lines = entry_lines(entry, width);
         let height = lines.len().max(1) as u16;
         terminal.insert_before(height, |buf| {
@@ -509,6 +519,7 @@ impl App {
                 .wrap(Wrap { trim: false })
                 .render(buf.area, buf);
         })?;
+        self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
     }
 }
@@ -675,28 +686,36 @@ fn compact_cwd(path: &Path) -> String {
 }
 
 fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
+    let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
     match entry {
         Entry::User(text) => push_wrapped_text(
             &mut lines,
             text,
-            width,
+            inner_width,
             Style::default().fg(Color::White).bg(Color::Rgb(36, 44, 54)),
             true,
         ),
         Entry::Assistant(text) => {
-            push_wrapped_text(&mut lines, text, width, Style::default(), false)
+            push_wrapped_text(&mut lines, text, inner_width, Style::default(), false)
         }
         Entry::Tool {
             name,
             command,
             ok,
             content,
-        } => push_tool_block(&mut lines, name, command.as_deref(), *ok, content, width),
+        } => push_tool_block(
+            &mut lines,
+            name,
+            command.as_deref(),
+            *ok,
+            content,
+            inner_width,
+        ),
         Entry::Notice(text) => push_wrapped_text(
             &mut lines,
             text,
-            width,
+            inner_width,
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
@@ -705,13 +724,22 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
         Entry::Error(text) => push_wrapped_text(
             &mut lines,
             text,
-            width,
+            inner_width,
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             false,
         ),
     }
-    lines.push(Line::raw(""));
-    lines
+
+    let block_style = lines
+        .first()
+        .and_then(|line| line.spans.first())
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut padded = Vec::with_capacity(lines.len() + 2);
+    padded.push(styled_blank_line(width, block_style));
+    padded.extend(lines.into_iter().map(pad_line));
+    padded.push(styled_blank_line(width, block_style));
+    padded
 }
 
 fn push_tool_block(
@@ -722,7 +750,7 @@ fn push_tool_block(
     content: &str,
     width: usize,
 ) {
-    let style = if name == "bash" {
+    let style = if matches!(name, "bash" | "read_file" | "write_file") {
         if ok {
             Style::default().fg(Color::White).bg(Color::Rgb(25, 75, 45))
         } else {
@@ -738,9 +766,12 @@ fn push_tool_block(
     if name == "bash" {
         if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
             push_wrapped_text(lines, command, width, style, true);
-        } else if !content.trim().is_empty() {
+        }
+        if !content.trim().is_empty() {
             push_wrapped_text(lines, content, width, style, true);
         }
+    } else if !content.trim().is_empty() {
+        push_wrapped_text(lines, content, width, style, true);
     }
 }
 
@@ -774,6 +805,27 @@ fn styled_line(mut text: String, width: usize, style: Style, fill_width: bool) -
         }
     }
     Line::from(Span::styled(text, style))
+}
+
+fn padded_inner_width(width: usize) -> usize {
+    width.saturating_sub(2).max(1)
+}
+
+fn pad_line(line: Line<'static>) -> Line<'static> {
+    let edge_style = line
+        .spans
+        .first()
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut spans = Vec::with_capacity(line.spans.len() + 2);
+    spans.push(Span::styled(" ", edge_style));
+    spans.extend(line.spans);
+    spans.push(Span::styled(" ", edge_style));
+    Line::from(spans)
+}
+
+fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
+    Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 
 fn wrap_line(line: &str, width: usize) -> Vec<String> {
@@ -852,6 +904,23 @@ mod tests {
         assert!(rendered.contains("bash"));
         assert!(rendered.contains("cargo test"));
         assert!(!rendered.contains("tool:"));
+    }
+
+    #[test]
+    fn read_file_tool_block_shows_file_name_only() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                name: "read_file".into(),
+                command: None,
+                ok: true,
+                content: "src/main.rs".into(),
+            },
+            40,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("read_file"));
+        assert!(rendered.contains("src/main.rs"));
     }
 
     #[test]

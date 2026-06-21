@@ -46,16 +46,6 @@ pub enum ModelEvent {
     ReasoningDelta(String),
 }
 
-impl ModelResponse {
-    pub fn final_answer(answer: impl Into<String>) -> Self {
-        Self::Assistant(vec![ContentBlock::Text(answer.into())])
-    }
-
-    pub fn tool_call(call: ToolCall) -> Self {
-        Self::Assistant(vec![ContentBlock::ToolCall(call)])
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum ModelError {
     #[error("missing OPENAI_API_KEY")]
