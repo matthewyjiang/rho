@@ -12,24 +12,25 @@ pub fn reasoning_config_value(value: &str) -> Option<String> {
 pub fn build_provider(
     provider: &str,
     model: &str,
-    auth: &str,
+    _auth: &str,
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
 ) -> anyhow::Result<OpenAiProvider> {
     match provider {
-        "openai" => {
-            let auth_mode = match auth {
-                "codex" => AuthMode::Codex,
-                _ => AuthMode::ApiKey,
-            };
-            OpenAiProvider::new_with_reasoning(
-                model.to_string(),
-                auth_mode,
-                reasoning_effort,
-                reasoning_summary,
-            )
-            .map_err(Into::into)
-        }
+        "openai" => OpenAiProvider::new_with_reasoning(
+            model.to_string(),
+            AuthMode::ApiKey,
+            reasoning_effort,
+            reasoning_summary,
+        )
+        .map_err(Into::into),
+        "openai-codex" => OpenAiProvider::new_with_reasoning(
+            model.to_string(),
+            AuthMode::Codex,
+            reasoning_effort,
+            reasoning_summary,
+        )
+        .map_err(Into::into),
         other => Err(ModelError::UnsupportedProvider(other.to_string()).into()),
     }
 }

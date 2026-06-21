@@ -942,11 +942,12 @@ impl App {
     ) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
+        let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
         let new_provider = match build_provider(
             &provider,
             &model,
-            &self.info.auth,
+            &auth,
             reasoning_config_value(&self.info.reasoning_effort),
             reasoning_config_value(&self.info.reasoning_summary),
         ) {
@@ -964,9 +965,11 @@ impl App {
         agent.replace_provider(new_provider);
         self.info.provider = provider.clone();
         self.info.model = model.clone();
+        self.info.auth = auth.clone();
         match Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.provider = provider.clone();
             config.model = model.clone();
+            config.auth = auth.clone();
             config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {

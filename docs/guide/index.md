@@ -40,7 +40,7 @@ codex login
 rho --auth codex --model gpt-5.5
 ```
 
-With Codex auth, `/model` uses Rho's built-in static model catalog instead of querying Codex for model listing. You can still run `rho --auth codex --model <model>` or `/model openai/<model>` to use a specific model.
+With Codex auth, `/model` uses Rho's built-in static model catalog instead of querying Codex for model listing. Codex models live under the `openai-codex` provider, separate from API-key OpenAI models. You can run `rho --provider openai-codex --model <model>` or `/model openai-codex/<model>` to use a specific Codex model.
 
 Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses:
 
