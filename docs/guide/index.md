@@ -80,6 +80,7 @@ Options:
       --model <MODEL>
       --config <CONFIG>
       --auth <AUTH>          [possible values: api-key, codex]
+  -R, --resume <RESUME>      Resume an existing session by UUID or UUID prefix
   -h, --help                 Print help
 ```
 

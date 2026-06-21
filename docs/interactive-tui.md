@@ -19,6 +19,15 @@ rho
 
 Rho uses the current working directory as the workspace for file reads, edits, and shell commands.
 
+Sessions persist automatically under `~/.rho/sessions/<workspace-key>/`, where `<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Starting `rho` creates a new session file only after you send the first message. To resume an existing session for the current workspace, pass its UUID or UUID prefix with `--resume` / `-R`:
+
+```bash
+rho --resume <session-uuid>
+rho -R <session-uuid-prefix>
+```
+
+After you send at least one message, Rho prints a resume command on exit that you can paste later. Pressing `ctrl-r` resets the conversation; the next message starts a new session file.
+
 ## Send prompts
 
 Type a request and press `enter` to send it.

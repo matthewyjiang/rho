@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod model;
 mod prompt;
+mod session;
 mod tool;
 mod tools;
 mod transcript;
@@ -16,12 +17,14 @@ use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
 use model::{AuthMode, OpenAiProvider};
+use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    validate_cli(&cli)?;
     let config_path = cli.config.clone();
     let mut cfg = Config::load(config_path.clone())?;
     let mut save_config = false;
@@ -82,7 +85,16 @@ async fn main() -> anyhow::Result<()> {
             println!("{answer}");
         }
         None => {
-            tui::run(
+            let session_id = if let Some(id) = &cli.resume {
+                let (session, history) = Session::open_by_id(&cwd, id)?;
+                let session_id = Some(session.id().to_string());
+                agent = agent.with_history(history);
+                agent.set_message_sink(move |message| session.append_message(message));
+                session_id
+            } else {
+                None
+            };
+            let tui_result = tui::run(
                 &mut agent,
                 TuiInfo {
                     cwd,
@@ -90,10 +102,21 @@ async fn main() -> anyhow::Result<()> {
                     model: cfg.model,
                     reasoning_effort: cfg.reasoning_effort,
                     reasoning_summary: cfg.reasoning_summary,
+                    session_id,
                 },
             )
             .await?;
+            if let Some(session_id) = tui_result.resume_session_id {
+                println!("\nResume this session:\n  rho --resume {session_id}\n");
+            }
         }
+    }
+    Ok(())
+}
+
+fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
+    if cli.resume.is_some() && matches!(&cli.command, Some(Command::Run { .. })) {
+        anyhow::bail!("--resume is only supported for interactive sessions");
     }
     Ok(())
 }
@@ -140,6 +163,25 @@ fn automation_prompt_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            resume: Some("session-id".into()),
+            command: Some(Command::Run {
+                stdin: true,
+                prompt: Vec::new(),
+            }),
+        };
+
+        let err = validate_cli(&cli).unwrap_err();
+
+        assert!(err.to_string().contains("--resume is only supported"));
+    }
 
     #[test]
     fn automation_prompt_joins_inline_parts() {

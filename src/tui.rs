@@ -23,6 +23,7 @@ use ratatui::{
 use crate::{
     agent::{Agent, AgentEvent},
     model::OpenAiProvider,
+    session::Session,
 };
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 18;
@@ -36,9 +37,14 @@ pub struct TuiInfo {
     pub model: String,
     pub reasoning_effort: String,
     pub reasoning_summary: String,
+    pub session_id: Option<String>,
 }
 
-pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<()> {
+pub struct TuiResult {
+    pub resume_session_id: Option<String>,
+}
+
+pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
@@ -146,7 +152,7 @@ impl App {
         mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent<OpenAiProvider>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TuiResult> {
         self.insert_session_intro(terminal)?;
         while !self.should_quit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -164,7 +170,10 @@ impl App {
                 }
             }
         }
-        Ok(())
+        self.insert_composer_snapshot(terminal)?;
+        Ok(TuiResult {
+            resume_session_id: self.info.session_id,
+        })
     }
 
     async fn handle_key(
@@ -189,7 +198,12 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 agent.reset();
-                self.insert_entry(terminal, &Entry::Notice("conversation reset".into()))?;
+                self.info.session_id = None;
+                agent.clear_message_sink();
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice("conversation reset; next message starts a new session".into()),
+                )?;
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -330,6 +344,15 @@ impl App {
         self.input_cursor = start_cursor;
     }
 
+    fn ensure_session(&mut self, agent: &mut Agent<OpenAiProvider>) -> anyhow::Result<()> {
+        if self.info.session_id.is_none() {
+            let session = Session::create(&self.info.cwd)?;
+            self.info.session_id = Some(session.id().to_string());
+            agent.set_message_sink(move |message| session.append_message(message));
+        }
+        Ok(())
+    }
+
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -344,6 +367,7 @@ impl App {
 
         self.input.clear();
         self.input_cursor = 0;
+        self.ensure_session(agent)?;
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
         self.stream_buffer.clear();
         self.reasoning_buffer.clear();
@@ -451,6 +475,12 @@ impl App {
 
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
         let mut content = Vec::new();
+        let visible_stream = visible_assistant_stream(&self.stream_buffer);
+        let has_active_output =
+            self.running || !self.reasoning_buffer.is_empty() || !visible_stream.is_empty();
+        if has_active_output {
+            content.push(Line::raw(""));
+        }
         if !self.reasoning_buffer.is_empty() {
             push_wrapped_text(
                 &mut content,
@@ -463,14 +493,8 @@ impl App {
             );
             content.push(Line::raw(""));
         }
-        if self.running || !self.stream_buffer.is_empty() {
-            push_wrapped_text(
-                &mut content,
-                visible_assistant_stream(&self.stream_buffer),
-                width,
-                Style::default(),
-                false,
-            );
+        if !visible_stream.is_empty() {
+            push_wrapped_text(&mut content, visible_stream, width, Style::default(), false);
             content.push(Line::raw(""));
         }
 
@@ -492,14 +516,25 @@ impl App {
 
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let width = terminal.size()?.width as usize;
-        let lines = session_header_lines(&self.info, width);
-        let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
+        insert_history_lines(terminal, session_header_lines(&self.info, width))?;
         Ok(())
+    }
+
+    fn insert_composer_snapshot(&self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        let width = terminal.size()?.width as usize;
+        let divider = Line::styled(
+            "─".repeat(width.max(1)),
+            Style::default().fg(Color::DarkGray),
+        );
+        let mut lines = Vec::new();
+        lines.push(divider.clone());
+        lines.extend(
+            input_visual_lines(&self.input, width)
+                .into_iter()
+                .map(Line::raw),
+        );
+        lines.push(divider);
+        insert_history_lines(terminal, lines)
     }
 
     fn insert_entry(
@@ -509,23 +544,30 @@ impl App {
     ) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
         if self.last_inserted_was_tool && matches!(entry, Entry::Tool { .. }) {
-            terminal.insert_before(1, |buf| {
-                Paragraph::new(vec![Line::raw("")])
-                    .wrap(Wrap { trim: false })
-                    .render(buf.area, buf);
-            })?;
+            insert_history_lines(terminal, vec![Line::raw("")])?;
         }
 
-        let lines = entry_lines(entry, width);
-        let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
+        insert_history_lines(terminal, entry_lines(entry, width))?;
         self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
     }
+}
+
+fn insert_history_lines(
+    terminal: &mut DefaultTerminal,
+    lines: Vec<Line<'static>>,
+) -> std::io::Result<()> {
+    // Ratatui's inline viewport tracks the real viewport anchor internally
+    // (it is not necessarily at the bottom of the screen). Use its insertion
+    // API so finalized chat is moved into terminal scrollback above the live
+    // composer without guessing the viewport position.
+    let height = lines.len().max(1) as u16;
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(buf.area, buf);
+    })?;
+    Ok(())
 }
 
 fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
@@ -925,6 +967,26 @@ mod tests {
 
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn active_stream_keeps_stable_leading_spacer() {
+        let mut app = App::new(TuiInfo {
+            cwd: PathBuf::from("/tmp/project"),
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            reasoning_effort: "low".into(),
+            reasoning_summary: "auto".into(),
+            session_id: None,
+        });
+        app.running = true;
+        let before_stream = app.active_lines(40);
+        app.stream_buffer = "hello".into();
+        let after_stream = app.active_lines(40);
+
+        assert_eq!(line_text(&before_stream[0]), "");
+        assert_eq!(line_text(&after_stream[0]), "");
+        assert_eq!(line_text(&after_stream[1]), "hello");
     }
 
     #[test]

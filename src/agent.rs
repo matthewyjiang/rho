@@ -4,7 +4,7 @@ use crate::model::{
     ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
-use crate::tool::{ToolContext, ToolError, ToolRegistry};
+use crate::tool::{ToolContext, ToolError, ToolRegistry, ToolResult};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -14,6 +14,8 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
+    #[error("Message persistence error: {0}")]
+    MessagePersistence(#[from] anyhow::Error),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,11 +31,14 @@ pub enum AgentEvent {
     },
 }
 
+type MessageSink = Box<dyn FnMut(&Message) -> anyhow::Result<()> + Send>;
+
 pub struct Agent<P: ModelProvider> {
     provider: P,
     tools: ToolRegistry,
     ctx: ToolContext,
     messages: Vec<Message>,
+    message_sink: Option<MessageSink>,
 }
 
 impl<P: ModelProvider> Agent<P> {
@@ -44,7 +49,24 @@ impl<P: ModelProvider> Agent<P> {
             tools,
             ctx,
             messages,
+            message_sink: None,
         }
+    }
+
+    pub fn with_history(mut self, history: Vec<Message>) -> Self {
+        self.messages.extend(history);
+        self
+    }
+
+    pub fn set_message_sink(
+        &mut self,
+        sink: impl FnMut(&Message) -> anyhow::Result<()> + Send + 'static,
+    ) {
+        self.message_sink = Some(Box::new(sink));
+    }
+
+    pub fn clear_message_sink(&mut self) {
+        self.message_sink = None;
     }
 
     pub fn reset(&mut self) {
@@ -55,13 +77,35 @@ impl<P: ModelProvider> Agent<P> {
         self.run_with_events(user_prompt, |_| Ok(())).await
     }
 
+    fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
+        if let Some(sink) = &mut self.message_sink {
+            sink(&message)?;
+        }
+        self.messages.push(message);
+        Ok(())
+    }
+
+    fn push_skipped_tool_results(
+        &mut self,
+        tool_calls: &[crate::tool::ToolCall],
+    ) -> Result<(), AgentError> {
+        for call in tool_calls {
+            self.push_message(Message::ToolResult(ToolResult {
+                id: call.id.clone(),
+                ok: false,
+                content: "Skipped because an earlier tool call failed".into(),
+            }))?;
+        }
+        Ok(())
+    }
+
     pub async fn run_with_events(
         &mut self,
         user_prompt: String,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
-        self.messages.push(Message::user_text(user_prompt));
+        self.push_message(Message::user_text(user_prompt))?;
 
         let mut step = 1usize;
         loop {
@@ -85,9 +129,9 @@ impl<P: ModelProvider> Agent<P> {
                 Ok(response) => response,
                 Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
                 Err(err) => {
-                    self.messages.push(Message::user_text(format!(
+                    self.push_message(Message::user_text(format!(
                         "The previous assistant response could not be processed by the client. Error: {err}\n\nPlease continue from the last request. If you attempted a tool call, emit valid tool-call JSON that exactly matches the required schema."
-                    )));
+                    )))?;
                     step += 1;
                     continue;
                 }
@@ -110,26 +154,57 @@ impl<P: ModelProvider> Agent<P> {
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        self.messages.push(Message::assistant_text(answer.clone()));
+                        self.push_message(Message::assistant_text(answer.clone()))?;
                         return Ok(answer);
                     }
 
-                    self.messages.push(Message::Assistant(blocks));
-                    for call in tool_calls {
-                        let Some(tool) = self.tools.get(&call.name) else {
-                            return Err(AgentError::UnknownTool(call.name));
-                        };
+                    self.push_message(Message::Assistant(blocks))?;
+                    let mut tool_events = Vec::new();
+                    for (index, call) in tool_calls.iter().cloned().enumerate() {
                         let name = call.name.clone();
                         let command = tool_command(&name, &call.arguments);
                         let event_content = tool_event_content(&name, &call.arguments, &self.ctx);
-                        let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
-                        on_event(AgentEvent::ToolFinished {
+                        let result = match self.tools.get(&call.name) {
+                            Some(tool) => match tool
+                                .call(call.arguments, self.ctx.clone(), call.id.clone())
+                                .await
+                            {
+                                Ok(result) => result,
+                                Err(err) => {
+                                    let result = ToolResult {
+                                        id: call.id,
+                                        ok: false,
+                                        content: err.to_string(),
+                                    };
+                                    self.push_message(Message::ToolResult(result.clone()))?;
+                                    self.push_skipped_tool_results(&tool_calls[index + 1..])?;
+                                    return Err(AgentError::Tool(err));
+                                }
+                            },
+                            None => {
+                                let result = ToolResult {
+                                    id: call.id,
+                                    ok: false,
+                                    content: format!("Unknown tool: {}", call.name),
+                                };
+                                self.push_message(Message::ToolResult(result))?;
+                                self.push_skipped_tool_results(&tool_calls[index + 1..])?;
+                                return Err(AgentError::UnknownTool(call.name));
+                            }
+                        };
+                        let display_content =
+                            event_content.unwrap_or_else(|| result.content.clone());
+                        let ok = result.ok;
+                        self.push_message(Message::ToolResult(result))?;
+                        tool_events.push(AgentEvent::ToolFinished {
                             name,
                             command,
-                            ok: result.ok,
-                            content: event_content.unwrap_or_else(|| result.content.clone()),
-                        })?;
-                        self.messages.push(Message::ToolResult(result));
+                            ok,
+                            content: display_content,
+                        });
+                    }
+                    for event in tool_events {
+                        on_event(event)?;
                     }
                 }
             }
@@ -183,31 +258,67 @@ mod tests {
 
     use super::*;
     use crate::model::{ModelRequest, ModelResponse};
+    use crate::tool::{Tool, ToolCall, ToolSpec};
 
     #[derive(Clone, Default)]
     struct RecordingProvider {
         requests: Arc<Mutex<Vec<Vec<Message>>>>,
+        response: Option<ModelResponse>,
     }
 
     #[async_trait(?Send)]
     impl ModelProvider for RecordingProvider {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
             self.requests.lock().unwrap().push(request.messages);
-            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "ok".into(),
-            )]))
+            Ok(self
+                .response
+                .clone()
+                .unwrap_or_else(|| ModelResponse::Assistant(vec![ContentBlock::Text("ok".into())])))
         }
     }
 
     fn test_agent(provider: RecordingProvider) -> Agent<RecordingProvider> {
+        test_agent_with_tools(provider, ToolRegistry::new())
+    }
+
+    fn test_agent_with_tools(
+        provider: RecordingProvider,
+        tools: ToolRegistry,
+    ) -> Agent<RecordingProvider> {
         Agent::new(
             provider,
-            ToolRegistry::new(),
+            tools,
             ToolContext {
                 cwd: std::env::current_dir().unwrap(),
                 max_output_bytes: 12000,
             },
         )
+    }
+
+    struct OkTool;
+
+    #[async_trait]
+    impl Tool for OkTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "ok_tool".into(),
+                description: "test tool".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }
+        }
+
+        async fn call(
+            &self,
+            _args: serde_json::Value,
+            _ctx: ToolContext,
+            id: String,
+        ) -> Result<ToolResult, ToolError> {
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: "tool ok".into(),
+            })
+        }
     }
 
     #[tokio::test]
@@ -231,6 +342,51 @@ mod tests {
         assert!(
             matches!(requests[1][3], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "second"))
         );
+    }
+
+    #[tokio::test]
+    async fn persists_all_tool_results_before_interrupting_tool_events() {
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        let response = ModelResponse::Assistant(vec![
+            ContentBlock::ToolCall(ToolCall {
+                id: "call_1".into(),
+                name: "ok_tool".into(),
+                arguments: serde_json::json!({}),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call_2".into(),
+                name: "ok_tool".into(),
+                arguments: serde_json::json!({}),
+            }),
+        ]);
+        let provider = RecordingProvider {
+            requests: Arc::default(),
+            response: Some(response),
+        };
+        let mut tools = ToolRegistry::new();
+        tools.register(OkTool);
+        let mut agent = test_agent_with_tools(provider, tools);
+        let persisted_for_sink = persisted.clone();
+        agent.set_message_sink(move |message| {
+            persisted_for_sink.lock().unwrap().push(message.clone());
+            Ok(())
+        });
+
+        let err = agent
+            .run_with_events("run tools".into(), |event| match event {
+                AgentEvent::ToolFinished { .. } => Err(ModelError::Interrupted),
+                _ => Ok(()),
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AgentError::Provider(ModelError::Interrupted)));
+        let persisted = persisted.lock().unwrap();
+        let tool_result_count = persisted
+            .iter()
+            .filter(|message| matches!(message, Message::ToolResult(_)))
+            .count();
+        assert_eq!(tool_result_count, 2);
     }
 
     #[tokio::test]
