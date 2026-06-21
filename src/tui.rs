@@ -502,7 +502,11 @@ impl App {
         Ok(())
     }
 
-    fn insert_entry(&mut self, terminal: &mut DefaultTerminal, entry: &Entry) -> std::io::Result<()> {
+    fn insert_entry(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        entry: &Entry,
+    ) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
         if self.last_inserted_was_tool && matches!(entry, Entry::Tool { .. }) {
             terminal.insert_before(1, |buf| {
