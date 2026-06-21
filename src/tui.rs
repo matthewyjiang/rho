@@ -860,7 +860,7 @@ impl App {
                     if entry.provider == self.info.provider && entry.model == self.info.model {
                         "current".into()
                     } else if entry.display_name != entry.model {
-                        entry.display_name.into()
+                        entry.display_name
                     } else {
                         String::new()
                     };

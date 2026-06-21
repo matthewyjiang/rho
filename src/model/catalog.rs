@@ -1,9 +1,13 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use std::sync::OnceLock;
+
+use serde::Deserialize;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
-    pub provider: &'static str,
-    pub model: &'static str,
-    pub display_name: &'static str,
-    pub auth_modes: &'static [&'static str],
+    pub provider: String,
+    pub model: String,
+    pub display_name: String,
+    pub auth_modes: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,41 +28,27 @@ pub enum ModelSelectionError {
     Empty,
 }
 
-pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
-    ModelCatalogEntry {
-        provider: "openai",
-        model: "gpt-5.5",
-        display_name: "gpt-5.5",
-        auth_modes: &["api-key"],
-    },
-    ModelCatalogEntry {
-        provider: "openai-codex",
-        model: "gpt-5.5",
-        display_name: "gpt-5.5",
-        auth_modes: &["codex"],
-    },
-    ModelCatalogEntry {
-        provider: "openai-codex",
-        model: "gpt-5.4-mini",
-        display_name: "gpt-5.4-mini",
-        auth_modes: &["codex"],
-    },
-    ModelCatalogEntry {
-        provider: "openai-codex",
-        model: "gpt-5.3-codex-spark",
-        display_name: "gpt-5.3-codex-spark",
-        auth_modes: &["codex"],
-    },
-];
+#[derive(Deserialize)]
+struct ModelCatalogFile {
+    openai_api_models: Vec<String>,
+    openai_codex_models: Vec<String>,
+}
 
+const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
 const IMPLEMENTED_PROVIDERS: &[&str] = &["openai", "openai-codex"];
+
+static MODEL_CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
 pub fn implemented_providers() -> &'static [&'static str] {
     IMPLEMENTED_PROVIDERS
 }
 
+pub fn model_catalog() -> &'static [ModelCatalogEntry] {
+    MODEL_CATALOG.get_or_init(|| parse_model_catalog(MODEL_CATALOG_TOML))
+}
+
 pub fn available_models(auth: &str) -> Vec<ModelCatalogEntry> {
-    available_models_from(MODEL_CATALOG, auth)
+    available_models_from(model_catalog(), auth)
 }
 
 pub fn resolve_model_selection(
@@ -66,19 +56,44 @@ pub fn resolve_model_selection(
     current_provider: &str,
     auth: &str,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_from(MODEL_CATALOG, input, current_provider, auth)
+    resolve_model_selection_from(model_catalog(), input, current_provider, auth)
+}
+
+fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
+    let file: ModelCatalogFile =
+        toml::from_str(text).expect("embedded model catalog must be valid");
+    let mut entries = Vec::new();
+    entries.extend(model_entries("openai", "api-key", file.openai_api_models));
+    entries.extend(model_entries(
+        "openai-codex",
+        "codex",
+        file.openai_codex_models,
+    ));
+    entries
+}
+
+fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {
+    models
+        .into_iter()
+        .map(|model| ModelCatalogEntry {
+            provider: provider.to_string(),
+            display_name: model.clone(),
+            model,
+            auth_modes: vec![auth.to_string()],
+        })
+        .collect()
 }
 
 fn available_models_from(catalog: &[ModelCatalogEntry], _auth: &str) -> Vec<ModelCatalogEntry> {
     let mut models = catalog
         .iter()
-        .copied()
-        .filter(|entry| implemented_providers().contains(&entry.provider))
+        .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
+        .cloned()
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
         left.provider
-            .cmp(right.provider)
-            .then_with(|| left.model.cmp(right.model))
+            .cmp(&right.provider)
+            .then_with(|| left.model.cmp(&right.model))
     });
     models
 }
@@ -93,12 +108,12 @@ fn provider_default_auth(provider: &str) -> Option<&'static str> {
 
 fn selection_from_entry(entry: &ModelCatalogEntry) -> ModelSelection {
     ModelSelection {
-        provider: entry.provider.to_string(),
-        model: entry.model.to_string(),
+        provider: entry.provider.clone(),
+        model: entry.model.clone(),
         auth: entry
             .auth_modes
             .first()
-            .copied()
+            .map(String::as_str)
             .unwrap_or("api-key")
             .to_string(),
         from_catalog: true,
@@ -165,32 +180,46 @@ fn resolve_model_selection_from(
 mod tests {
     use super::*;
 
-    const TEST_CATALOG: &[ModelCatalogEntry] = &[
-        ModelCatalogEntry {
-            provider: "openai",
-            model: "shared-model",
-            display_name: "shared-model",
-            auth_modes: &["api-key", "codex"],
-        },
-        ModelCatalogEntry {
-            provider: "openai",
-            model: "unique-openai",
-            display_name: "unique-openai",
-            auth_modes: &["api-key"],
-        },
-        ModelCatalogEntry {
-            provider: "openai",
-            model: "shared-model",
-            display_name: "shared-model duplicate",
-            auth_modes: &["api-key"],
-        },
-        ModelCatalogEntry {
-            provider: "future",
-            model: "future-model",
-            display_name: "future-model",
-            auth_modes: &["api-key"],
-        },
-    ];
+    fn test_catalog() -> Vec<ModelCatalogEntry> {
+        vec![
+            ModelCatalogEntry {
+                provider: "openai".into(),
+                model: "shared-model".into(),
+                display_name: "shared-model".into(),
+                auth_modes: vec!["api-key".into(), "codex".into()],
+            },
+            ModelCatalogEntry {
+                provider: "openai".into(),
+                model: "unique-openai".into(),
+                display_name: "unique-openai".into(),
+                auth_modes: vec!["api-key".into()],
+            },
+            ModelCatalogEntry {
+                provider: "openai".into(),
+                model: "shared-model".into(),
+                display_name: "shared-model duplicate".into(),
+                auth_modes: vec!["api-key".into()],
+            },
+            ModelCatalogEntry {
+                provider: "future".into(),
+                model: "future-model".into(),
+                display_name: "future-model".into(),
+                auth_modes: vec!["api-key".into()],
+            },
+        ]
+    }
+
+    #[test]
+    fn parses_embedded_model_catalog() {
+        let catalog = model_catalog();
+
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "openai" && entry.model == "gpt-5.5-pro"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.3-codex-spark"));
+    }
 
     #[test]
     fn available_models_filters_to_implemented_providers() {
@@ -210,7 +239,7 @@ mod tests {
             .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.3-codex-spark"));
         assert!(models
             .iter()
-            .all(|entry| implemented_providers().contains(&entry.provider)));
+            .all(|entry| implemented_providers().contains(&entry.provider.as_str())));
     }
 
     #[test]
@@ -225,9 +254,9 @@ mod tests {
 
     #[test]
     fn resolves_bare_unique_model_to_catalog_provider() {
+        let catalog = test_catalog();
         let selection =
-            resolve_model_selection_from(TEST_CATALOG, "unique-openai", "openai", "api-key")
-                .unwrap();
+            resolve_model_selection_from(&catalog, "unique-openai", "openai", "api-key").unwrap();
 
         assert_eq!(selection.provider, "openai");
         assert_eq!(selection.model, "unique-openai");
@@ -237,10 +266,11 @@ mod tests {
 
     #[test]
     fn resolves_bare_unique_codex_model() {
-        let selection = resolve_model_selection("gpt-5.4-mini", "openai", "api-key").unwrap();
+        let selection =
+            resolve_model_selection("gpt-5.3-codex-spark", "openai", "api-key").unwrap();
 
         assert_eq!(selection.provider, "openai-codex");
-        assert_eq!(selection.model, "gpt-5.4-mini");
+        assert_eq!(selection.model, "gpt-5.3-codex-spark");
         assert_eq!(selection.auth, "codex");
         assert!(selection.from_catalog);
     }
@@ -257,7 +287,8 @@ mod tests {
 
     #[test]
     fn bare_ambiguous_model_returns_error() {
-        let err = resolve_model_selection_from(TEST_CATALOG, "shared-model", "openai", "api-key")
+        let catalog = test_catalog();
+        let err = resolve_model_selection_from(&catalog, "shared-model", "openai", "api-key")
             .unwrap_err();
 
         assert_eq!(
