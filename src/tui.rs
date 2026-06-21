@@ -1124,6 +1124,7 @@ impl App {
         match event {
             AgentEvent::StepStarted(step) => {
                 self.stream_buffer.clear();
+                self.stream_flushed_text.clear();
                 self.reasoning_buffer.clear();
                 self.running = true;
                 self.status = format!("running step {step}");
@@ -1873,6 +1874,22 @@ mod tests {
 
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("src/file.rs:10-24"));
+    }
+
+    #[test]
+    fn step_started_clears_flushed_stream_state() {
+        let mut app = test_app();
+        app.stream_buffer = "current".into();
+        app.stream_flushed_text = "previous".into();
+        app.reasoning_buffer = "reasoning".into();
+
+        assert!(app.record_agent_event(AgentEvent::StepStarted(2)).is_none());
+
+        assert!(app.stream_buffer.is_empty());
+        assert!(app.stream_flushed_text.is_empty());
+        assert!(app.reasoning_buffer.is_empty());
+        assert!(app.running);
+        assert_eq!(app.status, "running step 2");
     }
 
     #[test]
