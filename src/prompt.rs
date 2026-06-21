@@ -38,10 +38,9 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
         return Ok(None);
     };
     let after = &content[start + "```json".len()..];
-    let Some(end) = after.rfind("```") else {
-        return Ok(None);
-    };
-    let json = after[..end].trim();
+    let json = extract_first_json_object(after).ok_or_else(|| {
+        ModelError::InvalidResponse("invalid tool call: expected JSON object".into())
+    })?;
     let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
         let snippet: String = json.chars().take(500).collect();
         ModelError::InvalidResponse(format!("invalid tool call json: {e}; snippet: {snippet}"))
@@ -63,4 +62,36 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
         name,
         arguments,
     }))
+}
+
+fn extract_first_json_object(s: &str) -> Option<&str> {
+    let start = s.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+    for (offset, ch) in s[start..].char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return Some(s[start..end].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
