@@ -161,15 +161,22 @@ fn diff_lines<'a>(old: &'a [&'a str], new: &'a [&'a str]) -> Vec<DiffLine<'a>> {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
+
+    fn test_context() -> (TempDir, ToolContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            cwd: dir.path().to_path_buf(),
+            max_output_bytes: 12000,
+        };
+        (dir, ctx)
+    }
 
     #[tokio::test]
     async fn writes_file_and_creates_parent_dirs() {
-        let root = std::env::temp_dir().join(format!("rho-write-file-{}", uuid::Uuid::new_v4()));
-        let ctx = ToolContext {
-            cwd: root.clone(),
-            max_output_bytes: 12000,
-        };
+        let (root, ctx) = test_context();
         let result = WriteFile
             .call(
                 json!({"path":"nested/hello.txt","content":"hello"}),
@@ -181,25 +188,19 @@ mod tests {
 
         assert!(result.ok);
         assert_eq!(
-            std::fs::read_to_string(root.join("nested/hello.txt")).unwrap(),
+            std::fs::read_to_string(root.path().join("nested/hello.txt")).unwrap(),
             "hello"
         );
         assert!(result.content.contains("created "));
         assert!(result.content.contains("--- /dev/null"));
         assert!(result.content.contains("+++ b/nested/hello.txt"));
         assert!(result.content.contains("+hello"));
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn output_includes_diff_for_overwritten_file() {
-        let root = std::env::temp_dir().join(format!("rho-write-file-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("hello.txt"), "hello\nold\n").unwrap();
-        let ctx = ToolContext {
-            cwd: root.clone(),
-            max_output_bytes: 12000,
-        };
+        let (root, ctx) = test_context();
+        std::fs::write(root.path().join("hello.txt"), "hello\nold\n").unwrap();
 
         let result = WriteFile
             .call(
@@ -217,7 +218,6 @@ mod tests {
         assert!(result.content.contains(" hello"));
         assert!(result.content.contains("-old"));
         assert!(result.content.contains("+new"));
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

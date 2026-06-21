@@ -22,3 +22,6 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 crossterm = "0.29.0"
 futures-util = "0.3"
 regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

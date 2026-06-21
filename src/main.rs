@@ -58,7 +58,6 @@ async fn main() -> anyhow::Result<()> {
     let provider = build_provider(
         &cfg.provider,
         &cfg.model,
-        &cfg.auth,
         reasoning_config_value(&cfg.reasoning_effort),
         reasoning_config_value(&cfg.reasoning_summary),
     )?;

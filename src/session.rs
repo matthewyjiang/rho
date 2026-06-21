@@ -294,6 +294,10 @@ fn unix_timestamp_secs() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
+
+    use tempfile::TempDir;
+
     use super::*;
     use crate::{
         model::ContentBlock,
@@ -302,6 +306,22 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    struct TestDir(TempDir);
+
+    impl Deref for TestDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.path()
+        }
+    }
+
+    impl AsRef<Path> for TestDir {
+        fn as_ref(&self) -> &Path {
+            self.0.path()
+        }
+    }
 
     #[test]
     fn persists_and_loads_messages() {
@@ -471,16 +491,12 @@ mod tests {
         assert_eq!(file_mode, 0o600);
     }
 
-    fn temp_session_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("rho-session-root-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        root
+    fn temp_session_root() -> TestDir {
+        TestDir(tempfile::tempdir().unwrap())
     }
 
-    fn temp_cwd() -> PathBuf {
-        let cwd = std::env::temp_dir().join(format!("rho-session-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&cwd).unwrap();
-        cwd
+    fn temp_cwd() -> TestDir {
+        TestDir(tempfile::tempdir().unwrap())
     }
 
     fn write_minimal_session_file(root: &Path, cwd: &Path, id: &str) {

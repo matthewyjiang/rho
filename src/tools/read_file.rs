@@ -70,31 +70,25 @@ fn select_line_range(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::SystemTime};
+    use std::fs;
 
     use serde_json::json;
+    use tempfile::TempDir;
 
     use super::*;
 
-    fn test_context() -> ToolContext {
-        let suffix = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let cwd = std::env::temp_dir().join(format!(
-            "rho-read-file-test-{}-{suffix}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&cwd).unwrap();
-        ToolContext {
-            cwd,
+    fn test_context() -> (TempDir, ToolContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            cwd: dir.path().to_path_buf(),
             max_output_bytes: 12000,
-        }
+        };
+        (dir, ctx)
     }
 
     #[tokio::test]
     async fn reads_selected_line_range() {
-        let ctx = test_context();
+        let (_dir, ctx) = test_context();
         fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\nthree\nfour\n").unwrap();
 
         let result = ReadFile
@@ -111,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_zero_offset() {
-        let ctx = test_context();
+        let (_dir, ctx) = test_context();
         fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
 
         let err = ReadFile
@@ -128,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_zero_limit() {
-        let ctx = test_context();
+        let (_dir, ctx) = test_context();
         fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
 
         let err = ReadFile

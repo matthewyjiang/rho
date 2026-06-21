@@ -43,6 +43,11 @@ pub enum ToolError {
     Message(String),
 }
 
+/// Extension point for agent tools exposed to model tool calls.
+///
+/// Implementors should provide a stable JSON schema from `spec` and execute
+/// `call` using only the supplied arguments and context, returning user-visible
+/// output in the `ToolResult`.
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;

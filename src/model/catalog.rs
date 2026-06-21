@@ -245,10 +245,15 @@ mod tests {
     fn resolves_provider_model_selection() {
         let selection = resolve_model_selection("openai/gpt-5.5", "openai", "codex").unwrap();
 
-        assert_eq!(selection.provider, "openai");
-        assert_eq!(selection.model, "gpt-5.5");
-        assert_eq!(selection.auth, "api-key");
-        assert!(selection.from_catalog);
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                auth: "api-key".into(),
+                from_catalog: true,
+            }
+        );
     }
 
     #[test]
@@ -257,10 +262,15 @@ mod tests {
         let selection =
             resolve_model_selection_from(&catalog, "unique-openai", "openai", "api-key").unwrap();
 
-        assert_eq!(selection.provider, "openai");
-        assert_eq!(selection.model, "unique-openai");
-        assert_eq!(selection.auth, "api-key");
-        assert!(selection.from_catalog);
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai".into(),
+                model: "unique-openai".into(),
+                auth: "api-key".into(),
+                from_catalog: true,
+            }
+        );
     }
 
     #[test]
@@ -268,20 +278,30 @@ mod tests {
         let selection =
             resolve_model_selection("gpt-5.3-codex-spark", "openai-codex", "codex").unwrap();
 
-        assert_eq!(selection.provider, "openai-codex");
-        assert_eq!(selection.model, "gpt-5.3-codex-spark");
-        assert_eq!(selection.auth, "codex");
-        assert!(selection.from_catalog);
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai-codex".into(),
+                model: "gpt-5.3-codex-spark".into(),
+                auth: "codex".into(),
+                from_catalog: true,
+            }
+        );
     }
 
     #[test]
     fn bare_uncataloged_model_uses_current_provider() {
         let selection = resolve_model_selection("brand-new-model", "openai", "codex").unwrap();
 
-        assert_eq!(selection.provider, "openai");
-        assert_eq!(selection.model, "brand-new-model");
-        assert_eq!(selection.auth, "api-key");
-        assert!(!selection.from_catalog);
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai".into(),
+                model: "brand-new-model".into(),
+                auth: "api-key".into(),
+                from_catalog: false,
+            }
+        );
     }
 
     #[test]
