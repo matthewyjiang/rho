@@ -4,21 +4,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::tool::{ToolCall, ToolSpec};
+use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
+pub enum Message {
+    System(String),
+    User(String),
+    Assistant(String),
+    AssistantToolCall(ToolCall),
+    ToolResult(ToolResult),
 }
 
 #[derive(Clone, Debug)]
@@ -228,20 +222,21 @@ impl OpenAiProvider {
         account_id: Option<&str>,
         auth_path: Option<&std::path::Path>,
     ) -> Result<String, ModelError> {
-        let mut instructions = String::new();
+        let mut instructions = Vec::new();
         let input: Vec<_> = messages
             .into_iter()
-            .filter_map(|m| {
-                if matches!(m.role, Role::System) {
-                    instructions = m.content;
-                    return None;
+            .filter_map(|m| match m {
+                Message::System(content) => {
+                    instructions.push(content);
+                    None
                 }
-                Some(json!({
-                    "role": match m.role { Role::System => "system", Role::User => "user", Role::Assistant => "assistant", Role::Tool => "user" },
-                    "content": match m.role { Role::Tool => format!("Tool result:\n{}", m.content), _ => m.content },
-                }))
+                message => Some(json!({
+                    "role": codex_role(&message),
+                    "content": render_message_content(&message),
+                })),
             })
             .collect();
+        let instructions = instructions.join("\n\n");
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_request = |token: &str| {
             self.client
@@ -283,19 +278,43 @@ impl OpenAiProvider {
     }
 }
 
-fn to_chat_message(m: Message) -> ChatMessage {
+fn to_chat_message(message: Message) -> ChatMessage {
     ChatMessage {
-        role: match m.role {
-            Role::System => "system",
-            Role::User => "user",
-            Role::Assistant => "assistant",
-            Role::Tool => "user",
+        role: chat_role(&message).to_string(),
+        content: render_message_content(&message),
+    }
+}
+
+fn chat_role(message: &Message) -> &'static str {
+    match message {
+        Message::System(_) => "system",
+        Message::User(_) => "user",
+        Message::Assistant(_) | Message::AssistantToolCall(_) => "assistant",
+        Message::ToolResult(_) => "user",
+    }
+}
+
+fn codex_role(message: &Message) -> &'static str {
+    match message {
+        Message::Assistant(_) | Message::AssistantToolCall(_) => "assistant",
+        Message::System(_) | Message::User(_) | Message::ToolResult(_) => "user",
+    }
+}
+
+fn render_message_content(message: &Message) -> String {
+    match message {
+        Message::System(content) | Message::User(content) | Message::Assistant(content) => {
+            content.clone()
         }
-        .to_string(),
-        content: match m.role {
-            Role::Tool => format!("Tool result:\n{}", m.content),
-            _ => m.content,
-        },
+        Message::AssistantToolCall(call) => {
+            let arguments = serde_json::to_string_pretty(&call.arguments)
+                .unwrap_or_else(|_| call.arguments.to_string());
+            format!("Tool call: {}\n{}", call.name, arguments)
+        }
+        Message::ToolResult(result) => format!(
+            "Tool result for {} (ok={}):\n{}",
+            result.id, result.ok, result.content
+        ),
     }
 }
 
@@ -484,5 +503,30 @@ mod tests {
         let text = extract_sse_text(body).unwrap();
 
         assert_eq!(text, "done");
+    }
+
+    #[test]
+    fn renders_explicit_tool_history_as_text() {
+        let call = Message::AssistantToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "bash".into(),
+            arguments: json!({ "command": "pwd" }),
+        });
+        let result = Message::ToolResult(ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: "/tmp\n".into(),
+        });
+
+        let rendered_call = to_chat_message(call);
+        let rendered_result = to_chat_message(result);
+
+        assert_eq!(rendered_call.role, "assistant");
+        assert!(rendered_call.content.contains("Tool call: bash"));
+        assert!(rendered_call.content.contains("\"command\": \"pwd\""));
+        assert_eq!(rendered_result.role, "user");
+        assert!(rendered_result
+            .content
+            .contains("Tool result for call-1 (ok=true):"));
     }
 }
