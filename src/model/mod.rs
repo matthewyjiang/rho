@@ -71,6 +71,11 @@ pub enum ModelError {
     UnsupportedProvider(String),
 }
 
+/// Extension point for model backends that can complete agent turns.
+///
+/// Implementors should translate `ModelRequest` values into provider-specific
+/// API calls and return assistant content or tool calls without mutating the
+/// request history.
 #[async_trait::async_trait(?Send)]
 pub trait ModelProvider: Send + Sync {
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;

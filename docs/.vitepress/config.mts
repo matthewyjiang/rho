@@ -7,16 +7,24 @@ export default defineConfig({
   cleanUrls: true,
   themeConfig: {
     nav: [
-      { text: 'Guide', link: '/guide/' },
-      { text: 'Interactive TUI', link: '/interactive-tui' }
+      { text: 'Getting started', link: '/getting-started' },
+      { text: 'Interactive TUI', link: '/interactive-tui' },
+      { text: 'Automation', link: '/automation-cli' }
     ],
     sidebar: [
       {
         text: 'Rho',
         items: [
           { text: 'Overview', link: '/' },
-          { text: 'Guide', link: '/guide/' },
-          { text: 'Interactive TUI', link: '/interactive-tui' }
+          { text: 'Getting started', link: '/getting-started' },
+          { text: 'Installation', link: '/installation' },
+          { text: 'Authentication and models', link: '/authentication-and-models' },
+          { text: 'Interactive TUI', link: '/interactive-tui' },
+          { text: 'Automation and CLI', link: '/automation-cli' },
+          { text: 'Configuration', link: '/configuration' },
+          { text: 'Tools and workspace', link: '/tools-workspace' },
+          { text: 'Sessions', link: '/sessions' },
+          { text: 'Development', link: '/development' }
         ]
       }
     ],

@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /guide/
+      link: /getting-started
     - theme: alt
       text: Interactive TUI
       link: /interactive-tui
@@ -21,3 +21,15 @@ features:
   - title: Rust-first
     details: Rho is built in Rust instead of TypeScript to avoid the runtime overhead of a Node.js-based harness.
 ---
+
+## Concept docs
+
+- [Getting started](/getting-started)
+- [Installation](/installation)
+- [Authentication and models](/authentication-and-models)
+- [Interactive TUI](/interactive-tui)
+- [Automation and CLI](/automation-cli)
+- [Configuration](/configuration)
+- [Tools and workspace](/tools-workspace)
+- [Sessions](/sessions)
+- [Development](/development)

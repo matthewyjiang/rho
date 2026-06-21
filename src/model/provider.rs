@@ -12,7 +12,6 @@ pub fn reasoning_config_value(value: &str) -> Option<String> {
 pub fn build_provider(
     provider: &str,
     model: &str,
-    _auth: &str,
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
 ) -> anyhow::Result<OpenAiProvider> {
