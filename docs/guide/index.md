@@ -40,6 +40,8 @@ codex login
 rho --auth codex --model gpt-5.5
 ```
 
+With Codex auth, `/model` uses Rho's built-in static model catalog instead of querying Codex for model listing. You can still run `rho --auth codex --model <model>` or `/model openai/<model>` to use a specific model.
+
 Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses:
 
 ```text
@@ -99,7 +101,7 @@ Options:
 
 ## Config
 
-Rho stores persistent config at `~/.rho/config.toml` by default. Passing `--provider`, `--model`, or `--auth` updates that file and makes the choice the future default.
+Rho stores persistent config at `~/.rho/config.toml` by default. Passing `--provider`, `--model`, or `--auth` updates that file and makes the choice the future default. In the interactive TUI, `/model` switches and saves `provider` and `model` together from Rho's static model catalog.
 
 ```toml
 provider = "openai"

@@ -3,7 +3,9 @@ use thiserror::Error;
 
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
+pub mod catalog;
 pub mod openai;
+pub mod provider;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -65,6 +67,8 @@ pub enum ModelError {
     Interrupted,
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
+    #[error("unsupported provider '{0}'")]
+    UnsupportedProvider(String),
 }
 
 #[async_trait::async_trait(?Send)]
@@ -95,3 +99,4 @@ pub enum AuthMode {
 }
 
 pub use openai::OpenAiProvider;
+pub use provider::{build_provider, reasoning_config_value};

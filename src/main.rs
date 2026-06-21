@@ -1,5 +1,6 @@
 mod agent;
 mod cli;
+mod commands;
 mod config;
 mod model;
 mod prompt;
@@ -16,7 +17,7 @@ use clap::Parser;
 use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
-use model::{AuthMode, OpenAiProvider};
+use model::{build_provider, reasoning_config_value};
 use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
@@ -41,14 +42,7 @@ async fn main() -> anyhow::Result<()> {
         save_config = true;
     }
     if save_config {
-        cfg.save(config_path)?;
-    }
-
-    if cfg.provider != "openai" {
-        anyhow::bail!(
-            "unsupported provider '{}': only 'openai' is implemented",
-            cfg.provider
-        );
+        cfg.save(config_path.clone())?;
     }
 
     if cli.command.is_none() && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
@@ -61,13 +55,10 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    let auth_mode = match cfg.auth.as_str() {
-        "codex" => AuthMode::Codex,
-        _ => AuthMode::ApiKey,
-    };
-    let provider = OpenAiProvider::new_with_reasoning(
-        cfg.model.clone(),
-        auth_mode,
+    let provider = build_provider(
+        &cfg.provider,
+        &cfg.model,
+        &cfg.auth,
         reasoning_config_value(&cfg.reasoning_effort),
         reasoning_config_value(&cfg.reasoning_summary),
     )?;
@@ -102,7 +93,9 @@ async fn main() -> anyhow::Result<()> {
                     model: cfg.model,
                     reasoning_effort: cfg.reasoning_effort,
                     reasoning_summary: cfg.reasoning_summary,
+                    auth: cfg.auth,
                     session_id,
+                    config_path,
                 },
             )
             .await?;
@@ -119,15 +112,6 @@ fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
         anyhow::bail!("--resume is only supported for interactive sessions");
     }
     Ok(())
-}
-
-fn reasoning_config_value(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(value.to_string())
-    }
 }
 
 fn automation_prompt(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
