@@ -475,6 +475,12 @@ impl App {
 
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
         let mut content = Vec::new();
+        let visible_stream = visible_assistant_stream(&self.stream_buffer);
+        let has_active_output =
+            self.running || !self.reasoning_buffer.is_empty() || !visible_stream.is_empty();
+        if has_active_output {
+            content.push(Line::raw(""));
+        }
         if !self.reasoning_buffer.is_empty() {
             push_wrapped_text(
                 &mut content,
@@ -487,14 +493,8 @@ impl App {
             );
             content.push(Line::raw(""));
         }
-        if self.running || !self.stream_buffer.is_empty() {
-            push_wrapped_text(
-                &mut content,
-                visible_assistant_stream(&self.stream_buffer),
-                width,
-                Style::default(),
-                false,
-            );
+        if !visible_stream.is_empty() {
+            push_wrapped_text(&mut content, visible_stream, width, Style::default(), false);
             content.push(Line::raw(""));
         }
 
@@ -967,6 +967,26 @@ mod tests {
 
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn active_stream_keeps_stable_leading_spacer() {
+        let mut app = App::new(TuiInfo {
+            cwd: PathBuf::from("/tmp/project"),
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            reasoning_effort: "low".into(),
+            reasoning_summary: "auto".into(),
+            session_id: None,
+        });
+        app.running = true;
+        let before_stream = app.active_lines(40);
+        app.stream_buffer = "hello".into();
+        let after_stream = app.active_lines(40);
+
+        assert_eq!(line_text(&before_stream[0]), "");
+        assert_eq!(line_text(&after_stream[0]), "");
+        assert_eq!(line_text(&after_stream[1]), "hello");
     }
 
     #[test]
