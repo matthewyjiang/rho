@@ -1,6 +1,8 @@
 # Rho
 
-Rho is a tiny YOLO coding agent harness for Rust.
+Rho is a tiny YOLO coding agent harness for Rust. It provides an inline terminal UI for day-to-day agent work and a small `rho run` command for non-interactive automation.
+
+> Rho v0.1 intentionally uses one OpenAI-compatible provider and no approvals, permissions, policies, allowlists, denylists, or sandboxing.
 
 ## Install
 
@@ -22,47 +24,58 @@ If Cargo's bin directory is not on your `PATH`, add it:
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-## Usage
+## Authentication
 
-With an OpenAI API key:
+### OpenAI API key
+
+Set an OpenAI API key and choose a model:
 
 ```bash
 export OPENAI_API_KEY=...
 rho --model gpt-5.5
 ```
 
-Or use Codex OAuth from an existing Codex CLI login:
+### Codex OAuth
+
+Rho can also use an existing Codex CLI login:
 
 ```bash
 codex login
 rho --auth codex --model gpt-5.5
 ```
 
-Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses `https://chatgpt.com/backend-api/codex/responses`.
-
-Codex reasoning summaries are configurable in `~/.rho/config.toml`:
-
-```toml
-reasoning_effort = "medium"  # set to "none" to omit
-reasoning_summary = "auto"   # set to "none" to omit
-```
-
-Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as tokens arrive, and reasoning deltas are shown when the model provides them. Useful keys:
+Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses:
 
 ```text
-enter    send the current prompt
-shift-enter insert a newline
-alt-enter insert a newline fallback
-paste    insert pasted text, including newlines, without submitting
-arrows   move within the prompt
-alt-arrows move by word
-alt-backspace delete previous word
-home/end jump to prompt start/end
-esc      interrupt a streaming response
-wheel    scroll terminal history
-ctrl-r   reset conversation history
-ctrl-c   clear the input line, press twice to exit
+https://chatgpt.com/backend-api/codex/responses
 ```
+
+## Usage
+
+### Interactive TUI
+
+Running `rho` opens an inline terminal interface. Finalized conversation output is written into normal terminal scrollback, while the active assistant response and composer stay inline below it. Assistant responses stream as tokens arrive, and reasoning deltas are shown when the model provides them.
+
+Useful keys:
+
+```text
+enter         send the current prompt
+shift-enter   insert a newline
+alt-enter     insert a newline fallback
+paste         insert pasted text, including newlines, without submitting
+arrows        move within the prompt
+alt-arrows    move by word
+alt-backspace delete previous word
+home/end      jump to prompt start/end
+esc           interrupt a streaming response
+wheel         scroll terminal history
+ctrl-r        reset conversation history
+ctrl-c        clear the input line, press twice to exit
+```
+
+See [`docs/interactive-tui.md`](docs/interactive-tui.md) for more detail on the TUI direction and current implementation notes.
+
+### Automation mode
 
 For non-interactive automation, use `rho run`:
 
@@ -72,20 +85,52 @@ printf 'summarize this repository' | rho run --stdin
 rho run "review this diff" --stdin < diff.txt
 ```
 
-The CLI is intentionally non-interactive. The TUI is the main mode of use.
+Automation mode prints the final answer to stdout and then exits. The richer interactive experience lives in the TUI.
+
+## CLI reference
+
+```text
+Usage: rho [OPTIONS] [COMMAND]
+
+Commands:
+  run   Run one non-interactive automation prompt and print the final answer
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --provider <PROVIDER>
+      --model <MODEL>
+      --config <CONFIG>
+      --auth <AUTH>          [possible values: api-key, codex]
+  -h, --help                 Print help
+```
+
+`rho run` accepts prompt text as arguments and can append stdin with `--stdin`:
+
+```text
+Usage: rho run [OPTIONS] [PROMPT]...
+
+Arguments:
+  [PROMPT]...  Prompt text to send to the agent
+
+Options:
+      --stdin  Read additional prompt text from stdin
+  -h, --help   Print help
+```
 
 ## Config
 
-Rho stores its persistent config at `~/.rho/config.toml` by default. Passing `--provider` or `--model` updates that file and makes the choice the future default.
+Rho stores its persistent config at `~/.rho/config.toml` by default. Passing `--provider`, `--model`, or `--auth` updates that file and makes the choice the future default.
 
 ```toml
 provider = "openai"
 model = "gpt-5.5"
 max_output_bytes = 12000
 auth = "api-key" # or "codex"
+reasoning_effort = "medium" # set to "none" to omit
+reasoning_summary = "auto"  # set to "none" to omit
 ```
 
-You can still load and save a specific config file with:
+You can load and save a specific config file with:
 
 ```bash
 rho --config ~/.rho/config.toml
@@ -103,4 +148,20 @@ edit_file
 bash
 ```
 
-Rho v0.1 intentionally uses one OpenAI-compatible provider and no approvals, permissions, policies, allowlists, denylists, or sandboxing.
+These tools can read and modify files and run shell commands in the working directory. Rho does not currently sandbox or prompt for approval before tool calls.
+
+## Development
+
+Build and check the project with Cargo:
+
+```bash
+cargo build
+cargo test
+```
+
+Run the local binary without installing:
+
+```bash
+cargo run --
+cargo run -- run "summarize this repository"
+```
