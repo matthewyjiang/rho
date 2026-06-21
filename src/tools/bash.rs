@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 
-pub struct RunCommand;
+pub struct Bash;
 #[derive(Deserialize)]
 struct Args {
     command: String,
@@ -11,11 +11,11 @@ struct Args {
 }
 
 #[async_trait::async_trait]
-impl Tool for RunCommand {
+impl Tool for Bash {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "run_command".into(),
-            description: "Runs a shell command in the configured cwd.".into(),
+            name: "bash".into(),
+            description: "Runs a bash command in the configured cwd.".into(),
             input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
         }
     }
@@ -26,8 +26,8 @@ impl Tool for RunCommand {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
-        let fut = Command::new("sh")
-            .arg("-c")
+        let fut = Command::new("bash")
+            .arg("-lc")
             .arg(&args.command)
             .current_dir(&ctx.cwd)
             .output();
