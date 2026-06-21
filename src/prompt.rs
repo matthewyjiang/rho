@@ -34,6 +34,13 @@ Call one tool at a time. After receiving a tool result, continue from that resul
 }
 
 pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
+    if let Some(call) = parse_fenced_tool_call(content)? {
+        return Ok(Some(call));
+    }
+    parse_rendered_tool_call(content)
+}
+
+fn parse_fenced_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
     let Some(start) = content.find("```json") else {
         return Ok(None);
     };
@@ -64,6 +71,35 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
     Ok(Some(ToolCall {
         id: Uuid::new_v4().to_string(),
         name,
+        arguments,
+    }))
+}
+
+fn parse_rendered_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
+    let trimmed = content.trim_start();
+    let Some(rest) = trimmed.strip_prefix("Tool call: ") else {
+        return Ok(None);
+    };
+    let Some((name, arguments_text)) = rest.split_once('\n') else {
+        return Ok(None);
+    };
+    let name = name.trim();
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return Ok(None);
+    }
+    let Some((json_start, json_end)) = extract_first_json_object_range(arguments_text) else {
+        return Ok(None);
+    };
+    let arguments =
+        serde_json::from_str(arguments_text[json_start..json_end].trim()).map_err(|e| {
+            let snippet: String = arguments_text.chars().take(500).collect();
+            ModelError::InvalidResponse(format!(
+                "invalid rendered tool call arguments: {e}; snippet: {snippet}"
+            ))
+        })?;
+    Ok(Some(ToolCall {
+        id: Uuid::new_v4().to_string(),
+        name: name.to_string(),
         arguments,
     }))
 }
@@ -166,5 +202,19 @@ not-json
 {"tool":"list_dir","arguments":{"path":"."}}"#;
 
         assert!(parse_tool_call(content).unwrap().is_none());
+    }
+
+    #[test]
+    fn parses_rendered_tool_call_protocol() {
+        let content = r#"Tool call: bash
+{
+  "command": "cargo test",
+  "timeout_seconds": 120
+}"#;
+
+        let call = parse_tool_call(content).unwrap().unwrap();
+
+        assert_eq!(call.name, "bash");
+        assert_eq!(call.arguments["command"], "cargo test");
     }
 }

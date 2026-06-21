@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::model::{ContentBlock, Message, ModelError, ModelProvider, ModelRequest, ModelResponse};
+use crate::model::{
+    ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
+};
 use crate::prompt::system_prompt;
 use crate::tool::{ToolContext, ToolError, ToolRegistry};
 
@@ -12,6 +14,14 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentEvent {
+    StepStarted(usize),
+    OutputDelta(String),
+    ReasoningDelta(String),
+    ToolFinished { name: String, content: String },
 }
 
 pub struct Agent<P: ModelProvider> {
@@ -37,18 +47,34 @@ impl<P: ModelProvider> Agent<P> {
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
+        self.run_with_events(user_prompt, |_| Ok(())).await
+    }
+
+    pub async fn run_with_events(
+        &mut self,
+        user_prompt: String,
+        mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
         self.messages.push(Message::user_text(user_prompt));
 
         let mut step = 1usize;
         loop {
-            eprintln!("[rho] step {step}");
+            on_event(AgentEvent::StepStarted(step))?;
             let response = self
                 .provider
-                .send_turn(ModelRequest {
-                    messages: self.messages.clone(),
-                    tools: specs.clone(),
-                })
+                .send_turn_stream(
+                    ModelRequest {
+                        messages: self.messages.clone(),
+                        tools: specs.clone(),
+                    },
+                    &mut |event| match event {
+                        ModelEvent::OutputDelta(text) => on_event(AgentEvent::OutputDelta(text)),
+                        ModelEvent::ReasoningDelta(text) => {
+                            on_event(AgentEvent::ReasoningDelta(text))
+                        }
+                    },
+                )
                 .await?;
             match response {
                 ModelResponse::Assistant(blocks) => {
@@ -77,8 +103,12 @@ impl<P: ModelProvider> Agent<P> {
                         let Some(tool) = self.tools.get(&call.name) else {
                             return Err(AgentError::UnknownTool(call.name));
                         };
+                        let name = call.name.clone();
                         let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
-                        println!("[tool:{}]\n{}", call.name, result.content);
+                        on_event(AgentEvent::ToolFinished {
+                            name,
+                            content: result.content.clone(),
+                        })?;
                         self.messages.push(Message::ToolResult(result));
                     }
                 }
@@ -106,7 +136,7 @@ mod tests {
         requests: Arc<Mutex<Vec<Vec<Message>>>>,
     }
 
-    #[async_trait]
+    #[async_trait(?Send)]
     impl ModelProvider for RecordingProvider {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
             self.requests.lock().unwrap().push(request.messages);
