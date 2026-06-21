@@ -9,6 +9,7 @@ pub struct Config {
     pub max_steps: usize,
     pub max_output_bytes: usize,
     pub cwd: PathBuf,
+    pub auth: String,
 }
 
 impl Default for Config {
@@ -19,6 +20,7 @@ impl Default for Config {
             max_steps: 8,
             max_output_bytes: 12000,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            auth: "api-key".into(),
         }
     }
 }
@@ -44,6 +46,9 @@ impl Config {
             if let Some(v) = file.cwd {
                 cfg.cwd = v;
             }
+            if let Some(v) = file.auth {
+                cfg.auth = v;
+            }
         }
         Ok(cfg)
     }
@@ -56,4 +61,5 @@ struct PartialConfig {
     max_steps: Option<usize>,
     max_output_bytes: Option<usize>,
     cwd: Option<PathBuf>,
+    auth: Option<String>,
 }

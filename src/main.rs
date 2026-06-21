@@ -14,7 +14,7 @@ use clap::Parser;
 use agent::Agent;
 use cli::Cli;
 use config::Config;
-use model::OpenAiProvider;
+use model::{AuthMode, OpenAiProvider};
 use tool::ToolContext;
 
 #[tokio::main]
@@ -30,8 +30,15 @@ async fn main() -> anyhow::Result<()> {
     if let Some(max_steps) = cli.max_steps {
         cfg.max_steps = max_steps;
     }
+    if let Some(auth) = cli.auth {
+        cfg.auth = auth;
+    }
 
-    let provider = OpenAiProvider::new(cfg.model.clone(), cfg.api_base.clone())?;
+    let auth_mode = match cfg.auth.as_str() {
+        "codex" => AuthMode::Codex,
+        _ => AuthMode::ApiKey,
+    };
+    let provider = OpenAiProvider::new(cfg.model.clone(), cfg.api_base.clone(), auth_mode)?;
     let registry = tools::registry();
     let ctx = ToolContext {
         cwd: cfg.cwd.clone(),
@@ -39,7 +46,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let agent = Agent::new(provider, registry, ctx, cfg.max_steps);
 
-    println!("rho: cwd={} model={}", cfg.cwd.display(), cfg.model);
+    println!(
+        "rho: cwd={} model={} auth={}",
+        cfg.cwd.display(),
+        cfg.model,
+        cfg.auth
+    );
     loop {
         print!("rho> ");
         io::stdout().flush()?;
