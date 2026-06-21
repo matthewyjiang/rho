@@ -19,6 +19,7 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
+use regex::RegexBuilder;
 
 use crate::{
     agent::{Agent, AgentEvent},
@@ -103,6 +104,7 @@ struct UiPicker {
     help: String,
     items: Vec<PickerItem>,
     selected: usize,
+    filter: String,
     action: PickerAction,
 }
 
@@ -152,29 +154,70 @@ impl UiPicker {
             help: help.into(),
             items,
             selected: 0,
+            filter: String::new(),
             action,
         }
     }
 
     fn select_previous(&mut self) {
-        if self.items.is_empty() {
+        let matches = self.matching_indices();
+        if matches.is_empty() {
             return;
         }
-        self.selected = if self.selected == 0 {
-            self.items.len() - 1
+        let position = matches
+            .iter()
+            .position(|index| *index == self.selected)
+            .unwrap_or(0);
+        self.selected = if position == 0 {
+            *matches.last().unwrap()
         } else {
-            self.selected - 1
+            matches[position - 1]
         };
     }
 
     fn select_next(&mut self) {
-        if !self.items.is_empty() {
-            self.selected = (self.selected + 1) % self.items.len();
+        let matches = self.matching_indices();
+        if matches.is_empty() {
+            return;
+        }
+        let position = matches
+            .iter()
+            .position(|index| *index == self.selected)
+            .unwrap_or(0);
+        self.selected = matches[(position + 1) % matches.len()];
+    }
+
+    fn push_filter_char(&mut self, ch: char) {
+        self.filter.push(ch);
+        self.select_first_match();
+    }
+
+    fn pop_filter_char(&mut self) {
+        self.filter.pop();
+        self.select_first_match();
+    }
+
+    fn complete_filter(&mut self) {
+        if let Some(item) = self.selected_item() {
+            self.filter = regex::escape(&item.value);
         }
     }
 
+    fn select_first_match(&mut self) {
+        if let Some(index) = self.matching_indices().first().copied() {
+            self.selected = index;
+        }
+    }
+
+    fn matching_indices(&self) -> Vec<usize> {
+        picker_matching_indices(&self.items, &self.filter)
+    }
+
     fn selected_item(&self) -> Option<&PickerItem> {
-        self.items.get(self.selected)
+        self.matching_indices()
+            .contains(&self.selected)
+            .then(|| self.items.get(self.selected))
+            .flatten()
     }
 }
 
@@ -416,6 +459,30 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Down) => {
                 if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.select_next();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.complete_filter();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.pop_filter_char();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.push_filter_char(ch);
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -853,7 +920,8 @@ impl App {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
         let models = catalog::available_models(&self.info.auth);
-        let items = models
+        let current = format!("{}/{}", self.info.provider, self.info.model);
+        let mut items = models
             .into_iter()
             .map(|entry| {
                 let value = format!("{}/{}", entry.provider, entry.model);
@@ -872,6 +940,7 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
+        items.sort_by_key(|item| item.value != current);
 
         if items.is_empty() {
             self.insert_entry(
@@ -886,11 +955,10 @@ impl App {
 
         let mut picker = UiPicker::new(
             "select model",
-            "up/down select, enter confirm, esc cancel",
+            "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
             items,
             PickerAction::SelectModel,
         );
-        let current = format!("{}/{}", self.info.provider, self.info.model);
         if let Some(index) = picker.items.iter().position(|item| item.value == current) {
             picker.selected = index;
         }
@@ -1165,14 +1233,21 @@ impl App {
     fn composer_cursor_position(&self, width: usize) -> Position {
         match &self.composer {
             ComposerMode::Input => input_cursor_position(&self.input, self.input_cursor, width),
-            ComposerMode::Picker(picker) => Position {
-                x: 0,
-                y: picker
-                    .selected
-                    .saturating_sub(visible_picker_item_start(picker))
-                    .saturating_add(1)
-                    .min(picker.items.len()) as u16,
-            },
+            ComposerMode::Picker(picker) => {
+                let matching_indices = picker.matching_indices();
+                let selected_position = matching_indices
+                    .iter()
+                    .position(|index| *index == picker.selected)
+                    .unwrap_or(0);
+                let start = visible_picker_match_start(picker, &matching_indices);
+                Position {
+                    x: 0,
+                    y: selected_position
+                        .saturating_sub(start)
+                        .saturating_add(1)
+                        .min(matching_indices.len()) as u16,
+                }
+            }
         }
     }
 
@@ -1338,21 +1413,35 @@ fn next_word_boundary(input: &str, cursor: usize) -> usize {
 }
 
 fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::with_capacity(picker.items.len() + 2);
+    let matching_indices = picker.matching_indices();
+    let mut lines = Vec::with_capacity(matching_indices.len() + 2);
+    let filter = if picker.filter.is_empty() {
+        String::new()
+    } else {
+        format!("  filter: {}", picker.filter)
+    };
     lines.push(styled_line(
-        format!("{}  {}", picker.title, picker.help),
+        format!("{}  {}{}", picker.title, picker.help, filter),
         width,
         Style::default().fg(Color::DarkGray),
         false,
     ));
-    let start = visible_picker_item_start(picker);
-    for (index, item) in picker
-        .items
-        .iter()
-        .enumerate()
+    if matching_indices.is_empty() {
+        lines.push(styled_line(
+            "  no matching models".to_string(),
+            width,
+            Style::default().fg(Color::DarkGray),
+            false,
+        ));
+        return lines;
+    }
+    let start = visible_picker_match_start(picker, &matching_indices);
+    for index in matching_indices
+        .into_iter()
         .skip(start)
         .take(MAX_PICKER_ITEMS)
     {
+        let item = &picker.items[index];
         let selected = index == picker.selected;
         let marker = if selected { ">" } else { " " };
         let text = if item.description.is_empty() {
@@ -1372,11 +1461,34 @@ fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn visible_picker_item_start(picker: &UiPicker) -> usize {
-    picker
-        .selected
+fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[usize]) -> usize {
+    let selected_position = matching_indices
+        .iter()
+        .position(|index| *index == picker.selected)
+        .unwrap_or(0);
+    selected_position
         .saturating_add(1)
         .saturating_sub(MAX_PICKER_ITEMS)
+}
+
+fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return (0..items.len()).collect();
+    }
+
+    let Ok(regex) = RegexBuilder::new(filter).case_insensitive(true).build() else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let haystack = format!("{} {} {}", item.label, item.value, item.description);
+            regex.is_match(&haystack).then_some(index)
+        })
+        .collect()
 }
 
 fn byte_index_after_visual_lines(text: &str, width: usize, target_lines: usize) -> Option<usize> {
@@ -1876,6 +1988,39 @@ mod tests {
         );
         assert!(rendered.contains("> model-a"), "{rendered}");
         assert!(!rendered.contains("draft prompt"), "{rendered}");
+    }
+
+    #[test]
+    fn picker_filters_by_regex_and_autocompletes() {
+        let mut picker = UiPicker::new(
+            "select model",
+            "enter confirm",
+            vec![
+                PickerItem {
+                    label: "openai/gpt-5.5".into(),
+                    description: String::new(),
+                    value: "openai/gpt-5.5".into(),
+                },
+                PickerItem {
+                    label: "openai-codex/gpt-5.4-mini".into(),
+                    description: String::new(),
+                    value: "openai-codex/gpt-5.4-mini".into(),
+                },
+            ],
+            PickerAction::SelectModel,
+        );
+
+        for ch in "codex.*mini".chars() {
+            picker.push_filter_char(ch);
+        }
+
+        assert_eq!(picker.matching_indices(), vec![1]);
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            "openai-codex/gpt-5.4-mini"
+        );
+        picker.complete_filter();
+        assert_eq!(picker.filter, regex::escape("openai-codex/gpt-5.4-mini"));
     }
 
     #[test]

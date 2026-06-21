@@ -72,7 +72,7 @@ Initial commands:
 | `/config` | Show the config path and current key settings. A full config UI is not implemented yet. |
 | `/exit` | Quit the TUI. |
 
-A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. Some commands can replace the message box with a picker; use `up`/`down` to select, `enter` to confirm, and `esc` to cancel.
+A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. Some commands can replace the message box with a picker; use `up`/`down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and `esc` to cancel.
 
 The model picker is populated from Rho's built-in static catalog for all implemented providers. `openai` uses API-key auth models, while `openai-codex` uses Codex auth models. Use `/model provider/model` to switch explicitly, for example `/model openai/gpt-5.5` or `/model openai-codex/gpt-5.5`. A bare model id works when it uniquely matches the catalog; uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
