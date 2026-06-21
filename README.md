@@ -28,7 +28,7 @@ With an OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY=...
-rho --model gpt-4.1-mini --cwd . --max-steps 8
+rho --model gpt-5.5 --cwd .
 ```
 
 Or use Codex OAuth from an existing Codex CLI login:
@@ -53,9 +53,8 @@ exit     exit rho
 Optional config:
 
 ```toml
-model = "gpt-4.1-mini"
+model = "gpt-5.5"
 api_base = "https://api.openai.com/v1"
-max_steps = 8
 max_output_bytes = 12000
 cwd = "."
 auth = "api-key" # or "codex"
@@ -79,4 +78,4 @@ edit_file
 bash
 ```
 
-Rho v0.1 intentionally uses prompt-level tool calls, one OpenAI-compatible provider, and no approvals, permissions, policies, allowlists, denylists, or sandboxing.
+Rho v0.1 intentionally uses one OpenAI-compatible provider and no approvals, permissions, policies, allowlists, denylists, or sandboxing.
