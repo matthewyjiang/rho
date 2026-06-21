@@ -42,7 +42,6 @@ pub struct TuiInfo {
 
 pub struct TuiResult {
     pub resume_session_id: Option<String>,
-    pub transcript: String,
 }
 
 pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<TuiResult> {
@@ -75,7 +74,6 @@ struct App {
     running: bool,
     paste_burst: PasteBurst,
     last_inserted_was_tool: bool,
-    transcript: Vec<Entry>,
 }
 
 #[derive(Clone, Debug)]
@@ -147,7 +145,6 @@ impl App {
             running: false,
             paste_burst: PasteBurst::default(),
             last_inserted_was_tool: false,
-            transcript: Vec::new(),
         }
     }
 
@@ -173,10 +170,8 @@ impl App {
                 }
             }
         }
-        let width = terminal.size()?.width as usize;
         Ok(TuiResult {
-            resume_session_id: self.info.session_id.clone(),
-            transcript: render_scrollback_transcript(&self.info, &self.transcript, width),
+            resume_session_id: self.info.session_id,
         })
     }
 
@@ -520,13 +515,7 @@ impl App {
 
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let width = terminal.size()?.width as usize;
-        let lines = session_header_lines(&self.info, width);
-        let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
+        insert_history_lines(terminal, session_header_lines(&self.info, width))?;
         Ok(())
     }
 
@@ -537,24 +526,30 @@ impl App {
     ) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
         if self.last_inserted_was_tool && matches!(entry, Entry::Tool { .. }) {
-            terminal.insert_before(1, |buf| {
-                Paragraph::new(vec![Line::raw("")])
-                    .wrap(Wrap { trim: false })
-                    .render(buf.area, buf);
-            })?;
+            insert_history_lines(terminal, vec![Line::raw("")])?;
         }
 
-        self.transcript.push(entry.clone());
-        let lines = entry_lines(entry, width);
-        let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
+        insert_history_lines(terminal, entry_lines(entry, width))?;
         self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
     }
+}
+
+fn insert_history_lines(
+    terminal: &mut DefaultTerminal,
+    lines: Vec<Line<'static>>,
+) -> std::io::Result<()> {
+    // Ratatui's inline viewport support inserts finalized rows above the live
+    // viewport using terminal scrollback/scroll-region operations. This mirrors
+    // Codex's model: finalized chat is real terminal history, while the inline
+    // viewport only owns active streaming output and the composer.
+    let height = lines.len().max(1) as u16;
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(buf.area, buf);
+    })?;
+    Ok(())
 }
 
 fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
@@ -604,28 +599,6 @@ fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
         Line::styled(divider, Style::default().fg(Color::DarkGray)),
         Line::raw(""),
     ]
-}
-
-fn render_scrollback_transcript(info: &TuiInfo, entries: &[Entry], width: usize) -> String {
-    if entries.is_empty() {
-        return String::new();
-    }
-    let mut lines = session_header_lines(info, width);
-    for entry in entries {
-        lines.extend(entry_lines(entry, width));
-    }
-    lines_to_plain_text(lines)
-}
-
-fn lines_to_plain_text(lines: Vec<Line<'static>>) -> String {
-    let mut out = String::new();
-    for line in lines {
-        for span in line.spans {
-            out.push_str(&span.content);
-        }
-        out.push('\n');
-    }
-    out
 }
 
 fn previous_word_boundary(input: &str, cursor: usize) -> usize {

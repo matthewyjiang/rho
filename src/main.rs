@@ -9,7 +9,7 @@ mod tools;
 mod transcript;
 mod tui;
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
 
@@ -106,31 +106,11 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
-            print_tui_scrollback(&tui_result)?;
+            if let Some(session_id) = tui_result.resume_session_id {
+                println!("\nResume this session:\n  rho --resume {session_id}\n");
+            }
         }
     }
-    Ok(())
-}
-
-fn print_tui_scrollback(result: &tui::TuiResult) -> anyhow::Result<()> {
-    if result.transcript.is_empty() && result.resume_session_id.is_none() {
-        return Ok(());
-    }
-
-    let mut stdout = io::stdout();
-    // Ratatui's inline viewport leaves the cursor inside its managed region. Move to
-    // the start of a fresh line and clear only the remaining live viewport before
-    // replaying the finalized transcript into normal terminal scrollback.
-    stdout.write_all(b"\r\n\x1b[J")?;
-    if !result.transcript.is_empty() {
-        stdout.write_all(result.transcript.as_bytes())?;
-    }
-    if let Some(session_id) = &result.resume_session_id {
-        writeln!(stdout, "Resume this session:")?;
-        writeln!(stdout, "  rho --resume {session_id}")?;
-        writeln!(stdout)?;
-    }
-    stdout.flush()?;
     Ok(())
 }
 
