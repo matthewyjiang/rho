@@ -69,6 +69,10 @@ impl<P: ModelProvider> Agent<P> {
         self.message_sink = None;
     }
 
+    pub fn replace_provider(&mut self, provider: P) {
+        self.provider = provider;
+    }
+
     pub fn reset(&mut self) {
         self.messages = initial_messages(&self.tools);
     }
@@ -229,12 +233,42 @@ fn tool_event_content(
     ctx: &ToolContext,
 ) -> Option<String> {
     match name {
-        "read_file" | "edit_file" | "write_file" => arguments
+        "read_file" => arguments
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| read_file_event_content(&ctx.cwd, path, arguments)),
+        "edit_file" | "write_file" => arguments
             .get("path")
             .and_then(|path| path.as_str())
             .map(|path| compact_display_path(&ctx.cwd, path)),
         _ => None,
     }
+}
+
+fn read_file_event_content(
+    cwd: &std::path::Path,
+    path: &str,
+    arguments: &serde_json::Value,
+) -> String {
+    let path = compact_display_path(cwd, path);
+    let offset = arguments
+        .get("offset")
+        .and_then(|offset| offset.as_u64())
+        .and_then(|offset| usize::try_from(offset).ok());
+    let limit = arguments
+        .get("limit")
+        .and_then(|limit| limit.as_u64())
+        .and_then(|limit| usize::try_from(limit).ok());
+
+    if offset.is_none() && limit.is_none() {
+        return path;
+    }
+
+    let start = offset.unwrap_or(1);
+    let end = limit
+        .map(|limit| start.saturating_add(limit).saturating_sub(1).to_string())
+        .unwrap_or_else(|| "end".into());
+    format!("{path}:{start}-{end}")
 }
 
 fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
@@ -387,6 +421,63 @@ mod tests {
             .filter(|message| matches!(message, Message::ToolResult(_)))
             .count();
         assert_eq!(tool_result_count, 2);
+    }
+
+    #[test]
+    fn read_file_event_content_shows_requested_line_range() {
+        let cwd = std::env::current_dir().unwrap();
+        let content = tool_event_content(
+            "read_file",
+            &serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 15}),
+            &ToolContext {
+                cwd,
+                max_output_bytes: 12000,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(content, "src/main.rs:10-24");
+    }
+
+    #[test]
+    fn read_file_event_content_keeps_plain_path_without_range() {
+        let cwd = std::env::current_dir().unwrap();
+        let content = tool_event_content(
+            "read_file",
+            &serde_json::json!({"path": "src/main.rs"}),
+            &ToolContext {
+                cwd,
+                max_output_bytes: 12000,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(content, "src/main.rs");
+    }
+
+    #[test]
+    fn read_file_event_content_uses_default_range_bounds() {
+        let cwd = std::env::current_dir().unwrap();
+        let context = ToolContext {
+            cwd,
+            max_output_bytes: 12000,
+        };
+
+        let from_offset = tool_event_content(
+            "read_file",
+            &serde_json::json!({"path": "src/main.rs", "offset": 10}),
+            &context,
+        )
+        .unwrap();
+        let from_limit = tool_event_content(
+            "read_file",
+            &serde_json::json!({"path": "src/main.rs", "limit": 20}),
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(from_offset, "src/main.rs:10-end");
+        assert_eq!(from_limit, "src/main.rs:1-20");
     }
 
     #[tokio::test]

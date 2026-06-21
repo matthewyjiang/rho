@@ -19,10 +19,17 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
+use regex::RegexBuilder;
 
 use crate::{
     agent::{Agent, AgentEvent},
-    model::OpenAiProvider,
+    commands::{self, CommandId, CommandInvocation, CommandSpec},
+    config::Config,
+    model::{
+        build_provider,
+        catalog::{self, ModelSelection},
+        reasoning_config_value, OpenAiProvider,
+    },
     session::Session,
 };
 
@@ -30,6 +37,8 @@ const INLINE_VIEWPORT_HEIGHT: u16 = 18;
 const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
 const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
 const PASTE_BURST_MIN_CHARS: usize = 2;
+const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
 
 pub struct TuiInfo {
     pub cwd: PathBuf,
@@ -37,7 +46,9 @@ pub struct TuiInfo {
     pub model: String,
     pub reasoning_effort: String,
     pub reasoning_summary: String,
+    pub auth: String,
     pub session_id: Option<String>,
+    pub config_path: Option<PathBuf>,
 }
 
 pub struct TuiResult {
@@ -70,15 +81,49 @@ struct App {
     should_quit: bool,
     ctrl_c_streak: u8,
     stream_buffer: String,
+    stream_flushed_text: String,
     reasoning_buffer: String,
     running: bool,
     paste_burst: PasteBurst,
     last_inserted_was_tool: bool,
+    command_selection: usize,
+    command_prefix: Option<String>,
+    command_palette_dismissed: bool,
+    composer: ComposerMode,
+}
+
+#[derive(Clone, Debug)]
+enum ComposerMode {
+    Input,
+    Picker(UiPicker),
+}
+
+#[derive(Clone, Debug)]
+struct UiPicker {
+    title: String,
+    help: String,
+    items: Vec<PickerItem>,
+    selected: usize,
+    filter: String,
+    action: PickerAction,
+}
+
+#[derive(Clone, Debug)]
+struct PickerItem {
+    label: String,
+    description: String,
+    value: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickerAction {
+    SelectModel,
 }
 
 #[derive(Clone, Debug)]
 enum Entry {
     User(String),
+    #[allow(dead_code)]
     Assistant(String),
     Tool {
         name: String,
@@ -95,6 +140,85 @@ struct PasteBurst {
     last_plain_char_at: Option<Instant>,
     plain_char_count: usize,
     suppress_enter_until: Option<Instant>,
+}
+
+impl UiPicker {
+    fn new(
+        title: impl Into<String>,
+        help: impl Into<String>,
+        items: Vec<PickerItem>,
+        action: PickerAction,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            help: help.into(),
+            items,
+            selected: 0,
+            filter: String::new(),
+            action,
+        }
+    }
+
+    fn select_previous(&mut self) {
+        let matches = self.matching_indices();
+        if matches.is_empty() {
+            return;
+        }
+        let position = matches
+            .iter()
+            .position(|index| *index == self.selected)
+            .unwrap_or(0);
+        self.selected = if position == 0 {
+            *matches.last().unwrap()
+        } else {
+            matches[position - 1]
+        };
+    }
+
+    fn select_next(&mut self) {
+        let matches = self.matching_indices();
+        if matches.is_empty() {
+            return;
+        }
+        let position = matches
+            .iter()
+            .position(|index| *index == self.selected)
+            .unwrap_or(0);
+        self.selected = matches[(position + 1) % matches.len()];
+    }
+
+    fn push_filter_char(&mut self, ch: char) {
+        self.filter.push(ch);
+        self.select_first_match();
+    }
+
+    fn pop_filter_char(&mut self) {
+        self.filter.pop();
+        self.select_first_match();
+    }
+
+    fn complete_filter(&mut self) {
+        if let Some(item) = self.selected_item() {
+            self.filter = regex::escape(&item.value);
+        }
+    }
+
+    fn select_first_match(&mut self) {
+        if let Some(index) = self.matching_indices().first().copied() {
+            self.selected = index;
+        }
+    }
+
+    fn matching_indices(&self) -> Vec<usize> {
+        picker_matching_indices(&self.items, &self.filter)
+    }
+
+    fn selected_item(&self) -> Option<&PickerItem> {
+        self.matching_indices()
+            .contains(&self.selected)
+            .then(|| self.items.get(self.selected))
+            .flatten()
+    }
 }
 
 impl PasteBurst {
@@ -141,10 +265,15 @@ impl App {
             should_quit: false,
             ctrl_c_streak: 0,
             stream_buffer: String::new(),
+            stream_flushed_text: String::new(),
             reasoning_buffer: String::new(),
             running: false,
             paste_burst: PasteBurst::default(),
             last_inserted_was_tool: false,
+            command_selection: 0,
+            command_prefix: None,
+            command_palette_dismissed: false,
+            composer: ComposerMode::Input,
         }
     }
 
@@ -162,7 +291,9 @@ impl App {
                         self.handle_key(key, terminal, agent).await?;
                     }
                     Event::Paste(text) => {
-                        self.insert_input_text(&normalize_paste(&text));
+                        if matches!(self.composer, ComposerMode::Input) {
+                            self.insert_input_text(&normalize_paste(&text));
+                        }
                         self.paste_burst.clear();
                     }
                     Event::Resize(_, _) => {}
@@ -182,11 +313,23 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent<OpenAiProvider>,
     ) -> anyhow::Result<()> {
+        if self.handle_picker_key(key, terminal, agent).await? {
+            return Ok(());
+        }
+
+        if self
+            .handle_command_palette_key(key, terminal, agent)
+            .await?
+        {
+            return Ok(());
+        }
+
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
                     self.input_cursor = 0;
+                    self.clamp_command_selection();
                     self.status = "input cleared; press ctrl-c again to quit".into();
                     self.ctrl_c_streak = 1;
                 } else {
@@ -290,7 +433,146 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
         }
+        self.clamp_command_selection();
         Ok(())
+    }
+
+    async fn handle_picker_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::Picker(_)) {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.select_previous();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.select_next();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.complete_filter();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.pop_filter_char();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.push_filter_char(ch);
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                self.submit_picker_selection(terminal, agent)?;
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                self.composer = ComposerMode::Input;
+                self.status = "ready".into();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    async fn handle_command_palette_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<bool> {
+        if !self.command_palette_visible() {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                let matches = self.command_matches();
+                if !matches.is_empty() {
+                    self.command_selection = if self.command_selection == 0 {
+                        matches.len() - 1
+                    } else {
+                        self.command_selection - 1
+                    };
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                let matches = self.command_matches();
+                if !matches.is_empty() {
+                    self.command_selection = (self.command_selection + 1) % matches.len();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let Some(spec) = self.selected_command() {
+                    let (input, cursor) =
+                        commands::complete_command(&self.input, self.input_cursor, spec);
+                    self.input = input;
+                    self.input_cursor = cursor;
+                    self.command_palette_dismissed = false;
+                    self.clamp_command_selection();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                if let Some(spec) = self.selected_command() {
+                    let (input, cursor) =
+                        commands::complete_command(&self.input, self.input_cursor, spec);
+                    self.input = input;
+                    self.input_cursor = cursor;
+                    self.clamp_command_selection();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                self.submit(terminal, agent).await?;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Esc) => {
+                self.command_palette_dismissed = true;
+                self.command_selection = 0;
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn input_char_len(&self) -> usize {
@@ -309,12 +591,14 @@ impl App {
         let byte_index = self.input_byte_index(self.input_cursor);
         self.input.insert(byte_index, ch);
         self.input_cursor += 1;
+        self.input_changed();
     }
 
     fn insert_input_text(&mut self, text: &str) {
         let byte_index = self.input_byte_index(self.input_cursor);
         self.input.insert_str(byte_index, text);
         self.input_cursor += text.chars().count();
+        self.input_changed();
     }
 
     fn backspace_input(&mut self) {
@@ -325,6 +609,7 @@ impl App {
         let end = self.input_byte_index(self.input_cursor);
         self.input.replace_range(start..end, "");
         self.input_cursor -= 1;
+        self.input_changed();
     }
 
     fn delete_input(&mut self) {
@@ -334,6 +619,7 @@ impl App {
         let start = self.input_byte_index(self.input_cursor);
         let end = self.input_byte_index(self.input_cursor + 1);
         self.input.replace_range(start..end, "");
+        self.input_changed();
     }
 
     fn delete_word_before_cursor(&mut self) {
@@ -342,6 +628,62 @@ impl App {
         let end = self.input_byte_index(self.input_cursor);
         self.input.replace_range(start..end, "");
         self.input_cursor = start_cursor;
+        self.input_changed();
+    }
+
+    fn input_changed(&mut self) {
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+    }
+
+    fn command_matches(&self) -> Vec<&'static CommandSpec> {
+        commands::command_prefix(&self.input)
+            .map(commands::matching_commands)
+            .unwrap_or_default()
+    }
+
+    fn selected_command(&self) -> Option<&'static CommandSpec> {
+        let matches = self.command_matches();
+        matches
+            .get(self.command_selection.min(matches.len().saturating_sub(1)))
+            .copied()
+    }
+
+    fn command_palette_visible(&self) -> bool {
+        !self.command_palette_dismissed
+            && self.cursor_in_command_token()
+            && !self.command_matches().is_empty()
+    }
+
+    fn cursor_in_command_token(&self) -> bool {
+        if !self.input.starts_with('/') {
+            return false;
+        }
+
+        let token_len = self
+            .input
+            .chars()
+            .position(char::is_whitespace)
+            .unwrap_or_else(|| self.input_char_len());
+        self.input_cursor <= token_len
+    }
+
+    fn clamp_command_selection(&mut self) {
+        let prefix = self
+            .cursor_in_command_token()
+            .then(|| commands::command_prefix(&self.input).map(str::to_ascii_lowercase))
+            .flatten();
+        if self.command_prefix != prefix {
+            self.command_prefix = prefix;
+            self.command_selection = 0;
+        }
+
+        let match_count = self.command_matches().len();
+        if match_count == 0 {
+            self.command_selection = 0;
+        } else if self.command_selection >= match_count {
+            self.command_selection = match_count - 1;
+        }
     }
 
     fn ensure_session(&mut self, agent: &mut Agent<OpenAiProvider>) -> anyhow::Result<()> {
@@ -362,14 +704,46 @@ impl App {
         if prompt.is_empty() {
             self.input.clear();
             self.input_cursor = 0;
+            self.clamp_command_selection();
             return Ok(());
+        }
+
+        match commands::parse_command(&self.input) {
+            Ok(Some(invocation)) => {
+                self.input.clear();
+                self.input_cursor = 0;
+                self.clamp_command_selection();
+                self.execute_command(invocation, terminal, agent).await?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(err) => {
+                self.input.clear();
+                self.input_cursor = 0;
+                self.clamp_command_selection();
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "{err}. Type / to choose one of: {}",
+                        commands::COMMANDS
+                            .iter()
+                            .map(|command| command.usage)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                )?;
+                self.status = "unknown command".into();
+                return Ok(());
+            }
         }
 
         self.input.clear();
         self.input_cursor = 0;
+        self.clamp_command_selection();
         self.ensure_session(agent)?;
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
         self.stream_buffer.clear();
+        self.stream_flushed_text.clear();
         self.reasoning_buffer.clear();
         self.status = "running".into();
         self.running = true;
@@ -380,6 +754,7 @@ impl App {
                 if let Some(entry) = self.record_agent_event(event) {
                     self.insert_entry(terminal, &entry)?;
                 }
+                self.flush_stream_overflow(terminal)?;
                 let _ = terminal.draw(|frame| self.draw(frame));
                 if poll_interrupt()? {
                     return Err(crate::model::ModelError::Interrupted);
@@ -390,27 +765,35 @@ impl App {
 
         match result {
             Ok(answer) => {
+                let remaining = self.unflushed_answer_text(&answer).to_string();
                 self.stream_buffer.clear();
                 self.reasoning_buffer.clear();
                 self.running = false;
-                self.insert_entry(terminal, &Entry::Assistant(answer))?;
+                self.insert_assistant_output(
+                    terminal,
+                    &remaining,
+                    self.stream_flushed_text.is_empty(),
+                )?;
+                self.stream_flushed_text.clear();
                 self.status = "ready".into();
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
-                let partial = visible_assistant_stream(&self.stream_buffer)
-                    .trim()
-                    .to_string();
-                if !partial.is_empty() {
-                    self.insert_entry(terminal, &Entry::Assistant(partial))?;
-                }
+                let partial = visible_assistant_stream(&self.stream_buffer).to_string();
                 self.stream_buffer.clear();
                 self.reasoning_buffer.clear();
                 self.running = false;
+                self.insert_assistant_output(
+                    terminal,
+                    partial.trim(),
+                    self.stream_flushed_text.is_empty(),
+                )?;
+                self.stream_flushed_text.clear();
                 self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
                 self.status = "interrupted".into();
             }
             Err(err) => {
                 self.stream_buffer.clear();
+                self.stream_flushed_text.clear();
                 self.reasoning_buffer.clear();
                 self.running = false;
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
@@ -420,10 +803,328 @@ impl App {
         Ok(())
     }
 
+    fn flush_stream_overflow(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<(), crate::model::ModelError> {
+        let visible = visible_assistant_stream(&self.stream_buffer);
+        if visible.is_empty() {
+            return Ok(());
+        }
+
+        let width = terminal.size()?.width as usize;
+        let composer_height =
+            self.composer_lines(width).len() + self.command_suggestion_lines(width).len() + 2;
+        let live_line_budget = (INLINE_VIEWPORT_HEIGHT as usize)
+            .saturating_sub(composer_height)
+            .saturating_sub(2)
+            .max(1);
+        let visual_lines = input_visual_lines(visible, width).len();
+        let overflow = visual_lines.saturating_sub(live_line_budget);
+        if overflow == 0 {
+            return Ok(());
+        }
+
+        let Some(split_at) = byte_index_after_visual_lines(visible, width, overflow) else {
+            return Ok(());
+        };
+        let flushed = self.stream_buffer[..split_at].to_string();
+        self.stream_buffer.replace_range(..split_at, "");
+        self.stream_flushed_text.push_str(&flushed);
+
+        let mut lines = Vec::new();
+        if self.stream_flushed_text == flushed {
+            lines.push(Line::raw(""));
+        }
+        push_wrapped_text(&mut lines, &flushed, width, Style::default(), false);
+        insert_history_lines(terminal, lines)?;
+        Ok(())
+    }
+
+    fn unflushed_answer_text<'a>(&self, answer: &'a str) -> &'a str {
+        answer
+            .strip_prefix(&self.stream_flushed_text)
+            .unwrap_or(answer)
+    }
+
+    fn insert_assistant_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        text: &str,
+        include_leading_blank: bool,
+    ) -> std::io::Result<()> {
+        let width = terminal.size()?.width as usize;
+        let mut lines = Vec::new();
+        if include_leading_blank {
+            lines.push(Line::raw(""));
+        }
+        if !text.is_empty() {
+            push_wrapped_text(&mut lines, text, width, Style::default(), false);
+        }
+        lines.push(Line::raw(""));
+        insert_history_lines(terminal, lines)
+    }
+
+    async fn execute_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<()> {
+        match invocation.id {
+            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Model => {
+                self.execute_model_command(invocation, terminal, agent)
+                    .await
+            }
+            CommandId::Login => self.execute_login_command(terminal),
+            CommandId::Resume => self.execute_resume_command(invocation, terminal),
+            CommandId::Config => self.execute_config_command(terminal),
+        }
+    }
+
+    fn execute_exit_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        self.insert_entry(terminal, &Entry::Notice("exiting rho".into()))?;
+        self.should_quit = true;
+        self.status = "exiting".into();
+        Ok(())
+    }
+
+    async fn execute_model_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<()> {
+        let model = invocation.args.trim();
+        if model.is_empty() {
+            self.open_model_picker(terminal, agent).await?;
+            return Ok(());
+        }
+
+        match catalog::resolve_model_selection(model, &self.info.provider, &self.info.auth) {
+            Ok(selection) => self.select_model(selection, terminal, agent),
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "model switch failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    async fn open_model_picker(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        _agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<()> {
+        self.status = "loading models".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        let models = catalog::available_models(&self.info.auth);
+        let current = format!("{}/{}", self.info.provider, self.info.model);
+        let mut items = models
+            .into_iter()
+            .map(|entry| {
+                let value = format!("{}/{}", entry.provider, entry.model);
+                let description =
+                    if entry.provider == self.info.provider && entry.model == self.info.model {
+                        "current".into()
+                    } else if entry.display_name != entry.model {
+                        entry.display_name
+                    } else {
+                        String::new()
+                    };
+                PickerItem {
+                    description,
+                    value: value.clone(),
+                    label: value,
+                }
+            })
+            .collect::<Vec<_>>();
+        items.sort_by_key(|item| item.value != current);
+
+        if items.is_empty() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(
+                    "model catalog has no available models for the current auth mode".into(),
+                ),
+            )?;
+            self.status = "ready".into();
+            return Ok(());
+        }
+
+        let mut picker = UiPicker::new(
+            "select model",
+            "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
+            items,
+            PickerAction::SelectModel,
+        );
+        if let Some(index) = picker.items.iter().position(|item| item.value == current) {
+            picker.selected = index;
+        }
+        self.composer = ComposerMode::Picker(picker);
+        self.status = "select model".into();
+        Ok(())
+    }
+
+    fn submit_picker_selection(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<()> {
+        let Some((action, value)) = self.active_picker_selection() else {
+            self.composer = ComposerMode::Input;
+            self.status = "ready".into();
+            return Ok(());
+        };
+
+        self.composer = ComposerMode::Input;
+        match action {
+            PickerAction::SelectModel => {
+                match catalog::resolve_model_selection(&value, &self.info.provider, &self.info.auth)
+                {
+                    Ok(selection) => self.select_model(selection, terminal, agent),
+                    Err(err) => {
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "model switch failed".into();
+                        Ok(())
+                    }
+                }
+            }
+        }
+    }
+
+    fn active_picker_selection(&self) -> Option<(PickerAction, String)> {
+        let ComposerMode::Picker(picker) = &self.composer else {
+            return None;
+        };
+        picker
+            .selected_item()
+            .map(|item| (picker.action, item.value.clone()))
+    }
+
+    fn select_model(
+        &mut self,
+        selection: ModelSelection,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent<OpenAiProvider>,
+    ) -> anyhow::Result<()> {
+        let provider = selection.provider;
+        let model = selection.model;
+        let auth = selection.auth;
+        let provider_model = format!("{provider}/{model}");
+        let new_provider = match build_provider(
+            &provider,
+            &model,
+            &auth,
+            reasoning_config_value(&self.info.reasoning_effort),
+            reasoning_config_value(&self.info.reasoning_summary),
+        ) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not switch to {provider_model}: {err}")),
+                )?;
+                self.status = "model switch failed".into();
+                return Ok(());
+            }
+        };
+
+        agent.replace_provider(new_provider);
+        self.info.provider = provider.clone();
+        self.info.model = model.clone();
+        self.info.auth = auth.clone();
+        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.provider = provider.clone();
+            config.model = model.clone();
+            config.auth = auth.clone();
+            config.save(self.info.config_path.clone())
+        }) {
+            Ok(()) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "model switched to {provider_model} and saved to config"
+                    )),
+                )?;
+                self.status = format!("model: {provider_model}");
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "model switched to {provider_model} for this session, but saving config failed: {err}"
+                    )),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_login_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(
+                "login UI is not implemented yet. For api-key auth, set OPENAI_API_KEY. For Codex auth, sign in with Codex and set auth = \"codex\" in the rho config."
+                    .into(),
+            ),
+        )?;
+        self.status = "login help".into();
+        Ok(())
+    }
+
+    fn execute_resume_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let notice = if invocation.args.is_empty() {
+            "interactive resume is not implemented yet. Exit and run rho --resume <session-id> to resume a saved session."
+                .to_string()
+        } else {
+            format!(
+                "interactive resume is not implemented yet. Exit and run rho --resume {} to resume that session.",
+                invocation.args
+            )
+        };
+        self.insert_entry(terminal, &Entry::Notice(notice))?;
+        self.status = "resume help".into();
+        Ok(())
+    }
+
+    fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let path = self
+            .info
+            .config_path
+            .clone()
+            .map(|path| path.display().to_string())
+            .or_else(|| {
+                Config::default_path()
+                    .ok()
+                    .map(|path| path.display().to_string())
+            })
+            .unwrap_or_else(|| "default config path unavailable".into());
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "config: {path}\nprovider: {}\nmodel: {}\nreasoning effort: {}\nreasoning summary: {}\nfull config UI is not implemented yet; edit the config file directly for now.",
+                self.info.provider,
+                self.info.model,
+                self.info.reasoning_effort,
+                self.info.reasoning_summary
+            )),
+        )?;
+        self.status = "config".into();
+        Ok(())
+    }
+
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
         match event {
             AgentEvent::StepStarted(step) => {
                 self.stream_buffer.clear();
+                self.stream_flushed_text.clear();
                 self.reasoning_buffer.clear();
                 self.running = true;
                 self.status = format!("running step {step}");
@@ -455,10 +1156,14 @@ impl App {
         let area = frame.area();
         let width = area.width as usize;
         let lines = self.active_lines(width);
-        let input_line_count = input_visual_lines(&self.input, width).len() as u16;
-        let input_y = (lines.len() as u16)
-            .saturating_sub(input_line_count + 1)
-            .min(area.height.saturating_sub(input_line_count + 1));
+        let composer_line_count = self.composer_lines(width).len() as u16;
+        let command_line_count = self.command_suggestion_lines(width).len() as u16;
+        let lines_below_composer = composer_line_count
+            .saturating_add(1)
+            .saturating_add(command_line_count);
+        let composer_y = (lines.len() as u16)
+            .saturating_sub(lines_below_composer)
+            .min(area.height.saturating_sub(lines_below_composer));
         frame.render_widget(
             Paragraph::new(lines)
                 .style(Style::default())
@@ -466,10 +1171,10 @@ impl App {
             area,
         );
 
-        let cursor = input_cursor_position(&self.input, self.input_cursor, width);
+        let cursor = self.composer_cursor_position(width);
         frame.set_cursor_position(Position {
             x: area.x.saturating_add(cursor.x),
-            y: area.y.saturating_add(input_y).saturating_add(cursor.y),
+            y: area.y.saturating_add(composer_y).saturating_add(cursor.y),
         });
     }
 
@@ -502,16 +1207,81 @@ impl App {
             "─".repeat(width.max(1)),
             Style::default().fg(Color::DarkGray),
         );
-        let input_lines = input_visual_lines(&self.input, width);
+        let composer_lines = self.composer_lines(width);
+        let command_lines = self.command_suggestion_lines(width);
         let mut lines = Vec::new();
-        let composer_height = input_lines.len() + 2;
+        let composer_height = composer_lines.len() + command_lines.len() + 2;
         let available_content = (INLINE_VIEWPORT_HEIGHT as usize).saturating_sub(composer_height);
         let skip = content.len().saturating_sub(available_content);
         lines.extend(content.into_iter().skip(skip));
         lines.push(divider.clone());
-        lines.extend(input_lines.into_iter().map(Line::raw));
+        lines.extend(composer_lines);
         lines.push(divider);
+        lines.extend(command_lines);
         lines
+    }
+
+    fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
+        match &self.composer {
+            ComposerMode::Input => input_visual_lines(&self.input, width)
+                .into_iter()
+                .map(Line::raw)
+                .collect(),
+            ComposerMode::Picker(picker) => picker_lines(picker, width),
+        }
+    }
+
+    fn composer_cursor_position(&self, width: usize) -> Position {
+        match &self.composer {
+            ComposerMode::Input => input_cursor_position(&self.input, self.input_cursor, width),
+            ComposerMode::Picker(picker) => {
+                let matching_indices = picker.matching_indices();
+                let selected_position = matching_indices
+                    .iter()
+                    .position(|index| *index == picker.selected)
+                    .unwrap_or(0);
+                let start = visible_picker_match_start(picker, &matching_indices);
+                Position {
+                    x: 0,
+                    y: selected_position
+                        .saturating_sub(start)
+                        .saturating_add(1)
+                        .min(matching_indices.len()) as u16,
+                }
+            }
+        }
+    }
+
+    fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
+        if !self.command_palette_visible() {
+            return Vec::new();
+        }
+
+        let matches = self.command_matches();
+        let selected_index = self.command_selection.min(matches.len().saturating_sub(1));
+        let start = selected_index
+            .saturating_add(1)
+            .saturating_sub(MAX_COMMAND_SUGGESTIONS);
+
+        matches
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .take(MAX_COMMAND_SUGGESTIONS)
+            .map(|(index, command)| {
+                let selected = index == selected_index;
+                let marker = if selected { ">" } else { " " };
+                let text = format!("{marker} {:<16} {}", command.usage, command.description);
+                let style = if selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                styled_line(text, width.max(1), style, false)
+            })
+            .collect()
     }
 
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
@@ -641,6 +1411,113 @@ fn next_word_boundary(input: &str, cursor: usize) -> usize {
         index += 1;
     }
     index
+}
+
+fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
+    let matching_indices = picker.matching_indices();
+    let mut lines = Vec::with_capacity(matching_indices.len() + 2);
+    let filter = if picker.filter.is_empty() {
+        String::new()
+    } else {
+        format!("  filter: {}", picker.filter)
+    };
+    lines.push(styled_line(
+        format!("{}  {}{}", picker.title, picker.help, filter),
+        width,
+        Style::default().fg(Color::DarkGray),
+        false,
+    ));
+    if matching_indices.is_empty() {
+        lines.push(styled_line(
+            "  no matching models".to_string(),
+            width,
+            Style::default().fg(Color::DarkGray),
+            false,
+        ));
+        return lines;
+    }
+    let start = visible_picker_match_start(picker, &matching_indices);
+    for index in matching_indices
+        .into_iter()
+        .skip(start)
+        .take(MAX_PICKER_ITEMS)
+    {
+        let item = &picker.items[index];
+        let selected = index == picker.selected;
+        let marker = if selected { ">" } else { " " };
+        let text = if item.description.is_empty() {
+            format!("{marker} {}", item.label)
+        } else {
+            format!("{marker} {:<28} {}", item.label, item.description)
+        };
+        let style = if selected {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(styled_line(text, width, style, false));
+    }
+    lines
+}
+
+fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[usize]) -> usize {
+    let selected_position = matching_indices
+        .iter()
+        .position(|index| *index == picker.selected)
+        .unwrap_or(0);
+    selected_position
+        .saturating_add(1)
+        .saturating_sub(MAX_PICKER_ITEMS)
+}
+
+fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return (0..items.len()).collect();
+    }
+
+    let Ok(regex) = RegexBuilder::new(filter).case_insensitive(true).build() else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let haystack = format!("{} {} {}", item.label, item.value, item.description);
+            regex.is_match(&haystack).then_some(index)
+        })
+        .collect()
+}
+
+fn byte_index_after_visual_lines(text: &str, width: usize, target_lines: usize) -> Option<usize> {
+    if target_lines == 0 {
+        return Some(0);
+    }
+
+    let width = width.max(1);
+    let mut completed = 0;
+    let mut column = 0;
+    for (index, ch) in text.char_indices() {
+        let next = index + ch.len_utf8();
+        if ch == '\n' {
+            completed += 1;
+            column = 0;
+        } else {
+            column += 1;
+            if column >= width {
+                completed += 1;
+                column = 0;
+            }
+        }
+
+        if completed >= target_lines {
+            return Some(next);
+        }
+    }
+    None
 }
 
 fn input_cursor_position(input: &str, cursor: usize, width: usize) -> Position {
@@ -904,6 +1781,19 @@ mod tests {
             .collect()
     }
 
+    fn test_app() -> App {
+        App::new(TuiInfo {
+            cwd: PathBuf::from("/tmp/project"),
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            reasoning_effort: "low".into(),
+            reasoning_summary: "auto".into(),
+            auth: "api-key".into(),
+            session_id: None,
+            config_path: None,
+        })
+    }
+
     #[test]
     fn transcript_entries_render_without_prefix_labels() {
         let entries = [
@@ -970,15 +1860,41 @@ mod tests {
     }
 
     #[test]
+    fn read_file_tool_block_shows_line_range_label() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                name: "read_file".into(),
+                command: None,
+                ok: true,
+                content: "src/file.rs:10-24".into(),
+            },
+            40,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("read_file"));
+        assert!(rendered.contains("src/file.rs:10-24"));
+    }
+
+    #[test]
+    fn step_started_clears_flushed_stream_state() {
+        let mut app = test_app();
+        app.stream_buffer = "current".into();
+        app.stream_flushed_text = "previous".into();
+        app.reasoning_buffer = "reasoning".into();
+
+        assert!(app.record_agent_event(AgentEvent::StepStarted(2)).is_none());
+
+        assert!(app.stream_buffer.is_empty());
+        assert!(app.stream_flushed_text.is_empty());
+        assert!(app.reasoning_buffer.is_empty());
+        assert!(app.running);
+        assert_eq!(app.status, "running step 2");
+    }
+
+    #[test]
     fn active_stream_keeps_stable_leading_spacer() {
-        let mut app = App::new(TuiInfo {
-            cwd: PathBuf::from("/tmp/project"),
-            provider: "openai".into(),
-            model: "gpt-5.5".into(),
-            reasoning_effort: "low".into(),
-            reasoning_summary: "auto".into(),
-            session_id: None,
-        });
+        let mut app = test_app();
         app.running = true;
         let before_stream = app.active_lines(40);
         app.stream_buffer = "hello".into();
@@ -987,6 +1903,183 @@ mod tests {
         assert_eq!(line_text(&before_stream[0]), "");
         assert_eq!(line_text(&after_stream[0]), "");
         assert_eq!(line_text(&after_stream[1]), "hello");
+    }
+
+    #[test]
+    fn command_palette_visibility_tracks_leading_command_token() {
+        let mut app = test_app();
+
+        app.input = "/".into();
+        app.input_cursor = 1;
+        app.clamp_command_selection();
+        assert!(app.command_palette_visible());
+
+        app.input = "/mo".into();
+        app.input_cursor = 3;
+        app.clamp_command_selection();
+        assert!(app.command_palette_visible());
+
+        app.input = "/model arg".into();
+        app.input_cursor = app.input_char_len();
+        app.clamp_command_selection();
+        assert!(!app.command_palette_visible());
+
+        app.input = "hello /model".into();
+        app.input_cursor = app.input_char_len();
+        app.clamp_command_selection();
+        assert!(!app.command_palette_visible());
+    }
+
+    #[test]
+    fn command_palette_rendering_shows_selected_match() {
+        let mut app = test_app();
+        app.input = "/m".into();
+        app.input_cursor = 2;
+        app.clamp_command_selection();
+
+        let rendered = app
+            .active_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("> /model [model]"), "{rendered}");
+        assert!(rendered.contains("show or switch model"), "{rendered}");
+    }
+
+    #[test]
+    fn command_palette_renders_under_message_box() {
+        let mut app = test_app();
+        app.input = "/m".into();
+        app.input_cursor = 2;
+        app.clamp_command_selection();
+
+        let lines = app
+            .active_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>();
+        let input_index = lines.iter().position(|line| line == "/m").unwrap();
+        let suggestion_index = lines
+            .iter()
+            .position(|line| line.contains("> /model [model]"))
+            .unwrap();
+
+        assert!(suggestion_index > input_index, "{lines:#?}");
+    }
+
+    #[test]
+    fn picker_renders_in_place_of_message_box() {
+        let mut app = test_app();
+        app.input = "draft prompt".into();
+        app.input_cursor = app.input_char_len();
+        app.composer = ComposerMode::Picker(UiPicker::new(
+            "select model",
+            "enter confirm",
+            vec![
+                PickerItem {
+                    label: "model-a".into(),
+                    description: "current".into(),
+                    value: "model-a".into(),
+                },
+                PickerItem {
+                    label: "model-b".into(),
+                    description: String::new(),
+                    value: "model-b".into(),
+                },
+            ],
+            PickerAction::SelectModel,
+        ));
+
+        let rendered = app
+            .active_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("select model  enter confirm"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("> model-a"), "{rendered}");
+        assert!(!rendered.contains("draft prompt"), "{rendered}");
+    }
+
+    #[test]
+    fn picker_filters_by_regex_and_autocompletes() {
+        let mut picker = UiPicker::new(
+            "select model",
+            "enter confirm",
+            vec![
+                PickerItem {
+                    label: "openai/gpt-5.5".into(),
+                    description: String::new(),
+                    value: "openai/gpt-5.5".into(),
+                },
+                PickerItem {
+                    label: "openai-codex/gpt-5.4-mini".into(),
+                    description: String::new(),
+                    value: "openai-codex/gpt-5.4-mini".into(),
+                },
+            ],
+            PickerAction::SelectModel,
+        );
+
+        for ch in "codex.*mini".chars() {
+            picker.push_filter_char(ch);
+        }
+
+        assert_eq!(picker.matching_indices(), vec![1]);
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            "openai-codex/gpt-5.4-mini"
+        );
+        picker.complete_filter();
+        assert_eq!(picker.filter, regex::escape("openai-codex/gpt-5.4-mini"));
+    }
+
+    #[test]
+    fn picker_selection_wraps() {
+        let mut picker = UiPicker::new(
+            "select model",
+            "enter confirm",
+            vec![
+                PickerItem {
+                    label: "model-a".into(),
+                    description: String::new(),
+                    value: "model-a".into(),
+                },
+                PickerItem {
+                    label: "model-b".into(),
+                    description: String::new(),
+                    value: "model-b".into(),
+                },
+            ],
+            PickerAction::SelectModel,
+        );
+
+        picker.select_previous();
+        assert_eq!(picker.selected_item().unwrap().value, "model-b");
+        picker.select_next();
+        assert_eq!(picker.selected_item().unwrap().value, "model-a");
+    }
+
+    #[test]
+    fn command_selection_clamps_to_available_matches() {
+        let mut app = test_app();
+        app.input = "/".into();
+        app.input_cursor = 1;
+        app.clamp_command_selection();
+        app.command_selection = 99;
+        app.clamp_command_selection();
+        assert_eq!(app.command_selection, commands::COMMANDS.len() - 1);
+
+        app.input = "/mo".into();
+        app.input_cursor = 3;
+        app.clamp_command_selection();
+        assert_eq!(app.command_selection, 0);
     }
 
     #[test]

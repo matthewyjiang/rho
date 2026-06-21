@@ -58,6 +58,24 @@ Completed conversation output remains in your normal terminal scrollback, so you
 
 Press `esc` to interrupt a response that is still running. This stops the current turn without closing Rho.
 
+## Commands
+
+Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Slash commands run locally instead of being sent to the AI.
+
+Initial commands:
+
+| Command | Action |
+| --- | --- |
+| `/login` | Show authentication help. A full login flow is not implemented yet. |
+| `/model [provider/model]` | Open Rho's static cross-provider model catalog, or switch directly to a provider/model and save it to config. |
+| `/resume [id]` | Show resume help. Interactive session switching/listing is not implemented yet. |
+| `/config` | Show the config path and current key settings. A full config UI is not implemented yet. |
+| `/exit` | Quit the TUI. |
+
+A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. Some commands can replace the message box with a picker; use `up`/`down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and `esc` to cancel.
+
+The model picker is populated from Rho's built-in static catalog for all implemented providers. `openai` uses API-key auth models, while `openai-codex` uses Codex auth models. Use `/model provider/model` to switch explicitly, for example `/model openai/gpt-5.5` or `/model openai-codex/gpt-5.5`. A bare model id works when it uniquely matches the catalog; uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
+
 ## Reset or quit
 
 - Press `ctrl-r` to reset the conversation history.
@@ -70,7 +88,11 @@ Most editing keys work the way they do in a normal terminal input. The controls 
 
 | Key | Action |
 | --- | --- |
-| `esc` | Interrupt the current response |
+| `esc` | Interrupt the current response, or hide the command palette when it is open |
+| `/` at start | Open the command palette |
+| `up` / `down` | Select a command while the palette is open |
+| `tab` | Complete the selected command while the palette is open |
+| `enter` | Send a prompt, or run a selected slash command |
 | `ctrl-r` | Reset conversation history |
 | `ctrl-c` | Clear input, then quit if pressed again |
 

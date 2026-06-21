@@ -2,9 +2,7 @@
 
 ## Conventional commits
 
-Use Conventional Commits for all commit messages and PR titles.
-
-Format:
+Use Conventional Commits for commit messages and PR titles:
 
 ```text
 <type>(<scope>): <description>
@@ -14,6 +12,7 @@ Format:
 - `scope` is optional, but preferred when it makes the affected area clear.
 - `description` must be concise, imperative, and lowercase unless it contains a proper noun.
 - Do not end the description with a period.
+- For breaking changes, add `!` after the type or scope and include a `BREAKING CHANGE:` footer.
 
 Examples:
 
@@ -22,35 +21,35 @@ feat(auth): add token refresh
 fix(api): handle empty responses
 docs: update setup instructions
 chore: bump dependencies
-```
-
-## Commits
-
-- Write every commit message using Conventional Commits.
-- Keep commits focused on one logical change.
-- Use a body when the change needs context, migration notes, or tradeoffs.
-- For breaking changes, add `!` after the type or scope and include a `BREAKING CHANGE:` footer.
-
-Example breaking change:
-
-```text
 feat(config)!: require explicit config path
 
 BREAKING CHANGE: the default config discovery behavior was removed.
 ```
 
+## Rust code conventions
+
+- Prefer small, cohesive modules with explicit public API. Keep modules private by default and export only the crate surface that callers actually need.
+- Avoid growing already-large files. Add a focused module when new behavior is separable, and keep tests/docs for invariants close to the implementation.
+- Keep API call sites self-documenting. Avoid boolean or ambiguous `Option` parameters such as `foo(false)` or `bar(None)`; prefer enums, named methods, builders, or newtypes when practical.
+- When a positional literal is unavoidable, add an exact parameter-name comment before opaque literals such as booleans, `None`, and numeric values, for example `set_mode(/*enabled*/ false)`.
+- Prefer exhaustive `match` statements over wildcard arms when matching known enums, so future variants force an intentional update.
+- Newly added traits should have doc comments explaining their role and expectations for implementors.
+- For async traits, avoid `#[async_trait]` and `#[allow(async_fn_in_trait)]`. Prefer returning an explicit future with a `Send` bound, for example `fn run(&self) -> impl std::future::Future<Output = Result<()>> + Send;`.
+- Do not create small helper methods that are only used once unless they materially improve readability or isolate a clear invariant.
+- Follow common Clippy/rustfmt style: collapse nested `if` statements when possible, inline `format!` arguments (`format!("hello {name}")`), and prefer method references over redundant closures.
+- After Rust code changes, run `cargo fmt`. Run the narrowest relevant tests for the changed crate or module before finalizing when practical.
+
+## Rust tests
+
+- Prefer integration or behavior-level tests for user-visible logic. Use unit tests for focused pure logic.
+- When adding a new test module, prefer a sibling `*_tests.rs` file with an explicit `#[path = "..."] mod tests;` instead of growing implementation files.
+- Prefer `pretty_assertions::assert_eq` in tests when available, and compare whole objects rather than asserting field-by-field.
+- Do not add tests for statically defined constants or negative tests for behavior that has been removed.
+- Avoid mutating process environment in tests; pass environment-derived values or dependencies explicitly where possible.
+
 ## Pull requests
 
-- Use a Conventional Commit style PR title, because it may become the squash commit title.
-- Prefer the most user-visible type for the PR title, usually `feat`, `fix`, `docs`, or `refactor`.
+- Prefer the most user-visible Conventional Commit type for the PR title, usually `feat`, `fix`, `docs`, or `refactor`.
 - Include a clear summary of what changed and why.
 - List tests or validation performed.
 - Call out breaking changes with a `BREAKING CHANGE:` section.
-
-PR title examples:
-
-```text
-feat(cli): add init command
-fix(parser): preserve escaped whitespace
-refactor(storage): simplify cache writes
-```
