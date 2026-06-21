@@ -35,7 +35,7 @@ Or use Codex OAuth from an existing Codex CLI login:
 
 ```bash
 codex login
-rho --auth codex --model gpt-5-codex
+rho --auth codex --model gpt-5.5
 ```
 
 Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses `https://chatgpt.com/backend-api/codex/responses`.
