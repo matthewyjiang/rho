@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-v0.3.0...rho-agent-v0.4.0) (2026-06-21)
+
+
+### Features
+
+* **model:** add static model catalog ([#10](https://github.com/matthewyjiang/rho/issues/10)) ([2f568a7](https://github.com/matthewyjiang/rho/commit/2f568a7518e1fecfa50693e2d1adb4d9386f8e89))
+
 ## [0.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-v0.2.0...rho-agent-v0.3.0) (2026-06-21)
 
 
