@@ -173,9 +173,10 @@ impl App {
                 }
             }
         }
+        let width = terminal.size()?.width as usize;
         Ok(TuiResult {
             resume_session_id: self.info.session_id.clone(),
-            transcript: render_plain_transcript(&self.info, &self.transcript),
+            transcript: render_scrollback_transcript(&self.info, &self.transcript, width),
         })
     }
 
@@ -605,57 +606,24 @@ fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
     ]
 }
 
-fn render_plain_transcript(info: &TuiInfo, entries: &[Entry]) -> String {
+fn render_scrollback_transcript(info: &TuiInfo, entries: &[Entry], width: usize) -> String {
     if entries.is_empty() {
         return String::new();
     }
-    let mut out = String::new();
-    out.push_str(&format!("rho v{}\n", env!("CARGO_PKG_VERSION")));
-    out.push_str(&format!(
-        "provider: {}  •  model: {}\n",
-        info.provider, info.model
-    ));
-    out.push_str(&format!("cwd: {}\n\n", compact_cwd(&info.cwd)));
+    let mut lines = session_header_lines(info, width);
     for entry in entries {
-        match entry {
-            Entry::User(text) => {
-                out.push_str("> ");
-                out.push_str(text);
-                out.push_str("\n\n");
-            }
-            Entry::Assistant(text) => {
-                out.push_str(text);
-                out.push_str("\n\n");
-            }
-            Entry::Tool {
-                name,
-                command,
-                ok,
-                content,
-            } => {
-                out.push_str(if *ok { "tool: " } else { "tool failed: " });
-                out.push_str(name);
-                if let Some(command) = command {
-                    out.push_str(" $");
-                    out.push_str(command);
-                }
-                if !content.is_empty() {
-                    out.push('\n');
-                    out.push_str(content);
-                }
-                out.push_str("\n\n");
-            }
-            Entry::Notice(text) => {
-                out.push_str("notice: ");
-                out.push_str(text);
-                out.push_str("\n\n");
-            }
-            Entry::Error(text) => {
-                out.push_str("error: ");
-                out.push_str(text);
-                out.push_str("\n\n");
-            }
+        lines.extend(entry_lines(entry, width));
+    }
+    lines_to_plain_text(lines)
+}
+
+fn lines_to_plain_text(lines: Vec<Line<'static>>) -> String {
+    let mut out = String::new();
+    for line in lines {
+        for span in line.spans {
+            out.push_str(&span.content);
         }
+        out.push('\n');
     }
     out
 }
