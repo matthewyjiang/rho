@@ -23,6 +23,7 @@ use ratatui::{
 use crate::{
     agent::{Agent, AgentEvent},
     model::OpenAiProvider,
+    session::Session,
 };
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 18;
@@ -36,6 +37,8 @@ pub struct TuiInfo {
     pub model: String,
     pub reasoning_effort: String,
     pub reasoning_summary: String,
+    pub session_path: Option<PathBuf>,
+    pub session_id: Option<String>,
 }
 
 pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<()> {
@@ -164,6 +167,9 @@ impl App {
                 }
             }
         }
+        if self.info.session_id.is_some() {
+            self.insert_exit_notice(terminal)?;
+        }
         Ok(())
     }
 
@@ -189,7 +195,13 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 agent.reset();
-                self.insert_entry(terminal, &Entry::Notice("conversation reset".into()))?;
+                self.info.session_id = None;
+                self.info.session_path = None;
+                agent.clear_session();
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice("conversation reset; next message starts a new session".into()),
+                )?;
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -330,6 +342,16 @@ impl App {
         self.input_cursor = start_cursor;
     }
 
+    fn ensure_session(&mut self, agent: &mut Agent<OpenAiProvider>) -> anyhow::Result<()> {
+        if self.info.session_id.is_none() {
+            let session = Session::create(&self.info.cwd)?;
+            self.info.session_id = Some(session.id().to_string());
+            self.info.session_path = Some(session.path().to_path_buf());
+            agent.set_session(session);
+        }
+        Ok(())
+    }
+
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -344,6 +366,7 @@ impl App {
 
         self.input.clear();
         self.input_cursor = 0;
+        self.ensure_session(agent)?;
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
         self.stream_buffer.clear();
         self.reasoning_buffer.clear();
@@ -494,6 +517,35 @@ impl App {
         let width = terminal.size()?.width as usize;
         let lines = session_header_lines(&self.info, width);
         let height = lines.len().max(1) as u16;
+        terminal.insert_before(height, |buf| {
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .render(buf.area, buf);
+        })?;
+        Ok(())
+    }
+
+    fn insert_exit_notice(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let width = terminal.size()?.width as usize;
+        let lines = vec![
+            Line::raw(""),
+            Line::styled(
+                "Resume this session:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(format!(
+                "  rho --resume {}",
+                self.info.session_id.as_deref().unwrap_or_default()
+            )),
+            Line::styled(
+                "─".repeat(width.max(1)),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::raw(""),
+        ];
+        let height = lines.len() as u16;
         terminal.insert_before(height, |buf| {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })

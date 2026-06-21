@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod model;
 mod prompt;
+mod session;
 mod tool;
 mod tools;
 mod transcript;
@@ -16,6 +17,7 @@ use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
 use model::{AuthMode, OpenAiProvider};
+use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
 
@@ -57,6 +59,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Run { prompt, stdin }) => Some(automation_prompt(prompt.clone(), *stdin)?),
         None => None,
     };
+    if cli.resume.is_some() && run_prompt.is_some() {
+        anyhow::bail!("--resume is only supported for interactive sessions");
+    }
 
     let auth_mode = match cfg.auth.as_str() {
         "codex" => AuthMode::Codex,
@@ -82,6 +87,16 @@ async fn main() -> anyhow::Result<()> {
             println!("{answer}");
         }
         None => {
+            let (session_id, session_path) = if let Some(id) = &cli.resume {
+                let (session, history) = Session::open_by_id(&cwd, id)?;
+                let session_id = Some(session.id().to_string());
+                let session_path = Some(session.path().to_path_buf());
+                agent = agent.with_history(history);
+                agent.set_session(session);
+                (session_id, session_path)
+            } else {
+                (None, None)
+            };
             tui::run(
                 &mut agent,
                 TuiInfo {
@@ -90,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
                     model: cfg.model,
                     reasoning_effort: cfg.reasoning_effort,
                     reasoning_summary: cfg.reasoning_summary,
+                    session_path,
+                    session_id,
                 },
             )
             .await?;

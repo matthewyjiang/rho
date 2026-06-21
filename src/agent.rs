@@ -4,6 +4,7 @@ use crate::model::{
     ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
+use crate::session::Session;
 use crate::tool::{ToolContext, ToolError, ToolRegistry};
 
 #[derive(Debug, Error)]
@@ -14,6 +15,8 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
+    #[error("Session error: {0}")]
+    Session(#[from] anyhow::Error),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +37,7 @@ pub struct Agent<P: ModelProvider> {
     tools: ToolRegistry,
     ctx: ToolContext,
     messages: Vec<Message>,
+    session: Option<Session>,
 }
 
 impl<P: ModelProvider> Agent<P> {
@@ -44,7 +48,21 @@ impl<P: ModelProvider> Agent<P> {
             tools,
             ctx,
             messages,
+            session: None,
         }
+    }
+
+    pub fn with_history(mut self, history: Vec<Message>) -> Self {
+        self.messages.extend(history);
+        self
+    }
+
+    pub fn set_session(&mut self, session: Session) {
+        self.session = Some(session);
+    }
+
+    pub fn clear_session(&mut self) {
+        self.session = None;
     }
 
     pub fn reset(&mut self) {
@@ -55,13 +73,21 @@ impl<P: ModelProvider> Agent<P> {
         self.run_with_events(user_prompt, |_| Ok(())).await
     }
 
+    fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
+        if let Some(session) = &self.session {
+            session.append_message(&message)?;
+        }
+        self.messages.push(message);
+        Ok(())
+    }
+
     pub async fn run_with_events(
         &mut self,
         user_prompt: String,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
-        self.messages.push(Message::user_text(user_prompt));
+        self.push_message(Message::user_text(user_prompt))?;
 
         let mut step = 1usize;
         loop {
@@ -85,9 +111,9 @@ impl<P: ModelProvider> Agent<P> {
                 Ok(response) => response,
                 Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
                 Err(err) => {
-                    self.messages.push(Message::user_text(format!(
+                    self.push_message(Message::user_text(format!(
                         "The previous assistant response could not be processed by the client. Error: {err}\n\nPlease continue from the last request. If you attempted a tool call, emit valid tool-call JSON that exactly matches the required schema."
-                    )));
+                    )))?;
                     step += 1;
                     continue;
                 }
@@ -110,11 +136,11 @@ impl<P: ModelProvider> Agent<P> {
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        self.messages.push(Message::assistant_text(answer.clone()));
+                        self.push_message(Message::assistant_text(answer.clone()))?;
                         return Ok(answer);
                     }
 
-                    self.messages.push(Message::Assistant(blocks));
+                    self.push_message(Message::Assistant(blocks))?;
                     for call in tool_calls {
                         let Some(tool) = self.tools.get(&call.name) else {
                             return Err(AgentError::UnknownTool(call.name));
@@ -129,7 +155,7 @@ impl<P: ModelProvider> Agent<P> {
                             ok: result.ok,
                             content: event_content.unwrap_or_else(|| result.content.clone()),
                         })?;
-                        self.messages.push(Message::ToolResult(result));
+                        self.push_message(Message::ToolResult(result))?;
                     }
                 }
             }
