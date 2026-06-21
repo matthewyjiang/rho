@@ -1,0 +1,9 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "package-name": "rho-agent",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
