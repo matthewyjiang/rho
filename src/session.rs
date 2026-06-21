@@ -177,8 +177,7 @@ mod tests {
 
     #[test]
     fn persists_and_loads_messages() {
-        let cwd = std::env::temp_dir().join(format!("rho-session-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&cwd).unwrap();
+        let cwd = temp_cwd();
         let session = Session::create(&cwd).unwrap();
         session
             .append_message(&Message::user_text("hello"))
@@ -191,5 +190,75 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert!(matches!(&messages[0], Message::User(_)));
         assert!(matches!(&messages[1], Message::Assistant(_)));
+    }
+
+    #[test]
+    fn opens_session_by_uuid_prefix() {
+        let cwd = temp_cwd();
+        let session = Session::create(&cwd).unwrap();
+        session
+            .append_message(&Message::user_text("prefix match"))
+            .unwrap();
+
+        let prefix = &session.id()[..8];
+        let (opened, messages) = Session::open_by_id(&cwd, prefix).unwrap();
+
+        assert_eq!(opened.id(), session.id());
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn errors_when_uuid_prefix_is_ambiguous() {
+        let cwd = temp_cwd();
+        write_minimal_session_file(&cwd, "aaaaaaaa-1111-4111-8111-111111111111");
+        write_minimal_session_file(&cwd, "aaaaaaaa-2222-4222-8222-222222222222");
+
+        let err = Session::open_by_id(&cwd, "aaaaaaaa").unwrap_err();
+
+        assert!(err.to_string().contains("multiple sessions match"));
+    }
+
+    #[test]
+    fn errors_when_uuid_prefix_is_missing() {
+        let cwd = temp_cwd();
+
+        let err = Session::open_by_id(&cwd, "missing").unwrap_err();
+
+        assert!(err.to_string().contains("no session found"));
+    }
+
+    #[test]
+    fn stores_sessions_under_home_rho_sessions_encoded_cwd() {
+        let cwd = temp_cwd();
+        let session = Session::create(&cwd).unwrap();
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap();
+        let expected_parent = home.join(".rho").join("sessions").join(encode_cwd(&cwd));
+
+        assert_eq!(session.path().parent(), Some(expected_parent.as_path()));
+    }
+
+    fn temp_cwd() -> PathBuf {
+        let cwd = std::env::temp_dir().join(format!("rho-session-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&cwd).unwrap();
+        cwd
+    }
+
+    fn write_minimal_session_file(cwd: &Path, id: &str) {
+        let dir = session_dir(cwd).unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("test_{id}.jsonl"));
+        fs::write(
+            path,
+            serde_json::json!({
+                "type": "session",
+                "version": SESSION_VERSION,
+                "id": id,
+                "timestamp": "0",
+                "cwd": cwd,
+            })
+            .to_string()
+                + "\n",
+        )
+        .unwrap();
     }
 }
