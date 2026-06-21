@@ -84,10 +84,11 @@ fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCa
         .collect()
 }
 
-fn available_models_from(catalog: &[ModelCatalogEntry], _auth: &str) -> Vec<ModelCatalogEntry> {
+fn available_models_from(catalog: &[ModelCatalogEntry], auth: &str) -> Vec<ModelCatalogEntry> {
     let mut models = catalog
         .iter()
         .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
+        .filter(|entry| entry.auth_modes.iter().any(|mode| mode == auth))
         .cloned()
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
@@ -225,9 +226,7 @@ mod tests {
     fn available_models_filters_to_implemented_providers() {
         let models = available_models("codex");
 
-        assert!(models
-            .iter()
-            .any(|entry| entry.provider == "openai" && entry.model == "gpt-5.5"));
+        assert!(models.iter().all(|entry| entry.provider == "openai-codex"));
         assert!(models
             .iter()
             .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.5"));
@@ -267,7 +266,7 @@ mod tests {
     #[test]
     fn resolves_bare_unique_codex_model() {
         let selection =
-            resolve_model_selection("gpt-5.3-codex-spark", "openai", "api-key").unwrap();
+            resolve_model_selection("gpt-5.3-codex-spark", "openai-codex", "codex").unwrap();
 
         assert_eq!(selection.provider, "openai-codex");
         assert_eq!(selection.model, "gpt-5.3-codex-spark");
