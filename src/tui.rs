@@ -34,7 +34,7 @@ use crate::{
     model::{
         build_provider,
         catalog::{self, ModelSelection},
-        reasoning_config_value, OpenAiProvider,
+        reasoning_config_value,
     },
     session::Session,
 };
@@ -60,7 +60,7 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
 }
 
-pub async fn run(agent: &mut Agent<OpenAiProvider>, info: TuiInfo) -> anyhow::Result<TuiResult> {
+pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
@@ -285,7 +285,7 @@ impl App {
     async fn run(
         mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<TuiResult> {
         self.insert_session_intro(terminal)?;
         while !self.should_quit {
@@ -316,7 +316,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if self.handle_picker_key(key, terminal, agent).await? {
             return Ok(());
@@ -446,7 +446,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Picker(_)) {
             return Ok(false);
@@ -514,7 +514,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         if !self.command_palette_visible() {
             return Ok(false);
@@ -691,7 +691,7 @@ impl App {
         }
     }
 
-    fn ensure_session(&mut self, agent: &mut Agent<OpenAiProvider>) -> anyhow::Result<()> {
+    fn ensure_session(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
             let session = Session::create(&self.info.cwd)?;
             self.info.session_id = Some(session.id().to_string());
@@ -703,7 +703,7 @@ impl App {
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let prompt = self.input.trim().to_string();
         if prompt.is_empty() {
@@ -880,7 +880,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(terminal),
@@ -905,7 +905,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let model = invocation.args.trim();
         if model.is_empty() {
@@ -926,7 +926,7 @@ impl App {
     async fn open_model_picker(
         &mut self,
         terminal: &mut DefaultTerminal,
-        _agent: &mut Agent<OpenAiProvider>,
+        _agent: &mut Agent,
     ) -> anyhow::Result<()> {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
@@ -981,7 +981,7 @@ impl App {
     fn submit_picker_selection(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.composer = ComposerMode::Input;
@@ -1018,7 +1018,7 @@ impl App {
         &mut self,
         selection: ModelSelection,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent<OpenAiProvider>,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;

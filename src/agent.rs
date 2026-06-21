@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::model::{
-    ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
+    ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{ToolContext, ToolError, ToolRegistry, ToolResult};
@@ -33,16 +33,16 @@ pub enum AgentEvent {
 
 type MessageSink = Box<dyn FnMut(&Message) -> anyhow::Result<()> + Send>;
 
-pub struct Agent<P: ModelProvider> {
-    provider: P,
+pub struct Agent {
+    provider: DynModelProvider,
     tools: ToolRegistry,
     ctx: ToolContext,
     messages: Vec<Message>,
     message_sink: Option<MessageSink>,
 }
 
-impl<P: ModelProvider> Agent<P> {
-    pub fn new(provider: P, tools: ToolRegistry, ctx: ToolContext) -> Self {
+impl Agent {
+    pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
         let messages = initial_messages(&tools);
         Self {
             provider,
@@ -69,7 +69,7 @@ impl<P: ModelProvider> Agent<P> {
         self.message_sink = None;
     }
 
-    pub fn replace_provider(&mut self, provider: P) {
+    pub fn replace_provider(&mut self, provider: DynModelProvider) {
         self.provider = provider;
     }
 
@@ -291,7 +291,7 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use crate::model::{ModelRequest, ModelResponse};
+    use crate::model::{ModelProvider, ModelRequest, ModelResponse};
     use crate::tool::{Tool, ToolCall, ToolSpec};
 
     #[derive(Clone, Default)]
@@ -311,16 +311,13 @@ mod tests {
         }
     }
 
-    fn test_agent(provider: RecordingProvider) -> Agent<RecordingProvider> {
+    fn test_agent(provider: RecordingProvider) -> Agent {
         test_agent_with_tools(provider, ToolRegistry::new())
     }
 
-    fn test_agent_with_tools(
-        provider: RecordingProvider,
-        tools: ToolRegistry,
-    ) -> Agent<RecordingProvider> {
+    fn test_agent_with_tools(provider: RecordingProvider, tools: ToolRegistry) -> Agent {
         Agent::new(
-            provider,
+            Box::new(provider),
             tools,
             ToolContext {
                 cwd: std::env::current_dir().unwrap(),

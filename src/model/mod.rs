@@ -97,6 +97,8 @@ pub trait ModelProvider: Send + Sync {
     }
 }
 
+pub type DynModelProvider = Box<dyn ModelProvider>;
+
 #[derive(Clone, Debug)]
 pub enum AuthMode {
     ApiKey,
