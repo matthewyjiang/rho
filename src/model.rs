@@ -41,6 +41,11 @@ pub enum ModelError {
     MissingCodexAuth,
     #[error("request failed: {0}")]
     Request(#[from] reqwest::Error),
+    #[error("request failed: HTTP {status}: {body}")]
+    HttpStatus {
+        status: reqwest::StatusCode,
+        body: String,
+    },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("provider returned invalid response: {0}")]
@@ -69,7 +74,9 @@ enum Auth {
     ApiKey(String),
     Codex {
         access_token: String,
+        refresh_token: Option<String>,
         account_id: Option<String>,
+        auth_path: Option<PathBuf>,
     },
 }
 
@@ -145,10 +152,18 @@ impl ModelProvider for OpenAiProvider {
             Auth::ApiKey(key) => self.send_chat_completions(messages, key).await?,
             Auth::Codex {
                 access_token,
+                refresh_token,
                 account_id,
+                auth_path,
             } => {
-                self.send_codex_responses(messages, access_token, account_id.as_deref())
-                    .await?
+                self.send_codex_responses(
+                    messages,
+                    access_token,
+                    refresh_token.as_deref(),
+                    account_id.as_deref(),
+                    auth_path.as_deref(),
+                )
+                .await?
             }
         };
 
@@ -194,25 +209,62 @@ impl OpenAiProvider {
         &self,
         messages: Vec<Message>,
         token: &str,
+        refresh_token: Option<&str>,
         account_id: Option<&str>,
+        auth_path: Option<&std::path::Path>,
     ) -> Result<String, ModelError> {
-        let input: Vec<_> = messages.into_iter().map(|m| json!({
-            "role": match m.role { Role::System => "system", Role::User => "user", Role::Assistant => "assistant", Role::Tool => "user" },
-            "content": match m.role { Role::Tool => format!("Tool result:\n{}", m.content), _ => m.content },
-        })).collect();
+        let mut instructions = String::new();
+        let input: Vec<_> = messages
+            .into_iter()
+            .filter_map(|m| {
+                if matches!(m.role, Role::System) {
+                    instructions = m.content;
+                    return None;
+                }
+                Some(json!({
+                    "role": match m.role { Role::System => "system", Role::User => "user", Role::Assistant => "assistant", Role::Tool => "user" },
+                    "content": match m.role { Role::Tool => format!("Tool result:\n{}", m.content), _ => m.content },
+                }))
+            })
+            .collect();
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
-        let mut req = self
-            .client
-            .post(url)
-            .bearer_auth(token)
-            .header("User-Agent", "codex-cli")
-            .header("originator", "codex_cli_rs")
-            .json(&json!({ "model": self.model, "input": input, "store": false }));
+        let make_request = |token: &str| {
+            self.client
+                .post(&url)
+                .bearer_auth(token)
+                .header("User-Agent", "codex-cli")
+                .header("originator", "codex_cli_rs")
+                .json(&json!({ "model": self.model, "instructions": instructions, "input": input, "store": false, "stream": true }))
+        };
+        let mut req = make_request(token);
         if let Some(account_id) = account_id {
             req = req.header("ChatGPT-Account-ID", account_id);
         }
-        let response: ResponsesResponse = req.send().await?.error_for_status()?.json().await?;
-        extract_response_text(response)
+        let response = req.send().await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(refresh_token) = refresh_token {
+                let refreshed = refresh_codex_token(&self.client, refresh_token, auth_path).await?;
+                let mut req = make_request(&refreshed.access_token);
+                if let Some(account_id) = refreshed.account_id.as_deref().or(account_id) {
+                    req = req.header("ChatGPT-Account-ID", account_id);
+                }
+                let response = req.send().await?;
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    return Err(ModelError::HttpStatus { status, body });
+                }
+                let body = response.text().await?;
+                return extract_sse_text(&body);
+            }
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ModelError::HttpStatus { status, body });
+        }
+        let body = response.text().await?;
+        extract_sse_text(&body)
     }
 }
 
@@ -251,6 +303,45 @@ fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelErr
     }
 }
 
+fn extract_sse_text(body: &str) -> Result<String, ModelError> {
+    let mut text = String::new();
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+            continue;
+        };
+        match value.get("type").and_then(|v| v.as_str()) {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
+                    text.push_str(delta);
+                }
+            }
+            Some("response.completed") => {
+                if text.is_empty() {
+                    if let Ok(response) =
+                        serde_json::from_value::<ResponsesResponse>(value["response"].clone())
+                    {
+                        return extract_response_text(response);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if text.is_empty() {
+        Err(ModelError::InvalidResponse(format!(
+            "missing response text in SSE: {body}"
+        )))
+    } else {
+        Ok(text)
+    }
+}
+
 #[derive(Deserialize)]
 struct CodexAuthFile {
     tokens: Option<CodexTokens>,
@@ -258,7 +349,15 @@ struct CodexAuthFile {
 #[derive(Deserialize)]
 struct CodexTokens {
     access_token: String,
+    refresh_token: Option<String>,
     account_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RefreshResponse {
+    id_token: Option<String>,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
 }
 
 fn load_codex_auth() -> Result<Auth, ModelError> {
@@ -266,20 +365,78 @@ fn load_codex_auth() -> Result<Auth, ModelError> {
         let account_id = std::env::var("CODEX_ACCOUNT_ID").ok();
         return Ok(Auth::Codex {
             access_token,
+            refresh_token: None,
             account_id,
+            auth_path: None,
         });
     }
     let home = std::env::var("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".codex")))
         .map_err(|_| ModelError::MissingCodexAuth)?;
-    let text = std::fs::read_to_string(home.join("auth.json"))
-        .map_err(|_| ModelError::MissingCodexAuth)?;
+    let auth_path = home.join("auth.json");
+    let text = std::fs::read_to_string(&auth_path).map_err(|_| ModelError::MissingCodexAuth)?;
     let file: CodexAuthFile = serde_json::from_str(&text)
         .map_err(|e| ModelError::InvalidResponse(format!("invalid Codex auth.json: {e}")))?;
     let tokens = file.tokens.ok_or(ModelError::MissingCodexAuth)?;
     Ok(Auth::Codex {
         access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
         account_id: tokens.account_id,
+        auth_path: Some(auth_path),
+    })
+}
+
+async fn refresh_codex_token(
+    client: &reqwest::Client,
+    refresh_token: &str,
+    auth_path: Option<&std::path::Path>,
+) -> Result<CodexTokens, ModelError> {
+    let response: RefreshResponse = client
+        .post("https://auth.openai.com/oauth/token")
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let access_token = response.access_token.ok_or_else(|| {
+        ModelError::InvalidResponse("refresh response missing access_token".into())
+    })?;
+    let new_refresh_token = response
+        .refresh_token
+        .unwrap_or_else(|| refresh_token.to_string());
+    let mut account_id = None;
+
+    if let Some(path) = auth_path {
+        let text = std::fs::read_to_string(path)?;
+        let mut value: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| ModelError::InvalidResponse(format!("invalid Codex auth.json: {e}")))?;
+        if let Some(tokens) = value.get_mut("tokens") {
+            if let Some(obj) = tokens.as_object_mut() {
+                obj.insert("access_token".into(), json!(access_token));
+                obj.insert("refresh_token".into(), json!(new_refresh_token));
+                if let Some(id_token) = response.id_token {
+                    obj.insert("id_token".into(), json!(id_token));
+                }
+                account_id = obj
+                    .get("account_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&value).unwrap())?;
+    }
+
+    Ok(CodexTokens {
+        access_token,
+        refresh_token: Some(new_refresh_token),
+        account_id,
     })
 }
