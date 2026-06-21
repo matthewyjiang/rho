@@ -1,21 +1,16 @@
 use std::{
-    fmt,
-    io::{self, Write},
+    io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use crossterm::{
-    cursor::{MoveTo, RestorePosition, SavePosition},
     event::{
         self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
         KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
-    execute, queue,
-    style::Print,
-    terminal::{Clear, ClearType},
-    Command,
+    execute,
 };
 use ratatui::{
     layout::Position,
@@ -543,68 +538,18 @@ impl App {
 fn insert_history_lines(
     terminal: &mut DefaultTerminal,
     lines: Vec<Line<'static>>,
-) -> io::Result<()> {
-    // Codex writes finalized chat directly into terminal scrollback using a
-    // scroll region above the live inline viewport. Do the same here instead of
-    // relying on ratatui's final frame or replaying after restore.
-    let size = terminal.size()?;
-    let viewport_height = INLINE_VIEWPORT_HEIGHT.min(size.height).max(1);
-    let viewport_top = size.height.saturating_sub(viewport_height);
-    if viewport_top == 0 {
-        let height = lines.len().max(1) as u16;
-        terminal.insert_before(height, |buf| {
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .render(buf.area, buf);
-        })?;
-        return Ok(());
-    }
-
-    let mut stdout = io::stdout();
-    queue!(stdout, SavePosition)?;
-    queue!(stdout, SetScrollRegion(1..viewport_top))?;
-    queue!(stdout, MoveTo(0, viewport_top.saturating_sub(1)))?;
-    for line in lines {
-        queue!(stdout, Print("\r\n"), Clear(ClearType::UntilNewLine))?;
-        write_plain_line(&mut stdout, &line)?;
-    }
-    queue!(stdout, ResetScrollRegion, RestorePosition)?;
-    stdout.flush()
-}
-
-fn write_plain_line(writer: &mut impl Write, line: &Line<'_>) -> io::Result<()> {
-    for span in &line.spans {
-        queue!(writer, Print(span.content.as_ref()))?;
-    }
+) -> std::io::Result<()> {
+    // Ratatui's inline viewport tracks the real viewport anchor internally
+    // (it is not necessarily at the bottom of the screen). Use its insertion
+    // API so finalized chat is moved into terminal scrollback above the live
+    // composer without guessing the viewport position.
+    let height = lines.len().max(1) as u16;
+    terminal.insert_before(height, |buf| {
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(buf.area, buf);
+    })?;
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SetScrollRegion(std::ops::Range<u16>);
-
-impl Command for SetScrollRegion {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[{};{}r", self.0.start, self.0.end)
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        panic!("SetScrollRegion requires ANSI support")
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ResetScrollRegion;
-
-impl Command for ResetScrollRegion {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[r")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        panic!("ResetScrollRegion requires ANSI support")
-    }
 }
 
 fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {

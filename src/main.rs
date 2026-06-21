@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             if let Some(session_id) = tui_result.resume_session_id {
-                println!("\nResume this session:\n  rho --resume {session_id}\n");
+                println!("Resume this session:\n  rho --resume {session_id}\n");
             }
         }
     }
