@@ -13,4 +13,6 @@ pub struct Cli {
     pub max_steps: Option<usize>,
     #[arg(long)]
     pub config: Option<PathBuf>,
+    #[arg(long, value_parser = ["api-key", "codex"])]
+    pub auth: Option<String>,
 }
