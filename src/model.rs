@@ -156,12 +156,27 @@ impl ModelProvider for OpenAiProvider {
                 account_id,
                 auth_path,
             } => {
+                let auth_path_for_request = auth_path.clone();
+                let (access_token, refresh_token, account_id) = if let Some(path) = auth_path {
+                    let tokens = load_codex_tokens_from_path(path)?;
+                    (
+                        tokens.access_token,
+                        tokens.refresh_token,
+                        tokens.account_id.or_else(|| account_id.clone()),
+                    )
+                } else {
+                    (
+                        access_token.clone(),
+                        refresh_token.clone(),
+                        account_id.clone(),
+                    )
+                };
                 self.send_codex_responses(
                     messages,
-                    access_token,
+                    &access_token,
                     refresh_token.as_deref(),
                     account_id.as_deref(),
-                    auth_path.as_deref(),
+                    auth_path_for_request.as_deref(),
                 )
                 .await?
             }
@@ -321,13 +336,11 @@ fn extract_sse_text(body: &str) -> Result<String, ModelError> {
                     text.push_str(delta);
                 }
             }
-            Some("response.completed") => {
-                if text.is_empty() {
-                    if let Ok(response) =
-                        serde_json::from_value::<ResponsesResponse>(value["response"].clone())
-                    {
-                        return extract_response_text(response);
-                    }
+            Some("response.completed") if text.is_empty() => {
+                if let Ok(response) =
+                    serde_json::from_value::<ResponsesResponse>(value["response"].clone())
+                {
+                    return extract_response_text(response);
                 }
             }
             _ => {}
@@ -375,16 +388,20 @@ fn load_codex_auth() -> Result<Auth, ModelError> {
         .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".codex")))
         .map_err(|_| ModelError::MissingCodexAuth)?;
     let auth_path = home.join("auth.json");
-    let text = std::fs::read_to_string(&auth_path).map_err(|_| ModelError::MissingCodexAuth)?;
-    let file: CodexAuthFile = serde_json::from_str(&text)
-        .map_err(|e| ModelError::InvalidResponse(format!("invalid Codex auth.json: {e}")))?;
-    let tokens = file.tokens.ok_or(ModelError::MissingCodexAuth)?;
+    let tokens = load_codex_tokens_from_path(&auth_path)?;
     Ok(Auth::Codex {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         account_id: tokens.account_id,
         auth_path: Some(auth_path),
     })
+}
+
+fn load_codex_tokens_from_path(path: &std::path::Path) -> Result<CodexTokens, ModelError> {
+    let text = std::fs::read_to_string(path).map_err(|_| ModelError::MissingCodexAuth)?;
+    let file: CodexAuthFile = serde_json::from_str(&text)
+        .map_err(|e| ModelError::InvalidResponse(format!("invalid Codex auth.json: {e}")))?;
+    file.tokens.ok_or(ModelError::MissingCodexAuth)
 }
 
 async fn refresh_codex_token(
@@ -394,12 +411,11 @@ async fn refresh_codex_token(
 ) -> Result<CodexTokens, ModelError> {
     let response: RefreshResponse = client
         .post("https://auth.openai.com/oauth/token")
-        .header("Content-Type", "application/json")
-        .json(&json!({
-            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        }))
+        .form(&[
+            ("client_id", "app_EMoamEEZ73f0CkXaXp7hrann"),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ])
         .send()
         .await?
         .error_for_status()?
@@ -439,4 +455,34 @@ async fn refresh_codex_token(
         refresh_token: Some(new_refresh_token),
         account_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_sse_delta_text() {
+        let body = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n",
+            "data: [DONE]\n"
+        );
+
+        let text = extract_sse_text(body).unwrap();
+
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn extracts_completed_response_text_when_no_deltas() {
+        let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
+"#;
+
+        let text = extract_sse_text(body).unwrap();
+
+        assert_eq!(text, "done");
+    }
 }
