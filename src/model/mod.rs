@@ -40,14 +40,10 @@ pub enum ModelResponse {
     Assistant(Vec<ContentBlock>),
 }
 
-impl ModelResponse {
-    pub fn final_answer(answer: impl Into<String>) -> Self {
-        Self::Assistant(vec![ContentBlock::Text(answer.into())])
-    }
-
-    pub fn tool_call(call: ToolCall) -> Self {
-        Self::Assistant(vec![ContentBlock::ToolCall(call)])
-    }
+#[derive(Clone, Debug)]
+pub enum ModelEvent {
+    OutputDelta(String),
+    ReasoningDelta(String),
 }
 
 #[derive(Debug, Error)]
@@ -65,13 +61,31 @@ pub enum ModelError {
     },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("provider stream interrupted")]
+    Interrupted,
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 pub trait ModelProvider: Send + Sync {
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;
+
+    async fn send_turn_stream(
+        &self,
+        request: ModelRequest,
+        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.send_turn(request).await?;
+        let ModelResponse::Assistant(blocks) = response;
+
+        for block in blocks.iter() {
+            if let ContentBlock::Text(text) = block {
+                on_event(ModelEvent::OutputDelta(text.clone()))?;
+            }
+        }
+        Ok(ModelResponse::Assistant(blocks))
+    }
 }
 
 #[derive(Clone, Debug)]
