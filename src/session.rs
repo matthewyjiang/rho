@@ -5,6 +5,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -43,8 +46,7 @@ impl Session {
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<(Self, Vec<Message>)> {
-        let dir = session_dir_in_root(session_root, cwd);
-        fs::create_dir_all(&dir)?;
+        let dir = ensure_session_dir(session_root, cwd)?;
         let matches = matching_session_files(&dir, id_prefix)?;
         match matches.as_slice() {
             [] => anyhow::bail!("no session found matching '{id_prefix}'"),
@@ -70,8 +72,7 @@ impl Session {
     }
 
     fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
-        let dir = session_dir_in_root(session_root, cwd);
-        fs::create_dir_all(&dir)?;
+        let dir = ensure_session_dir(session_root, cwd)?;
         let id = Uuid::new_v4().to_string();
         let path = dir.join(format!("{}_{}.jsonl", timestamp_for_filename(), id));
         let session = Self {
@@ -104,10 +105,13 @@ impl Session {
     }
 
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+
+        let mut file = options.open(&self.path)?;
+        set_private_file_permissions(&file)?;
         serde_json::to_writer(&mut file, entry)?;
         file.write_all(b"\n")?;
         file.sync_data()?;
@@ -118,18 +122,66 @@ impl Session {
 fn read_messages(path: &Path) -> anyhow::Result<Vec<Message>> {
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
+    let lines = reader
+        .lines()
+        .filter_map(|line| match line {
+            Ok(line) if line.trim().is_empty() => None,
+            other => Some(other),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut messages = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<SessionEntry>(&line)? {
+    for (index, line) in lines.iter().enumerate() {
+        let entry = match serde_json::from_str::<SessionEntry>(line) {
+            Ok(entry) => entry,
+            Err(_) if index + 1 == lines.len() => break,
+            Err(err) => return Err(err.into()),
+        };
+        match entry {
             SessionEntry::Session { .. } => {}
             SessionEntry::Message { message, .. } => messages.push(message),
         }
     }
-    Ok(messages)
+    Ok(drop_incomplete_tool_turn_tail(messages))
+}
+
+fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
+    let mut index = 0usize;
+    while index < messages.len() {
+        let Message::Assistant(blocks) = &messages[index] else {
+            index += 1;
+            continue;
+        };
+        let tool_call_ids = blocks
+            .iter()
+            .filter_map(|block| match block {
+                crate::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+                crate::model::ContentBlock::Text(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if tool_call_ids.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        let results_start = index + 1;
+        let results_end = results_start + tool_call_ids.len();
+        if results_end > messages.len() {
+            return messages[..index].to_vec();
+        }
+
+        let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
+            matches!(
+                &messages[results_start + offset],
+                Message::ToolResult(result) if result.id == *id
+            )
+        });
+        if !complete {
+            return messages[..index].to_vec();
+        }
+        index = results_end;
+    }
+    messages
 }
 
 fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<PathBuf>> {
@@ -164,6 +216,42 @@ fn session_root() -> anyhow::Result<PathBuf> {
 
 fn session_dir_in_root(session_root: &Path, cwd: &Path) -> PathBuf {
     session_root.join(workspace_key(cwd))
+}
+
+fn ensure_session_dir(session_root: &Path, cwd: &Path) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(session_root)?;
+    set_private_dir_permissions(session_root)?;
+
+    let dir = session_dir_in_root(session_root, cwd);
+    fs::create_dir_all(&dir)?;
+    set_private_dir_permissions(&dir)?;
+    Ok(dir)
+}
+
+fn set_private_dir_permissions(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+    }
+    Ok(())
 }
 
 fn workspace_key(cwd: &Path) -> String {
@@ -207,6 +295,13 @@ fn unix_timestamp_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        model::ContentBlock,
+        tool::{ToolCall, ToolResult},
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn persists_and_loads_messages() {
@@ -281,6 +376,99 @@ mod tests {
 
         assert_eq!(encode_cwd(&slash_path), encode_cwd(&dash_path));
         assert_ne!(workspace_key(&slash_path), workspace_key(&dash_path));
+    }
+
+    #[test]
+    fn drops_incomplete_tool_call_tail_on_load() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("run a tool"))
+            .unwrap();
+        session
+            .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "echo hi"}),
+                },
+            )]))
+            .unwrap();
+
+        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(&messages[0], Message::User(_)));
+    }
+
+    #[test]
+    fn ignores_truncated_final_json_line_on_load() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("complete"))
+            .unwrap();
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(session.path())
+            .unwrap();
+        file.write_all(b"{\"type\":\"message\"").unwrap();
+
+        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(&messages[0], Message::User(_)));
+    }
+
+    #[test]
+    fn keeps_complete_tool_call_turn_on_load() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "echo hi"}),
+                },
+            )]))
+            .unwrap();
+        session
+            .append_message(&Message::ToolResult(ToolResult {
+                id: "call-1".into(),
+                ok: true,
+                content: "hi".into(),
+            }))
+            .unwrap();
+
+        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(&messages[0], Message::Assistant(_)));
+        assert!(matches!(&messages[1], Message::ToolResult(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_session_paths_with_private_permissions() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+
+        let root_mode = fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+        let dir_mode = fs::metadata(session.path().parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = fs::metadata(session.path()).unwrap().permissions().mode() & 0o777;
+
+        assert_eq!(root_mode, 0o700);
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
     }
 
     fn temp_session_root() -> PathBuf {
