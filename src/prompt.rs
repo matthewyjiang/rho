@@ -38,9 +38,13 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
         return Ok(None);
     };
     let after = &content[start + "```json".len()..];
-    let json = extract_first_json_object(after).ok_or_else(|| {
-        ModelError::InvalidResponse("invalid tool call: expected JSON object".into())
-    })?;
+    let Some((json_start, json_end)) = extract_first_json_object_range(after) else {
+        return Ok(None);
+    };
+    if after[..json_start].contains("```") || !after[json_end..].contains("```") {
+        return Ok(None);
+    }
+    let json = after[json_start..json_end].trim();
     let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
         let snippet: String = json.chars().take(500).collect();
         ModelError::InvalidResponse(format!("invalid tool call json: {e}; snippet: {snippet}"))
@@ -64,7 +68,7 @@ pub fn parse_tool_call(content: &str) -> Result<Option<ToolCall>, ModelError> {
     }))
 }
 
-fn extract_first_json_object(s: &str) -> Option<&str> {
+fn extract_first_json_object_range(s: &str) -> Option<(usize, usize)> {
     let start = s.find('{')?;
     let mut depth = 0usize;
     let mut in_string = false;
@@ -87,11 +91,80 @@ fn extract_first_json_object(s: &str) -> Option<&str> {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
                     let end = start + offset + ch.len_utf8();
-                    return Some(s[start..end].trim());
+                    return Some((start, end));
                 }
             }
             _ => {}
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_first_of_multiple_fenced_json_blocks() {
+        let content = r#"```json
+{"tool":"list_dir","arguments":{"path":"."}}
+```
+```json
+{"tool":"read_file","arguments":{"path":"README.md"}}
+```"#;
+
+        let call = parse_tool_call(content).unwrap().unwrap();
+
+        assert_eq!(call.name, "list_dir");
+        assert_eq!(call.arguments["path"], ".");
+    }
+
+    #[test]
+    fn parses_braces_inside_strings() {
+        let content = r#"```json
+{"tool":"write_file","arguments":{"path":"notes.txt","content":"literal { brace } text"}}
+```"#;
+
+        let call = parse_tool_call(content).unwrap().unwrap();
+
+        assert_eq!(call.name, "write_file");
+        assert_eq!(call.arguments["content"], "literal { brace } text");
+    }
+
+    #[test]
+    fn missing_arguments_defaults_to_empty_object() {
+        let content = r#"```json
+{"tool":"list_dir"}
+```"#;
+
+        let call = parse_tool_call(content).unwrap().unwrap();
+
+        assert_eq!(call.name, "list_dir");
+        assert!(call.arguments.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_code_fence_inside_json_string() {
+        let content = r####"```json
+{"tool":"write_file","arguments":{"path":"README.md","content":"Example:\n```rust\nfn main() {}\n```\n"}}
+```"####;
+
+        let call = parse_tool_call(content).unwrap().unwrap();
+
+        assert_eq!(call.name, "write_file");
+        assert_eq!(call.arguments["path"], "README.md");
+        assert!(call.arguments["content"]
+            .as_str()
+            .unwrap()
+            .contains("```rust"));
+    }
+
+    #[test]
+    fn does_not_parse_json_outside_unclosed_fence() {
+        let content = r#"```json
+not-json
+{"tool":"list_dir","arguments":{"path":"."}}"#;
+
+        assert!(parse_tool_call(content).unwrap().is_none());
+    }
 }
