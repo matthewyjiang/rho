@@ -94,7 +94,8 @@ impl Session {
         })
     }
 
-    pub fn path(&self) -> &Path {
+    #[cfg(test)]
+    fn path(&self) -> &Path {
         &self.path
     }
 

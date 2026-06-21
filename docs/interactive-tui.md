@@ -26,7 +26,7 @@ rho --resume <session-uuid>
 rho -R <session-uuid-prefix>
 ```
 
-When Rho exits, it prints a resume command you can paste later. Pressing `ctrl-r` resets the conversation and starts a new session file.
+After you send at least one message, Rho prints a resume command on exit that you can paste later. Pressing `ctrl-r` resets the conversation; the next message starts a new session file.
 
 ## Send prompts
 

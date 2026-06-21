@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
                 let (session, history) = Session::open_by_id(&cwd, id)?;
                 let session_id = Some(session.id().to_string());
                 agent = agent.with_history(history);
-                agent.set_session(session);
+                agent.set_message_sink(move |message| session.append_message(message));
                 session_id
             } else {
                 None

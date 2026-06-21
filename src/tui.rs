@@ -195,7 +195,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 agent.reset();
                 self.info.session_id = None;
-                agent.clear_session();
+                agent.clear_message_sink();
                 self.insert_entry(
                     terminal,
                     &Entry::Notice("conversation reset; next message starts a new session".into()),
@@ -344,7 +344,7 @@ impl App {
         if self.info.session_id.is_none() {
             let session = Session::create(&self.info.cwd)?;
             self.info.session_id = Some(session.id().to_string());
-            agent.set_session(session);
+            agent.set_message_sink(move |message| session.append_message(message));
         }
         Ok(())
     }

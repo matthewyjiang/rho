@@ -4,8 +4,7 @@ use crate::model::{
     ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
-use crate::session::Session;
-use crate::tool::{ToolContext, ToolError, ToolRegistry};
+use crate::tool::{ToolContext, ToolError, ToolRegistry, ToolResult};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -15,8 +14,8 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
-    #[error("Session error: {0}")]
-    Session(#[from] anyhow::Error),
+    #[error("Message persistence error: {0}")]
+    MessagePersistence(#[from] anyhow::Error),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,12 +31,14 @@ pub enum AgentEvent {
     },
 }
 
+type MessageSink = Box<dyn FnMut(&Message) -> anyhow::Result<()> + Send>;
+
 pub struct Agent<P: ModelProvider> {
     provider: P,
     tools: ToolRegistry,
     ctx: ToolContext,
     messages: Vec<Message>,
-    session: Option<Session>,
+    message_sink: Option<MessageSink>,
 }
 
 impl<P: ModelProvider> Agent<P> {
@@ -48,7 +49,7 @@ impl<P: ModelProvider> Agent<P> {
             tools,
             ctx,
             messages,
-            session: None,
+            message_sink: None,
         }
     }
 
@@ -57,12 +58,15 @@ impl<P: ModelProvider> Agent<P> {
         self
     }
 
-    pub fn set_session(&mut self, session: Session) {
-        self.session = Some(session);
+    pub fn set_message_sink(
+        &mut self,
+        sink: impl FnMut(&Message) -> anyhow::Result<()> + Send + 'static,
+    ) {
+        self.message_sink = Some(Box::new(sink));
     }
 
-    pub fn clear_session(&mut self) {
-        self.session = None;
+    pub fn clear_message_sink(&mut self) {
+        self.message_sink = None;
     }
 
     pub fn reset(&mut self) {
@@ -74,8 +78,8 @@ impl<P: ModelProvider> Agent<P> {
     }
 
     fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
-        if let Some(session) = &self.session {
-            session.append_message(&message)?;
+        if let Some(sink) = &mut self.message_sink {
+            sink(&message)?;
         }
         self.messages.push(message);
         Ok(())
@@ -142,20 +146,45 @@ impl<P: ModelProvider> Agent<P> {
 
                     self.push_message(Message::Assistant(blocks))?;
                     for call in tool_calls {
-                        let Some(tool) = self.tools.get(&call.name) else {
-                            return Err(AgentError::UnknownTool(call.name));
-                        };
                         let name = call.name.clone();
                         let command = tool_command(&name, &call.arguments);
                         let event_content = tool_event_content(&name, &call.arguments, &self.ctx);
-                        let result = tool.call(call.arguments, self.ctx.clone(), call.id).await?;
+                        let result = match self.tools.get(&call.name) {
+                            Some(tool) => match tool
+                                .call(call.arguments, self.ctx.clone(), call.id.clone())
+                                .await
+                            {
+                                Ok(result) => result,
+                                Err(err) => {
+                                    let result = ToolResult {
+                                        id: call.id,
+                                        ok: false,
+                                        content: err.to_string(),
+                                    };
+                                    self.push_message(Message::ToolResult(result.clone()))?;
+                                    return Err(AgentError::Tool(err));
+                                }
+                            },
+                            None => {
+                                let result = ToolResult {
+                                    id: call.id,
+                                    ok: false,
+                                    content: format!("Unknown tool: {}", call.name),
+                                };
+                                self.push_message(Message::ToolResult(result))?;
+                                return Err(AgentError::UnknownTool(call.name));
+                            }
+                        };
+                        let display_content =
+                            event_content.unwrap_or_else(|| result.content.clone());
+                        let ok = result.ok;
+                        self.push_message(Message::ToolResult(result))?;
                         on_event(AgentEvent::ToolFinished {
                             name,
                             command,
-                            ok: result.ok,
-                            content: event_content.unwrap_or_else(|| result.content.clone()),
+                            ok,
+                            content: display_content,
                         })?;
-                        self.push_message(Message::ToolResult(result))?;
                     }
                 }
             }
