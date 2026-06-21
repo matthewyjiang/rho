@@ -170,6 +170,7 @@ impl App {
                 }
             }
         }
+        self.insert_composer_snapshot(terminal)?;
         Ok(TuiResult {
             resume_session_id: self.info.session_id,
         })
@@ -517,6 +518,23 @@ impl App {
         let width = terminal.size()?.width as usize;
         insert_history_lines(terminal, session_header_lines(&self.info, width))?;
         Ok(())
+    }
+
+    fn insert_composer_snapshot(&self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        let width = terminal.size()?.width as usize;
+        let divider = Line::styled(
+            "─".repeat(width.max(1)),
+            Style::default().fg(Color::DarkGray),
+        );
+        let mut lines = Vec::new();
+        lines.push(divider.clone());
+        lines.extend(
+            input_visual_lines(&self.input, width)
+                .into_iter()
+                .map(Line::raw),
+        );
+        lines.push(divider);
+        insert_history_lines(terminal, lines)
     }
 
     fn insert_entry(
