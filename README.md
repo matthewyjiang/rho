@@ -28,7 +28,7 @@ With an OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY=...
-rho --model gpt-5.5 --cwd .
+rho --model gpt-5.5
 ```
 
 Or use Codex OAuth from an existing Codex CLI login:
@@ -50,20 +50,19 @@ exit     exit rho
 
 ## Config
 
-Optional config:
+Rho stores its persistent config at `~/.rho/config.toml` by default. Passing `--provider` or `--model` updates that file and makes the choice the future default.
 
 ```toml
+provider = "openai"
 model = "gpt-5.5"
-api_base = "https://api.openai.com/v1"
 max_output_bytes = 12000
-cwd = "."
 auth = "api-key" # or "codex"
 ```
 
-Use it with:
+You can still load and save a specific config file with:
 
 ```bash
-rho --config ~/.config/rho/config.toml
+rho --config ~/.rho/config.toml
 ```
 
 ## Tools

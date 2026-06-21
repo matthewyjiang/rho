@@ -6,9 +6,9 @@ use clap::Parser;
 #[command(name = "rho")]
 pub struct Cli {
     #[arg(long)]
-    pub model: Option<String>,
+    pub provider: Option<String>,
     #[arg(long)]
-    pub cwd: Option<PathBuf>,
+    pub model: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
     #[arg(long, value_parser = ["api-key", "codex"])]
