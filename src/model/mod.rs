@@ -50,10 +50,12 @@ pub enum ModelEvent {
 
 #[derive(Debug, Error)]
 pub enum ModelError {
-    #[error("missing OPENAI_API_KEY")]
+    #[error("missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override")]
     MissingApiKey,
-    #[error("missing Codex OAuth credentials; run `codex login` or set CODEX_ACCESS_TOKEN")]
+    #[error("missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override")]
     MissingCodexAuth,
+    #[error("credential store error: {0}")]
+    Credentials(#[from] crate::credentials::CredentialError),
     #[error("request failed: {0}")]
     Request(#[from] reqwest::Error),
     #[error("request failed: HTTP {status}: {body}")]
@@ -106,4 +108,4 @@ pub enum AuthMode {
 }
 
 pub use openai::OpenAiProvider;
-pub use provider::{build_provider, reasoning_config_value};
+pub use provider::{build_provider, reasoning_config_value, UnavailableProvider};

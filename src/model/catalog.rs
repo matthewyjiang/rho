@@ -11,6 +11,13 @@ pub struct ModelCatalogEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginTarget {
+    pub provider: String,
+    pub auth: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub provider: String,
     pub model: String,
@@ -47,8 +54,41 @@ pub fn model_catalog() -> &'static [ModelCatalogEntry] {
     MODEL_CATALOG.get_or_init(|| parse_model_catalog(MODEL_CATALOG_TOML))
 }
 
+#[allow(dead_code)]
 pub fn available_models(auth: &str) -> Vec<ModelCatalogEntry> {
     available_models_from(model_catalog(), auth)
+}
+
+pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
+    available_models_for_auths_from(model_catalog(), auths)
+}
+
+pub fn login_targets() -> Vec<LoginTarget> {
+    vec![
+        LoginTarget {
+            provider: "openai".into(),
+            auth: "api-key".into(),
+            label: "OpenAI API key".into(),
+        },
+        LoginTarget {
+            provider: "openai-codex".into(),
+            auth: "codex".into(),
+            label: "Codex OAuth".into(),
+        },
+    ]
+}
+
+pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
+    login_targets()
+        .into_iter()
+        .find(|target| target.provider == provider)
+}
+
+pub fn default_model_for_provider(provider: &str) -> Option<String> {
+    model_catalog()
+        .iter()
+        .find(|entry| entry.provider == provider)
+        .map(|entry| entry.model.clone())
 }
 
 pub fn resolve_model_selection(
@@ -85,10 +125,22 @@ fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCa
 }
 
 fn available_models_from(catalog: &[ModelCatalogEntry], auth: &str) -> Vec<ModelCatalogEntry> {
+    available_models_for_auths_from(catalog, &[auth.to_string()])
+}
+
+fn available_models_for_auths_from(
+    catalog: &[ModelCatalogEntry],
+    auths: &[String],
+) -> Vec<ModelCatalogEntry> {
     let mut models = catalog
         .iter()
         .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
-        .filter(|entry| entry.auth_modes.iter().any(|mode| mode == auth))
+        .filter(|entry| {
+            entry
+                .auth_modes
+                .iter()
+                .any(|mode| auths.iter().any(|auth| auth == mode))
+        })
         .cloned()
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
@@ -239,6 +291,24 @@ mod tests {
         assert!(models
             .iter()
             .all(|entry| implemented_providers().contains(&entry.provider.as_str())));
+    }
+
+    #[test]
+    fn available_models_for_auths_includes_all_authenticated_providers() {
+        let models = available_models_for_auths(&["api-key".into(), "codex".into()]);
+
+        assert!(models.iter().any(|entry| entry.provider == "openai"));
+        assert!(models.iter().any(|entry| entry.provider == "openai-codex"));
+    }
+
+    #[test]
+    fn login_targets_use_provider_names() {
+        let targets = login_targets();
+
+        assert_eq!(targets[0].provider, "openai");
+        assert_eq!(targets[1].provider, "openai-codex");
+        assert!(login_target_for_provider("api-key").is_none());
+        assert!(login_target_for_provider("codex").is_none());
     }
 
     #[test]

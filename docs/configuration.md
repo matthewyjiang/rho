@@ -30,7 +30,7 @@ rho --config ~/.rho/config.toml
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. The picker shows auth-filtered entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog), and `/model provider/model` can switch explicitly.
+In the [interactive TUI](/interactive-tui), [`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) for providers with available auth, and `/model provider/model` can switch explicitly.
 
 ## Reasoning options
 

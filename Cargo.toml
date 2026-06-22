@@ -26,6 +26,12 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 crossterm = "0.29.0"
 futures-util = "0.3"
 regex = "1"
+keyring = "4.1.2"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+webbrowser = "1"
 
 [dev-dependencies]
 tempfile = "3"

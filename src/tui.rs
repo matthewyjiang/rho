@@ -1,6 +1,7 @@
 use std::{
     io::Write,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -29,12 +30,18 @@ use render::{
 
 use crate::{
     agent::{Agent, AgentEvent},
+    auth::codex_oauth::{self, CodexOAuthError},
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
+    credentials::{
+        available_auth_modes, delete_codex_tokens, delete_openai_api_key, provider_has_credentials,
+        provider_has_env_override, save_codex_tokens, save_openai_api_key, CodexTokens,
+        CredentialStore, OsCredentialStore,
+    },
     model::{
         build_provider,
-        catalog::{self, ModelSelection},
-        reasoning_config_value,
+        catalog::{self, LoginTarget, ModelSelection},
+        reasoning_config_value, ModelError, UnavailableProvider,
     },
     session::Session,
 };
@@ -54,6 +61,7 @@ pub struct TuiInfo {
     pub auth: String,
     pub session_id: Option<String>,
     pub config_path: Option<PathBuf>,
+    pub auth_unavailable: Option<String>,
 }
 
 pub struct TuiResult {
@@ -95,12 +103,18 @@ struct App {
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
     composer: ComposerMode,
+    credential_store: Arc<dyn CredentialStore>,
+    available_auths: Vec<String>,
+    using_unavailable_provider: bool,
+    pending_oauth_login: Option<PendingOAuthLogin>,
 }
 
 #[derive(Clone, Debug)]
 enum ComposerMode {
     Input,
     Picker(UiPicker),
+    SecretInput(SecretInput),
+    OAuthPending(LoginTarget),
 }
 
 #[derive(Clone, Debug)]
@@ -120,9 +134,24 @@ struct PickerItem {
     value: String,
 }
 
+#[derive(Clone, Debug)]
+struct SecretInput {
+    target: LoginTarget,
+    value: String,
+    cursor: usize,
+}
+
+#[derive(Debug)]
+struct PendingOAuthLogin {
+    target: LoginTarget,
+    handle: tokio::task::JoinHandle<Result<CodexTokens, CodexOAuthError>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickerAction {
     SelectModel,
+    LoginProvider,
+    LogoutProvider,
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +255,60 @@ impl UiPicker {
     }
 }
 
+impl SecretInput {
+    fn new(target: LoginTarget) -> Self {
+        Self {
+            target,
+            value: String::new(),
+            cursor: 0,
+        }
+    }
+
+    fn char_len(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        let sanitized = text.replace('\n', "");
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert_str(byte_index, &sanitized);
+        self.cursor += sanitized.chars().count();
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete(&mut self) {
+        if self.cursor >= self.char_len() {
+            return;
+        }
+        let start = self.byte_index(self.cursor);
+        let end = self.byte_index(self.cursor + 1);
+        self.value.replace_range(start..end, "");
+    }
+}
+
 impl PasteBurst {
     fn record_plain_char(&mut self, now: Instant) {
         self.plain_char_count = match self.last_plain_char_at {
@@ -262,11 +345,22 @@ impl PasteBurst {
 
 impl App {
     fn new(info: TuiInfo) -> Self {
+        Self::new_with_credentials(info, Arc::new(OsCredentialStore))
+    }
+
+    fn new_with_credentials(info: TuiInfo, credential_store: Arc<dyn CredentialStore>) -> Self {
+        let available_auths = available_auth_modes(credential_store.as_ref());
+        let using_unavailable_provider = info.auth_unavailable.is_some();
+        let status = info
+            .auth_unavailable
+            .as_ref()
+            .map(|_| "no providers configured; run /login to sign in".into())
+            .unwrap_or_else(|| "ready".into());
         Self {
             info,
             input: String::new(),
             input_cursor: 0,
-            status: "ready".into(),
+            status,
             should_quit: false,
             ctrl_c_streak: 0,
             stream_buffer: String::new(),
@@ -279,6 +373,10 @@ impl App {
             command_prefix: None,
             command_palette_dismissed: false,
             composer: ComposerMode::Input,
+            credential_store,
+            available_auths,
+            using_unavailable_provider,
+            pending_oauth_login: None,
         }
     }
 
@@ -288,7 +386,14 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<TuiResult> {
         self.insert_session_intro(terminal)?;
+        if self.info.auth_unavailable.is_some() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice("no providers configured. run /login to sign in.".into()),
+            )?;
+        }
         while !self.should_quit {
+            self.poll_pending_oauth_login(terminal, agent).await?;
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(Duration::from_millis(100))? {
                 match event::read()? {
@@ -296,8 +401,11 @@ impl App {
                         self.handle_key(key, terminal, agent).await?;
                     }
                     Event::Paste(text) => {
-                        if matches!(self.composer, ComposerMode::Input) {
-                            self.insert_input_text(&normalize_paste(&text));
+                        let text = normalize_paste(&text);
+                        match &mut self.composer {
+                            ComposerMode::Input => self.insert_input_text(&text),
+                            ComposerMode::SecretInput(secret) => secret.insert_text(&text),
+                            ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
                         }
                         self.paste_burst.clear();
                     }
@@ -318,6 +426,14 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
+        if self.handle_oauth_pending_key(key, terminal)? {
+            return Ok(());
+        }
+
+        if self.handle_secret_key(key, terminal, agent).await? {
+            return Ok(());
+        }
+
         if self.handle_picker_key(key, terminal, agent).await? {
             return Ok(());
         }
@@ -442,6 +558,107 @@ impl App {
         Ok(())
     }
 
+    fn handle_oauth_pending_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::OAuthPending(_)) {
+            return Ok(false);
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                if let Some(pending) = self.pending_oauth_login.take() {
+                    pending.handle.abort();
+                }
+                self.composer = ComposerMode::Input;
+                self.status = "login cancelled".into();
+                self.insert_entry(terminal, &Entry::Notice("Codex login cancelled".into()))?;
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    async fn handle_secret_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<bool> {
+        let ComposerMode::SecretInput(secret) = &mut self.composer else {
+            return Ok(false);
+        };
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                let target = secret.target.clone();
+                let value = secret.value.trim().to_string();
+                self.composer = ComposerMode::Input;
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                self.submit_api_key_login(target, value, terminal, agent)
+                    .await?;
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                self.composer = ComposerMode::Input;
+                self.status = "login cancelled".into();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Backspace) => {
+                secret.backspace();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Delete) => {
+                secret.delete();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Left) => {
+                secret.cursor = secret.cursor.saturating_sub(1);
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                secret.cursor = (secret.cursor + 1).min(secret.char_len());
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                secret.cursor = 0;
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                secret.cursor = secret.char_len();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                secret.insert_char(ch);
+                self.paste_burst.record_plain_char(Instant::now());
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
     async fn handle_picker_key(
         &mut self,
         key: KeyEvent,
@@ -496,7 +713,7 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
-                self.submit_picker_selection(terminal, agent)?;
+                self.submit_picker_selection(terminal, agent).await?;
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
@@ -888,7 +1105,14 @@ impl App {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::Login => self.execute_login_command(terminal),
+            CommandId::Login => {
+                self.execute_login_command(invocation, terminal, agent)
+                    .await
+            }
+            CommandId::Logout => {
+                self.execute_logout_command(invocation, terminal, agent)
+                    .await
+            }
             CommandId::Resume => self.execute_resume_command(invocation, terminal),
             CommandId::Config => self.execute_config_command(terminal),
         }
@@ -930,7 +1154,8 @@ impl App {
     ) -> anyhow::Result<()> {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
-        let models = catalog::available_models(&self.info.auth);
+        self.refresh_available_auths();
+        let models = catalog::available_models_for_auths(&self.available_auths);
         let current = format!("{}/{}", self.info.provider, self.info.model);
         let mut items = models
             .into_iter()
@@ -956,9 +1181,7 @@ impl App {
         if items.is_empty() {
             self.insert_entry(
                 terminal,
-                &Entry::Notice(
-                    "model catalog has no available models for the current auth mode".into(),
-                ),
+                &Entry::Notice("no providers configured. run /login to sign in.".into()),
             )?;
             self.status = "ready".into();
             return Ok(());
@@ -978,7 +1201,7 @@ impl App {
         Ok(())
     }
 
-    fn submit_picker_selection(
+    async fn submit_picker_selection(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
@@ -1002,6 +1225,10 @@ impl App {
                     }
                 }
             }
+            PickerAction::LoginProvider => {
+                self.start_login_for_provider(&value, terminal, agent).await
+            }
+            PickerAction::LogoutProvider => self.logout_provider(&value, terminal, agent).await,
         }
     }
 
@@ -1073,16 +1300,387 @@ impl App {
         Ok(())
     }
 
-    fn execute_login_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    async fn execute_login_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        if invocation.args.is_empty() {
+            self.open_provider_picker("login", PickerAction::LoginProvider);
+            return Ok(());
+        }
+        self.start_login_for_provider(&invocation.args, terminal, agent)
+            .await
+    }
+
+    async fn execute_logout_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        if invocation.args.is_empty() {
+            self.open_provider_picker("logout", PickerAction::LogoutProvider);
+            return Ok(());
+        }
+        self.logout_provider(&invocation.args, terminal, agent)
+            .await
+    }
+
+    fn open_provider_picker(&mut self, verb: &str, action: PickerAction) {
+        let items = catalog::login_targets()
+            .into_iter()
+            .map(|target| PickerItem {
+                label: target.provider.clone(),
+                description: target.label,
+                value: target.provider,
+            })
+            .collect();
+        self.composer = ComposerMode::Picker(UiPicker::new(
+            format!("select provider to {verb}"),
+            "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
+            items,
+            action,
+        ));
+        self.status = format!("select provider to {verb}");
+    }
+
+    async fn start_login_for_provider(
+        &mut self,
+        provider: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let provider = provider.trim();
+        let Some(target) = catalog::login_target_for_provider(provider) else {
+            self.insert_entry(
+                terminal,
+                &Entry::Error(format!(
+                    "unsupported login provider '{provider}'. Use /login openai or /login openai-codex"
+                )),
+            )?;
+            self.status = "login failed".into();
+            return Ok(());
+        };
+
+        match target.provider.as_str() {
+            "openai" => {
+                self.composer = ComposerMode::SecretInput(SecretInput::new(target));
+                self.status = "enter OpenAI API key".into();
+                Ok(())
+            }
+            "openai-codex" => self.start_codex_login(target, terminal, agent).await,
+            _ => unreachable!("catalog returned unsupported login provider"),
+        }
+    }
+
+    async fn submit_api_key_login(
+        &mut self,
+        target: LoginTarget,
+        key: String,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        if key.trim().is_empty() {
+            self.insert_entry(terminal, &Entry::Error("API key cannot be empty".into()))?;
+            self.status = "login failed".into();
+            return Ok(());
+        }
+        match save_openai_api_key(self.credential_store.as_ref(), &key) {
+            Ok(()) => self.finish_login(target, terminal, agent).await,
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "login failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    async fn start_codex_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        _agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        if self.pending_oauth_login.is_some() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice("Codex login is already in progress. Press esc to cancel.".into()),
+            )?;
+            return Ok(());
+        }
+
+        self.status = "waiting for Codex login; press esc to cancel".into();
+        self.composer = ComposerMode::OAuthPending(target.clone());
+        self.pending_oauth_login = Some(PendingOAuthLogin {
+            target,
+            handle: tokio::spawn(codex_oauth::run_codex_oauth_flow()),
+        });
         self.insert_entry(
             terminal,
-            &Entry::Notice(
-                "login UI is not implemented yet. For api-key auth, set OPENAI_API_KEY. For Codex auth, sign in with Codex and set auth = \"codex\" in the rho config."
-                    .into(),
-            ),
+            &Entry::Notice("opening browser for Codex login. Press esc to cancel.".into()),
         )?;
-        self.status = "login help".into();
         Ok(())
+    }
+
+    async fn poll_pending_oauth_login(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let Some(pending) = self.pending_oauth_login.as_ref() else {
+            return Ok(());
+        };
+        if !pending.handle.is_finished() {
+            return Ok(());
+        }
+
+        let pending = self.pending_oauth_login.take().unwrap();
+        let target = pending.target;
+        match pending.handle.await {
+            Ok(Ok(tokens)) => match save_codex_tokens(self.credential_store.as_ref(), &tokens) {
+                Ok(()) => {
+                    self.composer = ComposerMode::Input;
+                    self.finish_login(target, terminal, agent).await
+                }
+                Err(err) => {
+                    self.composer = ComposerMode::Input;
+                    self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                    self.status = "login failed".into();
+                    Ok(())
+                }
+            },
+            Ok(Err(err)) => {
+                self.composer = ComposerMode::Input;
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "login failed".into();
+                Ok(())
+            }
+            Err(err) if err.is_cancelled() => {
+                self.composer = ComposerMode::Input;
+                self.status = "login cancelled".into();
+                Ok(())
+            }
+            Err(err) => {
+                self.composer = ComposerMode::Input;
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("Codex login task failed: {err}")),
+                )?;
+                self.status = "login failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    async fn finish_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        self.refresh_available_auths();
+        if self.using_unavailable_provider {
+            self.activate_provider_after_login(&target, terminal, agent)?;
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(format!(
+                    "stored credentials for {} and selected {}/{}",
+                    target.provider, self.info.provider, self.info.model
+                )),
+            )?;
+        } else if target.provider == self.info.provider {
+            self.reload_active_provider_after_login(&target, terminal, agent)?;
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(format!(
+                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
+                    target.provider
+                )),
+            )?;
+        } else {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(format!(
+                    "stored credentials for {}. Switch models with /model when you want to use it.",
+                    target.provider
+                )),
+            )?;
+            self.status = "login saved".into();
+        }
+        Ok(())
+    }
+
+    fn reload_active_provider_after_login(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let new_provider = match build_provider(
+            &self.info.provider,
+            &self.info.model,
+            reasoning_config_value(&self.info.reasoning_effort),
+            reasoning_config_value(&self.info.reasoning_summary),
+        ) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "stored credentials, but could not refresh {}: {err}",
+                        target.provider
+                    )),
+                )?;
+                self.status = "login saved".into();
+                return Ok(());
+            }
+        };
+
+        agent.replace_provider(new_provider);
+        self.info.auth = target.auth.clone();
+        self.info.auth_unavailable = None;
+        self.status = "login saved".into();
+        Ok(())
+    }
+
+    fn activate_provider_after_login(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let model = catalog::default_model_for_provider(&target.provider)
+            .unwrap_or_else(|| self.info.model.clone());
+        let new_provider = match build_provider(
+            &target.provider,
+            &model,
+            reasoning_config_value(&self.info.reasoning_effort),
+            reasoning_config_value(&self.info.reasoning_summary),
+        ) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "stored credentials, but could not activate {}: {err}",
+                        target.provider
+                    )),
+                )?;
+                self.status = "login saved".into();
+                return Ok(());
+            }
+        };
+
+        agent.replace_provider(new_provider);
+        self.info.provider = target.provider.clone();
+        self.info.auth = target.auth.clone();
+        self.info.model = model;
+        self.info.auth_unavailable = None;
+        self.using_unavailable_provider = false;
+        self.save_current_config()?;
+        self.status = format!("model: {}/{}", self.info.provider, self.info.model);
+        Ok(())
+    }
+
+    async fn logout_provider(
+        &mut self,
+        provider: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let provider = provider.trim();
+        let Some(target) = catalog::login_target_for_provider(provider) else {
+            self.insert_entry(
+                terminal,
+                &Entry::Error(format!(
+                    "unsupported logout provider '{provider}'. Use /logout openai or /logout openai-codex"
+                )),
+            )?;
+            self.status = "logout failed".into();
+            return Ok(());
+        };
+
+        let deleted = match target.provider.as_str() {
+            "openai" => delete_openai_api_key(self.credential_store.as_ref()),
+            "openai-codex" => delete_codex_tokens(self.credential_store.as_ref()),
+            _ => unreachable!("catalog returned unsupported logout provider"),
+        };
+
+        match deleted {
+            Ok(deleted) => {
+                self.refresh_available_auths();
+                let env_active = provider_has_env_override(&target.provider);
+                let message = if env_active {
+                    format!(
+                        "deleted stored credentials for {}, but an env override is still active",
+                        target.provider
+                    )
+                } else if deleted {
+                    format!("deleted stored credentials for {}", target.provider)
+                } else {
+                    format!("no stored credentials for {} were present", target.provider)
+                };
+                self.insert_entry(terminal, &Entry::Notice(message))?;
+                if self.invalidate_active_provider_if_needed(&target, agent) {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Notice(
+                            "the active provider no longer has credentials. Run /login or switch with /model."
+                                .into(),
+                        ),
+                    )?;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "logout failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn invalidate_active_provider_if_needed(
+        &mut self,
+        target: &LoginTarget,
+        agent: &mut Agent,
+    ) -> bool {
+        if self.info.provider != target.provider {
+            self.status = "logout complete".into();
+            return false;
+        }
+        if provider_has_credentials(self.credential_store.as_ref(), &target.provider)
+            .unwrap_or(false)
+        {
+            self.status = "logout complete".into();
+            return false;
+        }
+
+        let error = match target.provider.as_str() {
+            "openai" => ModelError::MissingApiKey,
+            "openai-codex" => ModelError::MissingCodexAuth,
+            other => ModelError::UnsupportedProvider(other.to_string()),
+        };
+        self.info.auth_unavailable = Some(error.to_string());
+        self.using_unavailable_provider = true;
+        agent.replace_provider(Box::new(UnavailableProvider::new(error)));
+        self.status = "no providers configured; run /login".into();
+        true
+    }
+
+    fn refresh_available_auths(&mut self) {
+        self.available_auths = available_auth_modes(self.credential_store.as_ref());
+    }
+
+    fn save_current_config(&self) -> anyhow::Result<()> {
+        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.provider = self.info.provider.clone();
+            config.model = self.info.model.clone();
+            config.auth = self.info.auth.clone();
+            config.save(self.info.config_path.clone())
+        })
     }
 
     fn execute_resume_command(
@@ -1244,12 +1842,19 @@ impl App {
                 .map(Line::raw)
                 .collect(),
             ComposerMode::Picker(picker) => picker_lines(picker, width),
+            ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
+            ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
         }
     }
 
     fn composer_cursor_position(&self, width: usize) -> Position {
         match &self.composer {
             ComposerMode::Input => input_cursor_position(&self.input, self.input_cursor, width),
+            ComposerMode::SecretInput(secret) => Position {
+                x: secret.cursor.min(width.max(1)) as u16,
+                y: 1,
+            },
+            ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => {
                 let matching_indices = picker.matching_indices();
                 let selected_position = matching_indices
@@ -1314,11 +1919,17 @@ impl App {
         );
         let mut lines = Vec::new();
         lines.push(divider.clone());
-        lines.extend(
-            input_visual_lines(&self.input, width)
-                .into_iter()
-                .map(Line::raw),
-        );
+        if matches!(self.composer, ComposerMode::SecretInput(_)) {
+            lines.push(Line::raw("[secret input omitted]"));
+        } else if matches!(self.composer, ComposerMode::OAuthPending(_)) {
+            lines.push(Line::raw("[oauth login pending]"));
+        } else {
+            lines.extend(
+                input_visual_lines(&self.input, width)
+                    .into_iter()
+                    .map(Line::raw),
+            );
+        }
         lines.push(divider);
         insert_history_lines(terminal, lines)
     }
@@ -1337,6 +1948,31 @@ impl App {
         self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
     }
+}
+
+fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
+    let masked = "•".repeat(secret.value.chars().count());
+    vec![
+        styled_line(
+            format!(
+                "enter API key for {}  enter save, esc cancel",
+                secret.target.provider
+            ),
+            width,
+            Style::default().fg(Color::DarkGray),
+            LineFill::Natural,
+        ),
+        styled_line(masked, width, Style::default(), LineFill::Natural),
+    ]
+}
+
+fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>> {
+    vec![styled_line(
+        format!("waiting for {} browser login  esc cancel", target.provider),
+        width,
+        Style::default().fg(Color::DarkGray),
+        LineFill::Natural,
+    )]
 }
 
 fn insert_history_lines(
@@ -1423,6 +2059,7 @@ fn poll_interrupt() -> Result<bool, crate::model::ModelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::MemoryCredentialStore;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -1432,16 +2069,22 @@ mod tests {
     }
 
     fn test_app() -> App {
-        App::new(TuiInfo {
-            cwd: PathBuf::from("/tmp/project"),
-            provider: "openai".into(),
-            model: "gpt-5.5".into(),
-            reasoning_effort: "low".into(),
-            reasoning_summary: "auto".into(),
-            auth: "api-key".into(),
-            session_id: None,
-            config_path: None,
-        })
+        let store = Arc::new(MemoryCredentialStore::default());
+        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        App::new_with_credentials(
+            TuiInfo {
+                cwd: PathBuf::from("/tmp/project"),
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                reasoning_effort: "low".into(),
+                reasoning_summary: "auto".into(),
+                auth: "api-key".into(),
+                session_id: None,
+                config_path: None,
+                auth_unavailable: None,
+            },
+            store,
+        )
     }
 
     #[test]
@@ -1655,6 +2298,80 @@ mod tests {
         );
         assert!(rendered.contains("> model-a"), "{rendered}");
         assert!(!rendered.contains("draft prompt"), "{rendered}");
+    }
+
+    #[test]
+    fn secret_input_masks_api_key() {
+        let mut app = test_app();
+        let target = catalog::login_target_for_provider("openai").unwrap();
+        let mut secret = SecretInput::new(target);
+        secret.insert_text("sk-secret-value");
+        app.composer = ComposerMode::SecretInput(secret);
+
+        let rendered = app
+            .active_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("enter API key for openai"), "{rendered}");
+        assert!(rendered.contains("••••"), "{rendered}");
+        assert!(!rendered.contains("sk-secret-value"), "{rendered}");
+    }
+
+    #[test]
+    fn login_provider_picker_uses_provider_names_only() {
+        let mut app = test_app();
+        app.open_provider_picker("login", PickerAction::LoginProvider);
+
+        let rendered = app
+            .active_lines(80)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("openai"), "{rendered}");
+        assert!(rendered.contains("openai-codex"), "{rendered}");
+        assert!(!rendered.contains("api-key"), "{rendered}");
+        assert!(!rendered.contains("> codex"), "{rendered}");
+    }
+
+    #[test]
+    fn model_picker_uses_all_available_auths() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        save_codex_tokens(
+            store.as_ref(),
+            &crate::credentials::CodexTokens {
+                access_token: "access".into(),
+                refresh_token: Some("refresh".into()),
+                id_token: None,
+                account_id: None,
+            },
+        )
+        .unwrap();
+        let mut app = App::new_with_credentials(
+            TuiInfo {
+                cwd: PathBuf::from("/tmp/project"),
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                reasoning_effort: "low".into(),
+                reasoning_summary: "auto".into(),
+                auth: "api-key".into(),
+                session_id: None,
+                config_path: None,
+                auth_unavailable: None,
+            },
+            store,
+        );
+        app.refresh_available_auths();
+
+        let models = catalog::available_models_for_auths(&app.available_auths);
+
+        assert!(models.iter().any(|model| model.provider == "openai"));
+        assert!(models.iter().any(|model| model.provider == "openai-codex"));
     }
 
     #[test]
