@@ -255,6 +255,10 @@ fn tool_event_content(
             .get("path")
             .and_then(|path| path.as_str())
             .map(|path| compact_display_path(&ctx.cwd, path)),
+        "skill" => arguments
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| format!("skill {name}")),
         _ => None,
     }
 }
@@ -531,6 +535,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(content, "src/main.rs:10-24");
+    }
+
+    #[test]
+    fn skill_event_content_shows_skill_name_without_full_content() {
+        let cwd = std::env::current_dir().unwrap();
+        let content = tool_event_content(
+            "skill",
+            &serde_json::json!({"name": "caveman"}),
+            &ToolContext {
+                cwd,
+                max_output_bytes: 12000,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(content, "skill caveman");
     }
 
     #[test]
