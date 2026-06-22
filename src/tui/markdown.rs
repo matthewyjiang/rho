@@ -151,11 +151,19 @@ fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                 ));
                 rest = &rest[marked_end..];
             }
-            Some(MarkdownSpan::Link { start, end, label }) => {
+            Some(MarkdownSpan::Link {
+                start,
+                end,
+                label,
+                target,
+            }) => {
                 if start > 0 {
                     segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
                 }
-                segments.push(StyledSegment::new(label, Theme::markdown_link()));
+                segments.push(StyledSegment::new(label, Theme::text()));
+                segments.push(StyledSegment::new(" (".to_string(), Theme::text()));
+                segments.push(StyledSegment::new(target, Theme::markdown_link()));
+                segments.push(StyledSegment::new(")".to_string(), Theme::text()));
                 rest = &rest[end..];
             }
             Some(MarkdownSpan::RawUrl { start, end }) => {
@@ -189,6 +197,7 @@ enum MarkdownSpan {
         start: usize,
         end: usize,
         label: String,
+        target: String,
     },
     RawUrl {
         start: usize,
@@ -232,6 +241,7 @@ fn next_markdown_link(line: &str) -> Option<MarkdownSpan> {
         start,
         end: target_end + 1,
         label: label.to_string(),
+        target: target.to_string(),
     })
 }
 
@@ -340,7 +350,7 @@ mod tests {
 
         assert_eq!(
             line_text(&lines[0]),
-            "use cargo test, then ship the fix, docs, and https://example.com"
+            "use cargo test, then ship the fix, docs (https://example.com), and https://example.com"
         );
         let styles = line_styles(&lines[0]);
         assert!(styles.contains(&Theme::markdown_inline_code()));
