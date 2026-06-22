@@ -184,7 +184,7 @@ fn upstream_provider(provider: &str) -> &str {
 }
 
 fn models_dev_sqlite_path() -> PathBuf {
-    cache_dir().join("models.dev/cache.sqlite3")
+    cache_dir().join("models.dev/models-dev-metadata.sqlite3")
 }
 
 fn models_dev_cache_path() -> PathBuf {
