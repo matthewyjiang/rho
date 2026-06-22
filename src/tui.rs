@@ -44,7 +44,7 @@ use render::{
 use statusline::{statusline_lines, StatusLineState};
 
 use crate::{
-    agent::{Agent, AgentEvent},
+    agent::{Agent, AgentEvent, SessionHistorySink},
     auth::codex_oauth::{self, CodexOAuthError},
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
@@ -514,8 +514,7 @@ impl App {
                 agent.reset();
                 self.info.session_id = None;
                 agent.set_session_id(None);
-                agent.clear_message_sink();
-                agent.clear_history_replacement_sink();
+                agent.clear_history_sink();
                 self.cumulative_usage = None;
                 self.current_context = None;
                 self.insert_entry(
@@ -1174,11 +1173,7 @@ impl App {
             let session_id = session.id().to_string();
             self.info.session_id = Some(session_id.clone());
             agent.set_session_id(Some(session_id));
-            let history_session = session.clone();
-            agent.set_message_sink(move |message| session.append_message(message));
-            agent.set_history_replacement_sink(move |messages| {
-                history_session.replace_history(messages)
-            });
+            agent.set_history_sink(SessionHistorySink::new(session));
         }
         Ok(())
     }
@@ -1940,11 +1935,7 @@ impl App {
 
         agent.replace_history(history);
         agent.set_session_id(Some(full_id.clone()));
-        let history_session = session.clone();
-        agent.set_message_sink(move |message| session.append_message(message));
-        agent.set_history_replacement_sink(move |messages| {
-            history_session.replace_history(messages)
-        });
+        agent.set_history_sink(SessionHistorySink::new(session));
         self.info.session_id = Some(full_id);
         self.composer = ComposerMode::Input;
         self.input.clear();

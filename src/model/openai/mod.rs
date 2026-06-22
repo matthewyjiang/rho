@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
@@ -16,7 +14,7 @@ use auth::{
     load_api_key_auth, load_codex_auth, load_codex_tokens_for_request, refresh_codex_token, Auth,
     CodexAuthSource,
 };
-use codex_ws::{CodexContinuationCandidate, CodexContinuationState};
+use codex_ws::{CodexWsTransport, CodexWsTurn};
 use convert::{
     codex_input_items, codex_reasoning_param, convert_openai_response, to_openai_message,
     to_openai_tool, to_responses_tool,
@@ -39,7 +37,7 @@ pub struct OpenAiProvider {
     model: String,
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
-    codex_continuation: Mutex<CodexContinuationState>,
+    codex_ws: CodexWsTransport,
 }
 
 impl OpenAiProvider {
@@ -53,10 +51,11 @@ impl OpenAiProvider {
             AuthMode::ApiKey => load_api_key_auth()?,
             AuthMode::Codex => load_codex_auth()?,
         };
-        let api_base = match &auth {
+        let api_base: String = match &auth {
             Auth::Codex { .. } => "https://chatgpt.com/backend-api/codex".into(),
             Auth::ApiKey(_) => "https://api.openai.com/v1".into(),
         };
+        let codex_ws = CodexWsTransport::new(&api_base);
         Ok(Self {
             client: reqwest::Client::new(),
             auth,
@@ -64,7 +63,7 @@ impl OpenAiProvider {
             model,
             reasoning_effort,
             reasoning_summary,
-            codex_continuation: Mutex::new(CodexContinuationState::default()),
+            codex_ws,
         })
     }
 }
@@ -239,8 +238,19 @@ impl OpenAiProvider {
             self.reasoning_effort.as_deref(),
             self.reasoning_summary.as_deref(),
         )?;
-        let continuation_candidate = CodexContinuationCandidate::from_responses_body(&body)?;
-        self.prepare_codex_sse_fallback(&continuation_candidate)?;
+        match self
+            .codex_ws
+            .send_responses_turn(body.clone(), &tokens, &mut on_event)
+            .await?
+        {
+            CodexWsTurn::Completed(response) => return Ok(response),
+            CodexWsTurn::FullSseFallback => {
+                // The WebSocket transport has already reset stale continuation
+                // state and withheld stream events, so replaying the full body
+                // over SSE cannot duplicate caller-visible deltas.
+            }
+        }
+
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_request = |token: &str| {
             self.client
@@ -257,12 +267,12 @@ impl OpenAiProvider {
         let response = match req.send().await {
             Ok(response) => response,
             Err(err) => {
-                self.reset_codex_continuation()?;
+                self.codex_ws.reset().await;
                 return Err(err.into());
             }
         };
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            self.reset_codex_continuation()?;
+            self.codex_ws.reset().await;
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
                 let refreshed =
                     refresh_codex_token(&self.client, refresh_token, source, &tokens).await?;
@@ -273,28 +283,28 @@ impl OpenAiProvider {
                 let response = match req.send().await {
                     Ok(response) => response,
                     Err(err) => {
-                        self.reset_codex_continuation()?;
+                        self.codex_ws.reset().await;
                         return Err(err.into());
                     }
                 };
                 if !response.status().is_success() {
-                    self.reset_codex_continuation()?;
+                    self.codex_ws.reset().await;
                     let status = response.status();
                     let body = response.text().await.unwrap_or_default();
                     return Err(ModelError::HttpStatus { status, body });
                 }
                 return self
-                    .collect_codex_sse_response(response, &mut on_event, &continuation_candidate)
+                    .collect_codex_sse_response(response, &mut on_event, &body)
                     .await;
             }
         }
         if !response.status().is_success() {
-            self.reset_codex_continuation()?;
+            self.codex_ws.reset().await;
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(ModelError::HttpStatus { status, body });
         }
-        self.collect_codex_sse_response(response, &mut on_event, &continuation_candidate)
+        self.collect_codex_sse_response(response, &mut on_event, &body)
             .await
     }
 
@@ -302,49 +312,20 @@ impl OpenAiProvider {
         &self,
         response: reqwest::Response,
         on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-        continuation_candidate: &CodexContinuationCandidate,
+        body: &Value,
     ) -> Result<ModelResponse, ModelError> {
         match collect_codex_sse_response(response, on_event).await {
             Ok(output) => {
-                self.record_codex_continuation_success(continuation_candidate, output.response_id)?;
+                self.codex_ws
+                    .record_full_request_success(body, output.response_id)
+                    .await?;
                 Ok(output.response)
             }
             Err(err) => {
-                self.reset_codex_continuation()?;
+                self.codex_ws.reset().await;
                 Err(err)
             }
         }
-    }
-
-    fn prepare_codex_sse_fallback(
-        &self,
-        continuation_candidate: &CodexContinuationCandidate,
-    ) -> Result<(), ModelError> {
-        let mut continuation = self.codex_continuation.lock().map_err(|_| {
-            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
-        })?;
-        let _fallback = continuation.prepare_sse_fallback(continuation_candidate);
-        Ok(())
-    }
-
-    fn record_codex_continuation_success(
-        &self,
-        continuation_candidate: &CodexContinuationCandidate,
-        response_id: Option<String>,
-    ) -> Result<(), ModelError> {
-        let mut continuation = self.codex_continuation.lock().map_err(|_| {
-            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
-        })?;
-        continuation.record_success(continuation_candidate, response_id);
-        Ok(())
-    }
-
-    fn reset_codex_continuation(&self) -> Result<(), ModelError> {
-        let mut continuation = self.codex_continuation.lock().map_err(|_| {
-            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
-        })?;
-        continuation.reset();
-        Ok(())
     }
 }
 

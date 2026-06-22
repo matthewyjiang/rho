@@ -19,7 +19,7 @@ use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
 
-use agent::Agent;
+use agent::{Agent, SessionHistorySink};
 use cli::{Cli, Command};
 use config::Config;
 use model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider};
@@ -99,11 +99,7 @@ async fn main() -> anyhow::Result<()> {
                     let session_id = Some(session.id().to_string());
                     agent = agent.with_history(history);
                     agent.set_session_id(session_id.clone());
-                    let history_session = session.clone();
-                    agent.set_message_sink(move |message| session.append_message(message));
-                    agent.set_history_replacement_sink(move |messages| {
-                        history_session.replace_history(messages)
-                    });
+                    agent.set_history_sink(SessionHistorySink::new(session));
                     session_id
                 }
                 Some(None) => {
