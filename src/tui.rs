@@ -1946,6 +1946,36 @@ mod tests {
     }
 
     #[test]
+    fn skill_tool_block_uses_lavender_success_background() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                name: "skill".into(),
+                command: None,
+                ok: true,
+                content: "skill caveman".into(),
+            },
+            40,
+        );
+
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(92, 80, 140)));
+    }
+
+    #[test]
+    fn skill_tool_block_uses_red_failure_background() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                name: "skill".into(),
+                command: None,
+                ok: false,
+                content: "unknown skill".into(),
+            },
+            40,
+        );
+
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(95, 36, 36)));
+    }
+
+    #[test]
     fn read_file_tool_block_shows_line_range_label() {
         let lines = entry_lines(
             &Entry::Tool {

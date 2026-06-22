@@ -331,7 +331,15 @@ fn push_tool_block(
     content: &str,
     width: usize,
 ) {
-    let style = if matches!(name, "bash" | "read_file" | "write_file") {
+    let style = if name == "skill" {
+        if ok {
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(92, 80, 140))
+        } else {
+            Style::default().fg(Color::White).bg(Color::Rgb(95, 36, 36))
+        }
+    } else if matches!(name, "bash" | "read_file" | "write_file") {
         if ok {
             Style::default().fg(Color::White).bg(Color::Rgb(25, 75, 45))
         } else {
