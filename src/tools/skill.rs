@@ -37,6 +37,23 @@ impl Tool for Skill {
         crate::tool::ToolDisplayStyle::skill()
     }
 
+    fn display_content(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Option<String> {
+        args.get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| format!("skill {name}"))
+    }
+
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        vec![self
+            .display_content(args, ctx)
+            .unwrap_or_else(|| result.content.clone())]
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

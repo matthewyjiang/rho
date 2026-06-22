@@ -24,6 +24,12 @@ impl Tool for Bash {
         ToolDisplayStyle::file_or_command()
     }
 
+    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("command")
+            .and_then(|command| command.as_str())
+            .map(str::to_string)
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

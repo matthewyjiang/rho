@@ -23,6 +23,12 @@ impl Tool for WriteFile {
         ToolDisplayStyle::file_or_command()
     }
 
+    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
+        args.get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| compact_display_path(&ctx.cwd, path))
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

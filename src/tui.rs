@@ -177,11 +177,9 @@ enum Entry {
     #[allow(dead_code)]
     Assistant(String),
     Tool {
-        name: String,
-        command: Option<String>,
         ok: bool,
-        content: String,
         display_style: ToolDisplayStyle,
+        display_lines: Vec<String>,
     },
     Notice(String),
     Error(String),
@@ -1513,17 +1511,14 @@ impl App {
                 None
             }
             AgentEvent::ToolFinished {
-                name,
-                command,
                 ok,
-                content,
                 display_style,
+                display_lines,
+                ..
             } => Some(Entry::Tool {
-                name,
-                command,
                 ok,
-                content,
                 display_style,
+                display_lines,
             }),
         }
     }
@@ -1865,6 +1860,14 @@ mod tests {
             .collect()
     }
 
+    fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
+        Entry::Tool {
+            ok,
+            display_style: ToolDisplayStyle::file_or_command(),
+            display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
+        }
+    }
+
     fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
         save_openai_api_key(store.as_ref(), "sk-test").unwrap();
@@ -1889,13 +1892,7 @@ mod tests {
         let entries = [
             Entry::User("hello?".into()),
             Entry::Assistant("hi".into()),
-            Entry::Tool {
-                name: "read_file".into(),
-                command: None,
-                ok: true,
-                content: "read src/main.rs".into(),
-                display_style: ToolDisplayStyle::file_or_command(),
-            },
+            test_tool_entry(true, &["read_file", "read src/main.rs"]),
             Entry::Notice("note".into()),
             Entry::Error("bad".into()),
         ];
@@ -1918,13 +1915,7 @@ mod tests {
     #[test]
     fn bash_tool_block_shows_command() {
         let lines = entry_lines(
-            &Entry::Tool {
-                name: "bash".into(),
-                command: Some("cargo test".into()),
-                ok: true,
-                content: "ignored output".into(),
-                display_style: ToolDisplayStyle::file_or_command(),
-            },
+            &test_tool_entry(true, &["bash", "cargo test", "ignored output"]),
             40,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -1936,16 +1927,7 @@ mod tests {
 
     #[test]
     fn read_file_tool_block_shows_file_name_only() {
-        let lines = entry_lines(
-            &Entry::Tool {
-                name: "read_file".into(),
-                command: None,
-                ok: true,
-                content: "src/main.rs".into(),
-                display_style: ToolDisplayStyle::file_or_command(),
-            },
-            40,
-        );
+        let lines = entry_lines(&test_tool_entry(true, &["read_file", "src/main.rs"]), 40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(rendered.contains("read_file"));
@@ -1956,11 +1938,9 @@ mod tests {
     fn skill_tool_block_shows_single_lavender_status_line() {
         let lines = entry_lines(
             &Entry::Tool {
-                name: "skill".into(),
-                command: None,
                 ok: true,
-                content: "skill caveman".into(),
                 display_style: ToolDisplayStyle::skill(),
+                display_lines: vec!["skill caveman".into()],
             },
             40,
         );
@@ -1975,11 +1955,9 @@ mod tests {
     fn skill_tool_block_uses_red_failure_background() {
         let lines = entry_lines(
             &Entry::Tool {
-                name: "skill".into(),
-                command: None,
                 ok: false,
-                content: "unknown skill".into(),
                 display_style: ToolDisplayStyle::skill(),
+                display_lines: vec!["unknown skill".into()],
             },
             40,
         );
@@ -1990,13 +1968,7 @@ mod tests {
     #[test]
     fn read_file_tool_block_shows_line_range_label() {
         let lines = entry_lines(
-            &Entry::Tool {
-                name: "read_file".into(),
-                command: None,
-                ok: true,
-                content: "src/file.rs:10-24".into(),
-                display_style: ToolDisplayStyle::file_or_command(),
-            },
+            &test_tool_entry(true, &["read_file", "src/file.rs:10-24"]),
             40,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");

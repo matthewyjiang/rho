@@ -282,20 +282,11 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             LineFill::Natural,
         ),
         Entry::Tool {
-            name,
-            command,
             ok,
-            content,
             display_style,
-        } => push_tool_block(
-            &mut lines,
-            name,
-            command.as_deref(),
-            *ok,
-            content,
-            *display_style,
-            inner_width,
-        ),
+            display_lines,
+            ..
+        } => push_tool_block(&mut lines, *ok, display_lines, *display_style, inner_width),
         Entry::Notice(text) => push_wrapped_text(
             &mut lines,
             text,
@@ -328,10 +319,8 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
 
 fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    name: &str,
-    command: Option<&str>,
     ok: bool,
-    content: &str,
+    display_lines: &[String],
     display_style: ToolDisplayStyle,
     width: usize,
 ) {
@@ -344,20 +333,8 @@ fn push_tool_block(
         .fg(tool_color(display_style.foreground))
         .bg(tool_color(background));
 
-    if name == "skill" {
-        push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
-    } else {
-        push_wrapped_text(lines, name, width, style, LineFill::PadToWidth);
-        if name == "bash" {
-            if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
-                push_wrapped_text(lines, command, width, style, LineFill::PadToWidth);
-            }
-            if !content.trim().is_empty() {
-                push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
-            }
-        } else if !content.trim().is_empty() {
-            push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
-        }
+    for line in display_lines.iter().filter(|line| !line.trim().is_empty()) {
+        push_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
     }
 }
 

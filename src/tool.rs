@@ -104,6 +104,31 @@ pub trait Tool: Send + Sync {
         ToolDisplayStyle::default_tool()
     }
 
+    fn display_command(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
+    fn display_content(&self, _args: &Value, _ctx: &ToolContext) -> Option<String> {
+        None
+    }
+
+    fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
+        let mut lines = vec![self.spec().name];
+        if let Some(command) = self
+            .display_command(args)
+            .filter(|command| !command.trim().is_empty())
+        {
+            lines.push(command);
+        }
+        let content = self
+            .display_content(args, ctx)
+            .unwrap_or_else(|| result.content.clone());
+        if !content.trim().is_empty() {
+            lines.push(content);
+        }
+        lines
+    }
+
     async fn call(
         &self,
         args: Value,
@@ -143,6 +168,15 @@ pub fn resolve_path(cwd: &std::path::Path, path: &str) -> PathBuf {
     } else {
         cwd.join(p)
     }
+}
+
+pub fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
+    let path = resolve_path(cwd, path);
+    path.strip_prefix(cwd)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 pub fn truncate(mut s: String, max: usize) -> String {
