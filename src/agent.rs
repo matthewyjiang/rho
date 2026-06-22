@@ -55,7 +55,9 @@ pub struct Agent {
     history_replacement_sink: Option<HistoryReplacementSink>,
     prompt_cache_key: Option<String>,
     compaction: CompactionConfig,
+    configured_context_window: Option<u64>,
     last_context_window: Option<u64>,
+    context_unknown_after_compaction: bool,
 }
 
 impl Agent {
@@ -70,7 +72,9 @@ impl Agent {
             history_replacement_sink: None,
             prompt_cache_key: None,
             compaction: CompactionConfig::default(),
+            configured_context_window: None,
             last_context_window: None,
+            context_unknown_after_compaction: false,
         }
     }
 
@@ -114,6 +118,10 @@ impl Agent {
         self.compaction = compaction;
     }
 
+    pub fn set_context_window(&mut self, context_window: Option<u64>) {
+        self.configured_context_window = context_window.filter(|window| *window > 0);
+    }
+
     pub fn set_session_id(&mut self, session_id: Option<String>) {
         self.prompt_cache_key = session_id
             .as_deref()
@@ -122,11 +130,14 @@ impl Agent {
 
     pub fn replace_provider(&mut self, provider: DynModelProvider) {
         self.provider = provider;
+        self.last_context_window = None;
+        self.context_unknown_after_compaction = false;
     }
 
     pub fn reset(&mut self) {
         self.messages = initial_messages(&self.tools, &self.ctx.cwd);
         self.last_context_window = None;
+        self.context_unknown_after_compaction = false;
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
@@ -162,12 +173,15 @@ impl Agent {
         let mut step = 1usize;
         loop {
             on_event(AgentEvent::StepStarted(step))?;
-            on_event(AgentEvent::ContextUsage(estimate_context_usage(
-                &self.messages,
-                &specs,
-                self.last_context_window,
-            )))?;
+            if !self.context_unknown_after_compaction {
+                on_event(AgentEvent::ContextUsage(estimate_context_usage(
+                    &self.messages,
+                    &specs,
+                    self.context_window(),
+                )))?;
+            }
             let mut reported_context_window = None;
+            let mut provider_reported_context = false;
             let response = match self
                 .provider
                 .send_turn_stream(
@@ -185,6 +199,7 @@ impl Agent {
                             reported_context_window =
                                 usage.context_window.or(reported_context_window);
                             if let Some(context_usage) = ContextUsage::from_model_usage(&usage) {
+                                provider_reported_context = true;
                                 on_event(AgentEvent::ContextUsage(context_usage))?;
                             }
                             on_event(AgentEvent::Usage(usage))
@@ -204,6 +219,9 @@ impl Agent {
                 }
                 Err(err) => return Err(err.into()),
             };
+            if provider_reported_context {
+                self.context_unknown_after_compaction = false;
+            }
             self.last_context_window = reported_context_window.or(self.last_context_window);
             match response {
                 ModelResponse::Assistant(blocks) => {
@@ -306,7 +324,7 @@ impl Agent {
         specs: &[crate::tool::ToolSpec],
         on_event: &mut impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<(), AgentError> {
-        let estimate = estimate_context_usage(&self.messages, specs, self.last_context_window);
+        let estimate = estimate_context_usage(&self.messages, specs, self.context_window());
         if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
             return Ok(());
         }
@@ -344,10 +362,15 @@ impl Agent {
 
         self.messages = replacement_history_from_summary(partition, summary);
         self.persist_history_replacement()?;
+        self.context_unknown_after_compaction = true;
         on_event(AgentEvent::ContextUsage(
-            ContextUsage::unknown_after_compaction(self.last_context_window),
+            ContextUsage::unknown_after_compaction(self.context_window()),
         ))?;
         Ok(())
+    }
+
+    fn context_window(&self) -> Option<u64> {
+        self.last_context_window.or(self.configured_context_window)
     }
 
     fn persist_history_replacement(&mut self) -> Result<(), AgentError> {
@@ -527,7 +550,6 @@ mod tests {
                 .push(("normal".into(), request.messages));
             on_event(ModelEvent::Usage(ModelUsage {
                 input_tokens: Some(900),
-                context_window: Some(1_000),
                 ..ModelUsage::default()
             }))?;
             Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
@@ -728,7 +750,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded() {
+    async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded_with_configured_context_window(
+    ) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let mut agent = test_agent_with_tools(
             CompactingProvider {
@@ -741,6 +764,7 @@ mod tests {
             threshold_percent: 1,
             recent_messages: 1,
         });
+        agent.set_context_window(Some(1_000));
 
         agent.run("first".into()).await.unwrap();
         agent.run("second".into()).await.unwrap();
@@ -760,6 +784,56 @@ mod tests {
         assert!(
             matches!(requests[2].1.last(), Some(Message::User(blocks)) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "second"))
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_after_compaction_is_not_overwritten_by_estimate_before_provider_usage() {
+        let mut agent = test_agent_with_tools(
+            SequencedProvider {
+                requests: Arc::new(Mutex::new(Vec::new())),
+                responses: Mutex::new(VecDeque::from(vec![
+                    ModelResponse::Assistant(vec![ContentBlock::Text("first ok".into())]),
+                    ModelResponse::Assistant(vec![ContentBlock::Text("summary".into())]),
+                    ModelResponse::Assistant(vec![ContentBlock::Text("second ok".into())]),
+                ])),
+            },
+            ToolRegistry::new(),
+        );
+        agent.set_compaction_config(CompactionConfig {
+            auto_compact: true,
+            threshold_percent: 1,
+            recent_messages: 1,
+        });
+        agent.set_context_window(Some(1_000));
+        let mut context_events = Vec::new();
+
+        agent
+            .run_with_events("first".into(), |event| {
+                if let AgentEvent::ContextUsage(usage) = event {
+                    context_events.push(usage);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        agent
+            .run_with_events("second".into(), |event| {
+                if let AgentEvent::ContextUsage(usage) = event {
+                    context_events.push(usage);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(context_events.len(), 2);
+        assert_eq!(context_events[0].source, ContextUsageSource::Estimated);
+        assert_eq!(context_events[0].context_window, Some(1_000));
+        assert_eq!(
+            context_events[1].source,
+            ContextUsageSource::UnknownAfterCompaction
+        );
+        assert_eq!(context_events[1].context_window, Some(1_000));
     }
 
     #[test]

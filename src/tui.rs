@@ -410,7 +410,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<TuiResult> {
-        self.start_model_metadata_fetch();
+        self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal, agent)?;
         if self.info.open_resume_picker {
@@ -423,7 +423,7 @@ impl App {
             )?;
         }
         while !self.should_quit {
-            self.poll_model_metadata_fetch();
+            self.poll_model_metadata_fetch(agent);
             self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             terminal.draw(|frame| self.draw(frame))?;
@@ -612,15 +612,17 @@ impl App {
         Ok(())
     }
 
-    fn start_model_metadata_fetch(&mut self) {
+    fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
         }
         if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
+            agent.set_context_window(metadata.display_context_window());
             self.model_metadata = Some(metadata);
             return;
         }
 
+        agent.set_context_window(None);
         self.model_metadata = None;
         let provider = self.info.provider.clone();
         let model = self.info.model.clone();
@@ -629,7 +631,7 @@ impl App {
         }));
     }
 
-    fn poll_model_metadata_fetch(&mut self) {
+    fn poll_model_metadata_fetch(&mut self, agent: &mut Agent) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -638,6 +640,7 @@ impl App {
         }
         if let Some(handle) = self.pending_model_metadata.take() {
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
+                agent.set_context_window(metadata.display_context_window());
                 self.model_metadata = Some(metadata);
             }
         }
@@ -1775,7 +1778,7 @@ impl App {
         self.info.auth = auth.clone();
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
-        self.start_model_metadata_fetch();
+        self.start_model_metadata_fetch(agent);
         match Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.provider = provider.clone();
             config.model = model.clone();

@@ -22,7 +22,7 @@ use clap::Parser;
 use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
-use model::{build_provider, ModelError, UnavailableProvider};
+use model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider};
 use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
@@ -81,6 +81,10 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut agent = Agent::new(provider, registry, ctx);
     agent.set_compaction_config((&cfg).into());
+    agent.set_context_window(
+        cached_model_metadata(&cfg.provider, &cfg.model)
+            .and_then(|metadata| metadata.display_context_window()),
+    );
 
     match run_prompt {
         Some(prompt) => {
