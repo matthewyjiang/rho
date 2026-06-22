@@ -1,9 +1,12 @@
 use std::{
+    collections::VecDeque,
     io::Write,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
+
+use futures_util::FutureExt;
 
 use crossterm::{
     event::{
@@ -20,19 +23,22 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
+mod config_picker;
 mod login;
 mod model_picker;
 mod picker;
 mod provider_picker;
 mod render;
 mod skill_picker;
+mod statusline;
 
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
     byte_index_after_visual_lines, entry_lines, input_cursor_position, input_visual_lines,
     picker_lines, push_wrapped_text, session_header_lines, styled_line, truncate_one_line,
-    visible_picker_match_start, LineFill,
+    LineFill,
 };
+use statusline::{statusline_lines, StatusLineState};
 
 use crate::{
     agent::{Agent, AgentEvent},
@@ -47,8 +53,10 @@ use crate::{
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
-        reasoning_config_value, ModelError, UnavailableProvider,
+        models_dev::fetch_model_metadata,
+        ContentBlock, Message, ModelError, ModelMetadata, ModelUsage, UnavailableProvider,
     },
+    reasoning::ReasoningLevel,
     session::Session,
     tool::ToolDisplayStyle,
 };
@@ -58,13 +66,13 @@ const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
 const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
 const PASTE_BURST_MIN_CHARS: usize = 2;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 
 pub struct TuiInfo {
     pub cwd: PathBuf,
     pub provider: String,
     pub model: String,
-    pub reasoning_effort: String,
-    pub reasoning_summary: String,
+    pub reasoning: ReasoningLevel,
     pub auth: String,
     pub session_id: Option<String>,
     pub config_path: Option<PathBuf>,
@@ -119,6 +127,9 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
+    latest_usage: Option<ModelUsage>,
+    model_metadata: Option<ModelMetadata>,
+    pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -126,7 +137,20 @@ enum ComposerMode {
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
+    ConfigNumberInput(ConfigNumberInput),
     OAuthPending(LoginTarget),
+}
+
+#[derive(Clone, Debug)]
+struct ConfigNumberInput {
+    key: ConfigNumberKey,
+    value: String,
+    cursor: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigNumberKey {
+    MaxOutputBytes,
 }
 
 #[derive(Clone, Debug)]
@@ -176,6 +200,47 @@ struct PasteBurst {
     last_plain_char_at: Option<Instant>,
     plain_char_count: usize,
     suppress_enter_until: Option<Instant>,
+}
+
+impl ConfigNumberInput {
+    fn new(key: ConfigNumberKey, value: usize) -> Self {
+        let value = value.to_string();
+        let cursor = value.chars().count();
+        Self { key, value, cursor }
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        if !ch.is_ascii_digit() {
+            return;
+        }
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        for ch in text.chars().filter(|ch| ch.is_ascii_digit()) {
+            self.insert_char(ch);
+        }
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
 }
 
 impl SecretInput {
@@ -301,6 +366,9 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_oauth_login: None,
+            latest_usage: None,
+            model_metadata: None,
+            pending_model_metadata: None,
         }
     }
 
@@ -309,7 +377,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<TuiResult> {
+        self.start_model_metadata_fetch();
         self.insert_session_intro(terminal)?;
+        self.insert_recovered_history(terminal, agent)?;
         if self.info.auth_unavailable.is_some() {
             self.insert_entry(
                 terminal,
@@ -317,6 +387,7 @@ impl App {
             )?;
         }
         while !self.should_quit {
+            self.poll_model_metadata_fetch();
             self.poll_pending_oauth_login(terminal, agent).await?;
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(Duration::from_millis(100))? {
@@ -329,6 +400,7 @@ impl App {
                         match &mut self.composer {
                             ComposerMode::Input => self.insert_input_text(&text),
                             ComposerMode::SecretInput(secret) => secret.insert_text(&text),
+                            ComposerMode::ConfigNumberInput(input) => input.insert_text(&text),
                             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
                         }
                         self.paste_burst.clear();
@@ -359,6 +431,14 @@ impl App {
         }
 
         if self.handle_secret_key(key, terminal, agent).await? {
+            return Ok(());
+        }
+
+        if self.handle_config_number_key(key, terminal)? {
+            return Ok(());
+        }
+
+        if self.handle_reasoning_cycle_key(key, agent)? {
             return Ok(());
         }
 
@@ -486,6 +566,29 @@ impl App {
         Ok(())
     }
 
+    fn start_model_metadata_fetch(&mut self) {
+        self.model_metadata = None;
+        let provider = self.info.provider.clone();
+        let model = self.info.model.clone();
+        self.pending_model_metadata = Some(tokio::spawn(async move {
+            fetch_model_metadata(&provider, &model).await
+        }));
+    }
+
+    fn poll_model_metadata_fetch(&mut self) {
+        let Some(handle) = self.pending_model_metadata.as_mut() else {
+            return;
+        };
+        if !handle.is_finished() {
+            return;
+        }
+        if let Some(handle) = self.pending_model_metadata.take() {
+            if let Some(Ok(Some(metadata))) = handle.now_or_never() {
+                self.model_metadata = Some(metadata);
+            }
+        }
+    }
+
     fn handle_oauth_pending_key(
         &mut self,
         key: KeyEvent,
@@ -585,6 +688,91 @@ impl App {
             }
             _ => Ok(true),
         }
+    }
+
+    fn handle_config_number_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::ConfigNumberInput(_)) {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                let ComposerMode::ConfigNumberInput(input) = &self.composer else {
+                    return Ok(true);
+                };
+                let value = input.value.parse::<usize>()?;
+                if value == 0 {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error("max output bytes must be greater than zero".into()),
+                    )?;
+                    self.status = "config save failed".into();
+                    return Ok(true);
+                }
+                match input.key {
+                    ConfigNumberKey::MaxOutputBytes => {
+                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+                            config.max_output_bytes = value;
+                            config.save(self.info.config_path.clone())
+                        })?;
+                        self.composer =
+                            ComposerMode::Picker(config_picker::config_picker(&self.info, value));
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Notice(format!(
+                                "max output bytes set to {value}; applies next session"
+                            )),
+                        )?;
+                        self.status = "config saved".into();
+                    }
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.backspace();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.insert_char(ch);
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                let max_output_bytes =
+                    Config::load(self.info.config_path.clone())?.max_output_bytes;
+                self.composer = ComposerMode::Picker(config_picker::config_picker(
+                    &self.info,
+                    max_output_bytes,
+                ));
+                self.status = "config".into();
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    fn handle_reasoning_cycle_key(
+        &mut self,
+        key: KeyEvent,
+        agent: &mut Agent,
+    ) -> anyhow::Result<bool> {
+        let is_shift_tab = matches!(key.code, KeyCode::BackTab)
+            || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
+        if !is_shift_tab {
+            return Ok(false);
+        }
+
+        self.cycle_reasoning(agent)?;
+        self.paste_burst.clear();
+        self.ctrl_c_streak = 0;
+        Ok(true)
     }
 
     async fn handle_picker_key(
@@ -1224,7 +1412,9 @@ impl App {
             return Ok(());
         };
 
-        self.composer = ComposerMode::Input;
+        if !matches!(action, PickerAction::Config) {
+            self.composer = ComposerMode::Input;
+        }
         match action {
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
@@ -1253,7 +1443,45 @@ impl App {
                 self.status = "skill command inserted".into();
                 Ok(())
             }
+            PickerAction::Config => self.submit_config_selection(&value, agent),
         }
+    }
+
+    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
+        match value {
+            config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
+            config_picker::MAX_OUTPUT_BYTES_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::MaxOutputBytes,
+                    config.max_output_bytes,
+                ));
+                self.status = "edit max output bytes".into();
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+        let reasoning = self.info.reasoning.next();
+        let provider = build_provider(&self.info.provider, &self.info.model, reasoning)?;
+        agent.replace_provider(provider);
+        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.reasoning = reasoning;
+            config.save(self.info.config_path.clone())
+        })?;
+        self.info.reasoning = reasoning;
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            let max_output_bytes = Config::load(self.info.config_path.clone())?.max_output_bytes;
+            self.composer =
+                ComposerMode::Picker(config_picker::config_picker(&self.info, max_output_bytes));
+        }
+        self.status = format!("reasoning: {reasoning}");
+        Ok(())
     }
 
     fn active_picker_selection(&self) -> Option<(PickerAction, String)> {
@@ -1275,12 +1503,7 @@ impl App {
         let model = selection.model;
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
-        let new_provider = match build_provider(
-            &provider,
-            &model,
-            reasoning_config_value(&self.info.reasoning_effort),
-            reasoning_config_value(&self.info.reasoning_summary),
-        ) {
+        let new_provider = match build_provider(&provider, &model, self.info.reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(
@@ -1298,6 +1521,7 @@ impl App {
         self.info.auth = auth.clone();
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
+        self.start_model_metadata_fetch();
         match Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.provider = provider.clone();
             config.model = model.clone();
@@ -1359,28 +1583,12 @@ impl App {
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let path = self
-            .info
-            .config_path
-            .clone()
-            .map(|path| path.display().to_string())
-            .or_else(|| {
-                Config::default_path()
-                    .ok()
-                    .map(|path| path.display().to_string())
-            })
-            .unwrap_or_else(|| "default config path unavailable".into());
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "config: {path}\nprovider: {}\nmodel: {}\nreasoning effort: {}\nreasoning summary: {}\nfull config UI is not implemented yet; edit the config file directly for now.",
-                self.info.provider,
-                self.info.model,
-                self.info.reasoning_effort,
-                self.info.reasoning_summary
-            )),
-        )?;
+        self.composer = ComposerMode::Picker(config_picker::config_picker(
+            &self.info,
+            Config::load(self.info.config_path.clone())?.max_output_bytes,
+        ));
         self.status = "config".into();
+        terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }
 
@@ -1445,6 +1653,10 @@ impl App {
                 self.reasoning_buffer.push_str(&text);
                 None
             }
+            AgentEvent::Usage(usage) => {
+                merge_usage(&mut self.latest_usage, usage);
+                None
+            }
             AgentEvent::ToolFinished {
                 ok,
                 display_style,
@@ -1463,9 +1675,11 @@ impl App {
         let width = area.width as usize;
         let lines = self.active_lines(width);
         let composer_line_count = self.composer_lines(width).len() as u16;
+        let statusline_count = self.statusline_lines(width).len() as u16;
         let command_line_count = self.command_suggestion_lines(width).len() as u16;
         let lines_below_composer = composer_line_count
             .saturating_add(1)
+            .saturating_add(statusline_count)
             .saturating_add(command_line_count);
         let composer_y = (lines.len() as u16)
             .saturating_sub(lines_below_composer)
@@ -1519,20 +1733,25 @@ impl App {
             content.push(Line::raw(""));
         }
 
-        let divider = Line::styled(
-            "─".repeat(width.max(1)),
-            Style::default().fg(Color::DarkGray),
-        );
+        let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
+            Style::default().fg(Color::Blue)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let divider = Line::styled("─".repeat(width.max(1)), divider_style);
         let composer_lines = self.composer_lines(width);
+        let statusline_lines = self.statusline_lines(width);
         let command_lines = self.command_suggestion_lines(width);
         let mut lines = Vec::new();
-        let composer_height = composer_lines.len() + command_lines.len() + 2;
+        let composer_height =
+            composer_lines.len() + statusline_lines.len() + command_lines.len() + 2;
         let available_content = (INLINE_VIEWPORT_HEIGHT as usize).saturating_sub(composer_height);
         let skip = content.len().saturating_sub(available_content);
         lines.extend(content.into_iter().skip(skip));
         lines.push(divider.clone());
         lines.extend(composer_lines);
         lines.push(divider);
+        lines.extend(statusline_lines);
         lines.extend(command_lines);
         lines
     }
@@ -1545,8 +1764,22 @@ impl App {
                 .collect(),
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
+            ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
         }
+    }
+
+    fn statusline_lines(&self, width: usize) -> Vec<Line<'static>> {
+        statusline_lines(
+            &StatusLineState::from_tui(
+                &self.info,
+                &self.status,
+                self.latest_usage.clone(),
+                self.model_metadata.clone(),
+                self.pending_model_metadata.is_some(),
+            ),
+            width,
+        )
     }
 
     fn composer_cursor_position(&self, width: usize) -> Position {
@@ -1556,23 +1789,15 @@ impl App {
                 x: secret.cursor.min(width.max(1)) as u16,
                 y: 1,
             },
+            ComposerMode::ConfigNumberInput(input) => Position {
+                x: input.cursor.min(width.max(1)) as u16,
+                y: 1,
+            },
             ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
-            ComposerMode::Picker(picker) => {
-                let matching_indices = picker.matching_indices();
-                let selected_position = matching_indices
-                    .iter()
-                    .position(|index| *index == picker.selected)
-                    .unwrap_or(0);
-                let start = visible_picker_match_start(picker, &matching_indices);
-                Position {
-                    x: 0,
-                    y: selected_position
-                        .saturating_sub(start)
-                        .saturating_add(2)
-                        .min(matching_indices.len().saturating_add(1))
-                        as u16,
-                }
-            }
+            ComposerMode::Picker(picker) => Position {
+                x: picker.filter.chars().count().saturating_add(2) as u16,
+                y: 0,
+            },
         }
     }
 
@@ -1615,6 +1840,40 @@ impl App {
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let width = terminal.size()?.width as usize;
         insert_history_lines(terminal, session_header_lines(&self.info, width))?;
+        Ok(())
+    }
+
+    fn insert_recovered_history(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &Agent,
+    ) -> std::io::Result<()> {
+        let entries = transcript_entries_from_messages(agent.messages());
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let width = terminal.size()?.width as usize;
+        let (omitted, visible_entries) =
+            recovered_history_tail(&entries, width, RECOVERED_HISTORY_LINE_LIMIT);
+        let mut lines = Vec::new();
+        if omitted > 0 {
+            lines.extend(entry_lines(
+                &Entry::Notice(format!(
+                    "resumed session; showing last {} messages, omitted {omitted} earlier messages",
+                    visible_entries.len()
+                )),
+                width,
+            ));
+        }
+        lines.extend(transcript_lines(&visible_entries, width));
+
+        insert_history_lines(terminal, lines)?;
+        self.transcript = visible_entries;
+        self.last_inserted_was_tool = self
+            .transcript
+            .last()
+            .is_some_and(|entry| matches!(entry, Entry::Tool { .. }));
         Ok(())
     }
 
@@ -1693,6 +1952,94 @@ impl App {
     }
 }
 
+fn recovered_history_tail(
+    entries: &[Entry],
+    width: usize,
+    line_limit: usize,
+) -> (usize, Vec<Entry>) {
+    let mut selected_start = entries.len();
+    let mut line_count = 0usize;
+    let mut next_is_tool = false;
+
+    for (index, entry) in entries.iter().enumerate().rev() {
+        let spacing = matches!(entry, Entry::Tool { .. }) && next_is_tool;
+        let entry_line_count = entry_lines(entry, width).len() + usize::from(spacing);
+        if selected_start < entries.len() && line_count + entry_line_count > line_limit {
+            break;
+        }
+        selected_start = index;
+        line_count += entry_line_count;
+        next_is_tool = matches!(entry, Entry::Tool { .. });
+    }
+
+    (selected_start, entries[selected_start..].to_vec())
+}
+
+fn transcript_lines(entries: &[Entry], width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut previous_was_tool = false;
+    for entry in entries {
+        if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+            lines.push(Line::raw(""));
+        }
+        lines.extend(entry_lines(entry, width));
+        previous_was_tool = matches!(entry, Entry::Tool { .. });
+    }
+    lines
+}
+
+fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    let mut pending_tool_names = VecDeque::new();
+    for message in messages {
+        match message {
+            Message::System(_) => {}
+            Message::User(blocks) => {
+                let text = text_blocks(blocks);
+                if !text.is_empty() {
+                    entries.push(Entry::User(text));
+                }
+            }
+            Message::Assistant(blocks) => {
+                let text = text_blocks(blocks);
+                if !text.is_empty() {
+                    entries.push(Entry::Assistant(text));
+                }
+                pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
+                    ContentBlock::ToolCall(call) => Some(call.name.clone()),
+                    ContentBlock::Text(_) => None,
+                }));
+            }
+            Message::ToolResult(result) => {
+                let name = pending_tool_names
+                    .pop_front()
+                    .unwrap_or_else(|| "tool".into());
+                let mut display_lines = vec![name];
+                if !result.content.trim().is_empty() {
+                    display_lines.push(result.content.clone());
+                }
+                entries.push(Entry::Tool {
+                    ok: result.ok,
+                    display_style: ToolDisplayStyle::default_tool(),
+                    display_lines,
+                });
+            }
+        }
+    }
+    entries
+}
+
+fn text_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
     let masked = "•".repeat(secret.value.chars().count());
     vec![
@@ -1706,6 +2053,48 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
             LineFill::Natural,
         ),
         styled_line(masked, width, Style::default(), LineFill::Natural),
+    ]
+}
+
+fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
+    let Some(total) = total.as_mut() else {
+        *total = Some(usage);
+        return;
+    };
+    total.input_tokens = add_optional(total.input_tokens, usage.input_tokens);
+    total.output_tokens = add_optional(total.output_tokens, usage.output_tokens);
+    total.cache_read_tokens = add_optional(total.cache_read_tokens, usage.cache_read_tokens);
+    total.cache_write_tokens = add_optional(total.cache_write_tokens, usage.cache_write_tokens);
+    total.total_tokens = add_optional(total.total_tokens, usage.total_tokens);
+    total.cost_usd_micros = add_optional(total.cost_usd_micros, usage.cost_usd_micros);
+    total.context_window = usage.context_window.or(total.context_window);
+}
+
+fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.saturating_add(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Line<'static>> {
+    let label = match input.key {
+        ConfigNumberKey::MaxOutputBytes => "max output bytes",
+    };
+    vec![
+        styled_line(
+            format!("edit {label}  enter save, esc cancel"),
+            width,
+            Style::default().fg(Color::DarkGray),
+            LineFill::Natural,
+        ),
+        styled_line(
+            input.value.clone(),
+            width,
+            Style::default(),
+            LineFill::Natural,
+        ),
     ]
 }
 
@@ -2004,8 +2393,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/project"),
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
-                reasoning_effort: "low".into(),
-                reasoning_summary: "auto".into(),
+                reasoning: ReasoningLevel::Low,
                 auth: "api-key".into(),
                 session_id: None,
                 config_path: None,
@@ -2038,6 +2426,49 @@ mod tests {
                 "rendered label {label}: {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn recovered_history_tail_limits_initial_redraw() {
+        let entries = (0..10)
+            .map(|index| Entry::User(format!("message {index}")))
+            .collect::<Vec<_>>();
+
+        let (omitted, visible) = recovered_history_tail(&entries, 80, 9);
+
+        assert_eq!(omitted, 7);
+        assert!(matches!(visible.as_slice(), [
+            Entry::User(a),
+            Entry::User(b),
+            Entry::User(c),
+        ] if a == "message 7" && b == "message 8" && c == "message 9"));
+    }
+
+    #[test]
+    fn recovered_session_messages_become_transcript_entries() {
+        let entries = transcript_entries_from_messages(&[
+            Message::System("system".into()),
+            Message::User(vec![ContentBlock::Text("hello".into())]),
+            Message::Assistant(vec![ContentBlock::Text("hi".into())]),
+            Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            })]),
+            Message::ToolResult(crate::tool::ToolResult {
+                id: "call_1".into(),
+                ok: false,
+                content: "missing file".into(),
+            }),
+        ]);
+
+        assert!(matches!(entries[0], Entry::User(ref text) if text == "hello"));
+        assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
+        assert!(matches!(
+            entries[2],
+            Entry::Tool { ok: false, ref display_lines, .. }
+                if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
+        ));
     }
 
     #[test]
@@ -2242,11 +2673,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(
-            rendered.contains("select model  enter confirm"),
-            "{rendered}"
-        );
-        assert!(rendered.contains("> model-a"), "{rendered}");
+        assert!(rendered.contains("select model"), "{rendered}");
+        assert!(rendered.contains("→ model-a"), "{rendered}");
         assert!(!rendered.contains("draft prompt"), "{rendered}");
     }
 
@@ -2307,8 +2735,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/project"),
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
-                reasoning_effort: "low".into(),
-                reasoning_summary: "auto".into(),
+                reasoning: ReasoningLevel::Low,
                 auth: "api-key".into(),
                 session_id: None,
                 config_path: None,
@@ -2375,11 +2802,15 @@ mod tests {
 
         let lines = picker_lines(&picker, 36);
 
-        assert!(line_text(&lines[1]).contains("name"));
-        assert!(line_text(&lines[1]).contains("| detail"));
-        assert!(line_text(&lines[2]).contains("test-skill"));
-        assert!(line_text(&lines[2]).contains('…'));
-        assert_eq!(lines.len(), 3);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(!rendered.contains("| detail"), "{rendered}");
+        assert!(rendered.contains("→ test-skill"), "{rendered}");
+        assert!(
+            rendered.contains("this detail is much too long"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("loaded skills"), "{rendered}");
     }
 
     #[test]
@@ -2404,11 +2835,11 @@ mod tests {
 
         assert!(!rendered.contains("| detail"), "{rendered}");
         assert!(
-            rendered.contains("> openai-codex/gpt-5.3-codex-max    (selected)"),
+            rendered.contains("→ openai-codex/gpt-5.3-codex-max"),
             "{rendered}"
         );
-        assert_eq!(lines[1].spans[1].style.fg, Some(Color::Yellow));
-        assert_eq!(lines.len(), 2);
+        assert!(rendered.contains("(selected)"), "{rendered}");
+        assert_eq!(lines[2].spans[2].style.fg, Some(Color::Yellow));
     }
 
     #[test]

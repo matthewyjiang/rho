@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use super::{Entry, PickerBadgeTone, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
 use crate::tool::{ToolDisplayStyle, ToolRgb};
 use ratatui::{
@@ -8,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
+const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LineFill {
@@ -22,7 +20,7 @@ impl LineFill {
     }
 }
 
-pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
+pub(super) fn session_header_lines(_info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
     let divider = "─".repeat(width.max(1));
     vec![
         Line::styled(divider.clone(), Style::default().fg(Color::DarkGray)),
@@ -41,31 +39,6 @@ pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'st
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("provider", Style::default().fg(Color::DarkGray)),
-            Span::raw(": "),
-            Span::styled(info.provider.clone(), Style::default().fg(Color::Yellow)),
-            Span::raw("  •  model: "),
-            Span::styled(info.model.clone(), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled("cwd", Style::default().fg(Color::DarkGray)),
-            Span::raw(": "),
-            Span::styled(compact_cwd(&info.cwd), Style::default().fg(Color::Green)),
-        ]),
-        Line::from(vec![
-            Span::styled("reasoning", Style::default().fg(Color::DarkGray)),
-            Span::raw(": "),
-            Span::styled(
-                format!("effort {}", info.reasoning_effort),
-                Style::default().fg(Color::Magenta),
-            ),
-            Span::raw("  •  summary: "),
-            Span::styled(
-                info.reasoning_summary.clone(),
-                Style::default().fg(Color::Magenta),
-            ),
-        ]),
         Line::styled(divider, Style::default().fg(Color::DarkGray)),
         Line::raw(""),
     ]
@@ -73,18 +46,10 @@ pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'st
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     let matching_indices = picker.matching_indices();
-    let mut lines = Vec::with_capacity(matching_indices.len() + 2);
-    let filter = if picker.filter.is_empty() {
-        String::new()
-    } else {
-        format!("  filter: {}", picker.filter)
-    };
-    lines.push(styled_line(
-        format!("{}  {}{}", picker.title, picker.help, filter),
-        width,
-        Style::default().fg(Color::DarkGray),
-        LineFill::Natural,
-    ));
+    let mut lines = Vec::with_capacity(MAX_PICKER_ITEMS + 7);
+    lines.push(picker_filter_line(picker));
+    lines.push(Line::raw(""));
+
     if matching_indices.is_empty() {
         lines.push(styled_line(
             "  no matches".to_string(),
@@ -92,88 +57,122 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
             Style::default().fg(Color::DarkGray),
             LineFill::Natural,
         ));
+        lines.push(Line::raw(""));
+        lines.push(styled_line(
+            picker_footer_text(picker),
+            width,
+            Style::default().fg(Color::DarkGray),
+            LineFill::Natural,
+        ));
         return lines;
     }
 
-    let show_details = picker.items.iter().any(|item| item.detail.is_some());
-    let name_width = if show_details {
-        let label_width = picker
-            .items
-            .iter()
-            .map(|item| item.label.chars().count())
-            .max()
-            .unwrap_or(4)
-            .clamp(4, 28);
-        label_width.min(width.saturating_sub(18).max(4))
-    } else {
-        width.saturating_sub(2).max(1)
-    };
-    let detail_width = width.saturating_sub(name_width + 6).max(1);
-    if show_details {
-        lines.push(styled_line(
-            format!("  {:<name_width$} | detail", "name"),
-            width,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-            LineFill::Natural,
-        ));
-    }
-
+    let label_width = picker_label_width(picker, width);
     let start = visible_picker_match_start(picker, &matching_indices);
     for index in matching_indices
-        .into_iter()
+        .iter()
+        .copied()
         .skip(start)
         .take(MAX_PICKER_ITEMS)
     {
         let item = &picker.items[index];
         let selected = index == picker.selected;
-        let marker = if selected { ">" } else { " " };
-        let row_style = if selected {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        if show_details {
-            let label = truncate_one_line(&item.label, name_width);
-            let detail =
-                truncate_one_line(item.detail.as_deref().unwrap_or_default(), detail_width);
-            let text = format!("{marker} {label:<name_width$} | {detail}");
-            lines.push(styled_line(text, width, row_style, LineFill::Natural));
-        } else {
-            lines.push(picker_single_column_line(
-                item, marker, name_width, row_style,
-            ));
-        }
+        lines.push(picker_item_line(item, selected, label_width));
     }
+
+    let selected_position = matching_indices
+        .iter()
+        .position(|index| *index == picker.selected)
+        .unwrap_or(0);
+    lines.push(styled_line(
+        format!("  ({}/{})", selected_position + 1, matching_indices.len()),
+        width,
+        Style::default().fg(Color::DarkGray),
+        LineFill::Natural,
+    ));
+    lines.push(Line::raw(""));
+    if let Some(detail) = picker
+        .selected_item()
+        .and_then(|item| item.detail.as_deref())
+    {
+        lines.push(styled_line(
+            format!(
+                "  {}",
+                truncate_one_line(detail, width.saturating_sub(2).max(1))
+            ),
+            width,
+            Style::default().fg(Color::DarkGray),
+            LineFill::Natural,
+        ));
+        lines.push(Line::raw(""));
+    }
+    lines.push(styled_line(
+        picker_footer_text(picker),
+        width,
+        Style::default().fg(Color::DarkGray),
+        LineFill::Natural,
+    ));
     lines
 }
 
-fn picker_single_column_line(
-    item: &PickerItem,
-    marker: &str,
-    name_width: usize,
-    row_style: Style,
-) -> Line<'static> {
-    let Some(badge) = &item.badge else {
-        let label = truncate_one_line(&item.label, name_width);
-        return Line::from(Span::styled(format!("{marker} {label}"), row_style));
-    };
-
-    let badge_text = format!("    {}", badge.text);
-    let badge_width = badge_text.chars().count();
-    if name_width <= badge_width {
-        let label = truncate_one_line(&item.label, name_width);
-        return Line::from(Span::styled(format!("{marker} {label}"), row_style));
-    }
-
-    let label = truncate_one_line(&item.label, name_width - badge_width);
+fn picker_filter_line(picker: &UiPicker) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{marker} {label}"), row_style),
-        Span::styled(badge_text, picker_badge_style(badge.tone)),
+        Span::styled(">", Style::default().fg(Color::White)),
+        Span::raw(" "),
+        Span::styled(picker.filter.clone(), Style::default().fg(Color::White)),
     ])
+}
+
+fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
+    picker
+        .items
+        .iter()
+        .map(|item| item.label.chars().count())
+        .max()
+        .unwrap_or(12)
+        .clamp(12, 30)
+        .min(width.saturating_sub(18).max(12))
+}
+
+fn picker_item_line(item: &PickerItem, selected: bool, label_width: usize) -> Line<'static> {
+    let marker = if selected { "→" } else { " " };
+    let row_style = if selected {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let label = truncate_one_line(&item.label, label_width);
+    let mut spans = vec![Span::styled(
+        format!("{marker} {label:<label_width$}"),
+        row_style,
+    )];
+    if let Some(badge) = &item.badge {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            truncate_one_line(&badge.text, 24),
+            picker_badge_style(badge.tone),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn picker_footer_text(picker: &UiPicker) -> String {
+    let action = match picker.action {
+        super::PickerAction::Config => "change",
+        super::PickerAction::SelectModel
+        | super::PickerAction::LoginProvider
+        | super::PickerAction::LogoutProvider
+        | super::PickerAction::InsertSkillCommand => "select",
+    };
+    let tab = if picker.help.contains("tab") {
+        " · Tab to complete"
+    } else {
+        ""
+    };
+    format!(
+        "  {} · Type to search · Enter/Space to {action}{tab} · Esc to cancel",
+        picker.title
+    )
 }
 
 fn picker_badge_style(tone: PickerBadgeTone) -> Style {
@@ -266,24 +265,6 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
         vec![String::new()]
     } else {
         lines
-    }
-}
-
-fn compact_cwd(path: &Path) -> String {
-    let Ok(home) = std::env::var("HOME") else {
-        return path.display().to_string();
-    };
-
-    let home = Path::new(&home);
-    if let Ok(rest) = path.strip_prefix(home) {
-        let rel = rest.display().to_string();
-        if rel.is_empty() {
-            "~".to_string()
-        } else {
-            format!("~/{rel}")
-        }
-    } else {
-        path.display().to_string()
     }
 }
 

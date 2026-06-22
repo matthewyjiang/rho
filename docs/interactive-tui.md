@@ -51,12 +51,12 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai` and `openai-codex`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
 | `/resume [id]` | Show [session resume](/sessions) help. Interactive session switching/listing is not implemented yet. |
-| `/config` | Show the [config](/configuration) path and current key settings. A full config UI is not implemented yet. |
+| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; max output bytes changes save for the next session. |
 | `/exit` | Quit the TUI. |
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
 
-Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel.
+Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
 
 ## Login and logout
 

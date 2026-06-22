@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
 pub mod catalog;
+pub mod models_dev;
 pub mod openai;
 pub mod provider;
 
@@ -42,10 +43,22 @@ pub enum ModelResponse {
     Assistant(Vec<ContentBlock>),
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub cost_usd_micros: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub enum ModelEvent {
     OutputDelta(String),
     ReasoningDelta(String),
+    Usage(ModelUsage),
 }
 
 #[derive(Debug, Error)]
@@ -107,5 +120,6 @@ pub enum AuthMode {
     Codex,
 }
 
+pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;
-pub use provider::{build_provider, reasoning_config_value, UnavailableProvider};
+pub use provider::{build_provider, UnavailableProvider};
