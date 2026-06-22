@@ -133,27 +133,73 @@ fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
     let mut segments = Vec::new();
     let mut rest = line;
     while !rest.is_empty() {
-        if let Some((start, marker_len, end, style)) = next_markdown_span(rest) {
-            if start > 0 {
-                segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
-            }
-            let content_start = start + marker_len;
-            let marked_end = end + marker_len;
-            segments.push(StyledSegment::new(
-                rest[content_start..end].to_string(),
+        match next_markdown_span(rest) {
+            Some(MarkdownSpan::Styled {
+                start,
+                marker_len,
+                end,
                 style,
-            ));
-            rest = &rest[marked_end..];
-        } else {
-            segments.push(StyledSegment::new(rest.to_string(), Theme::text()));
-            break;
+            }) => {
+                if start > 0 {
+                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                }
+                let content_start = start + marker_len;
+                let marked_end = end + marker_len;
+                segments.push(StyledSegment::new(
+                    rest[content_start..end].to_string(),
+                    style,
+                ));
+                rest = &rest[marked_end..];
+            }
+            Some(MarkdownSpan::Link { start, end, label }) => {
+                if start > 0 {
+                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                }
+                segments.push(StyledSegment::new(label, Theme::markdown_link()));
+                rest = &rest[end..];
+            }
+            Some(MarkdownSpan::RawUrl { start, end }) => {
+                if start > 0 {
+                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                }
+                segments.push(StyledSegment::new(
+                    rest[start..end].to_string(),
+                    Theme::markdown_link(),
+                ));
+                rest = &rest[end..];
+            }
+            None => {
+                segments.push(StyledSegment::new(rest.to_string(), Theme::text()));
+                break;
+            }
         }
     }
     segments
 }
 
-fn next_markdown_span(line: &str) -> Option<(usize, usize, usize, Style)> {
+#[derive(Debug)]
+enum MarkdownSpan {
+    Styled {
+        start: usize,
+        marker_len: usize,
+        end: usize,
+        style: Style,
+    },
+    Link {
+        start: usize,
+        end: usize,
+        label: String,
+    },
+    RawUrl {
+        start: usize,
+        end: usize,
+    },
+}
+
+fn next_markdown_span(line: &str) -> Option<MarkdownSpan> {
     let candidates = [
+        next_markdown_link(line),
+        next_raw_url(line),
         next_delimited(line, "`", Theme::markdown_inline_code()),
         next_delimited(line, "**", Theme::markdown_bold()),
         next_delimited(line, "*", Theme::markdown_italic()),
@@ -162,10 +208,59 @@ fn next_markdown_span(line: &str) -> Option<(usize, usize, usize, Style)> {
     candidates
         .into_iter()
         .flatten()
-        .min_by_key(|(start, marker_len, _, _)| (*start, std::cmp::Reverse(*marker_len)))
+        .min_by_key(|span| match span {
+            MarkdownSpan::Styled {
+                start, marker_len, ..
+            } => (*start, std::cmp::Reverse(*marker_len)),
+            MarkdownSpan::Link { start, .. } => (*start, std::cmp::Reverse(1)),
+            MarkdownSpan::RawUrl { start, .. } => (*start, std::cmp::Reverse(1)),
+        })
 }
 
-fn next_delimited(line: &str, marker: &str, style: Style) -> Option<(usize, usize, usize, Style)> {
+fn next_markdown_link(line: &str) -> Option<MarkdownSpan> {
+    let start = line.find('[')?;
+    let after_label = start + 1;
+    let close_label = line[after_label..].find(']')? + after_label;
+    let target_start = close_label + 2;
+    if !line[close_label + 1..].starts_with('(') || target_start >= line.len() {
+        return None;
+    }
+    let target_end = line[target_start..].find(')')? + target_start;
+    let label = &line[after_label..close_label];
+    let target = &line[target_start..target_end];
+    (!label.is_empty() && !target.is_empty()).then(|| MarkdownSpan::Link {
+        start,
+        end: target_end + 1,
+        label: label.to_string(),
+    })
+}
+
+fn next_raw_url(line: &str) -> Option<MarkdownSpan> {
+    let start = match (line.find("https://"), line.find("http://")) {
+        (Some(https), Some(http)) => https.min(http),
+        (Some(https), None) => https,
+        (None, Some(http)) => http,
+        (None, None) => return None,
+    };
+    let mut end = line[start..]
+        .find(|ch: char| ch.is_whitespace())
+        .map_or(line.len(), |offset| start + offset);
+    while end > start
+        && matches!(
+            line[..end].chars().last(),
+            Some('.' | ',' | ';' | ':' | '!' | '?' | ')' | ']')
+        )
+    {
+        end -= line[..end]
+            .chars()
+            .last()
+            .expect("end is after start")
+            .len_utf8();
+    }
+    (end > start).then_some(MarkdownSpan::RawUrl { start, end })
+}
+
+fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan> {
     let start = line.find(marker)?;
     if marker == "*" && line[start..].starts_with("**") {
         return None;
@@ -173,7 +268,12 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<(usize, usiz
     let content_start = start + marker.len();
     let relative_end = line[content_start..].find(marker)?;
     let end = content_start + relative_end;
-    (end > content_start).then_some((start, marker.len(), end, style))
+    (end > content_start).then_some(MarkdownSpan::Styled {
+        start,
+        marker_len: marker.len(),
+        end,
+        style,
+    })
 }
 
 fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
@@ -216,7 +316,7 @@ fn merge_styled_chars(chars: &[(char, Style)]) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Style;
+    use ratatui::style::{Modifier, Style};
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -230,21 +330,34 @@ mod tests {
     }
 
     #[test]
-    fn styles_inline_code_bold_and_italic_without_markers() {
+    fn styles_inline_code_bold_italic_and_links_without_markers() {
         let mut in_code_block = false;
         let lines = markdown_lines(
-            "use `cargo test`, then **ship** the *fix*",
-            80,
+            "use `cargo test`, then **ship** the *fix*, [docs](https://example.com), and https://example.com",
+            120,
             &mut in_code_block,
         );
 
-        assert_eq!(line_text(&lines[0]), "use cargo test, then ship the fix");
+        assert_eq!(
+            line_text(&lines[0]),
+            "use cargo test, then ship the fix, docs, and https://example.com"
+        );
         let styles = line_styles(&lines[0]);
         assert!(styles.contains(&Theme::markdown_inline_code()));
         assert!(styles.contains(&Theme::markdown_bold()));
         assert!(styles.contains(&Theme::markdown_italic()));
+        assert!(styles.contains(&Theme::markdown_link()));
         assert_eq!(Theme::markdown_bold().fg, None);
         assert_eq!(Theme::markdown_italic().fg, None);
+        assert_eq!(Theme::markdown_link().fg, Theme::accent().fg);
+        assert!(Theme::markdown_link().has_modifier(Modifier::UNDERLINED));
+        assert_eq!(
+            styles
+                .iter()
+                .filter(|style| **style == Theme::markdown_link())
+                .count(),
+            2
+        );
     }
 
     #[test]

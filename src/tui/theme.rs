@@ -210,6 +210,12 @@ impl Theme {
         Style::default().add_modifier(Modifier::ITALIC)
     }
 
+    pub(super) fn markdown_link() -> Style {
+        Style::default()
+            .fg(Palette::current().accent)
+            .add_modifier(Modifier::UNDERLINED)
+    }
+
     pub(super) fn tool_default() -> ToolStyle {
         let palette = Palette::current();
         ToolStyle::new(
