@@ -21,3 +21,5 @@ jobs:
         run: cargo test --all
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Check crate package
+        run: cargo publish --dry-run --locked

@@ -5,7 +5,7 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust to stay fast an
 ## Install
 
 ```bash
-cargo install --path .
+cargo install rho-coding-agent
 ```
 
 ## Usage
