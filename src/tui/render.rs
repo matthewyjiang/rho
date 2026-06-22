@@ -170,7 +170,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         ""
     };
     format!(
-        "  {} · Type to search · Enter/Space to {action}{tab} · Esc to cancel",
+        "  {} · Type to search · Enter to {action}{tab} · Esc to cancel",
         picker.title
     )
 }

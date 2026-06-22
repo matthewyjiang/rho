@@ -5,7 +5,7 @@ pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) fn config_picker(info: &TuiInfo, max_output_bytes: usize) -> UiPicker {
     UiPicker::new(
         "Config",
-        "type regex filter, enter/space change, esc cancel",
+        "type regex filter, enter change, esc cancel",
         vec![
             PickerItem {
                 label: "Reasoning".into(),

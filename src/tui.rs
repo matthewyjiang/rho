@@ -438,7 +438,7 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_reasoning_cycle_key(key, agent)? {
+        if self.handle_reasoning_cycle_key(key, terminal, agent)? {
             return Ok(());
         }
 
@@ -567,7 +567,9 @@ impl App {
     }
 
     fn start_model_metadata_fetch(&mut self) {
-        self.pending_model_metadata = None;
+        if let Some(handle) = self.pending_model_metadata.take() {
+            handle.abort();
+        }
         if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
             self.model_metadata = Some(metadata);
             return;
@@ -710,7 +712,14 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                let value = input.value.parse::<usize>()?;
+                let Ok(value) = input.value.parse::<usize>() else {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error("max output bytes must be a positive whole number".into()),
+                    )?;
+                    self.status = "config save failed".into();
+                    return Ok(true);
+                };
                 if value == 0 {
                     self.insert_entry(
                         terminal,
@@ -767,6 +776,7 @@ impl App {
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
+        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         let is_shift_tab = matches!(key.code, KeyCode::BackTab)
@@ -775,7 +785,7 @@ impl App {
             return Ok(false);
         }
 
-        self.cycle_reasoning(agent)?;
+        self.cycle_reasoning(terminal, agent)?;
         self.paste_burst.clear();
         self.ctrl_c_streak = 0;
         Ok(true)
@@ -1449,13 +1459,18 @@ impl App {
                 self.status = "skill command inserted".into();
                 Ok(())
             }
-            PickerAction::Config => self.submit_config_selection(&value, agent),
+            PickerAction::Config => self.submit_config_selection(&value, terminal, agent),
         }
     }
 
-    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
+    fn submit_config_selection(
+        &mut self,
+        value: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
         match value {
-            config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
+            config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -1469,24 +1484,53 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn cycle_reasoning(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
         let reasoning = self.info.reasoning.next();
-        let provider = build_provider(&self.info.provider, &self.info.model, reasoning)?;
+        let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
+                )?;
+                self.status = "reasoning change failed".into();
+                return Ok(());
+            }
+        };
         agent.replace_provider(provider);
-        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        self.info.reasoning = reasoning;
+        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.reasoning = reasoning;
             config.save(self.info.config_path.clone())
-        })?;
-        self.info.reasoning = reasoning;
+        });
         if matches!(
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let max_output_bytes = Config::load(self.info.config_path.clone())?.max_output_bytes;
+            let max_output_bytes = Config::load(self.info.config_path.clone())
+                .map(|config| config.max_output_bytes)
+                .unwrap_or_else(|_| Config::default().max_output_bytes);
             self.composer =
                 ComposerMode::Picker(config_picker::config_picker(&self.info, max_output_bytes));
         }
-        self.status = format!("reasoning: {reasoning}");
+        match save_result {
+            Ok(()) => {
+                self.status = format!("reasoning: {reasoning}");
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                    )),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
         Ok(())
     }
 

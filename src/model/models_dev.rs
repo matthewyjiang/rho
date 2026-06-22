@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -60,11 +60,15 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(apply_overrides(provider, model, metadata));
     }
 
-    let response = fetch_models_dev_api().await?;
+    let Some(response) = fetch_models_dev_api().await else {
+        return override_metadata(provider, model);
+    };
     write_cached_api(&response);
-    let metadata = upstream_metadata_from_api(&response, provider, model)?;
-    write_cached_upstream_model_metadata(provider, model, &metadata);
-    Some(apply_overrides(provider, model, metadata))
+    if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
+        write_cached_upstream_model_metadata(provider, model, &metadata);
+        return Some(apply_overrides(provider, model, metadata));
+    }
+    override_metadata(provider, model)
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -76,8 +80,26 @@ fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> Mode
     apply_local_overrides(provider, model, metadata)
 }
 
+fn override_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    let metadata = apply_overrides(provider, model, ModelMetadata::default());
+    metadata_has_values(&metadata).then_some(metadata)
+}
+
+fn metadata_has_values(metadata: &ModelMetadata) -> bool {
+    metadata.advertised_context_window.is_some()
+        || metadata.effective_context_window.is_some()
+        || metadata.usable_context_window.is_some()
+        || metadata.long_context_threshold.is_some()
+        || metadata.max_output_tokens.is_some()
+        || metadata.cost_default.is_some()
+        || metadata.cost_long_context.is_some()
+}
+
 async fn fetch_models_dev_api() -> Option<Value> {
-    reqwest::Client::new()
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?
         .get("https://models.dev/api.json")
         .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
         .send()
