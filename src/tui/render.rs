@@ -88,13 +88,33 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     ));
     if matching_indices.is_empty() {
         lines.push(styled_line(
-            "  no matching models".to_string(),
+            "  no matches".to_string(),
             width,
             Style::default().fg(Color::DarkGray),
             LineFill::Natural,
         ));
         return lines;
     }
+
+    let name_width = picker
+        .items
+        .iter()
+        .map(|item| item.label.chars().count())
+        .max()
+        .unwrap_or(4)
+        .max(4)
+        .min(28)
+        .min(width.saturating_sub(18).max(4));
+    let description_width = width.saturating_sub(name_width + 6).max(1);
+    lines.push(styled_line(
+        format!("  {:<name_width$} | description", "name"),
+        width,
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+        LineFill::Natural,
+    ));
+
     let start = visible_picker_match_start(picker, &matching_indices);
     for index in matching_indices
         .into_iter()
@@ -104,11 +124,9 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         let item = &picker.items[index];
         let selected = index == picker.selected;
         let marker = if selected { ">" } else { " " };
-        let text = if item.description.is_empty() {
-            format!("{marker} {}", item.label)
-        } else {
-            format!("{marker} {:<28} {}", item.label, item.description)
-        };
+        let label = truncate_one_line(&item.label, name_width);
+        let description = truncate_one_line(&item.description, description_width);
+        let text = format!("{marker} {label:<name_width$} | {description}");
         let style = if selected {
             Style::default()
                 .fg(Color::Cyan)
@@ -129,6 +147,19 @@ pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[
     selected_position
         .saturating_add(1)
         .saturating_sub(MAX_PICKER_ITEMS)
+}
+
+pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
+    let mut text = text.replace('\n', " ");
+    if text.chars().count() <= width {
+        return text;
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+    text = text.chars().take(width - 1).collect();
+    text.push('…');
+    text
 }
 
 pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {

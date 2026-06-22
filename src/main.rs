@@ -7,6 +7,7 @@ mod credentials;
 mod model;
 mod prompt;
 mod session;
+mod skills;
 mod tool;
 mod tools;
 mod transcript;

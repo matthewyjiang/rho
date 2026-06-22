@@ -43,7 +43,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
-        let messages = initial_messages(&tools);
+        let messages = initial_messages(&tools, &ctx.cwd);
         Self {
             provider,
             tools,
@@ -74,11 +74,20 @@ impl Agent {
     }
 
     pub fn reset(&mut self) {
-        self.messages = initial_messages(&self.tools);
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd);
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
         self.run_with_events(user_prompt, |_| Ok(())).await
+    }
+
+    pub fn load_skill(&mut self, skill: &crate::skills::Skill) -> Result<(), AgentError> {
+        self.push_message(Message::user_text(format!(
+            "Loaded skill `{}` from {}:\n\n{}",
+            skill.name,
+            skill.path.display(),
+            skill.contents
+        )))
     }
 
     fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
@@ -285,8 +294,8 @@ fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn initial_messages(tools: &ToolRegistry) -> Vec<Message> {
-    vec![Message::System(system_prompt(&tools.specs()))]
+fn initial_messages(tools: &ToolRegistry, cwd: &std::path::Path) -> Vec<Message> {
+    vec![Message::System(system_prompt(&tools.specs(), cwd))]
 }
 
 #[cfg(test)]

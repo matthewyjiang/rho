@@ -7,6 +7,7 @@ pub enum CommandId {
     Model,
     Resume,
     Config,
+    Skills,
     Exit,
 }
 
@@ -62,6 +63,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "show configuration",
+    },
+    CommandSpec {
+        id: CommandId::Skills,
+        name: "skills",
+        usage: "/skills",
+        description: "show loaded skills and descriptions",
     },
     CommandSpec {
         id: CommandId::Exit,
@@ -201,6 +208,14 @@ mod tests {
         let matches = matching_commands(command_prefix("/nope").unwrap());
 
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn parses_skills_command() {
+        let invocation = parse_command("/skills").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Skills);
+        assert_eq!(invocation.name, "skills");
     }
 
     #[test]

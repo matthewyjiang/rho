@@ -26,7 +26,7 @@ mod render;
 use render::{
     byte_index_after_visual_lines, entry_lines, input_cursor_position, input_visual_lines,
     picker_lines, picker_matching_indices, push_wrapped_text, session_header_lines, styled_line,
-    visible_picker_match_start, LineFill,
+    truncate_one_line, visible_picker_match_start, LineFill,
 };
 
 use crate::{
@@ -153,6 +153,21 @@ enum PickerAction {
     SelectModel,
     LoginProvider,
     LogoutProvider,
+    InsertSkillCommand,
+}
+
+#[derive(Clone, Debug)]
+struct CommandChoice {
+    name: String,
+    usage: String,
+    description: String,
+    kind: CommandChoiceKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CommandChoiceKind {
+    Builtin(&'static CommandSpec),
+    Skill,
 }
 
 #[derive(Clone, Debug)]
@@ -762,9 +777,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(spec) = self.selected_command() {
-                    let (input, cursor) =
-                        commands::complete_command(&self.input, self.input_cursor, spec);
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
                     self.input = input;
                     self.input_cursor = cursor;
                     self.command_palette_dismissed = false;
@@ -775,9 +789,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(spec) = self.selected_command() {
-                    let (input, cursor) =
-                        commands::complete_command(&self.input, self.input_cursor, spec);
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
                     self.input = input;
                     self.input_cursor = cursor;
                     self.clamp_command_selection();
@@ -859,17 +872,59 @@ impl App {
         self.clamp_command_selection();
     }
 
-    fn command_matches(&self) -> Vec<&'static CommandSpec> {
-        commands::command_prefix(&self.input)
-            .map(commands::matching_commands)
-            .unwrap_or_default()
+    fn command_matches(&self) -> Vec<CommandChoice> {
+        let Some(prefix) = commands::command_prefix(&self.input) else {
+            return Vec::new();
+        };
+        let prefix = prefix
+            .strip_prefix('/')
+            .unwrap_or(prefix)
+            .to_ascii_lowercase();
+        let mut matches = commands::matching_commands(&prefix)
+            .into_iter()
+            .map(|command| CommandChoice {
+                name: command.name.to_string(),
+                usage: command.usage.to_string(),
+                description: command.description.to_string(),
+                kind: CommandChoiceKind::Builtin(command),
+            })
+            .collect::<Vec<_>>();
+        matches.extend(
+            crate::skills::discover(&self.info.cwd)
+                .into_iter()
+                .filter(|skill| {
+                    skill.name.starts_with(&prefix)
+                        || format!("skill:{}", skill.name).starts_with(&prefix)
+                })
+                .map(|skill| {
+                    let command_name = format!("skill:{}", skill.name);
+                    CommandChoice {
+                        usage: format!("/{command_name}"),
+                        name: command_name,
+                        description: skill.description,
+                        kind: CommandChoiceKind::Skill,
+                    }
+                }),
+        );
+        matches
     }
 
-    fn selected_command(&self) -> Option<&'static CommandSpec> {
+    fn selected_command(&self) -> Option<CommandChoice> {
         let matches = self.command_matches();
         matches
             .get(self.command_selection.min(matches.len().saturating_sub(1)))
-            .copied()
+            .cloned()
+    }
+
+    fn complete_command_choice(&self, choice: &CommandChoice) -> (String, usize) {
+        match &choice.kind {
+            CommandChoiceKind::Builtin(spec) => {
+                commands::complete_command(&self.input, self.input_cursor, spec)
+            }
+            CommandChoiceKind::Skill => {
+                complete_slash_command(&self.input, self.input_cursor, &choice.name)
+            }
+        }
     }
 
     fn command_palette_visible(&self) -> bool {
@@ -940,14 +995,17 @@ impl App {
                 return Ok(());
             }
             Ok(None) => {}
-            Err(err) => {
+            Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
+                if self.execute_skill_command(&name, terminal, agent)? {
+                    return Ok(());
+                }
                 self.insert_entry(
                     terminal,
                     &Entry::Error(format!(
-                        "{err}. Type / to choose one of: {}",
+                        "unknown command '/{name}'. Type / to choose one of: {}",
                         commands::COMMANDS
                             .iter()
                             .map(|command| command.usage)
@@ -1116,6 +1174,7 @@ impl App {
             }
             CommandId::Resume => self.execute_resume_command(invocation, terminal),
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Skills => self.execute_skills_command(terminal),
         }
     }
 
@@ -1241,6 +1300,13 @@ impl App {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
             PickerAction::LogoutProvider => self.logout_provider(&value, terminal, agent).await,
+            PickerAction::InsertSkillCommand => {
+                self.input = format!("/skill:{value}");
+                self.input_cursor = self.input_char_len();
+                self.command_palette_dismissed = true;
+                self.status = "skill command inserted".into();
+                Ok(())
+            }
         }
     }
 
@@ -1370,6 +1436,60 @@ impl App {
         )?;
         self.status = "config".into();
         Ok(())
+    }
+
+    fn execute_skills_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let items = crate::skills::discover(&self.info.cwd)
+            .into_iter()
+            .map(|skill| PickerItem {
+                label: skill.name.clone(),
+                description: skill.description,
+                value: skill.name,
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.insert_entry(terminal, &Entry::Notice("no skills loaded".into()))?;
+            self.status = "skills".into();
+            return Ok(());
+        }
+
+        self.composer = ComposerMode::Picker(UiPicker::new(
+            "loaded skills",
+            "enter inserts command, type regex filter, esc cancel",
+            items,
+            PickerAction::InsertSkillCommand,
+        ));
+        self.status = "select skill".into();
+        Ok(())
+    }
+
+    fn execute_skill_command(
+        &mut self,
+        name: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<bool> {
+        let Some(name) = name.strip_prefix("skill:") else {
+            return Ok(false);
+        };
+        let Some(skill) = crate::skills::discover(&self.info.cwd)
+            .into_iter()
+            .find(|skill| skill.name == name)
+        else {
+            return Ok(false);
+        };
+
+        agent.load_skill(&skill)?;
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "loaded skill {} from {}",
+                skill.name,
+                skill.path.display()
+            )),
+        )?;
+        self.status = format!("loaded skill {}", skill.name);
+        Ok(true)
     }
 
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
@@ -1510,8 +1630,9 @@ impl App {
                     x: 0,
                     y: selected_position
                         .saturating_sub(start)
-                        .saturating_add(1)
-                        .min(matching_indices.len()) as u16,
+                        .saturating_add(2)
+                        .min(matching_indices.len().saturating_add(1))
+                        as u16,
                 }
             }
         }
@@ -1536,7 +1657,11 @@ impl App {
             .map(|(index, command)| {
                 let selected = index == selected_index;
                 let marker = if selected { ">" } else { " " };
-                let text = format!("{marker} {:<16} {}", command.usage, command.description);
+                let usage_width = 16usize.min(width.saturating_sub(5).max(1));
+                let description_width = width.saturating_sub(usage_width + 3).max(1);
+                let usage = truncate_one_line(&command.usage, usage_width);
+                let description = truncate_one_line(&command.description, description_width);
+                let text = format!("{marker} {usage:<usage_width$} {description}");
                 let style = if selected {
                     Style::default()
                         .fg(Color::Cyan)
@@ -1676,6 +1801,30 @@ fn disable_modified_keys() -> std::io::Result<()> {
 
 fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn complete_slash_command(input: &str, cursor: usize, name: &str) -> (String, usize) {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    let token_len = input[..token_end].chars().count();
+    let args = input[token_end..].trim_start();
+    let completed = if args.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {args}")
+    };
+    let completed_token_len = name.chars().count() + 1;
+    let new_cursor = if cursor <= token_len {
+        completed_token_len
+    } else {
+        completed
+            .chars()
+            .count()
+            .min(completed_token_len.saturating_add(cursor.saturating_sub(token_len)))
+    };
+    (completed, new_cursor)
 }
 
 fn visible_assistant_stream(text: &str) -> &str {
@@ -2052,6 +2201,28 @@ mod tests {
     }
 
     #[test]
+    fn picker_lines_render_name_description_table_with_truncated_description() {
+        let picker = UiPicker::new(
+            "loaded skills",
+            "enter inserts command",
+            vec![PickerItem {
+                label: "test-skill".into(),
+                description: "this description is much too long for the available width".into(),
+                value: "test-skill".into(),
+            }],
+            PickerAction::InsertSkillCommand,
+        );
+
+        let lines = picker_lines(&picker, 36);
+
+        assert!(line_text(&lines[1]).contains("name"));
+        assert!(line_text(&lines[1]).contains("| description"));
+        assert!(line_text(&lines[2]).contains("test-skill"));
+        assert!(line_text(&lines[2]).contains('…'));
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
     fn picker_selection_wraps() {
         let mut picker = UiPicker::new(
             "select model",
@@ -2085,12 +2256,35 @@ mod tests {
         app.clamp_command_selection();
         app.command_selection = 99;
         app.clamp_command_selection();
-        assert_eq!(app.command_selection, commands::COMMANDS.len() - 1);
+        assert_eq!(app.command_selection, app.command_matches().len() - 1);
 
         app.input = "/mo".into();
         app.input_cursor = 3;
         app.clamp_command_selection();
         assert_eq!(app.command_selection, 0);
+    }
+
+    #[test]
+    fn command_suggestions_truncate_long_descriptions() {
+        let mut app = test_app();
+        app.input = "/c".into();
+        app.input_cursor = 2;
+        app.clamp_command_selection();
+
+        let lines = app.command_suggestion_lines(40);
+
+        assert!(lines.iter().any(|line| line_text(line).contains('…')));
+        assert!(lines
+            .iter()
+            .all(|line| line_text(line).chars().count() <= 40));
+    }
+
+    #[test]
+    fn complete_slash_command_inserts_prefixed_skill_command() {
+        let (input, cursor) = complete_slash_command("/cav", 4, "skill:caveman");
+
+        assert_eq!(input, "/skill:caveman");
+        assert_eq!(cursor, 14);
     }
 
     #[test]
