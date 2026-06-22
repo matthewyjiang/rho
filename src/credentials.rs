@@ -26,6 +26,12 @@ pub enum CredentialError {
 
 pub type CredentialResult<T> = Result<T, CredentialError>;
 
+/// Stores provider credentials under stable rho account names.
+///
+/// Implementors should treat the `account` argument as an opaque key within the
+/// rho service namespace and return `Ok(None)` or `Ok(false)` for missing
+/// entries. Backend access, permission, serialization, or availability failures
+/// should be reported as `CredentialError` values instead of panicking.
 pub trait CredentialStore: Send + Sync {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>>;
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()>;

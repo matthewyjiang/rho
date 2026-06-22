@@ -96,7 +96,28 @@ pub fn resolve_model_selection(
     current_provider: &str,
     auth: &str,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_from(model_catalog(), input, current_provider, auth)
+    resolve_model_selection_from(
+        model_catalog(),
+        input,
+        current_provider,
+        auth,
+        &[auth.to_string()],
+    )
+}
+
+pub fn resolve_model_selection_for_auths(
+    input: &str,
+    current_provider: &str,
+    auth: &str,
+    available_auths: &[String],
+) -> Result<ModelSelection, ModelSelectionError> {
+    resolve_model_selection_from(
+        model_catalog(),
+        input,
+        current_provider,
+        auth,
+        available_auths,
+    )
 }
 
 fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
@@ -178,6 +199,7 @@ fn resolve_model_selection_from(
     input: &str,
     current_provider: &str,
     auth: &str,
+    available_auths: &[String],
 ) -> Result<ModelSelection, ModelSelectionError> {
     let input = input.trim();
     if input.is_empty() {
@@ -209,7 +231,12 @@ fn resolve_model_selection_from(
         });
     }
 
-    let matches = available_models_from(catalog, auth)
+    let auths = if available_auths.is_empty() {
+        vec![auth.to_string()]
+    } else {
+        available_auths.to_vec()
+    };
+    let matches = available_models_for_auths_from(catalog, &auths)
         .into_iter()
         .filter(|entry| entry.model == input)
         .collect::<Vec<_>>();
@@ -252,6 +279,12 @@ mod tests {
                 model: "shared-model".into(),
                 display_name: "shared-model duplicate".into(),
                 auth_modes: vec!["api-key".into()],
+            },
+            ModelCatalogEntry {
+                provider: "openai-codex".into(),
+                model: "unique-codex".into(),
+                display_name: "unique-codex".into(),
+                auth_modes: vec!["codex".into()],
             },
             ModelCatalogEntry {
                 provider: "future".into(),
@@ -329,8 +362,14 @@ mod tests {
     #[test]
     fn resolves_bare_unique_model_to_catalog_provider() {
         let catalog = test_catalog();
-        let selection =
-            resolve_model_selection_from(&catalog, "unique-openai", "openai", "api-key").unwrap();
+        let selection = resolve_model_selection_from(
+            &catalog,
+            "unique-openai",
+            "openai",
+            "api-key",
+            &["api-key".into()],
+        )
+        .unwrap();
 
         assert_eq!(
             selection,
@@ -338,6 +377,29 @@ mod tests {
                 provider: "openai".into(),
                 model: "unique-openai".into(),
                 auth: "api-key".into(),
+                from_catalog: true,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_bare_model_across_all_available_auths() {
+        let catalog = test_catalog();
+        let selection = resolve_model_selection_from(
+            &catalog,
+            "unique-codex",
+            "openai",
+            "api-key",
+            &["api-key".into(), "codex".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai-codex".into(),
+                model: "unique-codex".into(),
+                auth: "codex".into(),
                 from_catalog: true,
             }
         );
@@ -377,8 +439,14 @@ mod tests {
     #[test]
     fn bare_ambiguous_model_returns_error() {
         let catalog = test_catalog();
-        let err = resolve_model_selection_from(&catalog, "shared-model", "openai", "api-key")
-            .unwrap_err();
+        let err = resolve_model_selection_from(
+            &catalog,
+            "shared-model",
+            "openai",
+            "api-key",
+            &["api-key".into()],
+        )
+        .unwrap_err();
 
         assert_eq!(
             err,

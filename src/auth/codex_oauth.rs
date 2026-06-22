@@ -64,6 +64,17 @@ struct TokenResponse {
     account_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct IdTokenClaims {
+    #[serde(rename = "https://api.openai.com/auth", default)]
+    auth: Option<IdTokenAuthClaims>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdTokenAuthClaims {
+    chatgpt_account_id: Option<String>,
+}
+
 pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
     let listener = TcpListener::bind((CALLBACK_HOST, CALLBACK_PORT))
         .await
@@ -95,7 +106,7 @@ pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
 }
 
 pub fn build_oauth_request() -> OAuthRequest {
-    let redirect_uri = format!("http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}");
+    let redirect_uri = format!("http://{CALLBACK_HOST}:{CALLBACK_PORT}{CALLBACK_PATH}");
     build_oauth_request_with_values(random_token(32), random_token(64), redirect_uri)
 }
 
@@ -229,6 +240,12 @@ async fn exchange_code(
         .json()
         .await?;
 
+    let account_id = response
+        .id_token
+        .as_deref()
+        .and_then(account_id_from_id_token)
+        .or(response.account_id);
+
     Ok(CodexTokens {
         access_token: response
             .access_token
@@ -239,8 +256,15 @@ async fn exchange_code(
                 .ok_or(CodexOAuthError::MissingToken("refresh_token"))?,
         ),
         id_token: response.id_token,
-        account_id: response.account_id,
+        account_id,
     })
+}
+
+fn account_id_from_id_token(id_token: &str) -> Option<String> {
+    let payload = id_token.split('.').nth(1)?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let claims: IdTokenClaims = serde_json::from_slice(&decoded).ok()?;
+    claims.auth?.chatgpt_account_id
 }
 
 #[cfg(test)]
@@ -252,7 +276,7 @@ mod tests {
         let request = build_oauth_request_with_values(
             "state123".into(),
             "verifier123".into(),
-            "http://localhost:1455/auth/callback".into(),
+            "http://127.0.0.1:1455/auth/callback".into(),
         );
         let url = Url::parse(&request.authorize_url).unwrap();
         let query = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
@@ -270,6 +294,22 @@ mod tests {
         assert_eq!(
             query.get("code_challenge").unwrap(),
             &pkce_challenge("verifier123")
+        );
+    }
+
+    #[test]
+    fn extracts_account_id_from_id_token_claims() {
+        let claims = serde_json::json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-123"
+            }
+        });
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let id_token = format!("header.{payload}.signature");
+
+        assert_eq!(
+            account_id_from_id_token(&id_token),
+            Some("account-123".into())
         );
     }
 
