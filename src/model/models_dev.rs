@@ -1,8 +1,9 @@
 use std::{fs, path::PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
     pub advertised_context_window: Option<u64>,
     pub effective_context_window: Option<u64>,
@@ -32,7 +33,7 @@ impl ModelMetadata {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelCost {
     pub input_micros_per_m: Option<u64>,
     pub output_micros_per_m: Option<u64>,
@@ -41,9 +42,8 @@ pub struct ModelCost {
 }
 
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    read_cached_api()
-        .as_ref()
-        .and_then(|api| metadata_from_api_with_overrides(api, provider, model))
+    cached_upstream_model_metadata(provider, model)
+        .map(|metadata| apply_overrides(provider, model, metadata))
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -51,23 +51,32 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(metadata);
     }
 
+    if let Some(metadata) = read_cached_api()
+        .as_ref()
+        .and_then(|api| upstream_metadata_from_api(api, provider, model))
+    {
+        write_cached_upstream_model_metadata(provider, model, &metadata);
+        return Some(apply_overrides(provider, model, metadata));
+    }
+
     let response = fetch_models_dev_api().await?;
     write_cached_api(&response);
-    metadata_from_api_with_overrides(&response, provider, model)
+    let metadata = upstream_metadata_from_api(&response, provider, model)?;
+    write_cached_upstream_model_metadata(provider, model, &metadata);
+    Some(apply_overrides(provider, model, metadata))
 }
 
-fn metadata_from_api_with_overrides(
-    api: &Value,
-    provider: &str,
-    model: &str,
-) -> Option<ModelMetadata> {
+fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
     let upstream_provider = match provider {
         "openai" | "openai-codex" => "openai",
         other => other,
     };
-    let metadata = model_metadata_from_api(api, upstream_provider, model)?;
+    model_metadata_from_api(api, upstream_provider, model)
+}
+
+fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
     let metadata = apply_builtin_overrides(provider, model, metadata);
-    Some(apply_local_overrides(provider, model, metadata))
+    apply_local_overrides(provider, model, metadata)
 }
 
 async fn fetch_models_dev_api() -> Option<Value> {
@@ -97,6 +106,42 @@ fn write_cached_api(value: &Value) {
     if let Ok(contents) = serde_json::to_string(value) {
         let _ = fs::write(path, contents);
     }
+}
+
+fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    let contents = fs::read_to_string(upstream_model_cache_path(provider, model)).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
+    let path = upstream_model_cache_path(provider, model);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(contents) = serde_json::to_string(metadata) {
+        let _ = fs::write(path, contents);
+    }
+}
+
+fn upstream_model_cache_path(provider: &str, model: &str) -> PathBuf {
+    let upstream_provider = match provider {
+        "openai" | "openai-codex" => "openai",
+        other => other,
+    };
+    cache_dir()
+        .join("models.dev/models")
+        .join(safe_cache_segment(upstream_provider))
+        .join(format!("{}.json", safe_cache_segment(model)))
+}
+
+fn safe_cache_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
 }
 
 fn models_dev_cache_path() -> PathBuf {
