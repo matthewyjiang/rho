@@ -30,6 +30,23 @@ impl Tool for Bash {
             .map(str::to_string)
     }
 
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        _ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        let mut lines = vec![match self.display_command(args) {
+            Some(command) if !command.trim().is_empty() => format!("bash {command}"),
+            _ => "bash".into(),
+        }];
+        if !result.content.trim().is_empty() {
+            lines.push(String::new());
+            lines.push(result.content.clone());
+        }
+        lines
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

@@ -32,6 +32,19 @@ impl Tool for EditFile {
             .map(|path| compact_display_path(&ctx.cwd, path))
     }
 
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        vec![format!(
+            "edit_file {}",
+            self.display_content(args, ctx)
+                .unwrap_or_else(|| result.content.clone())
+        )]
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

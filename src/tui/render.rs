@@ -333,7 +333,7 @@ fn push_tool_block(
         .fg(tool_color(display_style.foreground))
         .bg(tool_color(background));
 
-    for line in display_lines.iter().filter(|line| !line.trim().is_empty()) {
+    for line in display_lines {
         push_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
     }
 }
