@@ -143,7 +143,7 @@ impl Theme {
     }
 
     pub(super) fn text() -> Style {
-        Style::default()
+        Style::default().remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn text_strong() -> Style {
@@ -195,19 +195,27 @@ impl Theme {
     }
 
     pub(super) fn markdown_inline_code() -> Style {
-        Style::default().fg(Palette::current().warning)
+        Style::default()
+            .fg(Palette::current().warning)
+            .remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn markdown_code_block() -> Style {
-        Style::default().fg(Palette::current().accent)
+        Style::default()
+            .fg(Palette::current().accent)
+            .remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn markdown_bold() -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
+        Style::default()
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn markdown_italic() -> Style {
-        Style::default().add_modifier(Modifier::ITALIC)
+        Style::default()
+            .add_modifier(Modifier::ITALIC)
+            .remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn markdown_link() -> Style {

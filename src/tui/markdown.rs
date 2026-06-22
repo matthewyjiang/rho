@@ -317,7 +317,10 @@ fn merge_styled_chars(chars: &[(char, Style)]) -> Vec<Span<'static>> {
         spans.push(Span::styled(ch.to_string(), *style));
     }
     if spans.is_empty() {
-        spans.push(Span::raw(String::new()));
+        spans.push(Span::styled(
+            String::new(),
+            Style::default().remove_modifier(ratatui::style::Modifier::UNDERLINED),
+        ));
     }
     spans
 }
