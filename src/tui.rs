@@ -978,7 +978,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let prompt = self.input.trim().to_string();
+        let mut prompt = self.input.trim().to_string();
         if prompt.is_empty() {
             self.input.clear();
             self.input_cursor = 0;
@@ -996,25 +996,30 @@ impl App {
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
+                let trailing_prompt = slash_command_args(&self.input).trim().to_string();
                 self.input.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
                 if self.execute_skill_command(&name, terminal, agent)? {
+                    if trailing_prompt.is_empty() {
+                        return Ok(());
+                    }
+                    prompt = trailing_prompt;
+                } else {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!(
+                            "unknown command '/{name}'. Type / to choose one of: {}",
+                            commands::COMMANDS
+                                .iter()
+                                .map(|command| command.usage)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )),
+                    )?;
+                    self.status = "unknown command".into();
                     return Ok(());
                 }
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "unknown command '/{name}'. Type / to choose one of: {}",
-                        commands::COMMANDS
-                            .iter()
-                            .map(|command| command.usage)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )?;
-                self.status = "unknown command".into();
-                return Ok(());
             }
         }
 
@@ -1527,6 +1532,7 @@ impl App {
             return Ok(false);
         };
 
+        self.ensure_session(agent)?;
         agent.load_skill(&skill)?;
         self.insert_entry(
             terminal,
@@ -1871,13 +1877,21 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn slash_command_args(input: &str) -> &str {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    input[token_end..].trim_start()
+}
+
 fn complete_slash_command(input: &str, cursor: usize, name: &str) -> (String, usize) {
     let token_end = input
         .char_indices()
         .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
         .unwrap_or(input.len());
     let token_len = input[..token_end].chars().count();
-    let args = input[token_end..].trim_start();
+    let args = slash_command_args(input);
     let completed = if args.is_empty() {
         format!("/{name}")
     } else {
@@ -2370,6 +2384,14 @@ mod tests {
         assert!(lines
             .iter()
             .all(|line| line_text(line).chars().count() <= 40));
+    }
+
+    #[test]
+    fn slash_command_args_preserves_text_after_skill_command() {
+        assert_eq!(
+            slash_command_args("/skill:rust-review check this diff"),
+            "check this diff"
+        );
     }
 
     #[test]

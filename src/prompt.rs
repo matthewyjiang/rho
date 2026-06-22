@@ -78,7 +78,13 @@ fn agent_instruction_files(cwd: &Path, home: Option<&Path>) -> Vec<(PathBuf, Str
     if let Some(home) = home {
         paths.push(home.join(".rho").join("AGENTS.md"));
     }
-    paths.push(cwd.join("AGENTS.md"));
+    paths.extend(
+        cwd.ancestors()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|path| path.join("AGENTS.md")),
+    );
     read_existing_files(paths)
 }
 
@@ -123,6 +129,26 @@ mod tests {
             "path=\"{}\"",
             project.path().join("AGENTS.md").display()
         )));
+    }
+
+    #[test]
+    fn includes_parent_agents_files_before_child_agents_files() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let child = project.path().join("src/nested");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir(home.path().join(".rho")).unwrap();
+        std::fs::write(home.path().join(".rho").join("AGENTS.md"), "home rules").unwrap();
+        std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
+        std::fs::write(child.join("AGENTS.md"), "nested rules").unwrap();
+
+        let prompt = system_prompt_with_home(&[], &child, Some(home.path()));
+
+        let home_index = prompt.find("home rules").unwrap();
+        let project_index = prompt.find("project rules").unwrap();
+        let nested_index = prompt.find("nested rules").unwrap();
+        assert!(home_index < project_index);
+        assert!(project_index < nested_index);
     }
 
     #[test]

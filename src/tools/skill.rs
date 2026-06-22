@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::{
     skills,
-    tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+    tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 pub struct Skill;
@@ -69,7 +69,40 @@ impl Tool for Skill {
         Ok(ToolResult {
             id,
             ok: true,
-            content: skill.contents,
+            content: truncate(skill.contents, ctx.max_output_bytes),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn truncates_loaded_skill_contents() {
+        let root = TempDir::new().unwrap();
+        let skill_dir = root.path().join(".agents/skills/short-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: short-skill\ndescription: short desc\n---\nlong body contents\n",
+        )
+        .unwrap();
+
+        let result = Skill
+            .call(
+                serde_json::json!({"name": "short-skill"}),
+                ToolContext {
+                    cwd: root.path().to_path_buf(),
+                    max_output_bytes: 16,
+                },
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.content.ends_with("\n[truncated]"));
     }
 }

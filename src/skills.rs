@@ -22,7 +22,10 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
         roots.push(home.join(".rho").join("skills"));
         roots.push(home.join(".agents").join("skills"));
     }
-    roots.push(cwd.join(".agents").join("skills"));
+    roots.extend(
+        cwd.ancestors()
+            .map(|path| path.join(".agents").join("skills")),
+    );
 
     let mut seen = HashSet::new();
     roots
@@ -112,8 +115,7 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
             continue;
         }
 
-        let value = if matches!(value, "|" | ">") {
-            let block_style = value;
+        let value = if let Some(block_style) = yaml_block_style(value) {
             let mut block_lines = Vec::new();
             while index < lines.len() {
                 let block_line = lines[index];
@@ -126,7 +128,7 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
                 block_lines.push(block_line.trim());
                 index += 1;
             }
-            if block_style == ">" {
+            if block_style == '>' {
                 block_lines.join(" ").trim().to_string()
             } else {
                 block_lines.join("\n").trim().to_string()
@@ -138,6 +140,14 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
     }
 
     anyhow::bail!("unterminated YAML frontmatter")
+}
+
+fn yaml_block_style(value: &str) -> Option<char> {
+    match value {
+        "|" | "|-" | "|+" => Some('|'),
+        ">" | ">-" | ">+" => Some('>'),
+        _ => None,
+    }
 }
 
 fn unquote_yaml_scalar(value: &str) -> String {
@@ -212,6 +222,50 @@ mod tests {
     }
 
     #[test]
+    fn discovers_project_skills_from_ancestor_directories() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let child = project.path().join("src/nested");
+        std::fs::create_dir_all(&child).unwrap();
+        write_skill(
+            project.path(),
+            ".agents/skills/project-skill",
+            "project-skill",
+            "project desc",
+        );
+
+        let skills = discover_with_home(&child, Some(home.path()));
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "project-skill");
+    }
+
+    #[test]
+    fn prefers_nearest_project_skill_when_names_duplicate() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let child = project.path().join("src/nested");
+        std::fs::create_dir_all(&child).unwrap();
+        write_skill(
+            project.path(),
+            ".agents/skills/dup-skill",
+            "dup-skill",
+            "parent desc",
+        );
+        write_skill(
+            &child,
+            ".agents/skills/dup-skill",
+            "dup-skill",
+            "child desc",
+        );
+
+        let skills = discover_with_home(&child, Some(home.path()));
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "child desc");
+    }
+
+    #[test]
     fn rejects_missing_frontmatter() {
         let root = TempDir::new().unwrap();
         let skill_dir = root.path().join(".rho/skills/bad-skill");
@@ -267,6 +321,22 @@ mod tests {
         let skills = discover_with_home(root.path(), Some(root.path()));
 
         assert_eq!(skills[0].description, "first line second line");
+    }
+
+    #[test]
+    fn parses_block_scalar_chomping_description() {
+        let root = TempDir::new().unwrap();
+        let skill_dir = root.path().join(".rho/skills/chomp-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: chomp-skill\ndescription: |-\n  first line\n  second line\n---\n# block\n",
+        )
+        .unwrap();
+
+        let skills = discover_with_home(root.path(), Some(root.path()));
+
+        assert_eq!(skills[0].description, "first line\nsecond line");
     }
 
     #[test]
