@@ -1,12 +1,12 @@
 # Installation
 
-Install Rho from this repository with Cargo:
+Install Rho from crates.io with Cargo:
 
 ```bash
-cargo install --path .
+cargo install rho-coding-agent
 ```
 
-Then run Rho directly:
+This installs the `rho` binary. Run it directly:
 
 ```bash
 rho
