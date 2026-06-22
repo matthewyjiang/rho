@@ -40,23 +40,32 @@ pub struct ModelCost {
     pub cache_write_micros_per_m: Option<u64>,
 }
 
-pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    let upstream_provider = match provider {
-        "openai" | "openai-codex" => "openai",
-        other => other,
-    };
-
-    if let Some(metadata) = read_cached_api()
+pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    read_cached_api()
         .as_ref()
-        .and_then(|api| model_metadata_from_api(api, upstream_provider, model))
-    {
-        let metadata = apply_builtin_overrides(provider, model, metadata);
-        return Some(apply_local_overrides(provider, model, metadata));
+        .and_then(|api| metadata_from_api_with_overrides(api, provider, model))
+}
+
+pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    if let Some(metadata) = cached_model_metadata(provider, model) {
+        return Some(metadata);
     }
 
     let response = fetch_models_dev_api().await?;
     write_cached_api(&response);
-    let metadata = model_metadata_from_api(&response, upstream_provider, model)?;
+    metadata_from_api_with_overrides(&response, provider, model)
+}
+
+fn metadata_from_api_with_overrides(
+    api: &Value,
+    provider: &str,
+    model: &str,
+) -> Option<ModelMetadata> {
+    let upstream_provider = match provider {
+        "openai" | "openai-codex" => "openai",
+        other => other,
+    };
+    let metadata = model_metadata_from_api(api, upstream_provider, model)?;
     let metadata = apply_builtin_overrides(provider, model, metadata);
     Some(apply_local_overrides(provider, model, metadata))
 }

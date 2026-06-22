@@ -53,7 +53,7 @@ use crate::{
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
-        models_dev::fetch_model_metadata,
+        models_dev::{cached_model_metadata, fetch_model_metadata},
         ContentBlock, Message, ModelError, ModelMetadata, ModelUsage, UnavailableProvider,
     },
     reasoning::ReasoningLevel,
@@ -567,6 +567,12 @@ impl App {
     }
 
     fn start_model_metadata_fetch(&mut self) {
+        self.pending_model_metadata = None;
+        if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
+            self.model_metadata = Some(metadata);
+            return;
+        }
+
         self.model_metadata = None;
         let provider = self.info.provider.clone();
         let model = self.info.model.clone();
