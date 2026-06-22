@@ -305,6 +305,15 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             Style::default(),
             LineFill::Natural,
         ),
+        Entry::Reasoning(text) => push_wrapped_text(
+            &mut lines,
+            text,
+            inner_width,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+            LineFill::Natural,
+        ),
         Entry::Tool {
             ok,
             display_style,
