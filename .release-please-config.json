@@ -3,6 +3,7 @@
     ".": {
       "release-type": "rust",
       "package-name": "rho-coding-agent",
+      "component": "rho-coding-agent",
       "changelog-path": "CHANGELOG.md"
     }
   }
