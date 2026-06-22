@@ -97,15 +97,14 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         return lines;
     }
 
-    let name_width = picker
+    let label_width = picker
         .items
         .iter()
         .map(|item| item.label.chars().count())
         .max()
         .unwrap_or(4)
-        .max(4)
-        .min(28)
-        .min(width.saturating_sub(18).max(4));
+        .clamp(4, 28);
+    let name_width = label_width.min(width.saturating_sub(18).max(4));
     let description_width = width.saturating_sub(name_width + 6).max(1);
     lines.push(styled_line(
         format!("  {:<name_width$} | description", "name"),

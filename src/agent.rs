@@ -4,7 +4,7 @@ use crate::model::{
     ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
-use crate::tool::{ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
+use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -88,7 +88,7 @@ impl Agent {
             "Loaded skill `{}` from {}:\n\n{}",
             skill.name,
             skill.path.display(),
-            skill.contents
+            truncate(skill.contents.clone(), self.ctx.max_output_bytes)
         )))
     }
 
@@ -402,6 +402,43 @@ mod tests {
 
         assert_eq!(output, "ok");
         assert_eq!(*requests.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn load_skill_truncates_contents_before_persisting() {
+        let root = tempfile::tempdir().unwrap();
+        let skill = crate::skills::Skill {
+            name: "long-skill".into(),
+            description: "long skill".into(),
+            path: root.path().join(".agents/skills/long-skill/SKILL.md"),
+            contents: "abcdefghijklmnopqrstuvwxyz".into(),
+        };
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        let persisted_for_sink = persisted.clone();
+        let mut agent = Agent::new(
+            Box::new(RecordingProvider::default()),
+            ToolRegistry::new(),
+            ToolContext {
+                cwd: root.path().to_path_buf(),
+                max_output_bytes: 8,
+            },
+        );
+        agent.set_message_sink(move |message| {
+            persisted_for_sink.lock().unwrap().push(message.clone());
+            Ok(())
+        });
+
+        agent.load_skill(&skill).unwrap();
+
+        let persisted = persisted.lock().unwrap();
+        let Message::User(blocks) = persisted.last().unwrap() else {
+            panic!("expected persisted user message");
+        };
+        let [ContentBlock::Text(text)] = blocks.as_slice() else {
+            panic!("expected single text block");
+        };
+        assert!(text.contains("abcdefgh\n[truncated]"));
+        assert!(!text.contains("ijklmnopqrstuvwxyz"));
     }
 
     #[tokio::test]

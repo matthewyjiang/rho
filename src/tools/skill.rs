@@ -81,6 +81,52 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn loads_skill_contents() {
+        let root = TempDir::new().unwrap();
+        let skill_dir = root.path().join(".agents/skills/test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test-skill\ndescription: test desc\n---\nbody contents\n",
+        )
+        .unwrap();
+
+        let result = Skill
+            .call(
+                serde_json::json!({"name": "test-skill"}),
+                ToolContext {
+                    cwd: root.path().to_path_buf(),
+                    max_output_bytes: 12000,
+                },
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert!(result.content.contains("body contents"));
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_skill_name() {
+        let root = TempDir::new().unwrap();
+
+        let err = Skill
+            .call(
+                serde_json::json!({"name": "missing-skill"}),
+                ToolContext {
+                    cwd: root.path().to_path_buf(),
+                    max_output_bytes: 12000,
+                },
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "unknown skill: missing-skill");
+    }
+
+    #[tokio::test]
     async fn truncates_loaded_skill_contents() {
         let root = TempDir::new().unwrap();
         let skill_dir = root.path().join(".agents/skills/short-skill");
