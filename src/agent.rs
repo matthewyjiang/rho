@@ -350,6 +350,26 @@ mod tests {
         }
     }
 
+    struct TransientInvalidResponseProvider {
+        requests: Arc<Mutex<usize>>,
+    }
+
+    #[async_trait(?Send)]
+    impl ModelProvider for TransientInvalidResponseProvider {
+        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            let mut requests = self.requests.lock().unwrap();
+            *requests += 1;
+            if *requests == 1 {
+                return Err(ModelError::InvalidResponse(
+                    "temporary parse failure".into(),
+                ));
+            }
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "ok".into(),
+            )]))
+        }
+    }
+
     struct OkTool;
 
     #[async_trait]
@@ -398,6 +418,26 @@ mod tests {
             AgentError::Provider(ModelError::MissingApiKey)
         ));
         assert_eq!(*requests.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_recoverable_invalid_response_errors() {
+        let requests = Arc::new(Mutex::new(0));
+        let mut agent = Agent::new(
+            Box::new(TransientInvalidResponseProvider {
+                requests: requests.clone(),
+            }),
+            ToolRegistry::new(),
+            ToolContext {
+                cwd: std::env::current_dir().unwrap(),
+                max_output_bytes: 12000,
+            },
+        );
+
+        let output = agent.run("hello".into()).await.unwrap();
+
+        assert_eq!(output, "ok");
+        assert_eq!(*requests.lock().unwrap(), 2);
     }
 
     #[tokio::test]
