@@ -21,12 +21,17 @@ use ratatui::{
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
 mod login;
+mod model_picker;
+mod picker;
+mod provider_picker;
 mod render;
+mod skill_picker;
 
+use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
     byte_index_after_visual_lines, entry_lines, input_cursor_position, input_visual_lines,
-    picker_lines, picker_matching_indices, push_wrapped_text, session_header_lines, styled_line,
-    truncate_one_line, visible_picker_match_start, LineFill,
+    picker_lines, push_wrapped_text, session_header_lines, styled_line, truncate_one_line,
+    visible_picker_match_start, LineFill,
 };
 
 use crate::{
@@ -120,23 +125,6 @@ enum ComposerMode {
 }
 
 #[derive(Clone, Debug)]
-struct UiPicker {
-    title: String,
-    help: String,
-    items: Vec<PickerItem>,
-    selected: usize,
-    filter: String,
-    action: PickerAction,
-}
-
-#[derive(Clone, Debug)]
-struct PickerItem {
-    label: String,
-    description: String,
-    value: String,
-}
-
-#[derive(Clone, Debug)]
 struct SecretInput {
     target: LoginTarget,
     value: String,
@@ -147,14 +135,6 @@ struct SecretInput {
 struct PendingOAuthLogin {
     target: LoginTarget,
     handle: tokio::task::JoinHandle<Result<CodexTokens, CodexOAuthError>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PickerAction {
-    SelectModel,
-    LoginProvider,
-    LogoutProvider,
-    InsertSkillCommand,
 }
 
 #[derive(Clone, Debug)]
@@ -190,85 +170,6 @@ struct PasteBurst {
     last_plain_char_at: Option<Instant>,
     plain_char_count: usize,
     suppress_enter_until: Option<Instant>,
-}
-
-impl UiPicker {
-    fn new(
-        title: impl Into<String>,
-        help: impl Into<String>,
-        items: Vec<PickerItem>,
-        action: PickerAction,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            help: help.into(),
-            items,
-            selected: 0,
-            filter: String::new(),
-            action,
-        }
-    }
-
-    fn select_previous(&mut self) {
-        let matches = self.matching_indices();
-        if matches.is_empty() {
-            return;
-        }
-        let position = matches
-            .iter()
-            .position(|index| *index == self.selected)
-            .unwrap_or(0);
-        self.selected = if position == 0 {
-            *matches.last().unwrap()
-        } else {
-            matches[position - 1]
-        };
-    }
-
-    fn select_next(&mut self) {
-        let matches = self.matching_indices();
-        if matches.is_empty() {
-            return;
-        }
-        let position = matches
-            .iter()
-            .position(|index| *index == self.selected)
-            .unwrap_or(0);
-        self.selected = matches[(position + 1) % matches.len()];
-    }
-
-    fn push_filter_char(&mut self, ch: char) {
-        self.filter.push(ch);
-        self.select_first_match();
-    }
-
-    fn pop_filter_char(&mut self) {
-        self.filter.pop();
-        self.select_first_match();
-    }
-
-    fn complete_filter(&mut self) {
-        if let Some(item) = self.selected_item() {
-            self.filter = regex::escape(&item.value);
-        }
-    }
-
-    fn select_first_match(&mut self) {
-        if let Some(index) = self.matching_indices().first().copied() {
-            self.selected = index;
-        }
-    }
-
-    fn matching_indices(&self) -> Vec<usize> {
-        picker_matching_indices(&self.items, &self.filter)
-    }
-
-    fn selected_item(&self) -> Option<&PickerItem> {
-        self.matching_indices()
-            .contains(&self.selected)
-            .then(|| self.items.get(self.selected))
-            .flatten()
-    }
 }
 
 impl SecretInput {
@@ -1274,30 +1175,9 @@ impl App {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
         self.refresh_available_auths();
-        let models = catalog::available_models_for_auths(&self.available_auths);
-        let current = format!("{}/{}", self.info.provider, self.info.model);
-        let mut items = models
-            .into_iter()
-            .map(|entry| {
-                let value = format!("{}/{}", entry.provider, entry.model);
-                let description =
-                    if entry.provider == self.info.provider && entry.model == self.info.model {
-                        "current".into()
-                    } else if entry.display_name != entry.model {
-                        entry.display_name
-                    } else {
-                        String::new()
-                    };
-                PickerItem {
-                    description,
-                    value: value.clone(),
-                    label: value,
-                }
-            })
-            .collect::<Vec<_>>();
-        items.sort_by_key(|item| item.value != current);
+        let picker = model_picker::model_picker(&self.info, &self.available_auths);
 
-        if items.is_empty() {
+        if picker.items.is_empty() {
             self.insert_entry(
                 terminal,
                 &Entry::Notice("no providers configured. run /login to sign in.".into()),
@@ -1306,15 +1186,6 @@ impl App {
             return Ok(());
         }
 
-        let mut picker = UiPicker::new(
-            "select model",
-            "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
-            items,
-            PickerAction::SelectModel,
-        );
-        if let Some(index) = picker.items.iter().position(|item| item.value == current) {
-            picker.selected = index;
-        }
         self.composer = ComposerMode::Picker(picker);
         self.status = "select model".into();
         Ok(())
@@ -1492,26 +1363,14 @@ impl App {
     }
 
     fn execute_skills_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let items = crate::skills::discover(&self.info.cwd)
-            .into_iter()
-            .map(|skill| PickerItem {
-                label: skill.name.clone(),
-                description: skill.description,
-                value: skill.name,
-            })
-            .collect::<Vec<_>>();
-        if items.is_empty() {
+        let picker = skill_picker::skill_picker(crate::skills::discover(&self.info.cwd));
+        if picker.items.is_empty() {
             self.insert_entry(terminal, &Entry::Notice("no skills loaded".into()))?;
             self.status = "skills".into();
             return Ok(());
         }
 
-        self.composer = ComposerMode::Picker(UiPicker::new(
-            "loaded skills",
-            "enter inserts command, type regex filter, esc cancel",
-            items,
-            PickerAction::InsertSkillCommand,
-        ));
+        self.composer = ComposerMode::Picker(picker);
         self.status = "select skill".into();
         Ok(())
     }
@@ -2173,12 +2032,17 @@ mod tests {
             vec![
                 PickerItem {
                     label: "model-a".into(),
-                    description: "current".into(),
+                    detail: None,
+                    badge: Some(PickerBadge {
+                        text: "(selected)".into(),
+                        tone: PickerBadgeTone::Selected,
+                    }),
                     value: "model-a".into(),
                 },
                 PickerItem {
                     label: "model-b".into(),
-                    description: String::new(),
+                    detail: None,
+                    badge: None,
                     value: "model-b".into(),
                 },
             ],
@@ -2282,12 +2146,14 @@ mod tests {
             vec![
                 PickerItem {
                     label: "openai/gpt-5.5".into(),
-                    description: String::new(),
+                    detail: None,
+                    badge: None,
                     value: "openai/gpt-5.5".into(),
                 },
                 PickerItem {
                     label: "openai-codex/gpt-5.4-mini".into(),
-                    description: String::new(),
+                    detail: None,
+                    badge: None,
                     value: "openai-codex/gpt-5.4-mini".into(),
                 },
             ],
@@ -2308,13 +2174,14 @@ mod tests {
     }
 
     #[test]
-    fn picker_lines_render_name_description_table_with_truncated_description() {
+    fn picker_lines_render_name_detail_table_with_truncated_detail() {
         let picker = UiPicker::new(
             "loaded skills",
             "enter inserts command",
             vec![PickerItem {
                 label: "test-skill".into(),
-                description: "this description is much too long for the available width".into(),
+                detail: Some("this detail is much too long for the available width".into()),
+                badge: None,
                 value: "test-skill".into(),
             }],
             PickerAction::InsertSkillCommand,
@@ -2323,10 +2190,39 @@ mod tests {
         let lines = picker_lines(&picker, 36);
 
         assert!(line_text(&lines[1]).contains("name"));
-        assert!(line_text(&lines[1]).contains("| description"));
+        assert!(line_text(&lines[1]).contains("| detail"));
         assert!(line_text(&lines[2]).contains("test-skill"));
         assert!(line_text(&lines[2]).contains('…'));
         assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn picker_lines_use_single_column_without_details() {
+        let picker = UiPicker::new(
+            "select model",
+            "enter confirm",
+            vec![PickerItem {
+                label: "openai-codex/gpt-5.3-codex-max".into(),
+                detail: None,
+                badge: Some(PickerBadge {
+                    text: "(selected)".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: "openai-codex/gpt-5.3-codex-max".into(),
+            }],
+            PickerAction::SelectModel,
+        );
+
+        let lines = picker_lines(&picker, 60);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(!rendered.contains("| detail"), "{rendered}");
+        assert!(
+            rendered.contains("> openai-codex/gpt-5.3-codex-max    (selected)"),
+            "{rendered}"
+        );
+        assert_eq!(lines[1].spans[1].style.fg, Some(Color::Yellow));
+        assert_eq!(lines.len(), 2);
     }
 
     #[test]
@@ -2337,12 +2233,14 @@ mod tests {
             vec![
                 PickerItem {
                     label: "model-a".into(),
-                    description: String::new(),
+                    detail: None,
+                    badge: None,
                     value: "model-a".into(),
                 },
                 PickerItem {
                     label: "model-b".into(),
-                    description: String::new(),
+                    detail: None,
+                    badge: None,
                     value: "model-b".into(),
                 },
             ],

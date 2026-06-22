@@ -1,14 +1,12 @@
 use std::path::Path;
 
+use super::{Entry, PickerBadgeTone, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
+use crate::tool::{ToolDisplayStyle, ToolRgb};
 use ratatui::{
     layout::Position,
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-use regex::RegexBuilder;
-
-use super::{Entry, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
-use crate::tool::{ToolDisplayStyle, ToolRgb};
 
 const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
 
@@ -97,23 +95,30 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         return lines;
     }
 
-    let label_width = picker
-        .items
-        .iter()
-        .map(|item| item.label.chars().count())
-        .max()
-        .unwrap_or(4)
-        .clamp(4, 28);
-    let name_width = label_width.min(width.saturating_sub(18).max(4));
-    let description_width = width.saturating_sub(name_width + 6).max(1);
-    lines.push(styled_line(
-        format!("  {:<name_width$} | description", "name"),
-        width,
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-        LineFill::Natural,
-    ));
+    let show_details = picker.items.iter().any(|item| item.detail.is_some());
+    let name_width = if show_details {
+        let label_width = picker
+            .items
+            .iter()
+            .map(|item| item.label.chars().count())
+            .max()
+            .unwrap_or(4)
+            .clamp(4, 28);
+        label_width.min(width.saturating_sub(18).max(4))
+    } else {
+        width.saturating_sub(2).max(1)
+    };
+    let detail_width = width.saturating_sub(name_width + 6).max(1);
+    if show_details {
+        lines.push(styled_line(
+            format!("  {:<name_width$} | detail", "name"),
+            width,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+            LineFill::Natural,
+        ));
+    }
 
     let start = visible_picker_match_start(picker, &matching_indices);
     for index in matching_indices
@@ -124,19 +129,59 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         let item = &picker.items[index];
         let selected = index == picker.selected;
         let marker = if selected { ">" } else { " " };
-        let label = truncate_one_line(&item.label, name_width);
-        let description = truncate_one_line(&item.description, description_width);
-        let text = format!("{marker} {label:<name_width$} | {description}");
-        let style = if selected {
+        let row_style = if selected {
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        lines.push(styled_line(text, width, style, LineFill::Natural));
+        if show_details {
+            let label = truncate_one_line(&item.label, name_width);
+            let detail =
+                truncate_one_line(item.detail.as_deref().unwrap_or_default(), detail_width);
+            let text = format!("{marker} {label:<name_width$} | {detail}");
+            lines.push(styled_line(text, width, row_style, LineFill::Natural));
+        } else {
+            lines.push(picker_single_column_line(
+                item, marker, name_width, row_style,
+            ));
+        }
     }
     lines
+}
+
+fn picker_single_column_line(
+    item: &PickerItem,
+    marker: &str,
+    name_width: usize,
+    row_style: Style,
+) -> Line<'static> {
+    let Some(badge) = &item.badge else {
+        let label = truncate_one_line(&item.label, name_width);
+        return Line::from(Span::styled(format!("{marker} {label}"), row_style));
+    };
+
+    let badge_text = format!("    {}", badge.text);
+    let badge_width = badge_text.chars().count();
+    if name_width <= badge_width {
+        let label = truncate_one_line(&item.label, name_width);
+        return Line::from(Span::styled(format!("{marker} {label}"), row_style));
+    }
+
+    let label = truncate_one_line(&item.label, name_width - badge_width);
+    Line::from(vec![
+        Span::styled(format!("{marker} {label}"), row_style),
+        Span::styled(badge_text, picker_badge_style(badge.tone)),
+    ])
+}
+
+fn picker_badge_style(tone: PickerBadgeTone) -> Style {
+    match tone {
+        PickerBadgeTone::Selected => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[usize]) -> usize {
@@ -160,26 +205,6 @@ pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
     text = text.chars().take(width - 1).collect();
     text.push('…');
     text
-}
-
-pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
-    let filter = filter.trim();
-    if filter.is_empty() {
-        return (0..items.len()).collect();
-    }
-
-    let Ok(regex) = RegexBuilder::new(filter).case_insensitive(true).build() else {
-        return Vec::new();
-    };
-
-    items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            let haystack = format!("{} {} {}", item.label, item.value, item.description);
-            regex.is_match(&haystack).then_some(index)
-        })
-        .collect()
 }
 
 pub(super) fn byte_index_after_visual_lines(

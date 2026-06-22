@@ -30,20 +30,7 @@ impl App {
     }
 
     pub(super) fn open_provider_picker(&mut self, verb: &str, action: PickerAction) {
-        let items = catalog::login_targets()
-            .into_iter()
-            .map(|target| PickerItem {
-                label: target.provider.clone(),
-                description: target.label,
-                value: target.provider,
-            })
-            .collect();
-        self.composer = ComposerMode::Picker(UiPicker::new(
-            format!("select provider to {verb}"),
-            "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
-            items,
-            action,
-        ));
+        self.composer = ComposerMode::Picker(provider_picker::provider_picker(verb, action));
         self.status = format!("select provider to {verb}");
     }
 
