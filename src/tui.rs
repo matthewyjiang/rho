@@ -1704,6 +1704,7 @@ impl App {
                 None
             }
             AgentEvent::Usage(usage) => {
+                let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
                 merge_usage(&mut self.latest_usage, usage);
                 None
             }
@@ -2106,6 +2107,39 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
     ]
 }
 
+fn usage_with_estimated_cost(
+    mut usage: ModelUsage,
+    metadata: Option<&ModelMetadata>,
+) -> ModelUsage {
+    if usage.cost_usd_micros.is_none() {
+        usage.cost_usd_micros = estimated_usage_cost(&usage, metadata);
+    }
+    usage
+}
+
+fn estimated_usage_cost(usage: &ModelUsage, metadata: Option<&ModelMetadata>) -> Option<u64> {
+    let metadata = metadata?;
+    let input = usage.input_tokens.unwrap_or_default();
+    let cache_read = usage.cache_read_tokens.unwrap_or_default();
+    let cost = metadata.cost_for_input_tokens(input)?;
+    let mut micros = 0u128;
+    micros += cost_component(input.saturating_sub(cache_read), cost.input_micros_per_m);
+    micros += cost_component(
+        usage.output_tokens.unwrap_or_default(),
+        cost.output_micros_per_m,
+    );
+    micros += cost_component(cache_read, cost.cache_read_micros_per_m);
+    micros += cost_component(
+        usage.cache_write_tokens.unwrap_or_default(),
+        cost.cache_write_micros_per_m,
+    );
+    (micros > 0).then_some(micros.min(u64::MAX as u128) as u64)
+}
+
+fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
+    tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
+}
+
 fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
     let Some(total) = total.as_mut() else {
         *total = Some(usage);
@@ -2115,9 +2149,17 @@ fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
     total.output_tokens = add_optional(total.output_tokens, usage.output_tokens);
     total.cache_read_tokens = add_optional(total.cache_read_tokens, usage.cache_read_tokens);
     total.cache_write_tokens = add_optional(total.cache_write_tokens, usage.cache_write_tokens);
-    total.total_tokens = add_optional(total.total_tokens, usage.total_tokens);
+    total.total_tokens = usage.total_tokens.or_else(|| usage_total_tokens(&usage));
     total.cost_usd_micros = add_optional(total.cost_usd_micros, usage.cost_usd_micros);
     total.context_window = usage.context_window.or(total.context_window);
+}
+
+fn usage_total_tokens(usage: &ModelUsage) -> Option<u64> {
+    let total = usage
+        .input_tokens
+        .unwrap_or_default()
+        .saturating_add(usage.output_tokens.unwrap_or_default());
+    (total > 0).then_some(total)
 }
 
 fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {

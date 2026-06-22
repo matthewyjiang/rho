@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 8;
+const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LineFill {

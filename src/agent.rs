@@ -191,8 +191,13 @@ impl Agent {
                                             content: err.to_string(),
                                         },
                                     };
-                                    let display_lines =
+                                    let mut display_lines =
                                         tool.display_lines(&call.arguments, &self.ctx, &result);
+                                    if !result.ok
+                                        && !display_lines.iter().any(|line| line == &result.content)
+                                    {
+                                        display_lines.push(result.content.clone());
+                                    }
                                     (result, display_style, command, event_content, display_lines)
                                 }
                                 None => {
