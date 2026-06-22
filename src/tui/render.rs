@@ -293,7 +293,11 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
+pub(super) fn entry_lines(
+    entry: &Entry,
+    width: usize,
+    max_tool_output_lines: usize,
+) -> Vec<Line<'static>> {
     let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
     match entry {
@@ -324,8 +328,17 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             ok,
             display_style,
             display_lines,
+            expanded,
             ..
-        } => push_tool_block(&mut lines, *ok, display_lines, *display_style, inner_width),
+        } => push_tool_block(
+            &mut lines,
+            *ok,
+            display_lines,
+            *display_style,
+            inner_width,
+            max_tool_output_lines,
+            *expanded,
+        ),
         Entry::Notice(text) => push_wrapped_text(
             &mut lines,
             text,
@@ -362,6 +375,8 @@ fn push_tool_block(
     display_lines: &[String],
     display_style: ToolDisplayStyle,
     width: usize,
+    max_tool_output_lines: usize,
+    expanded: bool,
 ) {
     let background = if ok {
         display_style.success_background
@@ -372,9 +387,44 @@ fn push_tool_block(
         .fg(tool_color(display_style.foreground))
         .bg(tool_color(background));
 
-    for line in display_lines {
+    let logical_lines = tool_logical_lines(display_lines);
+    let max_tool_output_lines = max_tool_output_lines.max(1);
+    let truncated = logical_lines.len() > max_tool_output_lines;
+    let visible_count = if truncated && !expanded {
+        max_tool_output_lines
+    } else {
+        logical_lines.len()
+    };
+
+    for line in logical_lines.iter().take(visible_count) {
         push_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
     }
+
+    if truncated {
+        let prompt = if expanded {
+            "ctrl+o to collapse".to_string()
+        } else {
+            format!(
+                "... {} more lines, ctrl+o to expand",
+                logical_lines.len() - visible_count
+            )
+        };
+        push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
+    }
+}
+
+fn tool_logical_lines(display_lines: &[String]) -> Vec<String> {
+    display_lines
+        .iter()
+        .flat_map(|line| {
+            let lines = line.lines().map(str::to_string).collect::<Vec<_>>();
+            if lines.is_empty() {
+                vec![String::new()]
+            } else {
+                lines
+            }
+        })
+        .collect()
 }
 
 fn tool_color(color: ToolRgb) -> Color {

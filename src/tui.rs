@@ -81,6 +81,7 @@ pub struct TuiInfo {
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
+    pub max_tool_output_lines: usize,
     pub session_id: Option<String>,
     pub open_resume_picker: bool,
     pub config_path: Option<PathBuf>,
@@ -160,6 +161,16 @@ struct ConfigNumberInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigNumberKey {
     MaxOutputBytes,
+    MaxToolOutputLines,
+}
+
+impl ConfigNumberKey {
+    fn label(self) -> &'static str {
+        match self {
+            ConfigNumberKey::MaxOutputBytes => "max output bytes",
+            ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +216,7 @@ enum Entry {
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
+        expanded: bool,
     },
     Notice(String),
     Error(String),
@@ -354,6 +366,8 @@ impl App {
     fn new_with_credentials(info: TuiInfo, credential_store: Arc<dyn CredentialStore>) -> Self {
         let available_auths = available_auth_modes(credential_store.as_ref());
         let using_unavailable_provider = info.auth_unavailable.is_some();
+        let mut info = info;
+        info.max_tool_output_lines = info.max_tool_output_lines.max(1);
         let status = info
             .auth_unavailable
             .as_ref()
@@ -486,6 +500,11 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                self.toggle_latest_tool_output(terminal)?;
+                self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
@@ -754,35 +773,52 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                let Ok(value) = input.value.parse::<usize>() else {
+                let Ok(mut value) = input.value.parse::<usize>() else {
                     self.insert_entry(
                         terminal,
-                        &Entry::Error("max output bytes must be a positive whole number".into()),
+                        &Entry::Error(format!(
+                            "{} must be a positive whole number",
+                            input.key.label()
+                        )),
                     )?;
                     self.status = "config save failed".into();
                     return Ok(true);
                 };
-                if value == 0 {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error("max output bytes must be greater than zero".into()),
-                    )?;
-                    self.status = "config save failed".into();
-                    return Ok(true);
-                }
+                value = value.max(1);
                 match input.key {
                     ConfigNumberKey::MaxOutputBytes => {
                         Config::load(self.info.config_path.clone()).and_then(|mut config| {
                             config.max_output_bytes = value;
                             config.save(self.info.config_path.clone())
                         })?;
-                        self.composer =
-                            ComposerMode::Picker(config_picker::config_picker(&self.info, value));
+                        self.composer = ComposerMode::Picker(config_picker::config_picker(
+                            &self.info,
+                            value,
+                            self.info.max_tool_output_lines,
+                        ));
                         self.insert_entry(
                             terminal,
                             &Entry::Notice(format!(
                                 "max output bytes set to {value}; applies next session"
                             )),
+                        )?;
+                        self.status = "config saved".into();
+                    }
+                    ConfigNumberKey::MaxToolOutputLines => {
+                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+                            config.max_tool_output_lines = value;
+                            config.save(self.info.config_path.clone())
+                        })?;
+                        self.info.max_tool_output_lines = value;
+                        self.composer = ComposerMode::Picker(config_picker::config_picker(
+                            &self.info,
+                            Config::load(self.info.config_path.clone())?.max_output_bytes,
+                            value,
+                        ));
+                        self.reflow_history(terminal)?;
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Notice(format!("max tool output lines set to {value}")),
                         )?;
                         self.status = "config saved".into();
                     }
@@ -802,11 +838,11 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                let max_output_bytes =
-                    Config::load(self.info.config_path.clone())?.max_output_bytes;
+                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::Picker(config_picker::config_picker(
                     &self.info,
-                    max_output_bytes,
+                    config.max_output_bytes,
+                    config.max_tool_output_lines,
                 ));
                 self.status = "config".into();
                 Ok(true)
@@ -1625,6 +1661,15 @@ impl App {
                 self.status = "edit max output bytes".into();
                 Ok(())
             }
+            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::MaxToolOutputLines,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "edit max tool output lines".into();
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -1656,11 +1701,12 @@ impl App {
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let max_output_bytes = Config::load(self.info.config_path.clone())
-                .map(|config| config.max_output_bytes)
-                .unwrap_or_else(|_| Config::default().max_output_bytes);
-            self.composer =
-                ComposerMode::Picker(config_picker::config_picker(&self.info, max_output_bytes));
+            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            self.composer = ComposerMode::Picker(config_picker::config_picker(
+                &self.info,
+                config.max_output_bytes,
+                config.max_tool_output_lines,
+            ));
         }
         match save_result {
             Ok(()) => {
@@ -1891,8 +1937,12 @@ impl App {
         self.latest_usage = None;
         let entries = transcript_entries_from_messages(agent.messages());
         let width = terminal.size()?.width as usize;
-        let (_omitted, visible_entries) =
-            recovered_history_tail(&entries, width, RECOVERED_HISTORY_LINE_LIMIT);
+        let (_omitted, visible_entries) = recovered_history_tail(
+            &entries,
+            width,
+            RECOVERED_HISTORY_LINE_LIMIT,
+            self.info.max_tool_output_lines,
+        );
         self.transcript = visible_entries;
         self.last_inserted_was_tool = self
             .transcript
@@ -1908,9 +1958,12 @@ impl App {
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let config = Config::load(self.info.config_path.clone())?;
+        self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.composer = ComposerMode::Picker(config_picker::config_picker(
             &self.info,
-            Config::load(self.info.config_path.clone())?.max_output_bytes,
+            config.max_output_bytes,
+            self.info.max_tool_output_lines,
         ));
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
@@ -1960,6 +2013,34 @@ impl App {
         Ok(true)
     }
 
+    fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        let Some(index) = self.transcript.iter().rposition(|entry| {
+            matches!(entry, Entry::Tool { display_lines, .. } if tool_display_line_count(display_lines) > self.info.max_tool_output_lines)
+        }) else {
+            self.status = "no truncated tool output".into();
+            return Ok(());
+        };
+
+        let expand = !matches!(
+            self.transcript.get(index),
+            Some(Entry::Tool { expanded: true, .. })
+        );
+        for entry in &mut self.transcript {
+            if let Entry::Tool { expanded, .. } = entry {
+                *expanded = false;
+            }
+        }
+        if let Some(Entry::Tool { expanded, .. }) = self.transcript.get_mut(index) {
+            *expanded = expand;
+        }
+        self.status = if expand {
+            "tool output expanded".into()
+        } else {
+            "tool output collapsed".into()
+        };
+        self.reflow_history(terminal)
+    }
+
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
         match event {
             AgentEvent::StepStarted(step) => {
@@ -1992,6 +2073,7 @@ impl App {
                 ok,
                 display_style,
                 display_lines,
+                expanded: false,
             }),
         }
     }
@@ -2180,8 +2262,12 @@ impl App {
         }
 
         let width = terminal.size()?.width as usize;
-        let (omitted, visible_entries) =
-            recovered_history_tail(&entries, width, RECOVERED_HISTORY_LINE_LIMIT);
+        let (omitted, visible_entries) = recovered_history_tail(
+            &entries,
+            width,
+            RECOVERED_HISTORY_LINE_LIMIT,
+            self.info.max_tool_output_lines,
+        );
         let mut lines = Vec::new();
         if omitted > 0 {
             lines.extend(entry_lines(
@@ -2190,9 +2276,14 @@ impl App {
                     visible_entries.len()
                 )),
                 width,
+                self.info.max_tool_output_lines,
             ));
         }
-        lines.extend(transcript_lines(&visible_entries, width));
+        lines.extend(transcript_lines(
+            &visible_entries,
+            width,
+            self.info.max_tool_output_lines,
+        ));
 
         insert_history_lines(terminal, lines)?;
         self.transcript = visible_entries;
@@ -2210,7 +2301,7 @@ impl App {
             if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
                 lines.push(Line::raw(""));
             }
-            lines.extend(entry_lines(entry, width));
+            lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
             previous_was_tool = matches!(entry, Entry::Tool { .. });
         }
 
@@ -2244,7 +2335,10 @@ impl App {
             insert_history_lines(terminal, vec![Line::raw("")])?;
         }
 
-        insert_history_lines(terminal, entry_lines(entry, width))?;
+        insert_history_lines(
+            terminal,
+            entry_lines(entry, width, self.info.max_tool_output_lines),
+        )?;
         self.push_transcript_entry(entry.clone());
         self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
@@ -2259,7 +2353,7 @@ impl App {
             if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
                 lines.push(Line::raw(""));
             }
-            lines.extend(entry_lines(entry, width));
+            lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
             previous_was_tool = matches!(entry, Entry::Tool { .. });
         }
         insert_history_lines(terminal, lines)?;
@@ -2282,6 +2376,7 @@ fn recovered_history_tail(
     entries: &[Entry],
     width: usize,
     line_limit: usize,
+    max_tool_output_lines: usize,
 ) -> (usize, Vec<Entry>) {
     let mut selected_start = entries.len();
     let mut line_count = 0usize;
@@ -2289,7 +2384,8 @@ fn recovered_history_tail(
 
     for (index, entry) in entries.iter().enumerate().rev() {
         let spacing = matches!(entry, Entry::Tool { .. }) && next_is_tool;
-        let entry_line_count = entry_lines(entry, width).len() + usize::from(spacing);
+        let entry_line_count =
+            entry_lines(entry, width, max_tool_output_lines).len() + usize::from(spacing);
         if selected_start < entries.len() && line_count + entry_line_count > line_limit {
             break;
         }
@@ -2301,14 +2397,18 @@ fn recovered_history_tail(
     (selected_start, entries[selected_start..].to_vec())
 }
 
-fn transcript_lines(entries: &[Entry], width: usize) -> Vec<Line<'static>> {
+fn transcript_lines(
+    entries: &[Entry],
+    width: usize,
+    max_tool_output_lines: usize,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut previous_was_tool = false;
     for entry in entries {
         if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
             lines.push(Line::raw(""));
         }
-        lines.extend(entry_lines(entry, width));
+        lines.extend(entry_lines(entry, width, max_tool_output_lines));
         previous_was_tool = matches!(entry, Entry::Tool { .. });
     }
     lines
@@ -2348,11 +2448,19 @@ fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
                     ok: result.ok,
                     display_style: ToolDisplayStyle::default_tool(),
                     display_lines,
+                    expanded: false,
                 });
             }
         }
     }
     entries
+}
+
+fn tool_display_line_count(display_lines: &[String]) -> usize {
+    display_lines
+        .iter()
+        .map(|line| line.lines().count().max(1))
+        .sum()
 }
 
 fn text_blocks(blocks: &[ContentBlock]) -> String {
@@ -2500,9 +2608,7 @@ fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 }
 
 fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Line<'static>> {
-    let label = match input.key {
-        ConfigNumberKey::MaxOutputBytes => "max output bytes",
-    };
+    let label = input.key.label();
     vec![
         styled_line(
             format!("edit {label}  enter save, esc cancel"),
@@ -2807,6 +2913,7 @@ mod tests {
             ok,
             display_style: ToolDisplayStyle::file_or_command(),
             display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
+            expanded: false,
         }
     }
 
@@ -2827,6 +2934,7 @@ mod tests {
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
+                max_tool_output_lines: 10,
             },
             store,
         )
@@ -2863,7 +2971,7 @@ mod tests {
 
         let rendered = entries
             .iter()
-            .flat_map(|entry| entry_lines(entry, 40))
+            .flat_map(|entry| entry_lines(entry, 40, 10))
             .map(|line| line_text(&line))
             .collect::<Vec<_>>()
             .join("\n");
@@ -2882,7 +2990,7 @@ mod tests {
             .map(|index| Entry::User(format!("message {index}")))
             .collect::<Vec<_>>();
 
-        let (omitted, visible) = recovered_history_tail(&entries, 80, 9);
+        let (omitted, visible) = recovered_history_tail(&entries, 80, 9, 10);
 
         assert_eq!(omitted, 7);
         assert!(matches!(visible.as_slice(), [
@@ -2924,6 +3032,7 @@ mod tests {
         let lines = entry_lines(
             &test_tool_entry(true, &["bash", "cargo test", "ignored output"]),
             40,
+            10,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
@@ -2934,7 +3043,11 @@ mod tests {
 
     #[test]
     fn read_file_tool_block_shows_file_name_only() {
-        let lines = entry_lines(&test_tool_entry(true, &["read_file", "src/main.rs"]), 40);
+        let lines = entry_lines(
+            &test_tool_entry(true, &["read_file", "src/main.rs"]),
+            40,
+            10,
+        );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(rendered.contains("read_file"));
@@ -2948,8 +3061,10 @@ mod tests {
                 ok: true,
                 display_style: ToolDisplayStyle::skill(),
                 display_lines: vec!["skill caveman".into()],
+                expanded: false,
             },
             40,
+            10,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
@@ -2965,8 +3080,10 @@ mod tests {
                 ok: false,
                 display_style: ToolDisplayStyle::skill(),
                 display_lines: vec!["unknown skill".into()],
+                expanded: false,
             },
             40,
+            10,
         );
 
         assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(95, 36, 36)));
@@ -2977,11 +3094,92 @@ mod tests {
         let lines = entry_lines(
             &test_tool_entry(true, &["read_file", "src/file.rs:10-24"]),
             40,
+            10,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("src/file.rs:10-24"));
+    }
+    #[test]
+    fn tool_block_truncates_multiline_output_with_expand_prompt() {
+        let lines = entry_lines(
+            &test_tool_entry(true, &["bash", "line 1\nline 2\nline 3"]),
+            40,
+            2,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("bash"));
+        assert!(rendered.contains("line 1"));
+        assert!(!rendered.contains("line 2"));
+        assert!(rendered.contains("... 2 more lines, ctrl+o to expand"));
+    }
+
+    #[test]
+    fn expanded_tool_block_shows_full_multiline_output() {
+        let mut entry = test_tool_entry(true, &["bash", "line 1\nline 2\nline 3"]);
+        let Entry::Tool { expanded, .. } = &mut entry else {
+            panic!("expected tool entry");
+        };
+        *expanded = true;
+
+        let lines = entry_lines(&entry, 40, 2);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("line 1"));
+        assert!(rendered.contains("line 2"));
+        assert!(rendered.contains("line 3"));
+        assert!(rendered.contains("ctrl+o to collapse"));
+    }
+
+    #[test]
+    fn untruncated_tool_block_does_not_show_expand_prompt() {
+        let lines = entry_lines(&test_tool_entry(true, &["bash", "line 1"]), 40, 2);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(!rendered.contains("ctrl+o"));
+    }
+
+    #[test]
+    fn toggling_latest_truncated_tool_collapses_previous_tool() {
+        let mut app = test_app();
+        app.info.max_tool_output_lines = 1;
+        app.transcript = vec![
+            test_tool_entry(true, &["first", "a\nb"]),
+            test_tool_entry(true, &["second", "c\nd"]),
+        ];
+        if let Entry::Tool { expanded, .. } = &mut app.transcript[0] {
+            *expanded = true;
+        }
+
+        let index = app
+            .transcript
+            .iter()
+            .rposition(|entry| {
+                matches!(entry, Entry::Tool { display_lines, .. } if tool_display_line_count(display_lines) > app.info.max_tool_output_lines)
+            })
+            .unwrap();
+        for entry in &mut app.transcript {
+            if let Entry::Tool { expanded, .. } = entry {
+                *expanded = false;
+            }
+        }
+        if let Entry::Tool { expanded, .. } = &mut app.transcript[index] {
+            *expanded = true;
+        }
+
+        assert!(matches!(
+            app.transcript[0],
+            Entry::Tool {
+                expanded: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            app.transcript[1],
+            Entry::Tool { expanded: true, .. }
+        ));
     }
 
     #[test]
@@ -3194,6 +3392,7 @@ mod tests {
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
+                max_tool_output_lines: 10,
             },
             store,
         );
