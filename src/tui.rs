@@ -34,14 +34,15 @@ mod render;
 mod session_picker;
 mod skill_picker;
 mod statusline;
+mod stream;
 
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
-    byte_index_after_visual_lines, entry_lines, input_cursor_position, input_visual_lines,
-    picker_lines, push_wrapped_text, session_header_lines, styled_line, truncate_one_line,
-    LineFill,
+    entry_lines, input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
+    session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use statusline::{statusline_lines, StatusLineState};
+use stream::{AppendOnlyStream, StreamFragment};
 
 use crate::{
     agent::{Agent, AgentEvent, SessionHistorySink},
@@ -122,9 +123,10 @@ struct App {
     status: String,
     should_quit: bool,
     ctrl_c_streak: u8,
-    stream_buffer: String,
-    stream_flushed_text: String,
-    reasoning_buffer: String,
+    assistant_stream: AppendOnlyStream,
+    reasoning_stream: AppendOnlyStream,
+    current_stream_kind: Option<StreamKind>,
+    current_turn_start: Option<usize>,
     running: bool,
     paste_burst: PasteBurst,
     transcript: Vec<Entry>,
@@ -222,6 +224,45 @@ enum Entry {
     },
     Notice(String),
     Error(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamKind {
+    Assistant,
+    Reasoning,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FinalAnswerDelta<'a> {
+    None,
+    Append(&'a str),
+    Mismatch,
+}
+
+fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
+    match answer.strip_prefix(emitted_text) {
+        Some("") => FinalAnswerDelta::None,
+        Some(suffix) => FinalAnswerDelta::Append(suffix),
+        None => FinalAnswerDelta::Mismatch,
+    }
+}
+
+impl StreamKind {
+    fn style(self) -> Style {
+        match self {
+            Self::Assistant => Style::default(),
+            Self::Reasoning => Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn entry(self, text: String) -> Entry {
+        match self {
+            Self::Assistant => Entry::Assistant(text),
+            Self::Reasoning => Entry::Reasoning(text),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -382,9 +423,10 @@ impl App {
             status,
             should_quit: false,
             ctrl_c_streak: 0,
-            stream_buffer: String::new(),
-            stream_flushed_text: String::new(),
-            reasoning_buffer: String::new(),
+            assistant_stream: AppendOnlyStream::default(),
+            reasoning_stream: AppendOnlyStream::default(),
+            current_stream_kind: None,
+            current_turn_start: None,
             running: false,
             paste_burst: PasteBurst::default(),
             transcript: Vec::new(),
@@ -1269,24 +1311,26 @@ impl App {
             self.start_session_title_generation(prompt.clone());
         }
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
-        self.stream_buffer.clear();
-        self.stream_flushed_text.clear();
-        self.reasoning_buffer.clear();
+        self.current_turn_start = Some(self.transcript.len());
+        self.reset_streams();
         self.status = "running".into();
         self.running = true;
         terminal.draw(|frame| self.draw(frame))?;
 
         let result = agent
             .run_with_events(prompt, |event| {
-                if let Some(entry) = self.record_agent_event(event) {
-                    self.insert_entry(terminal, &entry)?;
-                }
-                self.flush_stream_overflow(terminal)?;
-                let _ = terminal.draw(|frame| self.draw(frame));
+                let mut should_draw = self.handle_agent_event(event, terminal)?;
                 match poll_stream_control()? {
                     StreamControl::Interrupt => return Err(crate::model::ModelError::Interrupted),
-                    StreamControl::Resize => self.reflow_history(terminal)?,
+                    StreamControl::Resize => {
+                        self.reflow_history(terminal)?;
+                        self.drain_streams(terminal)?;
+                        should_draw = true;
+                    }
                     StreamControl::Continue => {}
+                }
+                if should_draw {
+                    let _ = terminal.draw(|frame| self.draw(frame));
                 }
                 Ok(())
             })
@@ -1294,46 +1338,24 @@ impl App {
 
         match result {
             Ok(answer) => {
-                let remaining = self.unflushed_answer_text(&answer).to_string();
-                let reasoning = std::mem::take(&mut self.reasoning_buffer);
-                self.stream_buffer.clear();
                 self.running = false;
-                self.insert_reasoning_output(
-                    terminal,
-                    &reasoning,
-                    self.stream_flushed_text.is_empty(),
-                )?;
-                self.insert_assistant_output(
-                    terminal,
-                    &remaining,
-                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
-                )?;
-                self.stream_flushed_text.clear();
+                self.finish_streams(terminal)?;
+                self.insert_final_answer_suffix(terminal, &answer)?;
+                self.reset_streams();
+                self.current_turn_start = None;
                 self.status = "ready".into();
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
-                let partial = visible_assistant_stream(&self.stream_buffer).to_string();
-                let reasoning = std::mem::take(&mut self.reasoning_buffer);
-                self.stream_buffer.clear();
                 self.running = false;
-                self.insert_reasoning_output(
-                    terminal,
-                    &reasoning,
-                    self.stream_flushed_text.is_empty(),
-                )?;
-                self.insert_assistant_output(
-                    terminal,
-                    partial.trim(),
-                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
-                )?;
-                self.stream_flushed_text.clear();
+                self.finish_streams(terminal)?;
                 self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
+                self.reset_streams();
+                self.current_turn_start = None;
                 self.status = "interrupted".into();
             }
             Err(err) => {
-                self.stream_buffer.clear();
-                self.stream_flushed_text.clear();
-                self.reasoning_buffer.clear();
+                self.reset_streams();
+                self.current_turn_start = None;
                 self.running = false;
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
                 self.status = "error".into();
@@ -1342,119 +1364,192 @@ impl App {
         Ok(())
     }
 
-    fn flush_stream_overflow(
+    fn reset_streams(&mut self) {
+        self.assistant_stream.reset();
+        self.reasoning_stream.reset();
+        self.current_stream_kind = None;
+    }
+
+    fn handle_agent_event(
+        &mut self,
+        event: AgentEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<bool> {
+        match event {
+            AgentEvent::OutputDelta(text) => {
+                let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
+                self.assistant_stream.push_delta(&text);
+                let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
+                Ok(switched || drained)
+            }
+            AgentEvent::ReasoningDelta(text) => {
+                let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
+                self.reasoning_stream.push_delta(&text);
+                let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
+                Ok(switched || drained)
+            }
+            other => {
+                if matches!(
+                    other,
+                    AgentEvent::StepStarted(_) | AgentEvent::ToolFinished { .. }
+                ) {
+                    self.finish_streams(terminal)?;
+                }
+                if let Some(entry) = self.record_agent_event(other) {
+                    self.insert_entry(terminal, &entry)?;
+                }
+                self.drain_streams(terminal)?;
+                Ok(true)
+            }
+        }
+    }
+
+    fn switch_stream_kind(
         &mut self,
         terminal: &mut DefaultTerminal,
-    ) -> Result<(), crate::model::ModelError> {
-        let visible = visible_assistant_stream(&self.stream_buffer);
-        if visible.is_empty() {
-            return Ok(());
-        }
-
-        let width = terminal.size()?.width as usize;
-        let composer_height =
-            self.composer_lines(width).len() + self.command_suggestion_lines(width).len() + 2;
-        let live_line_budget = (INLINE_VIEWPORT_HEIGHT as usize)
-            .saturating_sub(composer_height)
-            .saturating_sub(2)
-            .max(1);
-        let visual_lines = input_visual_lines(visible, width).len();
-        let overflow = visual_lines.saturating_sub(live_line_budget);
-        if overflow == 0 {
-            return Ok(());
-        }
-
-        let Some(split_at) = byte_index_after_visual_lines(visible, width, overflow) else {
-            return Ok(());
+        kind: StreamKind,
+    ) -> std::io::Result<bool> {
+        let inserted = if self
+            .current_stream_kind
+            .is_some_and(|current| current != kind)
+        {
+            self.finish_current_stream(terminal)?
+        } else {
+            false
         };
-        let flushed = self.stream_buffer[..split_at].to_string();
-        self.stream_buffer.replace_range(..split_at, "");
-        self.stream_flushed_text.push_str(&flushed);
-
-        let mut lines = Vec::new();
-        if self.stream_flushed_text == flushed {
-            lines.push(Line::raw(""));
-        }
-        let mut flushed_lines = Vec::new();
-        push_wrapped_text(
-            &mut flushed_lines,
-            &flushed,
-            padded_content_width(width),
-            Style::default(),
-            LineFill::Natural,
-        );
-        lines.extend(flushed_lines.into_iter().map(pad_display_line));
-        insert_history_lines(terminal, lines)?;
-        self.push_transcript_entry(Entry::Assistant(flushed));
-        Ok(())
+        self.current_stream_kind = Some(kind);
+        Ok(inserted)
     }
 
-    fn unflushed_answer_text<'a>(&self, answer: &'a str) -> &'a str {
-        answer
-            .strip_prefix(&self.stream_flushed_text)
-            .unwrap_or(answer)
+    fn drain_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+        let reasoning_drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
+        let assistant_drained = self.drain_stream(terminal, StreamKind::Assistant)?;
+        Ok(reasoning_drained || assistant_drained)
     }
 
-    fn insert_reasoning_output(
+    fn drain_stream(
         &mut self,
         terminal: &mut DefaultTerminal,
-        text: &str,
-        include_leading_blank: bool,
-    ) -> std::io::Result<()> {
-        self.insert_padded_output(
-            terminal,
-            text,
-            include_leading_blank,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )?;
-        if !text.is_empty() {
-            self.push_transcript_entry(Entry::Reasoning(text.into()));
-        }
-        Ok(())
-    }
-
-    fn insert_assistant_output(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        text: &str,
-        include_leading_blank: bool,
-    ) -> std::io::Result<()> {
-        self.insert_padded_output(terminal, text, include_leading_blank, Style::default())?;
-        if !text.is_empty() {
-            self.push_transcript_entry(Entry::Assistant(text.into()));
-        }
-        Ok(())
-    }
-
-    fn insert_padded_output(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        text: &str,
-        include_leading_blank: bool,
-        style: Style,
-    ) -> std::io::Result<()> {
-        if text.is_empty() {
-            return Ok(());
-        }
-
+        kind: StreamKind,
+    ) -> std::io::Result<bool> {
         let width = terminal.size()?.width as usize;
-        let mut lines = Vec::new();
-        if include_leading_blank {
-            lines.push(Line::raw(""));
+        let inner_width = padded_content_width(width);
+        let fragment = match kind {
+            StreamKind::Assistant => self.assistant_stream.drain_renderable(inner_width),
+            StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
+        };
+        if let Some(fragment) = fragment {
+            self.insert_stream_fragment(terminal, fragment, kind)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        let mut text_lines = Vec::new();
-        push_wrapped_text(
-            &mut text_lines,
-            text,
-            padded_content_width(width),
-            style,
-            LineFill::Natural,
-        );
-        lines.extend(text_lines.into_iter().map(pad_display_line));
-        lines.push(Line::raw(""));
-        insert_history_lines(terminal, lines)
+    }
+
+    fn finish_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+        let reasoning_finished = self.finish_stream(terminal, StreamKind::Reasoning)?;
+        let assistant_finished = self.finish_stream(terminal, StreamKind::Assistant)?;
+        self.current_stream_kind = None;
+        Ok(reasoning_finished || assistant_finished)
+    }
+
+    fn finish_current_stream(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+        if let Some(kind) = self.current_stream_kind {
+            self.finish_stream(terminal, kind)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn finish_stream(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        kind: StreamKind,
+    ) -> std::io::Result<bool> {
+        let fragment = match kind {
+            StreamKind::Assistant => self.assistant_stream.finish(),
+            StreamKind::Reasoning => self.reasoning_stream.finish(),
+        };
+        if let Some(fragment) = fragment {
+            self.insert_stream_fragment(terminal, fragment, kind)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn insert_final_answer_suffix(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        answer: &str,
+    ) -> std::io::Result<()> {
+        match final_answer_delta(self.assistant_stream.emitted_text(), answer) {
+            FinalAnswerDelta::None => {}
+            FinalAnswerDelta::Append(suffix) => {
+                self.assistant_stream.push_delta(suffix);
+                if let Some(fragment) = self.assistant_stream.finish() {
+                    self.insert_stream_fragment(terminal, fragment, StreamKind::Assistant)?;
+                }
+            }
+            FinalAnswerDelta::Mismatch => {
+                self.replace_current_turn_assistant_transcript(answer);
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_stream_fragment(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        fragment: StreamFragment,
+        kind: StreamKind,
+    ) -> std::io::Result<()> {
+        let render_text = fragment.render_text();
+        if !render_text.is_empty() {
+            let width = terminal.size()?.width as usize;
+            let style = kind.style();
+            let mut lines = Vec::new();
+            if fragment.include_leading_blank() {
+                lines.push(Line::raw(""));
+            }
+            let mut text_lines = Vec::new();
+            push_wrapped_text(
+                &mut text_lines,
+                render_text,
+                padded_content_width(width),
+                style,
+                LineFill::Natural,
+            );
+            lines.extend(text_lines.into_iter().map(pad_display_line));
+            insert_history_lines(terminal, lines)?;
+            self.last_inserted_was_tool = false;
+        }
+        let text = fragment.into_text();
+        self.push_transcript_entry(kind.entry(text));
+        Ok(())
+    }
+
+    fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
+        let start = self.current_turn_start.unwrap_or(0);
+        let assistant_indices = self
+            .transcript
+            .iter()
+            .enumerate()
+            .skip(start)
+            .filter_map(|(index, entry)| matches!(entry, Entry::Assistant(_)).then_some(index))
+            .collect::<Vec<_>>();
+
+        let Some((first, stale)) = assistant_indices.split_first() else {
+            self.push_transcript_entry(Entry::Assistant(answer.to_string()));
+            return;
+        };
+
+        if let Entry::Assistant(text) = &mut self.transcript[*first] {
+            *text = answer.to_string();
+        }
+        for index in stale.iter().rev() {
+            self.transcript.remove(*index);
+        }
     }
 
     async fn execute_command(
@@ -1942,9 +2037,7 @@ impl App {
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
-        self.stream_buffer.clear();
-        self.stream_flushed_text.clear();
-        self.reasoning_buffer.clear();
+        self.reset_streams();
         self.running = false;
         self.cumulative_usage = None;
         self.current_context = None;
@@ -2057,21 +2150,12 @@ impl App {
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
         match event {
             AgentEvent::StepStarted(step) => {
-                self.stream_buffer.clear();
-                self.stream_flushed_text.clear();
-                self.reasoning_buffer.clear();
+                self.reset_streams();
                 self.running = true;
                 self.status = format!("running step {step}");
                 None
             }
-            AgentEvent::OutputDelta(text) => {
-                self.stream_buffer.push_str(&text);
-                None
-            }
-            AgentEvent::ReasoningDelta(text) => {
-                self.reasoning_buffer.push_str(&text);
-                None
-            }
+            AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
             AgentEvent::ContextUsage(usage) => {
                 self.current_context = Some(usage);
                 None
@@ -2125,36 +2209,7 @@ impl App {
 
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
         let mut content = Vec::new();
-        let visible_stream = visible_assistant_stream(&self.stream_buffer);
-        let has_active_output =
-            self.running || !self.reasoning_buffer.is_empty() || !visible_stream.is_empty();
-        if has_active_output {
-            content.push(Line::raw(""));
-        }
-        if !self.reasoning_buffer.is_empty() {
-            let mut reasoning_lines = Vec::new();
-            push_wrapped_text(
-                &mut reasoning_lines,
-                &self.reasoning_buffer,
-                padded_content_width(width),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-                LineFill::Natural,
-            );
-            content.extend(reasoning_lines.into_iter().map(pad_display_line));
-            content.push(Line::raw(""));
-        }
-        if !visible_stream.is_empty() {
-            let mut stream_lines = Vec::new();
-            push_wrapped_text(
-                &mut stream_lines,
-                visible_stream,
-                padded_content_width(width),
-                Style::default(),
-                LineFill::Natural,
-            );
-            content.extend(stream_lines.into_iter().map(pad_display_line));
+        if self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty() {
             content.push(Line::raw(""));
         }
 
@@ -2384,6 +2439,10 @@ impl App {
             Entry::Assistant(text) => match self.transcript.last_mut() {
                 Some(Entry::Assistant(previous)) => previous.push_str(&text),
                 _ => self.transcript.push(Entry::Assistant(text)),
+            },
+            Entry::Reasoning(text) => match self.transcript.last_mut() {
+                Some(Entry::Reasoning(previous)) => previous.push_str(&text),
+                _ => self.transcript.push(Entry::Reasoning(text)),
             },
             other => self.transcript.push(other),
         }
@@ -2884,18 +2943,6 @@ fn complete_slash_command(input: &str, cursor: usize, name: &str) -> (String, us
     (completed, new_cursor)
 }
 
-fn visible_assistant_stream(text: &str) -> &str {
-    let trimmed = text.trim_start();
-    if (trimmed.starts_with("```json") && trimmed.contains("\"tool\""))
-        || "Tool call: ".starts_with(trimmed)
-        || trimmed.starts_with("Tool call: ")
-    {
-        ""
-    } else {
-        text
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StreamControl {
     Continue,
@@ -3253,41 +3300,91 @@ mod tests {
     }
 
     #[test]
-    fn step_started_clears_flushed_stream_state() {
+    fn final_answer_delta_handles_unstreamed_suffix_and_mismatch() {
+        assert_eq!(
+            final_answer_delta("", "final"),
+            FinalAnswerDelta::Append("final")
+        );
+        assert_eq!(
+            final_answer_delta("hello", "hello world"),
+            FinalAnswerDelta::Append(" world")
+        );
+        assert_eq!(final_answer_delta("hello", "hello"), FinalAnswerDelta::None);
+        assert_eq!(
+            final_answer_delta("hello", "goodbye"),
+            FinalAnswerDelta::Mismatch
+        );
+    }
+
+    #[test]
+    fn final_answer_mismatch_replaces_transcript_without_duplicating_entry() {
         let mut app = test_app();
-        app.stream_buffer = "current".into();
-        app.stream_flushed_text = "previous".into();
-        app.reasoning_buffer = "reasoning".into();
+        app.push_transcript_entry(Entry::Assistant("streamed".into()));
+
+        app.replace_current_turn_assistant_transcript("final");
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::Assistant(text)] if text == "final"
+        ));
+    }
+
+    #[test]
+    fn final_answer_mismatch_replaces_transcript_with_empty_answer() {
+        let mut app = test_app();
+        app.push_transcript_entry(Entry::Assistant("streamed".into()));
+
+        app.replace_current_turn_assistant_transcript("");
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::Assistant(text)] if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments() {
+        let mut app = test_app();
+        app.push_transcript_entry(Entry::User("prompt".into()));
+        app.current_turn_start = Some(app.transcript.len());
+        app.push_transcript_entry(Entry::Assistant("hel".into()));
+        app.push_transcript_entry(Entry::Reasoning("thinking".into()));
+        app.push_transcript_entry(Entry::Assistant("lo".into()));
+
+        app.replace_current_turn_assistant_transcript("goodbye");
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
+        ));
+    }
+
+    #[test]
+    fn step_started_clears_stream_state() {
+        let mut app = test_app();
+        app.assistant_stream.push_delta("current");
+        app.reasoning_stream.push_delta("reasoning");
 
         assert!(app.record_agent_event(AgentEvent::StepStarted(2)).is_none());
 
-        assert!(app.stream_buffer.is_empty());
-        assert!(app.stream_flushed_text.is_empty());
-        assert!(app.reasoning_buffer.is_empty());
+        assert!(app.assistant_stream.is_empty());
+        assert!(app.reasoning_stream.is_empty());
         assert!(app.running);
         assert_eq!(app.status, "running step 2");
     }
 
     #[test]
-    fn active_reasoning_has_side_padding() {
-        let mut app = test_app();
-        app.reasoning_buffer = "thinking".into();
-        let lines = app.active_lines(40);
-
-        assert!(lines.iter().any(|line| line_text(line) == " thinking "));
-    }
-
-    #[test]
-    fn active_stream_keeps_stable_leading_spacer() {
+    fn active_lines_do_not_render_pending_stream_text() {
         let mut app = test_app();
         app.running = true;
-        let before_stream = app.active_lines(40);
-        app.stream_buffer = "hello".into();
-        let after_stream = app.active_lines(40);
+        app.assistant_stream.push_delta("hello");
+        app.reasoning_stream.push_delta("thinking");
+        let lines = app.active_lines(40);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert_eq!(line_text(&before_stream[0]), "");
-        assert_eq!(line_text(&after_stream[0]), "");
-        assert_eq!(line_text(&after_stream[1]), " hello ");
+        assert_eq!(line_text(&lines[0]), "");
+        assert!(!rendered.contains("hello"), "{rendered}");
+        assert!(!rendered.contains("thinking"), "{rendered}");
     }
 
     #[test]

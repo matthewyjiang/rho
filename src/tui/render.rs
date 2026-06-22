@@ -231,36 +231,64 @@ pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
     text
 }
 
-pub(super) fn byte_index_after_visual_lines(
-    text: &str,
-    width: usize,
-    target_lines: usize,
-) -> Option<usize> {
-    if target_lines == 0 {
-        return Some(0);
-    }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct CompleteVisualPrefix {
+    pub(super) byte_index: usize,
+    pub(super) ends_with_wrap: bool,
+}
 
+pub(super) fn complete_visual_prefix(text: &str, width: usize) -> CompleteVisualPrefix {
+    complete_visual_line_ends(text, width)
+        .last()
+        .copied()
+        .map(|(index, ch)| CompleteVisualPrefix {
+            byte_index: index,
+            ends_with_wrap: ch != '\n',
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn complete_visual_prefix_byte_index(text: &str, width: usize) -> usize {
+    complete_visual_prefix(text, width).byte_index
+}
+
+fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     let width = width.max(1);
-    let mut completed = 0;
-    let mut column = 0;
-    for (index, ch) in text.char_indices() {
-        let next = index + ch.len_utf8();
-        if ch == '\n' {
-            completed += 1;
-            column = 0;
-        } else {
-            column += 1;
-            if column >= width {
-                completed += 1;
-                column = 0;
-            }
-        }
+    let mut ends = Vec::new();
+    let mut line_start = 0;
 
-        if completed >= target_lines {
-            return Some(next);
+    for (index, ch) in text.char_indices() {
+        if ch == '\n' {
+            ends.extend(complete_word_wrapped_line_ends(
+                &text[line_start..index],
+                line_start,
+                width,
+            ));
+            ends.push((index + ch.len_utf8(), ch));
+            line_start = index + ch.len_utf8();
         }
     }
-    None
+
+    if line_start < text.len() {
+        ends.extend(complete_word_wrapped_line_ends(
+            &text[line_start..],
+            line_start,
+            width,
+        ));
+    }
+
+    ends
+}
+
+fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> Vec<(usize, char)> {
+    wrap_line_at_whitespace_ranges(line, width)
+        .into_iter()
+        .filter(|range| {
+            range.end < line.len() || line[range.clone()].chars().count() >= width.max(1)
+        })
+        .map(|range| (offset + range.end, 'x'))
+        .collect()
 }
 
 pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) -> Position {
@@ -279,7 +307,7 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
     for raw_line in input.split('\n') {
-        let wrapped = wrap_line(raw_line, width);
+        let wrapped = wrap_line_hard(raw_line, width);
         if wrapped.is_empty() {
             lines.push(String::new());
         } else {
@@ -397,7 +425,7 @@ fn push_tool_block(
     };
 
     for line in logical_lines.iter().take(visible_count) {
-        push_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
+        push_hard_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
     }
 
     if truncated {
@@ -437,6 +465,27 @@ pub(super) fn push_wrapped_text(
     width: usize,
     style: Style,
     fill: LineFill,
+) {
+    push_wrapped_text_with(lines, text, width, style, fill, wrap_line_at_whitespace);
+}
+
+fn push_hard_wrapped_text(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    style: Style,
+    fill: LineFill,
+) {
+    push_wrapped_text_with(lines, text, width, style, fill, wrap_line_hard);
+}
+
+fn push_wrapped_text_with(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    style: Style,
+    fill: LineFill,
+    wrap_line: fn(&str, usize) -> Vec<String>,
 ) {
     let width = width.max(1);
     let mut emitted = false;
@@ -489,7 +538,70 @@ fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 
-fn wrap_line(line: &str, width: usize) -> Vec<String> {
+fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
+    wrap_line_at_whitespace_ranges(line, width)
+        .into_iter()
+        .map(|range| line[range].to_string())
+        .collect()
+}
+
+fn wrap_line_at_whitespace_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    if line.is_empty() {
+        return std::iter::once(0..0).collect();
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < line.len() {
+        let mut count = 0usize;
+        let mut split_at_width = None;
+        let mut whitespace_break = None;
+        let mut saw_non_whitespace = false;
+        let mut overflow = false;
+        let mut prefer_width_split = false;
+
+        for (relative_index, ch) in line[start..].char_indices() {
+            if count == width {
+                overflow = true;
+                prefer_width_split = ch.is_whitespace();
+                break;
+            }
+
+            count += 1;
+            let next = start + relative_index + ch.len_utf8();
+            if ch.is_whitespace() {
+                if saw_non_whitespace {
+                    whitespace_break = Some(next);
+                }
+            } else {
+                saw_non_whitespace = true;
+            }
+            if count == width {
+                split_at_width = Some(next);
+            }
+        }
+
+        if !overflow {
+            ranges.push(start..line.len());
+            break;
+        }
+
+        let split = if prefer_width_split {
+            split_at_width.expect("overflow requires a full-width split")
+        } else {
+            whitespace_break
+                .filter(|split| *split > start)
+                .unwrap_or_else(|| split_at_width.expect("overflow requires a full-width split"))
+        };
+        ranges.push(start..split);
+        start = split;
+    }
+
+    ranges
+}
+
+fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
     if line.is_empty() {
         return vec![String::new()];
     }
@@ -506,4 +618,174 @@ fn wrap_line(line: &str, width: usize) -> Vec<String> {
         chunks.push(current);
     }
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Style;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn complete_visual_prefix_preserves_trailing_newline_state() {
+        assert_eq!(complete_visual_prefix_byte_index("a\n", 10), "a\n".len());
+        assert_eq!(
+            complete_visual_prefix_byte_index("a\n\n", 10),
+            "a\n\n".len()
+        );
+        assert_eq!(complete_visual_prefix_byte_index("a\nb", 10), "a\n".len());
+    }
+
+    #[test]
+    fn complete_visual_prefix_keeps_multibyte_boundaries() {
+        assert_eq!(complete_visual_prefix_byte_index("éa", 2), "éa".len());
+        assert_eq!(complete_visual_prefix_byte_index("éab", 2), "éa".len());
+    }
+
+    #[test]
+    fn complete_visual_prefix_wraps_at_exact_width() {
+        assert_eq!(complete_visual_prefix_byte_index("abc", 3), 3);
+        assert_eq!(complete_visual_prefix_byte_index("abcd", 3), 3);
+        assert_eq!(complete_visual_prefix_byte_index("abcdef", 3), 6);
+    }
+
+    #[test]
+    fn wrapped_text_prefers_whitespace_boundaries() {
+        let mut lines = Vec::new();
+        push_wrapped_text(
+            &mut lines,
+            "hello wide world",
+            10,
+            Style::default(),
+            LineFill::Natural,
+        );
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec!["hello wide".to_string(), " world".to_string()]
+        );
+    }
+
+    #[test]
+    fn complete_visual_prefix_prefers_whitespace_boundaries() {
+        assert_eq!(
+            complete_visual_prefix_byte_index("hello wide", 8),
+            "hello ".len()
+        );
+        assert_eq!(
+            complete_visual_prefix_byte_index("hello wide", 10),
+            "hello wide".len()
+        );
+    }
+
+    #[test]
+    fn wrapped_text_preserves_leading_repeated_and_trailing_whitespace() {
+        let mut lines = Vec::new();
+        push_wrapped_text(
+            &mut lines,
+            "  indented\na  b\ntrail  ",
+            20,
+            Style::default(),
+            LineFill::Natural,
+        );
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec![
+                "  indented".to_string(),
+                "a  b".to_string(),
+                "trail  ".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn wrapped_text_preserves_tabs_and_whitespace_only_lines() {
+        let mut lines = Vec::new();
+        push_wrapped_text(
+            &mut lines,
+            "\tindented\n   ",
+            20,
+            Style::default(),
+            LineFill::Natural,
+        );
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(rendered, vec!["\tindented".to_string(), "   ".to_string()]);
+    }
+
+    #[test]
+    fn wrapped_text_preserves_whitespace_when_breaking_at_boundary() {
+        let mut lines = Vec::new();
+        push_wrapped_text(
+            &mut lines,
+            "hello   wide",
+            8,
+            Style::default(),
+            LineFill::Natural,
+        );
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(rendered, vec!["hello   ".to_string(), "wide".to_string()]);
+    }
+
+    #[test]
+    fn complete_visual_prefix_and_rendering_agree_on_whitespace_boundary() {
+        let text = "hello   wide";
+        let split = complete_visual_prefix_byte_index(text, 8);
+        let mut lines = Vec::new();
+        push_wrapped_text(&mut lines, text, 8, Style::default(), LineFill::Natural);
+
+        assert_eq!(&text[..split], "hello   ");
+        assert_eq!(line_text(&lines[0]), "hello   ");
+    }
+
+    #[test]
+    fn complete_visual_prefix_and_rendering_agree_on_exact_width_trailing_space() {
+        let text = "abc ";
+        let split = complete_visual_prefix_byte_index(text, 3);
+        let mut lines = Vec::new();
+        push_wrapped_text(&mut lines, text, 3, Style::default(), LineFill::Natural);
+
+        assert_eq!(&text[..split], "abc");
+        assert_eq!(
+            lines.iter().map(line_text).collect::<Vec<_>>(),
+            vec!["abc".to_string(), " ".to_string()]
+        );
+    }
+
+    #[test]
+    fn long_words_still_hard_wrap() {
+        let mut lines = Vec::new();
+        push_wrapped_text(
+            &mut lines,
+            "abcdefghijk",
+            5,
+            Style::default(),
+            LineFill::Natural,
+        );
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            vec!["abcde".to_string(), "fghij".to_string(), "k".to_string()]
+        );
+    }
+
+    #[test]
+    fn stream_fragment_rendering_preserves_blank_lines() {
+        let mut lines = Vec::new();
+        push_wrapped_text(&mut lines, "a\n\n", 10, Style::default(), LineFill::Natural);
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(rendered, vec!["a".to_string(), String::new()]);
+    }
 }
