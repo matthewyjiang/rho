@@ -14,7 +14,7 @@ use crossterm::{
     execute,
 };
 use ratatui::{
-    layout::Position,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
@@ -73,6 +73,7 @@ pub struct TuiInfo {
 
 pub struct TuiResult {
     pub resume_session_id: Option<String>,
+    exit_lines: Vec<Line<'static>>,
 }
 
 pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
@@ -90,6 +91,9 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
     disable_modified_keys()?;
     execute!(std::io::stdout(), DisableBracketedPaste)?;
     ratatui::restore();
+    if let Ok(result) = &result {
+        print_exit_lines(&result.exit_lines)?;
+    }
     result
 }
 
@@ -105,6 +109,7 @@ struct App {
     reasoning_buffer: String,
     running: bool,
     paste_burst: PasteBurst,
+    transcript: Vec<Entry>,
     last_inserted_was_tool: bool,
     command_selection: usize,
     command_prefix: Option<String>,
@@ -156,6 +161,7 @@ enum Entry {
     User(String),
     #[allow(dead_code)]
     Assistant(String),
+    Reasoning(String),
     Tool {
         ok: bool,
         display_style: ToolDisplayStyle,
@@ -285,6 +291,7 @@ impl App {
             reasoning_buffer: String::new(),
             running: false,
             paste_burst: PasteBurst::default(),
+            transcript: Vec::new(),
             last_inserted_was_tool: false,
             command_selection: 0,
             command_prefix: None,
@@ -326,14 +333,18 @@ impl App {
                         }
                         self.paste_burst.clear();
                     }
-                    Event::Resize(_, _) => {}
+                    Event::Resize(_, _) => {
+                        self.reflow_history(terminal)?;
+                    }
                     _ => {}
                 }
             }
         }
-        self.insert_composer_snapshot(terminal)?;
+        let width = terminal.size()?.width as usize;
+        let exit_lines = self.exit_lines(width);
         Ok(TuiResult {
             resume_session_id: self.info.session_id,
+            exit_lines,
         })
     }
 
@@ -943,8 +954,10 @@ impl App {
                 }
                 self.flush_stream_overflow(terminal)?;
                 let _ = terminal.draw(|frame| self.draw(frame));
-                if poll_interrupt()? {
-                    return Err(crate::model::ModelError::Interrupted);
+                match poll_stream_control()? {
+                    StreamControl::Interrupt => return Err(crate::model::ModelError::Interrupted),
+                    StreamControl::Resize => self.reflow_history(terminal)?,
+                    StreamControl::Continue => {}
                 }
                 Ok(())
             })
@@ -1043,6 +1056,7 @@ impl App {
         );
         lines.extend(flushed_lines.into_iter().map(pad_display_line));
         insert_history_lines(terminal, lines)?;
+        self.push_transcript_entry(Entry::Assistant(flushed));
         Ok(())
     }
 
@@ -1065,7 +1079,11 @@ impl App {
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
-        )
+        )?;
+        if !text.is_empty() {
+            self.push_transcript_entry(Entry::Reasoning(text.into()));
+        }
+        Ok(())
     }
 
     fn insert_assistant_output(
@@ -1074,7 +1092,11 @@ impl App {
         text: &str,
         include_leading_blank: bool,
     ) -> std::io::Result<()> {
-        self.insert_padded_output(terminal, text, include_leading_blank, Style::default())
+        self.insert_padded_output(terminal, text, include_leading_blank, Style::default())?;
+        if !text.is_empty() {
+            self.push_transcript_entry(Entry::Assistant(text.into()));
+        }
+        Ok(())
     }
 
     fn insert_padded_output(
@@ -1596,13 +1618,21 @@ impl App {
         Ok(())
     }
 
-    fn insert_composer_snapshot(&self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        let width = terminal.size()?.width as usize;
+    fn exit_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let mut lines = session_header_lines(&self.info, width);
+        let mut previous_was_tool = false;
+        for entry in &self.transcript {
+            if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+                lines.push(Line::raw(""));
+            }
+            lines.extend(entry_lines(entry, width));
+            previous_was_tool = matches!(entry, Entry::Tool { .. });
+        }
+
         let divider = Line::styled(
             "─".repeat(width.max(1)),
             Style::default().fg(Color::DarkGray),
         );
-        let mut lines = Vec::new();
         lines.push(divider.clone());
         if matches!(self.composer, ComposerMode::SecretInput(_)) {
             lines.push(Line::raw("[secret input omitted]"));
@@ -1616,7 +1646,7 @@ impl App {
             );
         }
         lines.push(divider);
-        insert_history_lines(terminal, lines)
+        lines
     }
 
     fn insert_entry(
@@ -1630,8 +1660,36 @@ impl App {
         }
 
         insert_history_lines(terminal, entry_lines(entry, width))?;
+        self.push_transcript_entry(entry.clone());
         self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
         Ok(())
+    }
+
+    fn reflow_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        clear_terminal_for_history_reflow(terminal)?;
+        let width = terminal.size()?.width as usize;
+        let mut lines = session_header_lines(&self.info, width);
+        let mut previous_was_tool = false;
+        for entry in &self.transcript {
+            if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+                lines.push(Line::raw(""));
+            }
+            lines.extend(entry_lines(entry, width));
+            previous_was_tool = matches!(entry, Entry::Tool { .. });
+        }
+        insert_history_lines(terminal, lines)?;
+        self.last_inserted_was_tool = previous_was_tool;
+        Ok(())
+    }
+
+    fn push_transcript_entry(&mut self, entry: Entry) {
+        match entry {
+            Entry::Assistant(text) => match self.transcript.last_mut() {
+                Some(Entry::Assistant(previous)) => previous.push_str(&text),
+                _ => self.transcript.push(Entry::Assistant(text)),
+            },
+            other => self.transcript.push(other),
+        }
     }
 }
 
@@ -1675,6 +1733,124 @@ fn pad_display_line(line: Line<'static>) -> Line<'static> {
     spans.extend(line.spans);
     spans.push(Span::styled(" ", edge_style));
     Line::from(spans)
+}
+
+fn print_exit_lines(lines: &[Line<'_>]) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    stdout.write_all(b"\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[H")?;
+    for line in lines {
+        write_styled_line(&mut stdout, line)?;
+        stdout.write_all(b"\n")?;
+    }
+    stdout.flush()
+}
+
+fn write_styled_line(stdout: &mut impl Write, line: &Line<'_>) -> std::io::Result<()> {
+    for span in &line.spans {
+        write_style(stdout, span.style)?;
+        stdout.write_all(span.content.as_bytes())?;
+        stdout.write_all(b"\x1b[0m")?;
+    }
+    Ok(())
+}
+
+fn write_style(stdout: &mut impl Write, style: Style) -> std::io::Result<()> {
+    if style.add_modifier.contains(Modifier::BOLD) {
+        stdout.write_all(b"\x1b[1m")?;
+    }
+    if style.add_modifier.contains(Modifier::DIM) {
+        stdout.write_all(b"\x1b[2m")?;
+    }
+    if style.add_modifier.contains(Modifier::ITALIC) {
+        stdout.write_all(b"\x1b[3m")?;
+    }
+    if let Some(color) = style.fg {
+        write_color(stdout, color, /*foreground*/ true)?;
+    }
+    if let Some(color) = style.bg {
+        write_color(stdout, color, /*foreground*/ false)?;
+    }
+    Ok(())
+}
+
+fn write_color(stdout: &mut impl Write, color: Color, foreground: bool) -> std::io::Result<()> {
+    let code = match (foreground, color) {
+        (_, Color::Reset) => {
+            if foreground {
+                39
+            } else {
+                49
+            }
+        }
+        (true, Color::Black) => 30,
+        (true, Color::Red) => 31,
+        (true, Color::Green) => 32,
+        (true, Color::Yellow) => 33,
+        (true, Color::Blue) => 34,
+        (true, Color::Magenta) => 35,
+        (true, Color::Cyan) => 36,
+        (true, Color::Gray) => 37,
+        (true, Color::DarkGray) => 90,
+        (true, Color::LightRed) => 91,
+        (true, Color::LightGreen) => 92,
+        (true, Color::LightYellow) => 93,
+        (true, Color::LightBlue) => 94,
+        (true, Color::LightMagenta) => 95,
+        (true, Color::LightCyan) => 96,
+        (true, Color::White) => 97,
+        (false, Color::Black) => 40,
+        (false, Color::Red) => 41,
+        (false, Color::Green) => 42,
+        (false, Color::Yellow) => 43,
+        (false, Color::Blue) => 44,
+        (false, Color::Magenta) => 45,
+        (false, Color::Cyan) => 46,
+        (false, Color::Gray) => 47,
+        (false, Color::DarkGray) => 100,
+        (false, Color::LightRed) => 101,
+        (false, Color::LightGreen) => 102,
+        (false, Color::LightYellow) => 103,
+        (false, Color::LightBlue) => 104,
+        (false, Color::LightMagenta) => 105,
+        (false, Color::LightCyan) => 106,
+        (false, Color::White) => 107,
+        (true, Color::Indexed(index)) => {
+            write!(stdout, "\x1b[38;5;{index}m")?;
+            return Ok(());
+        }
+        (false, Color::Indexed(index)) => {
+            write!(stdout, "\x1b[48;5;{index}m")?;
+            return Ok(());
+        }
+        (true, Color::Rgb(red, green, blue)) => {
+            write!(stdout, "\x1b[38;2;{red};{green};{blue}m")?;
+            return Ok(());
+        }
+        (false, Color::Rgb(red, green, blue)) => {
+            write!(stdout, "\x1b[48;2;{red};{green};{blue}m")?;
+            return Ok(());
+        }
+    };
+    write!(stdout, "\x1b[{code}m")
+}
+
+fn clear_terminal_for_history_reflow(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    // Codex handles terminal resize by rebuilding source-backed transcript
+    // scrollback after clearing stale terminal-wrapped rows. Do the same here,
+    // but avoid purging scrollback because rho runs inline after shell output
+    // that it cannot reconstruct.
+    let size = terminal.size()?;
+    let mut stdout = std::io::stdout();
+    stdout.write_all(b"\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[H")?;
+    stdout.flush()?;
+
+    // The ANSI clear homes the real cursor, but ratatui also tracks cursor and
+    // inline viewport state internally. Update that state before resizing so
+    // the replay starts at the top of the cleared terminal instead of at the
+    // old inline viewport anchor.
+    terminal.set_cursor_position(Position { x: 0, y: 0 })?;
+    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
+    terminal.clear()
 }
 
 fn insert_history_lines(
@@ -1780,14 +1956,24 @@ fn visible_assistant_stream(text: &str) -> &str {
     }
 }
 
-fn poll_interrupt() -> Result<bool, crate::model::ModelError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamControl {
+    Continue,
+    Interrupt,
+    Resize,
+}
+
+fn poll_stream_control() -> Result<StreamControl, crate::model::ModelError> {
     if !event::poll(Duration::from_millis(0))? {
-        return Ok(false);
+        return Ok(StreamControl::Continue);
     }
-    let Event::Key(key) = event::read()? else {
-        return Ok(false);
-    };
-    Ok(key.kind == KeyEventKind::Press && key.code == KeyCode::Esc)
+    match event::read()? {
+        Event::Key(key) if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc => {
+            Ok(StreamControl::Interrupt)
+        }
+        Event::Resize(_, _) => Ok(StreamControl::Resize),
+        _ => Ok(StreamControl::Continue),
+    }
 }
 
 #[cfg(test)]
