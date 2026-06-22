@@ -344,16 +344,20 @@ fn push_tool_block(
         .fg(tool_color(display_style.foreground))
         .bg(tool_color(background));
 
-    push_wrapped_text(lines, name, width, style, LineFill::PadToWidth);
-    if name == "bash" {
-        if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
-            push_wrapped_text(lines, command, width, style, LineFill::PadToWidth);
-        }
-        if !content.trim().is_empty() {
+    if name == "skill" {
+        push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
+    } else {
+        push_wrapped_text(lines, name, width, style, LineFill::PadToWidth);
+        if name == "bash" {
+            if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
+                push_wrapped_text(lines, command, width, style, LineFill::PadToWidth);
+            }
+            if !content.trim().is_empty() {
+                push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
+            }
+        } else if !content.trim().is_empty() {
             push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
         }
-    } else if !content.trim().is_empty() {
-        push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
     }
 }
 

@@ -1953,7 +1953,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_tool_block_uses_lavender_success_background() {
+    fn skill_tool_block_shows_single_lavender_status_line() {
         let lines = entry_lines(
             &Entry::Tool {
                 name: "skill".into(),
@@ -1964,8 +1964,11 @@ mod tests {
             },
             40,
         );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(92, 80, 140)));
+        assert!(rendered.contains("skill caveman"));
+        assert_eq!(rendered.matches("skill").count(), 1);
     }
 
     #[test]
