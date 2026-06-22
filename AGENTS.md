@@ -39,6 +39,15 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 - Follow common Clippy/rustfmt style: collapse nested `if` statements when possible, inline `format!` arguments (`format!("hello {name}")`), and prefer method references over redundant closures.
 - After Rust code changes, run `cargo fmt`. Run the narrowest relevant tests for the changed crate or module before finalizing when practical.
 
+## Abstraction and module boundaries
+
+- Keep generic infrastructure separate from feature-specific policy. Rendering, transport, storage, parsing, and orchestration layers should operate on explicit generic data shapes instead of knowing special cases from individual commands, menus, providers, or features.
+- Put feature-specific construction and decisions near the feature that owns them. For example, a picker renderer should understand labels, details, badges, and selection state, while a model picker module decides which model gets a selected badge.
+- Prefer explicit interfaces over encoded strings or suffix parsing. If behavior depends on a concept like selected, current, unavailable, warning, or detail text, model it as a field, enum, or small type instead of inferring it from display text.
+- When a file starts accumulating unrelated responsibilities, split along ownership boundaries: shared types and mechanics in one module, each feature's setup and policy in its own focused module.
+- Design reusable components around stable concepts, not today's specific UI copy or provider names. New features should be able to plug into existing components by providing data, not by adding conditionals to the component.
+- Avoid broad abstractions before there are clear boundaries, but once a pattern appears in multiple places, extract the common mechanics and leave the differing policy at the call sites.
+
 ## Rust tests
 
 - Prefer integration or behavior-level tests for user-visible logic. Use unit tests for focused pure logic.
