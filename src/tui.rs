@@ -16,7 +16,7 @@ use crossterm::{
 use ratatui::{
     layout::Position,
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
@@ -26,7 +26,7 @@ mod render;
 use render::{
     byte_index_after_visual_lines, entry_lines, input_cursor_position, input_visual_lines,
     picker_lines, picker_matching_indices, push_wrapped_text, session_header_lines, styled_line,
-    visible_picker_match_start, LineFill,
+    truncate_one_line, visible_picker_match_start, LineFill,
 };
 
 use crate::{
@@ -45,6 +45,7 @@ use crate::{
         reasoning_config_value, ModelError, UnavailableProvider,
     },
     session::Session,
+    tool::ToolDisplayStyle,
 };
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 18;
@@ -153,6 +154,21 @@ enum PickerAction {
     SelectModel,
     LoginProvider,
     LogoutProvider,
+    InsertSkillCommand,
+}
+
+#[derive(Clone, Debug)]
+struct CommandChoice {
+    name: String,
+    usage: String,
+    description: String,
+    kind: CommandChoiceKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CommandChoiceKind {
+    Builtin(&'static CommandSpec),
+    Skill,
 }
 
 #[derive(Clone, Debug)]
@@ -161,10 +177,9 @@ enum Entry {
     #[allow(dead_code)]
     Assistant(String),
     Tool {
-        name: String,
-        command: Option<String>,
         ok: bool,
-        content: String,
+        display_style: ToolDisplayStyle,
+        display_lines: Vec<String>,
     },
     Notice(String),
     Error(String),
@@ -762,9 +777,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(spec) = self.selected_command() {
-                    let (input, cursor) =
-                        commands::complete_command(&self.input, self.input_cursor, spec);
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
                     self.input = input;
                     self.input_cursor = cursor;
                     self.command_palette_dismissed = false;
@@ -775,9 +789,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(spec) = self.selected_command() {
-                    let (input, cursor) =
-                        commands::complete_command(&self.input, self.input_cursor, spec);
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
                     self.input = input;
                     self.input_cursor = cursor;
                     self.clamp_command_selection();
@@ -859,17 +872,59 @@ impl App {
         self.clamp_command_selection();
     }
 
-    fn command_matches(&self) -> Vec<&'static CommandSpec> {
-        commands::command_prefix(&self.input)
-            .map(commands::matching_commands)
-            .unwrap_or_default()
+    fn command_matches(&self) -> Vec<CommandChoice> {
+        let Some(prefix) = commands::command_prefix(&self.input) else {
+            return Vec::new();
+        };
+        let prefix = prefix
+            .strip_prefix('/')
+            .unwrap_or(prefix)
+            .to_ascii_lowercase();
+        let mut matches = commands::matching_commands(&prefix)
+            .into_iter()
+            .map(|command| CommandChoice {
+                name: command.name.to_string(),
+                usage: command.usage.to_string(),
+                description: command.description.to_string(),
+                kind: CommandChoiceKind::Builtin(command),
+            })
+            .collect::<Vec<_>>();
+        matches.extend(
+            crate::skills::discover(&self.info.cwd)
+                .into_iter()
+                .filter(|skill| {
+                    skill.name.starts_with(&prefix)
+                        || format!("skill:{}", skill.name).starts_with(&prefix)
+                })
+                .map(|skill| {
+                    let command_name = format!("skill:{}", skill.name);
+                    CommandChoice {
+                        usage: format!("/{command_name}"),
+                        name: command_name,
+                        description: skill.description,
+                        kind: CommandChoiceKind::Skill,
+                    }
+                }),
+        );
+        matches
     }
 
-    fn selected_command(&self) -> Option<&'static CommandSpec> {
+    fn selected_command(&self) -> Option<CommandChoice> {
         let matches = self.command_matches();
         matches
             .get(self.command_selection.min(matches.len().saturating_sub(1)))
-            .copied()
+            .cloned()
+    }
+
+    fn complete_command_choice(&self, choice: &CommandChoice) -> (String, usize) {
+        match &choice.kind {
+            CommandChoiceKind::Builtin(spec) => {
+                commands::complete_command(&self.input, self.input_cursor, spec)
+            }
+            CommandChoiceKind::Skill => {
+                complete_slash_command(&self.input, self.input_cursor, &choice.name)
+            }
+        }
     }
 
     fn command_palette_visible(&self) -> bool {
@@ -923,7 +978,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let prompt = self.input.trim().to_string();
+        let mut prompt = self.input.trim().to_string();
         if prompt.is_empty() {
             self.input.clear();
             self.input_cursor = 0;
@@ -940,23 +995,31 @@ impl App {
                 return Ok(());
             }
             Ok(None) => {}
-            Err(err) => {
+            Err(commands::CommandParseError::Unknown(name)) => {
+                let trailing_prompt = slash_command_args(&self.input).trim().to_string();
                 self.input.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "{err}. Type / to choose one of: {}",
-                        commands::COMMANDS
-                            .iter()
-                            .map(|command| command.usage)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )?;
-                self.status = "unknown command".into();
-                return Ok(());
+                if self.execute_skill_command(&name, terminal, agent)? {
+                    if trailing_prompt.is_empty() {
+                        return Ok(());
+                    }
+                    prompt = trailing_prompt;
+                } else {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!(
+                            "unknown command '/{name}'. Type / to choose one of: {}",
+                            commands::COMMANDS
+                                .iter()
+                                .map(|command| command.usage)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )),
+                    )?;
+                    self.status = "unknown command".into();
+                    return Ok(());
+                }
             }
         }
 
@@ -989,26 +1052,36 @@ impl App {
         match result {
             Ok(answer) => {
                 let remaining = self.unflushed_answer_text(&answer).to_string();
+                let reasoning = std::mem::take(&mut self.reasoning_buffer);
                 self.stream_buffer.clear();
-                self.reasoning_buffer.clear();
                 self.running = false;
+                self.insert_reasoning_output(
+                    terminal,
+                    &reasoning,
+                    self.stream_flushed_text.is_empty(),
+                )?;
                 self.insert_assistant_output(
                     terminal,
                     &remaining,
-                    self.stream_flushed_text.is_empty(),
+                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
                 )?;
                 self.stream_flushed_text.clear();
                 self.status = "ready".into();
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
                 let partial = visible_assistant_stream(&self.stream_buffer).to_string();
+                let reasoning = std::mem::take(&mut self.reasoning_buffer);
                 self.stream_buffer.clear();
-                self.reasoning_buffer.clear();
                 self.running = false;
+                self.insert_reasoning_output(
+                    terminal,
+                    &reasoning,
+                    self.stream_flushed_text.is_empty(),
+                )?;
                 self.insert_assistant_output(
                     terminal,
                     partial.trim(),
-                    self.stream_flushed_text.is_empty(),
+                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
                 )?;
                 self.stream_flushed_text.clear();
                 self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
@@ -1059,13 +1132,15 @@ impl App {
         if self.stream_flushed_text == flushed {
             lines.push(Line::raw(""));
         }
+        let mut flushed_lines = Vec::new();
         push_wrapped_text(
-            &mut lines,
+            &mut flushed_lines,
             &flushed,
-            width,
+            padded_content_width(width),
             Style::default(),
             LineFill::Natural,
         );
+        lines.extend(flushed_lines.into_iter().map(pad_display_line));
         insert_history_lines(terminal, lines)?;
         Ok(())
     }
@@ -1076,20 +1151,56 @@ impl App {
             .unwrap_or(answer)
     }
 
+    fn insert_reasoning_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        text: &str,
+        include_leading_blank: bool,
+    ) -> std::io::Result<()> {
+        self.insert_padded_output(
+            terminal,
+            text,
+            include_leading_blank,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )
+    }
+
     fn insert_assistant_output(
         &mut self,
         terminal: &mut DefaultTerminal,
         text: &str,
         include_leading_blank: bool,
     ) -> std::io::Result<()> {
+        self.insert_padded_output(terminal, text, include_leading_blank, Style::default())
+    }
+
+    fn insert_padded_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        text: &str,
+        include_leading_blank: bool,
+        style: Style,
+    ) -> std::io::Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+
         let width = terminal.size()?.width as usize;
         let mut lines = Vec::new();
         if include_leading_blank {
             lines.push(Line::raw(""));
         }
-        if !text.is_empty() {
-            push_wrapped_text(&mut lines, text, width, Style::default(), LineFill::Natural);
-        }
+        let mut text_lines = Vec::new();
+        push_wrapped_text(
+            &mut text_lines,
+            text,
+            padded_content_width(width),
+            style,
+            LineFill::Natural,
+        );
+        lines.extend(text_lines.into_iter().map(pad_display_line));
         lines.push(Line::raw(""));
         insert_history_lines(terminal, lines)
     }
@@ -1116,6 +1227,7 @@ impl App {
             }
             CommandId::Resume => self.execute_resume_command(invocation, terminal),
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Skills => self.execute_skills_command(terminal),
         }
     }
 
@@ -1241,6 +1353,13 @@ impl App {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
             PickerAction::LogoutProvider => self.logout_provider(&value, terminal, agent).await,
+            PickerAction::InsertSkillCommand => {
+                self.input = format!("/skill:{value}");
+                self.input_cursor = self.input_char_len();
+                self.command_palette_dismissed = true;
+                self.status = "skill command inserted".into();
+                Ok(())
+            }
         }
     }
 
@@ -1372,6 +1491,61 @@ impl App {
         Ok(())
     }
 
+    fn execute_skills_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let items = crate::skills::discover(&self.info.cwd)
+            .into_iter()
+            .map(|skill| PickerItem {
+                label: skill.name.clone(),
+                description: skill.description,
+                value: skill.name,
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.insert_entry(terminal, &Entry::Notice("no skills loaded".into()))?;
+            self.status = "skills".into();
+            return Ok(());
+        }
+
+        self.composer = ComposerMode::Picker(UiPicker::new(
+            "loaded skills",
+            "enter inserts command, type regex filter, esc cancel",
+            items,
+            PickerAction::InsertSkillCommand,
+        ));
+        self.status = "select skill".into();
+        Ok(())
+    }
+
+    fn execute_skill_command(
+        &mut self,
+        name: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<bool> {
+        let Some(name) = name.strip_prefix("skill:") else {
+            return Ok(false);
+        };
+        let Some(skill) = crate::skills::discover(&self.info.cwd)
+            .into_iter()
+            .find(|skill| skill.name == name)
+        else {
+            return Ok(false);
+        };
+
+        self.ensure_session(agent)?;
+        agent.load_skill(&skill)?;
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "loaded skill {} from {}",
+                skill.name,
+                skill.path.display()
+            )),
+        )?;
+        self.status = format!("loaded skill {}", skill.name);
+        Ok(true)
+    }
+
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
         match event {
             AgentEvent::StepStarted(step) => {
@@ -1391,15 +1565,14 @@ impl App {
                 None
             }
             AgentEvent::ToolFinished {
-                name,
-                command,
                 ok,
-                content,
+                display_style,
+                display_lines,
+                ..
             } => Some(Entry::Tool {
-                name,
-                command,
                 ok,
-                content,
+                display_style,
+                display_lines,
             }),
         }
     }
@@ -1439,25 +1612,29 @@ impl App {
             content.push(Line::raw(""));
         }
         if !self.reasoning_buffer.is_empty() {
+            let mut reasoning_lines = Vec::new();
             push_wrapped_text(
-                &mut content,
+                &mut reasoning_lines,
                 &self.reasoning_buffer,
-                width,
+                padded_content_width(width),
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::DIM),
                 LineFill::Natural,
             );
+            content.extend(reasoning_lines.into_iter().map(pad_display_line));
             content.push(Line::raw(""));
         }
         if !visible_stream.is_empty() {
+            let mut stream_lines = Vec::new();
             push_wrapped_text(
-                &mut content,
+                &mut stream_lines,
                 visible_stream,
-                width,
+                padded_content_width(width),
                 Style::default(),
                 LineFill::Natural,
             );
+            content.extend(stream_lines.into_iter().map(pad_display_line));
             content.push(Line::raw(""));
         }
 
@@ -1510,8 +1687,9 @@ impl App {
                     x: 0,
                     y: selected_position
                         .saturating_sub(start)
-                        .saturating_add(1)
-                        .min(matching_indices.len()) as u16,
+                        .saturating_add(2)
+                        .min(matching_indices.len().saturating_add(1))
+                        as u16,
                 }
             }
         }
@@ -1536,7 +1714,11 @@ impl App {
             .map(|(index, command)| {
                 let selected = index == selected_index;
                 let marker = if selected { ">" } else { " " };
-                let text = format!("{marker} {:<16} {}", command.usage, command.description);
+                let usage_width = 16usize.min(width.saturating_sub(5).max(1));
+                let description_width = width.saturating_sub(usage_width + 3).max(1);
+                let usage = truncate_one_line(&command.usage, usage_width);
+                let description = truncate_one_line(&command.description, description_width);
+                let text = format!("{marker} {usage:<usage_width$} {description}");
                 let style = if selected {
                     Style::default()
                         .fg(Color::Cyan)
@@ -1619,6 +1801,23 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
     )]
 }
 
+fn padded_content_width(width: usize) -> usize {
+    width.saturating_sub(2).max(1)
+}
+
+fn pad_display_line(line: Line<'static>) -> Line<'static> {
+    let edge_style = line
+        .spans
+        .first()
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut spans = Vec::with_capacity(line.spans.len() + 2);
+    spans.push(Span::styled(" ", edge_style));
+    spans.extend(line.spans);
+    spans.push(Span::styled(" ", edge_style));
+    Line::from(spans)
+}
+
 fn insert_history_lines(
     terminal: &mut DefaultTerminal,
     lines: Vec<Line<'static>>,
@@ -1678,6 +1877,38 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn slash_command_args(input: &str) -> &str {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    input[token_end..].trim_start()
+}
+
+fn complete_slash_command(input: &str, cursor: usize, name: &str) -> (String, usize) {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    let token_len = input[..token_end].chars().count();
+    let args = slash_command_args(input);
+    let completed = if args.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {args}")
+    };
+    let completed_token_len = name.chars().count() + 1;
+    let new_cursor = if cursor <= token_len {
+        completed_token_len
+    } else {
+        completed
+            .chars()
+            .count()
+            .min(completed_token_len.saturating_add(cursor.saturating_sub(token_len)))
+    };
+    (completed, new_cursor)
+}
+
 fn visible_assistant_stream(text: &str) -> &str {
     let trimmed = text.trim_start();
     if (trimmed.starts_with("```json") && trimmed.contains("\"tool\""))
@@ -1712,6 +1943,14 @@ mod tests {
             .collect()
     }
 
+    fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
+        Entry::Tool {
+            ok,
+            display_style: ToolDisplayStyle::file_or_command(),
+            display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
+        }
+    }
+
     fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
         save_openai_api_key(store.as_ref(), "sk-test").unwrap();
@@ -1736,12 +1975,7 @@ mod tests {
         let entries = [
             Entry::User("hello?".into()),
             Entry::Assistant("hi".into()),
-            Entry::Tool {
-                name: "read_file".into(),
-                command: None,
-                ok: true,
-                content: "read src/main.rs".into(),
-            },
+            test_tool_entry(true, &["read_file", "read src/main.rs"]),
             Entry::Notice("note".into()),
             Entry::Error("bad".into()),
         ];
@@ -1764,12 +1998,7 @@ mod tests {
     #[test]
     fn bash_tool_block_shows_command() {
         let lines = entry_lines(
-            &Entry::Tool {
-                name: "bash".into(),
-                command: Some("cargo test".into()),
-                ok: true,
-                content: "ignored output".into(),
-            },
+            &test_tool_entry(true, &["bash", "cargo test", "ignored output"]),
             40,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -1781,15 +2010,7 @@ mod tests {
 
     #[test]
     fn read_file_tool_block_shows_file_name_only() {
-        let lines = entry_lines(
-            &Entry::Tool {
-                name: "read_file".into(),
-                command: None,
-                ok: true,
-                content: "src/main.rs".into(),
-            },
-            40,
-        );
+        let lines = entry_lines(&test_tool_entry(true, &["read_file", "src/main.rs"]), 40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(rendered.contains("read_file"));
@@ -1797,14 +2018,40 @@ mod tests {
     }
 
     #[test]
-    fn read_file_tool_block_shows_line_range_label() {
+    fn skill_tool_block_shows_single_lavender_status_line() {
         let lines = entry_lines(
             &Entry::Tool {
-                name: "read_file".into(),
-                command: None,
                 ok: true,
-                content: "src/file.rs:10-24".into(),
+                display_style: ToolDisplayStyle::skill(),
+                display_lines: vec!["skill caveman".into()],
             },
+            40,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(92, 80, 140)));
+        assert!(rendered.contains("skill caveman"));
+        assert_eq!(rendered.matches("skill").count(), 1);
+    }
+
+    #[test]
+    fn skill_tool_block_uses_red_failure_background() {
+        let lines = entry_lines(
+            &Entry::Tool {
+                ok: false,
+                display_style: ToolDisplayStyle::skill(),
+                display_lines: vec!["unknown skill".into()],
+            },
+            40,
+        );
+
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(95, 36, 36)));
+    }
+
+    #[test]
+    fn read_file_tool_block_shows_line_range_label() {
+        let lines = entry_lines(
+            &test_tool_entry(true, &["read_file", "src/file.rs:10-24"]),
             40,
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -1830,6 +2077,15 @@ mod tests {
     }
 
     #[test]
+    fn active_reasoning_has_side_padding() {
+        let mut app = test_app();
+        app.reasoning_buffer = "thinking".into();
+        let lines = app.active_lines(40);
+
+        assert!(lines.iter().any(|line| line_text(line) == " thinking "));
+    }
+
+    #[test]
     fn active_stream_keeps_stable_leading_spacer() {
         let mut app = test_app();
         app.running = true;
@@ -1839,7 +2095,7 @@ mod tests {
 
         assert_eq!(line_text(&before_stream[0]), "");
         assert_eq!(line_text(&after_stream[0]), "");
-        assert_eq!(line_text(&after_stream[1]), "hello");
+        assert_eq!(line_text(&after_stream[1]), " hello ");
     }
 
     #[test]
@@ -2052,6 +2308,28 @@ mod tests {
     }
 
     #[test]
+    fn picker_lines_render_name_description_table_with_truncated_description() {
+        let picker = UiPicker::new(
+            "loaded skills",
+            "enter inserts command",
+            vec![PickerItem {
+                label: "test-skill".into(),
+                description: "this description is much too long for the available width".into(),
+                value: "test-skill".into(),
+            }],
+            PickerAction::InsertSkillCommand,
+        );
+
+        let lines = picker_lines(&picker, 36);
+
+        assert!(line_text(&lines[1]).contains("name"));
+        assert!(line_text(&lines[1]).contains("| description"));
+        assert!(line_text(&lines[2]).contains("test-skill"));
+        assert!(line_text(&lines[2]).contains('…'));
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
     fn picker_selection_wraps() {
         let mut picker = UiPicker::new(
             "select model",
@@ -2085,12 +2363,54 @@ mod tests {
         app.clamp_command_selection();
         app.command_selection = 99;
         app.clamp_command_selection();
-        assert_eq!(app.command_selection, commands::COMMANDS.len() - 1);
+        assert_eq!(app.command_selection, app.command_matches().len() - 1);
 
         app.input = "/mo".into();
         app.input_cursor = 3;
         app.clamp_command_selection();
         assert_eq!(app.command_selection, 0);
+    }
+
+    #[test]
+    fn command_suggestions_truncate_long_descriptions() {
+        let project = tempfile::tempdir().unwrap();
+        let skill_dir = project
+            .path()
+            .join(".agents/skills/zz-deterministic-truncation-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: zz-deterministic-truncation-skill\ndescription: this description is intentionally long enough to require truncation in a narrow command suggestion row\n---\nbody\n",
+        )
+        .unwrap();
+        let mut app = test_app();
+        app.info.cwd = project.path().to_path_buf();
+        app.input = "/zz".into();
+        app.input_cursor = 3;
+        app.clamp_command_selection();
+
+        let lines = app.command_suggestion_lines(40);
+
+        assert!(lines.iter().any(|line| line_text(line).contains('…')));
+        assert!(lines
+            .iter()
+            .all(|line| line_text(line).chars().count() <= 40));
+    }
+
+    #[test]
+    fn slash_command_args_preserves_text_after_skill_command() {
+        assert_eq!(
+            slash_command_args("/skill:rust-review check this diff"),
+            "check this diff"
+        );
+    }
+
+    #[test]
+    fn complete_slash_command_inserts_prefixed_skill_command() {
+        let (input, cursor) = complete_slash_command("/cav", 4, "skill:caveman");
+
+        assert_eq!(input, "/skill:caveman");
+        assert_eq!(cursor, 14);
     }
 
     #[test]

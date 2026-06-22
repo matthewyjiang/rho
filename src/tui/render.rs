@@ -8,6 +8,7 @@ use ratatui::{
 use regex::RegexBuilder;
 
 use super::{Entry, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
+use crate::tool::{ToolDisplayStyle, ToolRgb};
 
 const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
 
@@ -88,13 +89,32 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     ));
     if matching_indices.is_empty() {
         lines.push(styled_line(
-            "  no matching models".to_string(),
+            "  no matches".to_string(),
             width,
             Style::default().fg(Color::DarkGray),
             LineFill::Natural,
         ));
         return lines;
     }
+
+    let label_width = picker
+        .items
+        .iter()
+        .map(|item| item.label.chars().count())
+        .max()
+        .unwrap_or(4)
+        .clamp(4, 28);
+    let name_width = label_width.min(width.saturating_sub(18).max(4));
+    let description_width = width.saturating_sub(name_width + 6).max(1);
+    lines.push(styled_line(
+        format!("  {:<name_width$} | description", "name"),
+        width,
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+        LineFill::Natural,
+    ));
+
     let start = visible_picker_match_start(picker, &matching_indices);
     for index in matching_indices
         .into_iter()
@@ -104,11 +124,9 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         let item = &picker.items[index];
         let selected = index == picker.selected;
         let marker = if selected { ">" } else { " " };
-        let text = if item.description.is_empty() {
-            format!("{marker} {}", item.label)
-        } else {
-            format!("{marker} {:<28} {}", item.label, item.description)
-        };
+        let label = truncate_one_line(&item.label, name_width);
+        let description = truncate_one_line(&item.description, description_width);
+        let text = format!("{marker} {label:<name_width$} | {description}");
         let style = if selected {
             Style::default()
                 .fg(Color::Cyan)
@@ -129,6 +147,19 @@ pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[
     selected_position
         .saturating_add(1)
         .saturating_sub(MAX_PICKER_ITEMS)
+}
+
+pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
+    let mut text = text.replace('\n', " ");
+    if text.chars().count() <= width {
+        return text;
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+    text = text.chars().take(width - 1).collect();
+    text.push('…');
+    text
 }
 
 pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
@@ -250,18 +281,11 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             LineFill::Natural,
         ),
         Entry::Tool {
-            name,
-            command,
             ok,
-            content,
-        } => push_tool_block(
-            &mut lines,
-            name,
-            command.as_deref(),
-            *ok,
-            content,
-            inner_width,
-        ),
+            display_style,
+            display_lines,
+            ..
+        } => push_tool_block(&mut lines, *ok, display_lines, *display_style, inner_width),
         Entry::Notice(text) => push_wrapped_text(
             &mut lines,
             text,
@@ -294,35 +318,27 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
 
 fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    name: &str,
-    command: Option<&str>,
     ok: bool,
-    content: &str,
+    display_lines: &[String],
+    display_style: ToolDisplayStyle,
     width: usize,
 ) {
-    let style = if matches!(name, "bash" | "read_file" | "write_file") {
-        if ok {
-            Style::default().fg(Color::White).bg(Color::Rgb(25, 75, 45))
-        } else {
-            Style::default().fg(Color::White).bg(Color::Rgb(95, 36, 36))
-        }
+    let background = if ok {
+        display_style.success_background
     } else {
-        Style::default()
-            .fg(Color::Yellow)
-            .bg(Color::Rgb(48, 45, 30))
+        display_style.failure_background
     };
+    let style = Style::default()
+        .fg(tool_color(display_style.foreground))
+        .bg(tool_color(background));
 
-    push_wrapped_text(lines, name, width, style, LineFill::PadToWidth);
-    if name == "bash" {
-        if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
-            push_wrapped_text(lines, command, width, style, LineFill::PadToWidth);
-        }
-        if !content.trim().is_empty() {
-            push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
-        }
-    } else if !content.trim().is_empty() {
-        push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
+    for line in display_lines {
+        push_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
     }
+}
+
+fn tool_color(color: ToolRgb) -> Color {
+    Color::Rgb(color.0, color.1, color.2)
 }
 
 pub(super) fn push_wrapped_text(

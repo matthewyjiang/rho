@@ -7,10 +7,12 @@ mod credentials;
 mod model;
 mod prompt;
 mod session;
+mod skills;
 mod tool;
 mod tools;
 mod transcript;
 mod tui;
+mod workspace;
 
 use std::io::{self, IsTerminal, Read};
 

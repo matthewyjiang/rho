@@ -4,7 +4,7 @@ use crate::model::{
     ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
-use crate::tool::{ToolContext, ToolError, ToolRegistry, ToolResult};
+use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -28,6 +28,8 @@ pub enum AgentEvent {
         command: Option<String>,
         ok: bool,
         content: String,
+        display_style: ToolDisplayStyle,
+        display_lines: Vec<String>,
     },
 }
 
@@ -43,7 +45,7 @@ pub struct Agent {
 
 impl Agent {
     pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
-        let messages = initial_messages(&tools);
+        let messages = initial_messages(&tools, &ctx.cwd);
         Self {
             provider,
             tools,
@@ -74,11 +76,20 @@ impl Agent {
     }
 
     pub fn reset(&mut self) {
-        self.messages = initial_messages(&self.tools);
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd);
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
         self.run_with_events(user_prompt, |_| Ok(())).await
+    }
+
+    pub fn load_skill(&mut self, skill: &crate::skills::Skill) -> Result<(), AgentError> {
+        self.push_message(Message::user_text(format!(
+            "Loaded skill `{}` from {}:\n\n{}",
+            skill.name,
+            skill.path.display(),
+            truncate(skill.contents.clone(), self.ctx.max_output_bytes)
+        )))
     }
 
     fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
@@ -167,36 +178,50 @@ impl Agent {
                     let mut tool_events = Vec::new();
                     for (index, call) in tool_calls.iter().cloned().enumerate() {
                         let name = call.name.clone();
-                        let command = tool_command(&name, &call.arguments);
-                        let event_content = tool_event_content(&name, &call.arguments, &self.ctx);
-                        let result = match self.tools.get(&call.name) {
-                            Some(tool) => match tool
-                                .call(call.arguments, self.ctx.clone(), call.id.clone())
-                                .await
-                            {
-                                Ok(result) => result,
-                                Err(err) => {
+                        let (result, display_style, command, event_content, display_lines) =
+                            match self.tools.get(&call.name) {
+                                Some(tool) => {
+                                    let display_style = tool.display_style();
+                                    let command = tool.display_command(&call.arguments);
+                                    let event_content =
+                                        tool.display_content(&call.arguments, &self.ctx);
+                                    let result = match tool
+                                        .call(
+                                            call.arguments.clone(),
+                                            self.ctx.clone(),
+                                            call.id.clone(),
+                                        )
+                                        .await
+                                    {
+                                        Ok(result) => result,
+                                        Err(err) => {
+                                            let result = ToolResult {
+                                                id: call.id,
+                                                ok: false,
+                                                content: err.to_string(),
+                                            };
+                                            self.push_message(Message::ToolResult(result.clone()))?;
+                                            self.push_skipped_tool_results(
+                                                &tool_calls[index + 1..],
+                                            )?;
+                                            return Err(AgentError::Tool(err));
+                                        }
+                                    };
+                                    let display_lines =
+                                        tool.display_lines(&call.arguments, &self.ctx, &result);
+                                    (result, display_style, command, event_content, display_lines)
+                                }
+                                None => {
                                     let result = ToolResult {
                                         id: call.id,
                                         ok: false,
-                                        content: err.to_string(),
+                                        content: format!("Unknown tool: {}", call.name),
                                     };
-                                    self.push_message(Message::ToolResult(result.clone()))?;
+                                    self.push_message(Message::ToolResult(result))?;
                                     self.push_skipped_tool_results(&tool_calls[index + 1..])?;
-                                    return Err(AgentError::Tool(err));
+                                    return Err(AgentError::UnknownTool(call.name));
                                 }
-                            },
-                            None => {
-                                let result = ToolResult {
-                                    id: call.id,
-                                    ok: false,
-                                    content: format!("Unknown tool: {}", call.name),
-                                };
-                                self.push_message(Message::ToolResult(result))?;
-                                self.push_skipped_tool_results(&tool_calls[index + 1..])?;
-                                return Err(AgentError::UnknownTool(call.name));
-                            }
-                        };
+                            };
                         let display_content =
                             event_content.unwrap_or_else(|| result.content.clone());
                         let ok = result.ok;
@@ -206,6 +231,8 @@ impl Agent {
                             command,
                             ok,
                             content: display_content,
+                            display_style,
+                            display_lines,
                         });
                     }
                     for event in tool_events {
@@ -222,71 +249,8 @@ fn should_retry_model_error(error: &ModelError) -> bool {
     matches!(error, ModelError::InvalidResponse(_))
 }
 
-fn tool_command(name: &str, arguments: &serde_json::Value) -> Option<String> {
-    match name {
-        "bash" => arguments
-            .get("command")
-            .and_then(|command| command.as_str())
-            .map(str::to_string),
-        _ => None,
-    }
-}
-
-fn tool_event_content(
-    name: &str,
-    arguments: &serde_json::Value,
-    ctx: &ToolContext,
-) -> Option<String> {
-    match name {
-        "read_file" => arguments
-            .get("path")
-            .and_then(|path| path.as_str())
-            .map(|path| read_file_event_content(&ctx.cwd, path, arguments)),
-        "edit_file" | "write_file" => arguments
-            .get("path")
-            .and_then(|path| path.as_str())
-            .map(|path| compact_display_path(&ctx.cwd, path)),
-        _ => None,
-    }
-}
-
-fn read_file_event_content(
-    cwd: &std::path::Path,
-    path: &str,
-    arguments: &serde_json::Value,
-) -> String {
-    let path = compact_display_path(cwd, path);
-    let offset = arguments
-        .get("offset")
-        .and_then(|offset| offset.as_u64())
-        .and_then(|offset| usize::try_from(offset).ok());
-    let limit = arguments
-        .get("limit")
-        .and_then(|limit| limit.as_u64())
-        .and_then(|limit| usize::try_from(limit).ok());
-
-    if offset.is_none() && limit.is_none() {
-        return path;
-    }
-
-    let start = offset.unwrap_or(1);
-    let end = limit
-        .map(|limit| start.saturating_add(limit).saturating_sub(1).to_string())
-        .unwrap_or_else(|| "end".into());
-    format!("{path}:{start}-{end}")
-}
-
-fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
-    let path = crate::tool::resolve_path(cwd, path);
-    path.strip_prefix(cwd)
-        .ok()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-fn initial_messages(tools: &ToolRegistry) -> Vec<Message> {
-    vec![Message::System(system_prompt(&tools.specs()))]
+fn initial_messages(tools: &ToolRegistry, cwd: &std::path::Path) -> Vec<Message> {
+    vec![Message::System(system_prompt(&tools.specs(), cwd))]
 }
 
 #[cfg(test)]
@@ -440,6 +404,43 @@ mod tests {
         assert_eq!(*requests.lock().unwrap(), 2);
     }
 
+    #[test]
+    fn load_skill_truncates_contents_before_persisting() {
+        let root = tempfile::tempdir().unwrap();
+        let skill = crate::skills::Skill {
+            name: "long-skill".into(),
+            description: "long skill".into(),
+            path: root.path().join(".agents/skills/long-skill/SKILL.md"),
+            contents: "abcdefghijklmnopqrstuvwxyz".into(),
+        };
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        let persisted_for_sink = persisted.clone();
+        let mut agent = Agent::new(
+            Box::new(RecordingProvider::default()),
+            ToolRegistry::new(),
+            ToolContext {
+                cwd: root.path().to_path_buf(),
+                max_output_bytes: 8,
+            },
+        );
+        agent.set_message_sink(move |message| {
+            persisted_for_sink.lock().unwrap().push(message.clone());
+            Ok(())
+        });
+
+        agent.load_skill(&skill).unwrap();
+
+        let persisted = persisted.lock().unwrap();
+        let Message::User(blocks) = persisted.last().unwrap() else {
+            panic!("expected persisted user message");
+        };
+        let [ContentBlock::Text(text)] = blocks.as_slice() else {
+            panic!("expected single text block");
+        };
+        assert!(text.contains("abcdefgh\n[truncated]"));
+        assert!(!text.contains("ijklmnopqrstuvwxyz"));
+    }
+
     #[tokio::test]
     async fn preserves_history_across_runs() {
         let provider = RecordingProvider::default();
@@ -511,31 +512,47 @@ mod tests {
     #[test]
     fn read_file_event_content_shows_requested_line_range() {
         let cwd = std::env::current_dir().unwrap();
-        let content = tool_event_content(
-            "read_file",
-            &serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 15}),
-            &ToolContext {
-                cwd,
-                max_output_bytes: 12000,
-            },
-        )
-        .unwrap();
+        let content = crate::tools::read_file::ReadFile
+            .display_content(
+                &serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 15}),
+                &ToolContext {
+                    cwd,
+                    max_output_bytes: 12000,
+                },
+            )
+            .unwrap();
 
         assert_eq!(content, "src/main.rs:10-24");
     }
 
     #[test]
+    fn skill_event_content_shows_skill_name_without_full_content() {
+        let cwd = std::env::current_dir().unwrap();
+        let content = crate::tools::skill::Skill
+            .display_content(
+                &serde_json::json!({"name": "caveman"}),
+                &ToolContext {
+                    cwd,
+                    max_output_bytes: 12000,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(content, "skill caveman");
+    }
+
+    #[test]
     fn read_file_event_content_keeps_plain_path_without_range() {
         let cwd = std::env::current_dir().unwrap();
-        let content = tool_event_content(
-            "read_file",
-            &serde_json::json!({"path": "src/main.rs"}),
-            &ToolContext {
-                cwd,
-                max_output_bytes: 12000,
-            },
-        )
-        .unwrap();
+        let content = crate::tools::read_file::ReadFile
+            .display_content(
+                &serde_json::json!({"path": "src/main.rs"}),
+                &ToolContext {
+                    cwd,
+                    max_output_bytes: 12000,
+                },
+            )
+            .unwrap();
 
         assert_eq!(content, "src/main.rs");
     }
@@ -548,18 +565,18 @@ mod tests {
             max_output_bytes: 12000,
         };
 
-        let from_offset = tool_event_content(
-            "read_file",
-            &serde_json::json!({"path": "src/main.rs", "offset": 10}),
-            &context,
-        )
-        .unwrap();
-        let from_limit = tool_event_content(
-            "read_file",
-            &serde_json::json!({"path": "src/main.rs", "limit": 20}),
-            &context,
-        )
-        .unwrap();
+        let from_offset = crate::tools::read_file::ReadFile
+            .display_content(
+                &serde_json::json!({"path": "src/main.rs", "offset": 10}),
+                &context,
+            )
+            .unwrap();
+        let from_limit = crate::tools::read_file::ReadFile
+            .display_content(
+                &serde_json::json!({"path": "src/main.rs", "limit": 20}),
+                &context,
+            )
+            .unwrap();
 
         assert_eq!(from_offset, "src/main.rs:10-end");
         assert_eq!(from_limit, "src/main.rs:1-20");

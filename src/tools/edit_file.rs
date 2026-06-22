@@ -21,6 +21,30 @@ impl Tool for EditFile {
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old_string","new_string"]}),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
+    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
+        args.get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| compact_display_path(&ctx.cwd, path))
+    }
+
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        vec![format!(
+            "edit_file {}",
+            self.display_content(args, ctx)
+                .unwrap_or_else(|| result.content.clone())
+        )]
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

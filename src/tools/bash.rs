@@ -19,6 +19,34 @@ impl Tool for Bash {
             input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
+    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("command")
+            .and_then(|command| command.as_str())
+            .map(str::to_string)
+    }
+
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        _ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        let mut lines = vec![match self.display_command(args) {
+            Some(command) if !command.trim().is_empty() => format!("bash {command}"),
+            _ => "bash".into(),
+        }];
+        if !result.content.trim().is_empty() {
+            lines.push(String::new());
+            lines.push(result.content.clone());
+        }
+        lines
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

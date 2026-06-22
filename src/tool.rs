@@ -25,6 +25,54 @@ pub struct ToolResult {
     pub content: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolRgb(pub u8, pub u8, pub u8);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolDisplayStyle {
+    pub foreground: ToolRgb,
+    pub success_background: ToolRgb,
+    pub failure_background: ToolRgb,
+}
+
+impl ToolDisplayStyle {
+    pub const fn new(
+        foreground: ToolRgb,
+        success_background: ToolRgb,
+        failure_background: ToolRgb,
+    ) -> Self {
+        Self {
+            foreground,
+            success_background,
+            failure_background,
+        }
+    }
+
+    pub const fn default_tool() -> Self {
+        Self::new(
+            ToolRgb(255, 215, 0),
+            ToolRgb(48, 45, 30),
+            ToolRgb(95, 36, 36),
+        )
+    }
+
+    pub const fn file_or_command() -> Self {
+        Self::new(
+            ToolRgb(255, 255, 255),
+            ToolRgb(25, 75, 45),
+            ToolRgb(95, 36, 36),
+        )
+    }
+
+    pub const fn skill() -> Self {
+        Self::new(
+            ToolRgb(255, 255, 255),
+            ToolRgb(92, 80, 140),
+            ToolRgb(95, 36, 36),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolContext {
     pub cwd: PathBuf,
@@ -51,6 +99,36 @@ pub enum ToolError {
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::default_tool()
+    }
+
+    fn display_command(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
+    fn display_content(&self, _args: &Value, _ctx: &ToolContext) -> Option<String> {
+        None
+    }
+
+    fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
+        let mut lines = vec![self.spec().name];
+        if let Some(command) = self
+            .display_command(args)
+            .filter(|command| !command.trim().is_empty())
+        {
+            lines.push(command);
+        }
+        let content = self
+            .display_content(args, ctx)
+            .unwrap_or_else(|| result.content.clone());
+        if !content.trim().is_empty() {
+            lines.push(content);
+        }
+        lines
+    }
+
     async fn call(
         &self,
         args: Value,
@@ -92,11 +170,49 @@ pub fn resolve_path(cwd: &std::path::Path, path: &str) -> PathBuf {
     }
 }
 
+pub fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
+    let path = resolve_path(cwd, path);
+    path.strip_prefix(cwd)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 pub fn truncate(mut s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
-    s.truncate(max);
+    let boundary = previous_char_boundary(&s, max);
+    s.truncate(boundary);
     s.push_str("\n[truncated]");
     s
+}
+
+fn previous_char_boundary(s: &str, index: usize) -> usize {
+    let mut index = index.min(s.len());
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_keeps_ascii_prefix() {
+        assert_eq!(truncate("abcdef".into(), 3), "abc\n[truncated]");
+    }
+
+    #[test]
+    fn truncate_does_not_split_utf8_character() {
+        assert_eq!(truncate("aébc".into(), 2), "a\n[truncated]");
+    }
+
+    #[test]
+    fn truncate_allows_exact_utf8_boundary() {
+        assert_eq!(truncate("aébc".into(), 3), "aé\n[truncated]");
+    }
 }

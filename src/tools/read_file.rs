@@ -27,6 +27,30 @@ impl Tool for ReadFile {
             }),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
+    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
+        args.get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| read_file_display_content(&ctx.cwd, path, args))
+    }
+
+    fn display_lines(
+        &self,
+        args: &serde_json::Value,
+        ctx: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        vec![format!(
+            "read_file {}",
+            self.display_content(args, ctx)
+                .unwrap_or_else(|| result.content.clone())
+        )]
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,
@@ -42,6 +66,41 @@ impl Tool for ReadFile {
             content: truncate(content, ctx.max_output_bytes),
         })
     }
+}
+
+fn read_file_display_content(
+    cwd: &std::path::Path,
+    path: &str,
+    args: &serde_json::Value,
+) -> String {
+    let path = compact_display_path(cwd, path);
+    let offset = args
+        .get("offset")
+        .and_then(|offset| offset.as_u64())
+        .and_then(|offset| usize::try_from(offset).ok());
+    let limit = args
+        .get("limit")
+        .and_then(|limit| limit.as_u64())
+        .and_then(|limit| usize::try_from(limit).ok());
+
+    if offset.is_none() && limit.is_none() {
+        return path;
+    }
+
+    let start = offset.unwrap_or(1);
+    let end = limit
+        .map(|limit| start.saturating_add(limit).saturating_sub(1).to_string())
+        .unwrap_or_else(|| "end".into());
+    format!("{path}:{start}-{end}")
+}
+
+fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
+    let path = resolve_path(cwd, path);
+    path.strip_prefix(cwd)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn select_line_range(
