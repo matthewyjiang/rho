@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf};
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -67,11 +68,7 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
-    let upstream_provider = match provider {
-        "openai" | "openai-codex" => "openai",
-        other => other,
-    };
-    model_metadata_from_api(api, upstream_provider, model)
+    model_metadata_from_api(api, upstream_provider(provider), model)
 }
 
 fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
@@ -109,39 +106,63 @@ fn write_cached_api(value: &Value) {
 }
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    let contents = fs::read_to_string(upstream_model_cache_path(provider, model)).ok()?;
+    let upstream_provider = upstream_provider(provider);
+    let connection = open_models_dev_cache().ok()?;
+    let contents: String = connection
+        .query_row(
+            "select metadata_json from model_metadata where provider = ?1 and model = ?2",
+            params![upstream_provider, model],
+            |row| row.get(0),
+        )
+        .ok()?;
     serde_json::from_str(&contents).ok()
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
-    let path = upstream_model_cache_path(provider, model);
+    let upstream_provider = upstream_provider(provider);
+    let Ok(connection) = open_models_dev_cache() else {
+        return;
+    };
+    let Ok(contents) = serde_json::to_string(metadata) else {
+        return;
+    };
+    let _ = connection.execute(
+        "insert into model_metadata (provider, model, metadata_json, updated_at)
+         values (?1, ?2, ?3, strftime('%s', 'now'))
+         on conflict(provider, model) do update set
+           metadata_json = excluded.metadata_json,
+           updated_at = excluded.updated_at",
+        params![upstream_provider, model, contents],
+    );
+}
+
+fn open_models_dev_cache() -> rusqlite::Result<Connection> {
+    let path = models_dev_sqlite_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    if let Ok(contents) = serde_json::to_string(metadata) {
-        let _ = fs::write(path, contents);
+    let connection = Connection::open(path)?;
+    connection.execute_batch(
+        "create table if not exists model_metadata (
+            provider text not null,
+            model text not null,
+            metadata_json text not null,
+            updated_at integer not null,
+            primary key (provider, model)
+        );",
+    )?;
+    Ok(connection)
+}
+
+fn upstream_provider(provider: &str) -> &str {
+    match provider {
+        "openai" | "openai-codex" => "openai",
+        other => other,
     }
 }
 
-fn upstream_model_cache_path(provider: &str, model: &str) -> PathBuf {
-    let upstream_provider = match provider {
-        "openai" | "openai-codex" => "openai",
-        other => other,
-    };
-    cache_dir()
-        .join("models.dev/models")
-        .join(safe_cache_segment(upstream_provider))
-        .join(format!("{}.json", safe_cache_segment(model)))
-}
-
-fn safe_cache_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => ch,
-            _ => '_',
-        })
-        .collect()
+fn models_dev_sqlite_path() -> PathBuf {
+    cache_dir().join("models.dev/cache.sqlite3")
 }
 
 fn models_dev_cache_path() -> PathBuf {
