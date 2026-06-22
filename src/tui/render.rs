@@ -77,7 +77,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     {
         let item = &picker.items[index];
         let selected = index == picker.selected;
-        lines.push(picker_item_line(item, selected, label_width));
+        lines.push(picker_item_line(item, selected, label_width, width));
     }
 
     let selected_position = matching_indices
@@ -124,17 +124,30 @@ fn picker_filter_line(picker: &UiPicker) -> Line<'static> {
 }
 
 fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
+    let max_label_width = match picker.action {
+        super::PickerAction::SelectModel | super::PickerAction::SelectTitleModel => 60,
+        super::PickerAction::ResumeSession => 36,
+        super::PickerAction::Config
+        | super::PickerAction::LoginProvider
+        | super::PickerAction::LogoutProvider
+        | super::PickerAction::InsertSkillCommand => 30,
+    };
     picker
         .items
         .iter()
         .map(|item| item.label.chars().count())
         .max()
         .unwrap_or(12)
-        .clamp(12, 30)
+        .clamp(12, max_label_width)
         .min(width.saturating_sub(18).max(12))
 }
 
-fn picker_item_line(item: &PickerItem, selected: bool, label_width: usize) -> Line<'static> {
+fn picker_item_line(
+    item: &PickerItem,
+    selected: bool,
+    label_width: usize,
+    width: usize,
+) -> Line<'static> {
     let marker = if selected { "→" } else { " " };
     let row_style = if selected {
         Style::default().fg(Color::Cyan)
@@ -142,16 +155,26 @@ fn picker_item_line(item: &PickerItem, selected: bool, label_width: usize) -> Li
         Style::default().fg(Color::White)
     };
     let label = truncate_one_line(&item.label, label_width);
+    let mut used_width = 2 + label_width;
     let mut spans = vec![Span::styled(
         format!("{marker} {label:<label_width$}"),
         row_style,
     )];
     if let Some(badge) = &item.badge {
+        let badge_text = truncate_one_line(&badge.text, 24);
+        used_width += 2 + badge_text.chars().count();
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            truncate_one_line(&badge.text, 24),
-            picker_badge_style(badge.tone),
-        ));
+        spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));
+    }
+    if let Some(preview) = &item.preview {
+        let remaining = width.saturating_sub(used_width.saturating_add(2));
+        if remaining > 1 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                truncate_one_line(preview, remaining),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
     }
     Line::from(spans)
 }
@@ -160,9 +183,11 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     let action = match picker.action {
         super::PickerAction::Config => "change",
         super::PickerAction::SelectModel
+        | super::PickerAction::SelectTitleModel
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
-        | super::PickerAction::InsertSkillCommand => "select",
+        | super::PickerAction::InsertSkillCommand
+        | super::PickerAction::ResumeSession => "select",
     };
     let tab = if picker.help.contains("tab") {
         " · Tab to complete"

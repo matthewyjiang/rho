@@ -103,7 +103,12 @@ impl OpenAiProvider {
             .into_iter()
             .map(to_openai_message)
             .collect::<Result<Vec<_>, _>>()?;
-        let tools = request.tools.into_iter().map(to_openai_tool).collect();
+        let tools = request
+            .tools
+            .into_iter()
+            .map(to_openai_tool)
+            .collect::<Vec<_>>();
+        let has_tools = !tools.is_empty();
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
         let response: ChatResponse = self
             .client
@@ -112,8 +117,8 @@ impl OpenAiProvider {
             .json(&ChatRequest {
                 model: self.model.clone(),
                 messages,
-                tools,
-                tool_choice: "auto",
+                tools: has_tools.then_some(tools),
+                tool_choice: has_tools.then_some("auto"),
                 stream: false,
                 stream_options: None,
             })
@@ -136,7 +141,12 @@ impl OpenAiProvider {
             .into_iter()
             .map(to_openai_message)
             .collect::<Result<Vec<_>, _>>()?;
-        let tools = request.tools.into_iter().map(to_openai_tool).collect();
+        let tools = request
+            .tools
+            .into_iter()
+            .map(to_openai_tool)
+            .collect::<Vec<_>>();
+        let has_tools = !tools.is_empty();
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
         let response = self
             .client
@@ -145,8 +155,8 @@ impl OpenAiProvider {
             .json(&ChatRequest {
                 model: self.model.clone(),
                 messages,
-                tools,
-                tool_choice: "auto",
+                tools: has_tools.then_some(tools),
+                tool_choice: has_tools.then_some("auto"),
                 stream: true,
                 stream_options: Some(ChatStreamOptions {
                     include_usage: true,
@@ -224,11 +234,13 @@ impl OpenAiProvider {
                 "model": self.model,
                 "instructions": instructions,
                 "input": input,
-                "tools": tools,
-                "tool_choice": "auto",
                 "store": false,
                 "stream": true
             });
+            if !tools.is_empty() {
+                body["tools"] = json!(tools);
+                body["tool_choice"] = json!("auto");
+            }
             if let Some(reasoning) = codex_reasoning_param(
                 self.reasoning_effort.as_deref(),
                 self.reasoning_summary.as_deref(),

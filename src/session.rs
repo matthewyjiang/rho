@@ -11,7 +11,9 @@ use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::Message;
+use crate::model::{ContentBlock, Message};
+
+mod index;
 
 const SESSION_VERSION: u32 = 1;
 
@@ -19,9 +21,32 @@ const SESSION_VERSION: u32 = 1;
 pub struct Session {
     id: String,
     path: PathBuf,
+    session_root: PathBuf,
+    cwd: PathBuf,
+    workspace_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub id: String,
+    pub path: PathBuf,
+    pub cwd: PathBuf,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub message_count: u64,
+    pub title: Option<String>,
+    pub first_user_message: Option<String>,
+    pub last_user_message: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SessionIndexRecord {
+    pub(super) summary: SessionSummary,
+    pub(super) file_size: Option<i64>,
+    pub(super) file_mtime: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SessionEntry {
     Session {
@@ -47,7 +72,12 @@ impl Session {
         id_prefix: &str,
     ) -> anyhow::Result<(Self, Vec<Message>)> {
         let dir = ensure_session_dir(session_root, cwd)?;
-        let matches = matching_session_files(&dir, id_prefix)?;
+        let matches = match index::sync_workspace(session_root, cwd)
+            .and_then(|_| index::matching_session_paths(session_root, cwd, id_prefix))
+        {
+            Ok(paths) => paths,
+            Err(_) => matching_session_files(&dir, id_prefix)?,
+        };
         match matches.as_slice() {
             [] => anyhow::bail!("no session found matching '{id_prefix}'"),
             [path] => {
@@ -56,14 +86,37 @@ impl Session {
                 })?;
                 let messages = read_messages(path)?;
                 Ok((
-                    Self {
-                        id,
-                        path: path.clone(),
-                    },
+                    Self::from_parts(session_root, cwd, id, path.clone()),
                     messages,
                 ))
             }
             _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
+        }
+    }
+
+    pub fn list(cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_in_root(&session_root()?, cwd)
+    }
+
+    pub fn set_title(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
+        Self::set_title_in_root(&session_root()?, cwd, id_prefix, title)
+    }
+
+    fn set_title_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<()> {
+        index::sync_workspace(session_root, cwd)?;
+        index::set_title(session_root, cwd, id_prefix, title)
+    }
+
+    fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
+        let dir = ensure_session_dir(session_root, cwd)?;
+        match index::list_workspace_sessions(session_root, cwd) {
+            Ok(summaries) => Ok(summaries),
+            Err(_) => list_session_summaries_by_scan(&dir, cwd),
         }
     }
 
@@ -74,17 +127,16 @@ impl Session {
     fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
         let dir = ensure_session_dir(session_root, cwd)?;
         let id = Uuid::new_v4().to_string();
-        let path = dir.join(format!("{}_{}.jsonl", timestamp_for_filename(), id));
-        let session = Self {
-            id: id.clone(),
-            path,
-        };
+        let created_at = unix_timestamp_secs();
+        let path = dir.join(format!("{created_at}_{id}.jsonl"));
+        let session = Self::from_parts(session_root, cwd, id.clone(), path);
         session.append_entry(&SessionEntry::Session {
             version: SESSION_VERSION,
             id,
-            timestamp: timestamp(),
+            timestamp: created_at.to_string(),
             cwd: cwd.to_path_buf(),
         })?;
+        let _ = index::record_created(&session, created_at);
         Ok(session)
     }
 
@@ -92,7 +144,19 @@ impl Session {
         self.append_entry(&SessionEntry::Message {
             timestamp: timestamp(),
             message: message.clone(),
-        })
+        })?;
+        let _ = index::record_message(self, message);
+        Ok(())
+    }
+
+    fn from_parts(session_root: &Path, cwd: &Path, id: String, path: PathBuf) -> Self {
+        Self {
+            id,
+            path,
+            session_root: session_root.to_path_buf(),
+            cwd: cwd.to_path_buf(),
+            workspace_key: workspace_key(cwd),
+        }
     }
 
     #[cfg(test)]
@@ -120,6 +184,12 @@ impl Session {
 }
 
 fn read_messages(path: &Path) -> anyhow::Result<Vec<Message>> {
+    Ok(drop_incomplete_tool_turn_tail(messages_from_entries(
+        read_entries(path)?,
+    )))
+}
+
+fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
     let lines = reader
@@ -130,19 +200,85 @@ fn read_messages(path: &Path) -> anyhow::Result<Vec<Message>> {
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut messages = Vec::new();
+    let mut entries = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         let entry = match serde_json::from_str::<SessionEntry>(line) {
             Ok(entry) => entry,
             Err(_) if index + 1 == lines.len() => break,
             Err(err) => return Err(err.into()),
         };
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+fn messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
+    entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            SessionEntry::Session { .. } => None,
+            SessionEntry::Message { message, .. } => Some(message),
+        })
+        .collect()
+}
+
+pub(super) fn summarize_session_file(
+    path: &Path,
+    fallback_cwd: &Path,
+) -> anyhow::Result<SessionIndexRecord> {
+    let id = session_id_from_path(path)
+        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
+    let mut cwd = fallback_cwd.to_path_buf();
+    let mut created_at = timestamp_from_filename(path).unwrap_or_default();
+    let mut updated_at = created_at;
+    let mut messages = Vec::new();
+
+    for entry in read_entries(path)? {
         match entry {
-            SessionEntry::Session { .. } => {}
-            SessionEntry::Message { message, .. } => messages.push(message),
+            SessionEntry::Session {
+                timestamp,
+                cwd: session_cwd,
+                ..
+            } => {
+                cwd = session_cwd;
+                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                    created_at = timestamp;
+                    updated_at = updated_at.max(timestamp);
+                }
+            }
+            SessionEntry::Message { timestamp, message } => {
+                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                    updated_at = updated_at.max(timestamp);
+                }
+                messages.push(message);
+            }
         }
     }
-    Ok(drop_incomplete_tool_turn_tail(messages))
+
+    let messages = drop_incomplete_tool_turn_tail(messages);
+    let (file_size, file_mtime) = session_file_stats(path);
+    if updated_at == 0 {
+        updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
+    }
+    if created_at == 0 {
+        created_at = updated_at;
+    }
+
+    Ok(SessionIndexRecord {
+        summary: SessionSummary {
+            id,
+            path: path.to_path_buf(),
+            cwd,
+            created_at,
+            updated_at,
+            message_count: messages.len() as u64,
+            title: None,
+            first_user_message: messages.iter().find_map(user_message_text),
+            last_user_message: messages.iter().rev().find_map(user_message_text),
+        },
+        file_size,
+        file_mtime,
+    })
 }
 
 fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
@@ -195,6 +331,68 @@ fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<Pat
         .collect::<Vec<_>>();
     files.sort();
     Ok(files)
+}
+
+fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
+    let mut summaries = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| summarize_session_file(&entry.path(), cwd).ok())
+        .map(|record| record.summary)
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(summaries)
+}
+
+pub(super) fn session_file_stats(path: &Path) -> (Option<i64>, Option<i64>) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return (None, None);
+    };
+    let file_size = Some(clamp_u64_to_i64(metadata.len()));
+    let file_mtime = metadata.modified().ok().map(system_time_secs);
+    (file_size, file_mtime)
+}
+
+pub(super) fn user_message_text(message: &Message) -> Option<String> {
+    let Message::User(blocks) = message else {
+        return None;
+    };
+    let text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.trim()),
+            ContentBlock::ToolCall(_) => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+pub(super) fn parse_timestamp(timestamp: &str) -> Option<u64> {
+    timestamp.parse().ok()
+}
+
+pub(super) fn clamp_u64_to_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+fn timestamp_from_filename(path: &Path) -> Option<u64> {
+    path.file_stem()?
+        .to_str()?
+        .split_once('_')
+        .and_then(|(timestamp, _)| parse_timestamp(timestamp))
+}
+
+fn system_time_secs(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| clamp_u64_to_i64(duration.as_secs()))
+        .unwrap_or_default()
 }
 
 fn session_id_from_path(path: &Path) -> Option<String> {
@@ -278,10 +476,6 @@ fn stable_path_hash(path: &Path) -> u64 {
 }
 
 fn timestamp() -> String {
-    unix_timestamp_secs().to_string()
-}
-
-fn timestamp_for_filename() -> String {
     unix_timestamp_secs().to_string()
 }
 
@@ -471,6 +665,92 @@ mod tests {
         assert!(matches!(&messages[1], Message::ToolResult(_)));
     }
 
+    #[test]
+    fn list_backfills_existing_sessions_and_sorts_newest_first() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let older_id = "11111111-1111-4111-8111-111111111111";
+        let newer_id = "22222222-2222-4222-8222-222222222222";
+        write_session_file(&root, &cwd, older_id, 10, &["older prompt"]);
+        write_session_file(&root, &cwd, newer_id, 20, &["newer prompt"]);
+
+        let summaries = Session::list_in_root(&root, &cwd).unwrap();
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].id, newer_id);
+        assert_eq!(summaries[0].message_count, 1);
+        assert_eq!(
+            summaries[0].first_user_message.as_deref(),
+            Some("newer prompt")
+        );
+        assert_eq!(
+            summaries[0].last_user_message.as_deref(),
+            Some("newer prompt")
+        );
+        assert_eq!(summaries[1].id, older_id);
+        assert!(root.join("index.sqlite3").exists());
+    }
+
+    #[test]
+    fn append_message_updates_session_summary() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("remember this"))
+            .unwrap();
+        session
+            .append_message(&Message::assistant_text("remembered"))
+            .unwrap();
+
+        let summaries = Session::list_in_root(&root, &cwd).unwrap();
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, session.id());
+        assert_eq!(summaries[0].message_count, 2);
+        assert_eq!(
+            summaries[0].first_user_message.as_deref(),
+            Some("remember this")
+        );
+        assert_eq!(
+            summaries[0].last_user_message.as_deref(),
+            Some("remember this")
+        );
+        assert!(summaries[0].updated_at >= summaries[0].created_at);
+    }
+
+    #[test]
+    fn set_title_updates_session_summary() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("write tests"))
+            .unwrap();
+
+        Session::set_title_in_root(&root, &cwd, session.id(), "Testing plan").unwrap();
+        let summaries = Session::list_in_root(&root, &cwd).unwrap();
+
+        assert_eq!(summaries[0].title.as_deref(), Some("Testing plan"));
+        assert_eq!(
+            summaries[0].first_user_message.as_deref(),
+            Some("write tests")
+        );
+    }
+
+    #[test]
+    fn list_removes_stale_index_rows() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        assert_eq!(Session::list_in_root(&root, &cwd).unwrap().len(), 1);
+        fs::remove_file(session.path()).unwrap();
+
+        let summaries = Session::list_in_root(&root, &cwd).unwrap();
+
+        assert!(summaries.is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn creates_session_paths_with_private_permissions() {
@@ -500,21 +780,29 @@ mod tests {
     }
 
     fn write_minimal_session_file(root: &Path, cwd: &Path, id: &str) {
+        write_session_file(root, cwd, id, 0, &[]);
+    }
+
+    fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts: &[&str]) {
         let dir = session_dir_in_root(root, cwd);
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("test_{id}.jsonl"));
-        fs::write(
-            path,
-            serde_json::json!({
-                "type": "session",
-                "version": SESSION_VERSION,
-                "id": id,
-                "timestamp": "0",
-                "cwd": cwd,
-            })
-            .to_string()
-                + "\n",
-        )
-        .unwrap();
+        let path = dir.join(format!("{timestamp}_{id}.jsonl"));
+        let mut entries = vec![SessionEntry::Session {
+            version: SESSION_VERSION,
+            id: id.into(),
+            timestamp: timestamp.to_string(),
+            cwd: cwd.to_path_buf(),
+        }];
+        entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
+            timestamp: timestamp.to_string(),
+            message: Message::user_text(*prompt),
+        }));
+        let contents = entries
+            .into_iter()
+            .map(|entry| serde_json::to_string(&entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(path, contents).unwrap();
     }
 }

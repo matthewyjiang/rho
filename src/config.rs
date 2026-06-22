@@ -11,6 +11,9 @@ pub struct Config {
     pub max_output_bytes: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
+    pub title_provider: Option<String>,
+    pub title_model: Option<String>,
+    pub title_auth: Option<String>,
 }
 
 impl Default for Config {
@@ -21,6 +24,9 @@ impl Default for Config {
             max_output_bytes: 12000,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
+            title_provider: None,
+            title_model: None,
+            title_auth: None,
         }
     }
 }
@@ -59,6 +65,15 @@ impl Config {
         } else if let Some(v) = file.reasoning_effort {
             cfg.reasoning = v.parse()?;
         }
+        if let Some(v) = file.title_provider {
+            cfg.title_provider = Some(v);
+        }
+        if let Some(v) = file.title_model {
+            cfg.title_model = Some(v);
+        }
+        if let Some(v) = file.title_auth {
+            cfg.title_auth = Some(v);
+        }
         Ok(cfg)
     }
 
@@ -80,4 +95,7 @@ struct PartialConfig {
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
     reasoning_effort: Option<String>,
+    title_provider: Option<String>,
+    title_model: Option<String>,
+    title_auth: Option<String>,
 }

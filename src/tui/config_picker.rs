@@ -14,6 +14,7 @@ pub(super) fn config_picker(info: &TuiInfo, max_output_bytes: usize) -> UiPicker
                     info.reasoning,
                     info.reasoning.next()
                 )),
+                preview: None,
                 badge: Some(PickerBadge {
                     text: info.reasoning.to_string(),
                     tone: PickerBadgeTone::Selected,
@@ -25,6 +26,7 @@ pub(super) fn config_picker(info: &TuiInfo, max_output_bytes: usize) -> UiPicker
                 detail: Some(
                     "Maximum tool output retained in context. Saved for next session.".into(),
                 ),
+                preview: None,
                 badge: Some(PickerBadge {
                     text: max_output_bytes.to_string(),
                     tone: PickerBadgeTone::Selected,

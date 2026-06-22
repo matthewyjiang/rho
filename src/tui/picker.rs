@@ -14,6 +14,7 @@ pub(super) struct UiPicker {
 pub(super) struct PickerItem {
     pub(super) label: String,
     pub(super) detail: Option<String>,
+    pub(super) preview: Option<String>,
     pub(super) badge: Option<PickerBadge>,
     pub(super) value: String,
 }
@@ -32,9 +33,11 @@ pub(super) enum PickerBadgeTone {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerAction {
     SelectModel,
+    SelectTitleModel,
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
+    ResumeSession,
     Config,
 }
 
@@ -132,12 +135,16 @@ pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec
         .enumerate()
         .filter_map(|(index, item)| {
             let detail = item.detail.as_deref().unwrap_or_default();
+            let preview = item.preview.as_deref().unwrap_or_default();
             let badge = item
                 .badge
                 .as_ref()
                 .map(|badge| badge.text.as_str())
                 .unwrap_or_default();
-            let haystack = format!("{} {} {} {}", item.label, item.value, detail, badge);
+            let haystack = format!(
+                "{} {} {} {} {}",
+                item.label, item.value, detail, preview, badge
+            );
             regex.is_match(&haystack).then_some(index)
         })
         .collect()

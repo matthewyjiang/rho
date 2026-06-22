@@ -7,6 +7,7 @@ pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
         .map(|skill| PickerItem {
             label: skill.name.clone(),
             detail: Some(skill.description),
+            preview: None,
             badge: None,
             value: skill.name,
         })
