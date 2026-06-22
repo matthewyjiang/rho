@@ -2373,9 +2373,20 @@ mod tests {
 
     #[test]
     fn command_suggestions_truncate_long_descriptions() {
+        let project = tempfile::tempdir().unwrap();
+        let skill_dir = project
+            .path()
+            .join(".agents/skills/zz-deterministic-truncation-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: zz-deterministic-truncation-skill\ndescription: this description is intentionally long enough to require truncation in a narrow command suggestion row\n---\nbody\n",
+        )
+        .unwrap();
         let mut app = test_app();
-        app.input = "/c".into();
-        app.input_cursor = 2;
+        app.info.cwd = project.path().to_path_buf();
+        app.input = "/zz".into();
+        app.input_cursor = 3;
         app.clamp_command_selection();
 
         let lines = app.command_suggestion_lines(40);
