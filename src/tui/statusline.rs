@@ -213,7 +213,7 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
 
     let left_width = left.chars().count();
     let right_width = right.chars().count();
-    if left_width + right_width + 1 <= width {
+    if left_width + right_width < width {
         let gap = " ".repeat(width - left_width - right_width);
         return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
     }
