@@ -13,9 +13,9 @@ pub struct Cli {
     pub config: Option<PathBuf>,
     #[arg(long, value_parser = ["api-key", "codex"])]
     pub auth: Option<String>,
-    /// Resume an existing session by UUID or UUID prefix.
-    #[arg(short = 'R', long)]
-    pub resume: Option<String>,
+    /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.
+    #[arg(short = 'R', long, value_name = "ID", num_args = 0..=1)]
+    pub resume: Option<Option<String>>,
     #[command(subcommand)]
     pub command: Option<Command>,
 }

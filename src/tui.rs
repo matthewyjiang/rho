@@ -1,12 +1,14 @@
 use std::{
     collections::VecDeque,
+    future::Future,
     io::Write,
     path::PathBuf,
+    pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use futures_util::FutureExt;
+use futures_util::{task::noop_waker_ref, FutureExt};
 
 use crossterm::{
     event::{
@@ -29,6 +31,7 @@ mod model_picker;
 mod picker;
 mod provider_picker;
 mod render;
+mod session_picker;
 mod skill_picker;
 mod statusline;
 
@@ -54,7 +57,8 @@ use crate::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         models_dev::{cached_model_metadata, fetch_model_metadata},
-        ContentBlock, Message, ModelError, ModelMetadata, ModelUsage, UnavailableProvider,
+        ContentBlock, Message, ModelError, ModelMetadata, ModelRequest, ModelResponse, ModelUsage,
+        UnavailableProvider,
     },
     reasoning::ReasoningLevel,
     session::Session,
@@ -74,7 +78,11 @@ pub struct TuiInfo {
     pub model: String,
     pub reasoning: ReasoningLevel,
     pub auth: String,
+    pub title_provider: Option<String>,
+    pub title_model: Option<String>,
+    pub title_auth: Option<String>,
     pub session_id: Option<String>,
+    pub open_resume_picker: bool,
     pub config_path: Option<PathBuf>,
     pub auth_unavailable: Option<String>,
 }
@@ -130,6 +138,7 @@ struct App {
     latest_usage: Option<ModelUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +173,12 @@ struct SecretInput {
 struct PendingOAuthLogin {
     target: LoginTarget,
     handle: tokio::task::JoinHandle<Result<CodexTokens, CodexOAuthError>>,
+}
+
+#[derive(Debug)]
+struct SessionTitleResult {
+    session_id: String,
+    title: anyhow::Result<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -369,6 +384,7 @@ impl App {
             latest_usage: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_session_title: None,
         }
     }
 
@@ -380,6 +396,9 @@ impl App {
         self.start_model_metadata_fetch();
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal, agent)?;
+        if self.info.open_resume_picker {
+            self.open_resume_picker(terminal)?;
+        }
         if self.info.auth_unavailable.is_some() {
             self.insert_entry(
                 terminal,
@@ -388,6 +407,7 @@ impl App {
         }
         while !self.should_quit {
             self.poll_model_metadata_fetch();
+            self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(Duration::from_millis(100))? {
@@ -595,6 +615,28 @@ impl App {
                 self.model_metadata = Some(metadata);
             }
         }
+    }
+
+    fn poll_pending_session_title(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let Some(future) = self.pending_session_title.as_mut() else {
+            return Ok(());
+        };
+        let waker = noop_waker_ref();
+        let mut context = std::task::Context::from_waker(waker);
+        let std::task::Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+            return Ok(());
+        };
+        self.pending_session_title = None;
+        let Ok(title) = result.title else {
+            return Ok(());
+        };
+        if Session::set_title(&self.info.cwd, &result.session_id, &title).is_err() {
+            return Ok(());
+        }
+        if self.info.session_id.as_deref() == Some(result.session_id.as_str()) {
+            self.insert_entry(terminal, &Entry::Notice(format!("session titled: {title}")))?;
+        }
+        Ok(())
     }
 
     fn handle_oauth_pending_key(
@@ -1089,6 +1131,35 @@ impl App {
         Ok(())
     }
 
+    fn title_model_selection(&self) -> (String, String, String) {
+        (
+            self.info
+                .title_provider
+                .clone()
+                .unwrap_or_else(|| self.info.provider.clone()),
+            self.info
+                .title_model
+                .clone()
+                .unwrap_or_else(|| self.info.model.clone()),
+            self.info
+                .title_auth
+                .clone()
+                .unwrap_or_else(|| self.info.auth.clone()),
+        )
+    }
+
+    fn start_session_title_generation(&mut self, first_user_message: String) {
+        let Some(session_id) = self.info.session_id.clone() else {
+            return;
+        };
+        self.pending_session_title = None;
+        let (provider, model, _auth) = self.title_model_selection();
+        self.pending_session_title = Some(Box::pin(async move {
+            let title = generate_session_title(provider, model, first_user_message).await;
+            SessionTitleResult { session_id, title }
+        }));
+    }
+
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -1143,6 +1214,13 @@ impl App {
         self.input_cursor = 0;
         self.clamp_command_selection();
         self.ensure_session(agent)?;
+        if !agent
+            .messages()
+            .iter()
+            .any(|message| matches!(message, Message::User(_)))
+        {
+            self.start_session_title_generation(prompt.clone());
+        }
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
         self.stream_buffer.clear();
         self.stream_flushed_text.clear();
@@ -1344,6 +1422,7 @@ impl App {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
             }
+            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::Login => {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
@@ -1352,7 +1431,7 @@ impl App {
                 self.execute_logout_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::Resume => self.execute_resume_command(invocation, terminal),
+            CommandId::Resume => self.execute_resume_command(invocation, terminal, agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
         }
@@ -1417,6 +1496,54 @@ impl App {
         Ok(())
     }
 
+    fn execute_title_model_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let model = invocation.args.trim();
+        if model.is_empty() {
+            return self.open_title_model_picker(terminal);
+        }
+
+        self.refresh_available_auths();
+        let (provider, _model, auth) = self.title_model_selection();
+        match catalog::resolve_model_selection_for_auths(
+            model,
+            &provider,
+            &auth,
+            &self.available_auths,
+        ) {
+            Ok(selection) => self.select_title_model(selection, terminal),
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "title model switch failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn open_title_model_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        self.status = "loading title models".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        self.refresh_available_auths();
+        let (provider, model, _auth) = self.title_model_selection();
+        let picker = model_picker::title_model_picker(&provider, &model, &self.available_auths);
+
+        if picker.items.is_empty() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice("no providers configured. run /login to sign in.".into()),
+            )?;
+            self.status = "ready".into();
+            return Ok(());
+        }
+
+        self.composer = ComposerMode::Picker(picker);
+        self.status = "select title model".into();
+        Ok(())
+    }
+
     async fn submit_picker_selection(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -1448,6 +1575,23 @@ impl App {
                     }
                 }
             }
+            PickerAction::SelectTitleModel => {
+                self.refresh_available_auths();
+                let (provider, _model, auth) = self.title_model_selection();
+                match catalog::resolve_model_selection_for_auths(
+                    &value,
+                    &provider,
+                    &auth,
+                    &self.available_auths,
+                ) {
+                    Ok(selection) => self.select_title_model(selection, terminal),
+                    Err(err) => {
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "title model switch failed".into();
+                        Ok(())
+                    }
+                }
+            }
             PickerAction::LoginProvider => {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
@@ -1459,6 +1603,7 @@ impl App {
                 self.status = "skill command inserted".into();
                 Ok(())
             }
+            PickerAction::ResumeSession => self.submit_resume_selection(&value, terminal, agent),
             PickerAction::Config => self.submit_config_selection(&value, terminal, agent),
         }
     }
@@ -1600,6 +1745,46 @@ impl App {
         Ok(())
     }
 
+    fn select_title_model(
+        &mut self,
+        selection: ModelSelection,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let provider = selection.provider;
+        let model = selection.model;
+        let auth = selection.auth;
+        let provider_model = format!("{provider}/{model}");
+        self.info.title_provider = Some(provider.clone());
+        self.info.title_model = Some(model.clone());
+        self.info.title_auth = Some(auth.clone());
+        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.title_provider = Some(provider.clone());
+            config.title_model = Some(model.clone());
+            config.title_auth = Some(auth.clone());
+            config.save(self.info.config_path.clone())
+        }) {
+            Ok(()) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "session title model switched to {provider_model} and saved to config"
+                    )),
+                )?;
+                self.status = format!("title model: {provider_model}");
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "session title model switched to {provider_model} for this session, but saving config failed: {err}"
+                    )),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(())
+    }
+
     fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
@@ -1617,18 +1802,108 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let notice = if invocation.args.is_empty() {
-            "interactive resume is not implemented yet. Exit and run rho --resume <session-id> to resume a saved session."
-                .to_string()
-        } else {
-            format!(
-                "interactive resume is not implemented yet. Exit and run rho --resume {} to resume that session.",
-                invocation.args
-            )
-        };
-        self.insert_entry(terminal, &Entry::Notice(notice))?;
-        self.status = "resume help".into();
+        let session_id = invocation.args.trim();
+        if !session_id.is_empty() {
+            return self.submit_resume_selection(session_id, terminal, agent);
+        }
+
+        self.open_resume_picker(terminal)
+    }
+
+    fn open_resume_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        match Session::list(&self.info.cwd) {
+            Ok(sessions) if sessions.is_empty() => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice("no saved sessions for this workspace".into()),
+                )?;
+                self.status = "no sessions".into();
+            }
+            Ok(sessions) => {
+                let picker =
+                    session_picker::session_picker(sessions, self.info.session_id.as_deref());
+                if picker.items.is_empty() {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Notice("no other saved sessions for this workspace".into()),
+                    )?;
+                    self.status = "no sessions".into();
+                    return Ok(());
+                }
+                self.composer = ComposerMode::Picker(picker);
+                self.status = "select session".into();
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not list sessions: {err}")),
+                )?;
+                self.status = "resume failed".into();
+            }
+        }
+        Ok(())
+    }
+
+    fn submit_resume_selection(
+        &mut self,
+        session_id: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        match self.resume_session_by_id(session_id, terminal, agent) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.composer = ComposerMode::Input;
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not resume session: {err}")),
+                )?;
+                self.status = "resume failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn resume_session_by_id(
+        &mut self,
+        session_id: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let (session, history) = Session::open_by_id(&self.info.cwd, session_id)?;
+        let full_id = session.id().to_string();
+        let short_id = short_session_id(&full_id);
+
+        agent.replace_history(history);
+        agent.set_message_sink(move |message| session.append_message(message));
+        self.info.session_id = Some(full_id);
+        self.composer = ComposerMode::Input;
+        self.input.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.stream_buffer.clear();
+        self.stream_flushed_text.clear();
+        self.reasoning_buffer.clear();
+        self.running = false;
+        self.latest_usage = None;
+        let entries = transcript_entries_from_messages(agent.messages());
+        let width = terminal.size()?.width as usize;
+        let (_omitted, visible_entries) =
+            recovered_history_tail(&entries, width, RECOVERED_HISTORY_LINE_LIMIT);
+        self.transcript = visible_entries;
+        self.last_inserted_was_tool = self
+            .transcript
+            .last()
+            .is_some_and(|entry| matches!(entry, Entry::Tool { .. }));
+        self.reflow_history(terminal)?;
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!("resumed session {short_id}")),
+        )?;
+        self.status = format!("resumed {short_id}");
         Ok(())
     }
 
@@ -2091,6 +2366,60 @@ fn text_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
+async fn generate_session_title(
+    provider_name: String,
+    model: String,
+    first_user_message: String,
+) -> anyhow::Result<String> {
+    let provider = build_provider(&provider_name, &model, ReasoningLevel::Low)?;
+    let response = tokio::time::timeout(
+        Duration::from_secs(20),
+        provider.send_turn(ModelRequest {
+            messages: vec![
+                Message::System(
+                    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
+                        .into(),
+                ),
+                Message::user_text(format!("First user message:\n\n{first_user_message}")),
+            ],
+            tools: Vec::new(),
+        }),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("title generation timed out"))??;
+    let ModelResponse::Assistant(blocks) = response;
+    let title = blocks
+        .into_iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text),
+            ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    sanitize_session_title(&title)
+        .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
+}
+
+fn sanitize_session_title(title: &str) -> Option<String> {
+    let title = title
+        .lines()
+        .find(|line| !line.trim().is_empty())?
+        .trim()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '*' | '#'))
+        .trim()
+        .trim_end_matches(['.', ':', ';'])
+        .trim();
+    if title.is_empty() {
+        return None;
+    }
+    let mut title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.chars().count() > 80 {
+        title = title.chars().take(79).collect();
+        title.push('…');
+    }
+    Some(title)
+}
+
 fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
     let masked = "•".repeat(secret.value.chars().count());
     vec![
@@ -2393,6 +2722,10 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn short_session_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 fn slash_command_args(input: &str) -> &str {
     let token_end = input
         .char_indices()
@@ -2487,12 +2820,35 @@ mod tests {
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
                 auth: "api-key".into(),
+                title_provider: None,
+                title_model: None,
+                title_auth: None,
                 session_id: None,
+                open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
             },
             store,
         )
+    }
+
+    #[test]
+    fn sanitizes_generated_session_title() {
+        assert_eq!(
+            sanitize_session_title("\"Implement resume picker.\""),
+            Some("Implement resume picker".into())
+        );
+        assert_eq!(sanitize_session_title("\n\n"), None);
+    }
+
+    #[test]
+    fn title_model_defaults_to_main_model() {
+        let app = test_app();
+
+        assert_eq!(
+            app.title_model_selection(),
+            ("openai".into(), "gpt-5.5".into(), "api-key".into())
+        );
     }
 
     #[test]
@@ -2742,6 +3098,7 @@ mod tests {
                 PickerItem {
                     label: "model-a".into(),
                     detail: None,
+                    preview: None,
                     badge: Some(PickerBadge {
                         text: "(selected)".into(),
                         tone: PickerBadgeTone::Selected,
@@ -2751,6 +3108,7 @@ mod tests {
                 PickerItem {
                     label: "model-b".into(),
                     detail: None,
+                    preview: None,
                     badge: None,
                     value: "model-b".into(),
                 },
@@ -2829,7 +3187,11 @@ mod tests {
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
                 auth: "api-key".into(),
+                title_provider: None,
+                title_model: None,
+                title_auth: None,
                 session_id: None,
+                open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
             },
@@ -2852,12 +3214,14 @@ mod tests {
                 PickerItem {
                     label: "openai/gpt-5.5".into(),
                     detail: None,
+                    preview: None,
                     badge: None,
                     value: "openai/gpt-5.5".into(),
                 },
                 PickerItem {
                     label: "openai-codex/gpt-5.4-mini".into(),
                     detail: None,
+                    preview: None,
                     badge: None,
                     value: "openai-codex/gpt-5.4-mini".into(),
                 },
@@ -2886,6 +3250,7 @@ mod tests {
             vec![PickerItem {
                 label: "test-skill".into(),
                 detail: Some("this detail is much too long for the available width".into()),
+                preview: None,
                 badge: None,
                 value: "test-skill".into(),
             }],
@@ -2913,6 +3278,7 @@ mod tests {
             vec![PickerItem {
                 label: "openai-codex/gpt-5.3-codex-max".into(),
                 detail: None,
+                preview: None,
                 badge: Some(PickerBadge {
                     text: "(selected)".into(),
                     tone: PickerBadgeTone::Selected,
@@ -2943,12 +3309,14 @@ mod tests {
                 PickerItem {
                     label: "model-a".into(),
                     detail: None,
+                    preview: None,
                     badge: None,
                     value: "model-a".into(),
                 },
                 PickerItem {
                     label: "model-b".into(),
                     detail: None,
+                    preview: None,
                     badge: None,
                     value: "model-b".into(),
                 },

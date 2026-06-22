@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 pub(super) struct ChatRequest {
     pub(super) model: String,
     pub(super) messages: Vec<OpenAiMessage>,
-    pub(super) tools: Vec<OpenAiTool>,
-    pub(super) tool_choice: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) tools: Option<Vec<OpenAiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) tool_choice: Option<&'static str>,
     pub(super) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) stream_options: Option<ChatStreamOptions>,

@@ -60,6 +60,11 @@ impl Agent {
         self
     }
 
+    pub fn replace_history(&mut self, history: Vec<Message>) {
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd);
+        self.messages.extend(history);
+    }
+
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
@@ -681,6 +686,25 @@ mod tests {
 
         assert_eq!(from_offset, "src/main.rs:10-end");
         assert_eq!(from_limit, "src/main.rs:1-20");
+    }
+
+    #[test]
+    fn replace_history_keeps_initial_system_message() {
+        let mut agent = test_agent(RecordingProvider::default());
+
+        agent.replace_history(vec![
+            Message::user_text("previous user"),
+            Message::assistant_text("previous assistant"),
+        ]);
+
+        assert_eq!(agent.messages.len(), 3);
+        assert!(matches!(agent.messages[0], Message::System(_)));
+        assert!(
+            matches!(agent.messages[1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous user"))
+        );
+        assert!(
+            matches!(agent.messages[2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous assistant"))
+        );
     }
 
     #[tokio::test]

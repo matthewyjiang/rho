@@ -87,14 +87,20 @@ async fn main() -> anyhow::Result<()> {
             println!("{answer}");
         }
         None => {
-            let session_id = if let Some(id) = &cli.resume {
-                let (session, history) = Session::open_by_id(&cwd, id)?;
-                let session_id = Some(session.id().to_string());
-                agent = agent.with_history(history);
-                agent.set_message_sink(move |message| session.append_message(message));
-                session_id
-            } else {
-                None
+            let mut open_resume_picker = false;
+            let session_id = match &cli.resume {
+                Some(Some(id)) => {
+                    let (session, history) = Session::open_by_id(&cwd, id)?;
+                    let session_id = Some(session.id().to_string());
+                    agent = agent.with_history(history);
+                    agent.set_message_sink(move |message| session.append_message(message));
+                    session_id
+                }
+                Some(None) => {
+                    open_resume_picker = true;
+                    None
+                }
+                None => None,
             };
             let tui_result = tui::run(
                 &mut agent,
@@ -104,7 +110,11 @@ async fn main() -> anyhow::Result<()> {
                     model: cfg.model,
                     reasoning: cfg.reasoning,
                     auth: cfg.auth,
+                    title_provider: cfg.title_provider,
+                    title_model: cfg.title_model,
+                    title_auth: cfg.title_auth,
                     session_id,
+                    open_resume_picker,
                     config_path,
                     auth_unavailable: missing_auth_error,
                 },
@@ -177,7 +187,7 @@ mod tests {
             model: None,
             config: None,
             auth: None,
-            resume: Some("session-id".into()),
+            resume: Some(Some("session-id".into())),
             command: Some(Command::Run {
                 stdin: true,
                 prompt: Vec::new(),

@@ -5,6 +5,7 @@ pub enum CommandId {
     Login,
     Logout,
     Model,
+    TitleModel,
     Resume,
     Config,
     Skills,
@@ -53,10 +54,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "show or switch model",
     },
     CommandSpec {
+        id: CommandId::TitleModel,
+        name: "title-model",
+        usage: "/title-model [model]",
+        description: "show or switch session title model",
+    },
+    CommandSpec {
         id: CommandId::Resume,
         name: "resume",
         usage: "/resume [id]",
-        description: "show resume help",
+        description: "resume a saved session",
     },
     CommandSpec {
         id: CommandId::Config,

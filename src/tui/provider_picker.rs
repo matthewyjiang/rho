@@ -7,6 +7,7 @@ pub(super) fn provider_picker(verb: &str, action: PickerAction) -> UiPicker {
         .map(|target| PickerItem {
             label: target.provider.clone(),
             detail: Some(target.label),
+            preview: None,
             badge: None,
             value: target.provider,
         })
