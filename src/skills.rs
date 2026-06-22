@@ -23,7 +23,9 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
         roots.push(home.join(".agents").join("skills"));
     }
     roots.extend(
-        cwd.ancestors()
+        crate::workspace::project_ancestor_dirs(cwd)
+            .into_iter()
+            .rev()
             .map(|path| path.join(".agents").join("skills")),
     );
 
@@ -227,6 +229,7 @@ mod tests {
         let project = TempDir::new().unwrap();
         let child = project.path().join("src/nested");
         std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir(project.path().join(".git")).unwrap();
         write_skill(
             project.path(),
             ".agents/skills/project-skill",
@@ -246,6 +249,7 @@ mod tests {
         let project = TempDir::new().unwrap();
         let child = project.path().join("src/nested");
         std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir(project.path().join(".git")).unwrap();
         write_skill(
             project.path(),
             ".agents/skills/dup-skill",

@@ -79,10 +79,8 @@ fn agent_instruction_files(cwd: &Path, home: Option<&Path>) -> Vec<(PathBuf, Str
         paths.push(home.join(".rho").join("AGENTS.md"));
     }
     paths.extend(
-        cwd.ancestors()
-            .collect::<Vec<_>>()
+        crate::workspace::project_ancestor_dirs(cwd)
             .into_iter()
-            .rev()
             .map(|path| path.join("AGENTS.md")),
     );
     read_existing_files(paths)
@@ -139,6 +137,7 @@ mod tests {
         std::fs::create_dir_all(&child).unwrap();
         std::fs::create_dir(home.path().join(".rho")).unwrap();
         std::fs::write(home.path().join(".rho").join("AGENTS.md"), "home rules").unwrap();
+        std::fs::create_dir(project.path().join(".git")).unwrap();
         std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
         std::fs::write(child.join("AGENTS.md"), "nested rules").unwrap();
 

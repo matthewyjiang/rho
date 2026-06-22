@@ -12,6 +12,7 @@ mod tool;
 mod tools;
 mod transcript;
 mod tui;
+mod workspace;
 
 use std::io::{self, IsTerminal, Read};
 
