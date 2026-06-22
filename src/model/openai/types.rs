@@ -7,6 +7,13 @@ pub(super) struct ChatRequest {
     pub(super) tools: Vec<OpenAiTool>,
     pub(super) tool_choice: &'static str,
     pub(super) stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) stream_options: Option<ChatStreamOptions>,
+}
+
+#[derive(Serialize)]
+pub(super) struct ChatStreamOptions {
+    pub(super) include_usage: bool,
 }
 
 #[derive(Serialize, Deserialize)]

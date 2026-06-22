@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::model::{
     ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
+    ModelUsage,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -12,8 +13,6 @@ pub enum AgentError {
     Provider(#[from] ModelError),
     #[error("Tool error: {0}")]
     Tool(#[from] ToolError),
-    #[error("Unknown tool: {0}")]
-    UnknownTool(String),
     #[error("Message persistence error: {0}")]
     MessagePersistence(#[from] anyhow::Error),
 }
@@ -23,6 +22,7 @@ pub enum AgentEvent {
     StepStarted(usize),
     OutputDelta(String),
     ReasoningDelta(String),
+    Usage(ModelUsage),
     ToolFinished {
         name: String,
         command: Option<String>,
@@ -58,6 +58,10 @@ impl Agent {
     pub fn with_history(mut self, history: Vec<Message>) -> Self {
         self.messages.extend(history);
         self
+    }
+
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
     }
 
     pub fn set_message_sink(
@@ -100,20 +104,6 @@ impl Agent {
         Ok(())
     }
 
-    fn push_skipped_tool_results(
-        &mut self,
-        tool_calls: &[crate::tool::ToolCall],
-    ) -> Result<(), AgentError> {
-        for call in tool_calls {
-            self.push_message(Message::ToolResult(ToolResult {
-                id: call.id.clone(),
-                ok: false,
-                content: "Skipped because an earlier tool call failed".into(),
-            }))?;
-        }
-        Ok(())
-    }
-
     pub async fn run_with_events(
         &mut self,
         user_prompt: String,
@@ -137,6 +127,7 @@ impl Agent {
                         ModelEvent::ReasoningDelta(text) => {
                             on_event(AgentEvent::ReasoningDelta(text))
                         }
+                        ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
                     },
                 )
                 .await
@@ -176,7 +167,7 @@ impl Agent {
 
                     self.push_message(Message::Assistant(blocks))?;
                     let mut tool_events = Vec::new();
-                    for (index, call) in tool_calls.iter().cloned().enumerate() {
+                    for call in tool_calls.iter().cloned() {
                         let name = call.name.clone();
                         let (result, display_style, command, event_content, display_lines) =
                             match self.tools.get(&call.name) {
@@ -194,32 +185,36 @@ impl Agent {
                                         .await
                                     {
                                         Ok(result) => result,
-                                        Err(err) => {
-                                            let result = ToolResult {
-                                                id: call.id,
-                                                ok: false,
-                                                content: err.to_string(),
-                                            };
-                                            self.push_message(Message::ToolResult(result.clone()))?;
-                                            self.push_skipped_tool_results(
-                                                &tool_calls[index + 1..],
-                                            )?;
-                                            return Err(AgentError::Tool(err));
-                                        }
+                                        Err(err) => ToolResult {
+                                            id: call.id.clone(),
+                                            ok: false,
+                                            content: err.to_string(),
+                                        },
                                     };
-                                    let display_lines =
+                                    let mut display_lines =
                                         tool.display_lines(&call.arguments, &self.ctx, &result);
+                                    if !result.ok
+                                        && !display_lines.iter().any(|line| line == &result.content)
+                                    {
+                                        display_lines.push(result.content.clone());
+                                    }
                                     (result, display_style, command, event_content, display_lines)
                                 }
                                 None => {
                                     let result = ToolResult {
-                                        id: call.id,
+                                        id: call.id.clone(),
                                         ok: false,
                                         content: format!("Unknown tool: {}", call.name),
                                     };
-                                    self.push_message(Message::ToolResult(result))?;
-                                    self.push_skipped_tool_results(&tool_calls[index + 1..])?;
-                                    return Err(AgentError::UnknownTool(call.name));
+                                    let display_lines =
+                                        vec![call.name.clone(), result.content.clone()];
+                                    (
+                                        result,
+                                        ToolDisplayStyle::default_tool(),
+                                        None,
+                                        None,
+                                        display_lines,
+                                    )
                                 }
                             };
                         let display_content =
@@ -255,7 +250,10 @@ fn initial_messages(tools: &ToolRegistry, cwd: &std::path::Path) -> Vec<Message>
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
 
     use async_trait::async_trait;
 
@@ -284,7 +282,7 @@ mod tests {
         test_agent_with_tools(provider, ToolRegistry::new())
     }
 
-    fn test_agent_with_tools(provider: RecordingProvider, tools: ToolRegistry) -> Agent {
+    fn test_agent_with_tools(provider: impl ModelProvider + 'static, tools: ToolRegistry) -> Agent {
         Agent::new(
             Box::new(provider),
             tools,
@@ -334,6 +332,19 @@ mod tests {
         }
     }
 
+    struct SequencedProvider {
+        requests: Arc<Mutex<Vec<Vec<Message>>>>,
+        responses: Mutex<VecDeque<ModelResponse>>,
+    }
+
+    #[async_trait(?Send)]
+    impl ModelProvider for SequencedProvider {
+        async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            self.requests.lock().unwrap().push(request.messages);
+            Ok(self.responses.lock().unwrap().pop_front().unwrap())
+        }
+    }
+
     struct OkTool;
 
     #[async_trait]
@@ -357,6 +368,28 @@ mod tests {
                 ok: true,
                 content: "tool ok".into(),
             })
+        }
+    }
+
+    struct FailingTool;
+
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "failing_tool".into(),
+                description: "test failing tool".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }
+        }
+
+        async fn call(
+            &self,
+            _args: serde_json::Value,
+            _ctx: ToolContext,
+            _id: String,
+        ) -> Result<ToolResult, ToolError> {
+            Err(ToolError::Message("tool failed".into()))
         }
     }
 
@@ -507,6 +540,74 @@ mod tests {
             .filter(|message| matches!(message, Message::ToolResult(_)))
             .count();
         assert_eq!(tool_result_count, 2);
+    }
+
+    #[tokio::test]
+    async fn tool_errors_are_returned_to_model_without_stopping_loop() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call_1".into(),
+            name: "failing_tool".into(),
+            arguments: serde_json::json!({}),
+        })]);
+        let provider = SequencedProvider {
+            requests: requests.clone(),
+            responses: Mutex::new(VecDeque::from([
+                response,
+                ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
+            ])),
+        };
+        let mut tools = ToolRegistry::new();
+        tools.register(FailingTool);
+        let mut agent = test_agent_with_tools(provider, tools);
+        let mut tool_events = Vec::new();
+
+        let output = agent
+            .run_with_events("run tool".into(), |event| {
+                if let AgentEvent::ToolFinished { ok, content, .. } = event {
+                    tool_events.push((ok, content));
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(output, "recovered");
+        assert_eq!(tool_events, vec![(false, "tool failed".into())]);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(matches!(
+            requests[1].last(),
+            Some(Message::ToolResult(ToolResult { ok: false, content, .. })) if content == "tool failed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_are_returned_to_model_without_stopping_loop() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call_1".into(),
+            name: "missing_tool".into(),
+            arguments: serde_json::json!({}),
+        })]);
+        let provider = SequencedProvider {
+            requests: requests.clone(),
+            responses: Mutex::new(VecDeque::from([
+                response,
+                ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
+            ])),
+        };
+        let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+
+        let output = agent.run("run tool".into()).await.unwrap();
+
+        assert_eq!(output, "recovered");
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(matches!(
+            requests[1].last(),
+            Some(Message::ToolResult(ToolResult { ok: false, content, .. })) if content == "Unknown tool: missing_tool"
+        ));
     }
 
     #[test]

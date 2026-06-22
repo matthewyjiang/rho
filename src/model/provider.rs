@@ -4,22 +4,15 @@ use crate::model::{
     AuthMode, DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
     OpenAiProvider,
 };
-
-pub fn reasoning_config_value(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
+use crate::reasoning::ReasoningLevel;
 
 pub fn build_provider(
     provider: &str,
     model: &str,
-    reasoning_effort: Option<String>,
-    reasoning_summary: Option<String>,
+    reasoning: ReasoningLevel,
 ) -> Result<DynModelProvider, ModelError> {
+    let reasoning_effort = reasoning.effort().map(str::to_string);
+    let reasoning_summary = reasoning.summary().map(str::to_string);
     let provider = match provider {
         "openai" => OpenAiProvider::new_with_reasoning(
             model.to_string(),

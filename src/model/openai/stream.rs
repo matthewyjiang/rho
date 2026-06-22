@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 
-use crate::model::{ContentBlock, ModelError, ModelEvent, ModelResponse};
+use crate::model::{ContentBlock, ModelError, ModelEvent, ModelResponse, ModelUsage};
 use crate::tool::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
@@ -36,6 +36,9 @@ pub(super) fn handle_openai_stream_line(
     let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
         return Ok(());
     };
+    if let Some(usage) = extract_usage(&value) {
+        on_event(ModelEvent::Usage(usage))?;
+    }
     let Some(choice) = value
         .get("choices")
         .and_then(|v| v.as_array())
@@ -288,10 +291,19 @@ pub(super) fn handle_codex_sse_line(
         if let Some(call) = extract_codex_function_call(value.get("item").unwrap_or(&value))? {
             state.tool_calls.push(call);
         }
-    } else if event_type == "response.completed"
-        && state.text.is_empty()
-        && state.tool_calls.is_empty()
-    {
+    } else if event_type == "response.completed" {
+        if let Some(usage) = value
+            .get("response")
+            .and_then(extract_usage)
+            .or_else(|| extract_usage(&value))
+        {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::Usage(usage))?;
+            }
+        }
+        if !state.text.is_empty() || !state.tool_calls.is_empty() {
+            return Ok(());
+        }
         if let Some(output) = value
             .get("response")
             .and_then(|response| response.get("output"))
@@ -312,6 +324,70 @@ pub(super) fn handle_codex_sse_line(
         }
     }
     Ok(())
+}
+
+fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
+    let usage = value.get("usage")?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(|v| v.as_u64());
+    let output_tokens = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(|v| v.as_u64());
+    let total_tokens = usage.get("total_tokens").and_then(|v| v.as_u64());
+    let input_details = usage
+        .get("input_tokens_details")
+        .or_else(|| usage.get("prompt_tokens_details"));
+    let cache_read_tokens = input_details
+        .and_then(|v| {
+            v.get("cached_tokens")
+                .or_else(|| v.get("cache_read_tokens"))
+                .or_else(|| v.get("cached_input_tokens"))
+        })
+        .and_then(|v| v.as_u64());
+    let cache_write_tokens = input_details
+        .and_then(|v| {
+            v.get("cache_write_tokens")
+                .or_else(|| v.get("cache_creation_input_tokens"))
+                .or_else(|| v.get("cache_creation_tokens"))
+        })
+        .and_then(|v| v.as_u64());
+    let context_window = usage
+        .get("context_window")
+        .or_else(|| usage.get("context_window_tokens"))
+        .and_then(|v| v.as_u64());
+    let cost_usd_micros = usage
+        .get("cost_usd")
+        .or_else(|| usage.get("estimated_cost_usd"))
+        .or_else(|| usage.get("cost"))
+        .or_else(|| usage.get("estimated_cost"))
+        .and_then(parse_usd_micros);
+
+    Some(ModelUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
+        context_window,
+        cost_usd_micros,
+    })
+}
+
+fn parse_usd_micros(value: &serde_json::Value) -> Option<u64> {
+    let dollars = value.as_f64().or_else(|| {
+        value
+            .as_str()?
+            .trim_start_matches('$')
+            .replace(',', "")
+            .parse()
+            .ok()
+    })?;
+    dollars
+        .is_finite()
+        .then(|| (dollars.max(0.0) * 1_000_000.0).round() as u64)
 }
 
 #[cfg(test)]

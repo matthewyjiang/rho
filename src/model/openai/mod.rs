@@ -18,7 +18,7 @@ use stream::{
     collect_codex_sse_response, convert_streamed_response, handle_openai_stream_line,
     trim_sse_line_end,
 };
-use types::{ChatRequest, ChatResponse};
+use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 
 use crate::{
     credentials::CodexTokens,
@@ -115,6 +115,7 @@ impl OpenAiProvider {
                 tools,
                 tool_choice: "auto",
                 stream: false,
+                stream_options: None,
             })
             .send()
             .await?
@@ -147,6 +148,9 @@ impl OpenAiProvider {
                 tools,
                 tool_choice: "auto",
                 stream: true,
+                stream_options: Some(ChatStreamOptions {
+                    include_usage: true,
+                }),
             })
             .send()
             .await?
@@ -294,6 +298,31 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_level_maps_to_codex_reasoning_param() {
+        assert!(codex_reasoning_param(
+            crate::reasoning::ReasoningLevel::Off.effort(),
+            crate::reasoning::ReasoningLevel::Off.summary()
+        )
+        .is_none());
+        assert_eq!(
+            codex_reasoning_param(
+                crate::reasoning::ReasoningLevel::Minimal.effort(),
+                crate::reasoning::ReasoningLevel::Minimal.summary()
+            )
+            .unwrap(),
+            json!({"effort":"low","summary":"auto"})
+        );
+        assert_eq!(
+            codex_reasoning_param(
+                crate::reasoning::ReasoningLevel::Xhigh.effort(),
+                crate::reasoning::ReasoningLevel::Xhigh.summary()
+            )
+            .unwrap(),
+            json!({"effort":"xhigh","summary":"auto"})
+        );
+    }
+
+    #[test]
     fn extracts_sse_delta_text() {
         let body = concat!(
             "event: response.output_text.delta\n",
@@ -316,6 +345,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::Usage(_) => {}
                 }
                 Ok(())
             }),
@@ -338,6 +368,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::Usage(_) => {},
                 }
                 Ok(())
             }),
@@ -359,6 +390,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::Usage(_) => {}
                 }
                 Ok(())
             }),
@@ -408,6 +440,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::Usage(_) => {}
                 }
                 Ok(())
             },
@@ -460,6 +493,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::Usage(_) => {}
                 }
                 Ok(())
             },

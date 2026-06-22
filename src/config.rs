@@ -2,14 +2,15 @@ use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::reasoning::ReasoningLevel;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub provider: String,
     pub model: String,
     pub max_output_bytes: usize,
     pub auth: String,
-    pub reasoning_effort: String,
-    pub reasoning_summary: String,
+    pub reasoning: ReasoningLevel,
 }
 
 impl Default for Config {
@@ -19,8 +20,7 @@ impl Default for Config {
             model: "gpt-5.5".into(),
             max_output_bytes: 12000,
             auth: "api-key".into(),
-            reasoning_effort: "medium".into(),
-            reasoning_summary: "auto".into(),
+            reasoning: ReasoningLevel::Medium,
         }
     }
 }
@@ -54,11 +54,10 @@ impl Config {
         if let Some(v) = file.auth {
             cfg.auth = v;
         }
-        if let Some(v) = file.reasoning_effort {
-            cfg.reasoning_effort = v;
-        }
-        if let Some(v) = file.reasoning_summary {
-            cfg.reasoning_summary = v;
+        if let Some(v) = file.reasoning {
+            cfg.reasoning = v;
+        } else if let Some(v) = file.reasoning_effort {
+            cfg.reasoning = v.parse()?;
         }
         Ok(cfg)
     }
@@ -79,6 +78,6 @@ struct PartialConfig {
     model: Option<String>,
     max_output_bytes: Option<usize>,
     auth: Option<String>,
+    reasoning: Option<ReasoningLevel>,
     reasoning_effort: Option<String>,
-    reasoning_summary: Option<String>,
 }

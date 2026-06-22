@@ -26,6 +26,7 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 crossterm = "0.29.0"
 futures-util = "0.3"
 regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 keyring = "4.1.2"
 rand = "0.8"
 sha2 = "0.10"

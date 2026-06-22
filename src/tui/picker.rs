@@ -35,6 +35,7 @@ pub(super) enum PickerAction {
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
+    Config,
 }
 
 impl UiPicker {

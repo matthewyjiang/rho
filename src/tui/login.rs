@@ -206,25 +206,21 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let new_provider = match build_provider(
-            &self.info.provider,
-            &self.info.model,
-            reasoning_config_value(&self.info.reasoning_effort),
-            reasoning_config_value(&self.info.reasoning_summary),
-        ) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "stored credentials, but could not refresh {}: {err}",
-                        target.provider
-                    )),
-                )?;
-                self.status = "login saved".into();
-                return Ok(());
-            }
-        };
+        let new_provider =
+            match build_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!(
+                            "stored credentials, but could not refresh {}: {err}",
+                            target.provider
+                        )),
+                    )?;
+                    self.status = "login saved".into();
+                    return Ok(());
+                }
+            };
 
         agent.replace_provider(new_provider);
         self.info.auth = target.auth.clone();
@@ -241,12 +237,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let model = catalog::default_model_for_provider(&target.provider)
             .unwrap_or_else(|| self.info.model.clone());
-        let new_provider = match build_provider(
-            &target.provider,
-            &model,
-            reasoning_config_value(&self.info.reasoning_effort),
-            reasoning_config_value(&self.info.reasoning_summary),
-        ) {
+        let new_provider = match build_provider(&target.provider, &model, self.info.reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(

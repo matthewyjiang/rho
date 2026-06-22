@@ -62,7 +62,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Config,
         name: "config",
         usage: "/config",
-        description: "show configuration",
+        description: "open configuration picker",
     },
     CommandSpec {
         id: CommandId::Skills,

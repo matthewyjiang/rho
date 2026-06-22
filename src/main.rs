@@ -6,6 +6,7 @@ mod config;
 mod credentials;
 mod model;
 mod prompt;
+mod reasoning;
 mod session;
 mod skills;
 mod tool;
@@ -21,7 +22,7 @@ use clap::Parser;
 use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
-use model::{build_provider, reasoning_config_value, ModelError, UnavailableProvider};
+use model::{build_provider, ModelError, UnavailableProvider};
 use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
@@ -59,12 +60,7 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    let provider_result = build_provider(
-        &cfg.provider,
-        &cfg.model,
-        reasoning_config_value(&cfg.reasoning_effort),
-        reasoning_config_value(&cfg.reasoning_summary),
-    );
+    let provider_result = build_provider(&cfg.provider, &cfg.model, cfg.reasoning);
     let missing_auth_error = provider_result
         .as_ref()
         .err()
@@ -106,8 +102,7 @@ async fn main() -> anyhow::Result<()> {
                     cwd,
                     provider: cfg.provider,
                     model: cfg.model,
-                    reasoning_effort: cfg.reasoning_effort,
-                    reasoning_summary: cfg.reasoning_summary,
+                    reasoning: cfg.reasoning,
                     auth: cfg.auth,
                     session_id,
                     config_path,
