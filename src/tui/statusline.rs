@@ -3,12 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ratatui::{
-    style::{Color, Style},
-    text::{Line, Span},
-};
+use ratatui::text::{Line, Span};
 
-use super::TuiInfo;
+use super::{theme::Theme, TuiInfo};
 use crate::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,7 +210,7 @@ fn compact_number(value: u64) -> String {
 }
 
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
-    let style = Style::default().fg(Color::DarkGray);
+    let style = Theme::dim();
     if right.is_empty() {
         return Line::from(Span::styled(truncate_one_line(&left, width), style));
     }

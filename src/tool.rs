@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,50 +29,33 @@ pub struct ToolResult {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ToolRgb(pub u8, pub u8, pub u8);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ToolDisplayStyle {
-    pub foreground: ToolRgb,
-    pub success_background: ToolRgb,
-    pub failure_background: ToolRgb,
+pub enum ToolDisplayStyle {
+    DefaultTool,
+    FileOrCommand,
+    Skill,
 }
 
 impl ToolDisplayStyle {
-    pub const fn new(
-        foreground: ToolRgb,
-        success_background: ToolRgb,
-        failure_background: ToolRgb,
-    ) -> Self {
-        Self {
-            foreground,
-            success_background,
-            failure_background,
-        }
-    }
-
     pub const fn default_tool() -> Self {
-        Self::new(
-            ToolRgb(255, 215, 0),
-            ToolRgb(48, 45, 30),
-            ToolRgb(95, 36, 36),
-        )
+        Self::DefaultTool
     }
 
     pub const fn file_or_command() -> Self {
-        Self::new(
-            ToolRgb(255, 255, 255),
-            ToolRgb(25, 75, 45),
-            ToolRgb(95, 36, 36),
-        )
+        Self::FileOrCommand
     }
 
     pub const fn skill() -> Self {
-        Self::new(
-            ToolRgb(255, 255, 255),
-            ToolRgb(92, 80, 140),
-            ToolRgb(95, 36, 36),
-        )
+        Self::Skill
+    }
+
+    pub fn for_tool_name(name: &str) -> Self {
+        match name {
+            "bash" | "edit_file" | "list_dir" | "read_file" | "write_file" => {
+                Self::file_or_command()
+            }
+            "skill" => Self::skill(),
+            _ => Self::default_tool(),
+        }
     }
 }
 
@@ -171,12 +157,36 @@ pub fn resolve_path(cwd: &std::path::Path, path: &str) -> PathBuf {
 }
 
 pub fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
-    let path = resolve_path(cwd, path);
-    path.strip_prefix(cwd)
+    let cwd = normalize_path(cwd);
+    let path = normalize_path(&resolve_path(&cwd, path));
+    path.strip_prefix(&cwd)
         .ok()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| path.display().to_string())
+        .map(|path| {
+            if path.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                path.display().to_string()
+            }
+        })
         .unwrap_or_else(|| path.display().to_string())
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !path.is_absolute() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 pub fn truncate(mut s: String, max: usize) -> String {
@@ -200,6 +210,45 @@ fn previous_char_boundary(s: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_display_style_is_recovered_from_tool_name() {
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("read_file"),
+            ToolDisplayStyle::FileOrCommand
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("bash"),
+            ToolDisplayStyle::FileOrCommand
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("skill"),
+            ToolDisplayStyle::Skill
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("custom"),
+            ToolDisplayStyle::DefaultTool
+        );
+    }
+
+    #[test]
+    fn compact_display_path_renders_cwd_as_dot() {
+        let cwd = Path::new("/home/emgym/rho");
+
+        assert_eq!(compact_display_path(cwd, "/home/emgym/rho/."), ".");
+        assert_eq!(compact_display_path(cwd, "."), ".");
+    }
+
+    #[test]
+    fn compact_display_path_normalizes_relative_children() {
+        let cwd = Path::new("/home/emgym/rho");
+
+        assert_eq!(
+            compact_display_path(cwd, "/home/emgym/rho/src/../Cargo.toml"),
+            "Cargo.toml"
+        );
+        assert_eq!(compact_display_path(cwd, "./src"), "src");
+    }
 
     #[test]
     fn truncate_keeps_ascii_prefix() {

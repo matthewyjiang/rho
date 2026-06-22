@@ -27,6 +27,7 @@ use ratatui::{
 };
 mod config_picker;
 mod login;
+mod markdown;
 mod model_picker;
 mod picker;
 mod provider_picker;
@@ -35,7 +36,9 @@ mod session_picker;
 mod skill_picker;
 mod statusline;
 mod stream;
+mod theme;
 
+use markdown::push_wrapped_markdown;
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
     entry_lines, input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
@@ -43,6 +46,7 @@ use render::{
 };
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
+use theme::Theme;
 
 use crate::{
     agent::{Agent, AgentEvent, SessionHistorySink},
@@ -99,6 +103,7 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
+    Theme::initialize_from_terminal();
     execute!(std::io::stdout(), EnableBracketedPaste)?;
     enable_modified_keys()?;
     execute!(
@@ -124,6 +129,7 @@ struct App {
     should_quit: bool,
     ctrl_c_streak: u8,
     assistant_stream: AppendOnlyStream,
+    assistant_stream_in_code_block: bool,
     reasoning_stream: AppendOnlyStream,
     current_stream_kind: Option<StreamKind>,
     current_turn_start: Option<usize>,
@@ -250,10 +256,8 @@ fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDel
 impl StreamKind {
     fn style(self) -> Style {
         match self {
-            Self::Assistant => Style::default(),
-            Self::Reasoning => Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
+            Self::Assistant => Theme::text(),
+            Self::Reasoning => Theme::dim().add_modifier(Modifier::DIM),
         }
     }
 
@@ -424,6 +428,7 @@ impl App {
             should_quit: false,
             ctrl_c_streak: 0,
             assistant_stream: AppendOnlyStream::default(),
+            assistant_stream_in_code_block: false,
             reasoning_stream: AppendOnlyStream::default(),
             current_stream_kind: None,
             current_turn_start: None,
@@ -1366,6 +1371,7 @@ impl App {
 
     fn reset_streams(&mut self) {
         self.assistant_stream.reset();
+        self.assistant_stream_in_code_block = false;
         self.reasoning_stream.reset();
         self.current_stream_kind = None;
     }
@@ -1513,13 +1519,22 @@ impl App {
                 lines.push(Line::raw(""));
             }
             let mut text_lines = Vec::new();
-            push_wrapped_text(
-                &mut text_lines,
-                render_text,
-                padded_content_width(width),
-                style,
-                LineFill::Natural,
-            );
+            if matches!(kind, StreamKind::Assistant) {
+                push_wrapped_markdown(
+                    &mut text_lines,
+                    render_text,
+                    padded_content_width(width),
+                    &mut self.assistant_stream_in_code_block,
+                );
+            } else {
+                push_wrapped_text(
+                    &mut text_lines,
+                    render_text,
+                    padded_content_width(width),
+                    style,
+                    LineFill::Natural,
+                );
+            }
             lines.extend(text_lines.into_iter().map(pad_display_line));
             insert_history_lines(terminal, lines)?;
             self.last_inserted_was_tool = false;
@@ -2214,9 +2229,9 @@ impl App {
         }
 
         let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
-            Style::default().fg(Color::Blue)
+            Theme::input_prompt()
         } else {
-            Style::default().fg(Color::DarkGray)
+            Theme::dim()
         };
         let divider = Line::styled("─".repeat(width.max(1)), divider_style);
         let composer_lines = self.composer_lines(width);
@@ -2307,11 +2322,9 @@ impl App {
                 let description = truncate_one_line(&command.description, description_width);
                 let text = format!("{marker} {usage:<usage_width$} {description}");
                 let style = if selected {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+                    Theme::brand()
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Theme::dim()
                 };
                 styled_line(text, width.max(1), style, LineFill::Natural)
             })
@@ -2378,10 +2391,7 @@ impl App {
             previous_was_tool = matches!(entry, Entry::Tool { .. });
         }
 
-        let divider = Line::styled(
-            "─".repeat(width.max(1)),
-            Style::default().fg(Color::DarkGray),
-        );
+        let divider = Line::styled("─".repeat(width.max(1)), Theme::dim());
         lines.push(divider.clone());
         if matches!(self.composer, ComposerMode::SecretInput(_)) {
             lines.push(Line::raw("[secret input omitted]"));
@@ -2517,13 +2527,14 @@ fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
                 let name = pending_tool_names
                     .pop_front()
                     .unwrap_or_else(|| "tool".into());
+                let display_style = ToolDisplayStyle::for_tool_name(&name);
                 let mut display_lines = vec![name];
                 if !result.content.trim().is_empty() {
                     display_lines.push(result.content.clone());
                 }
                 entries.push(Entry::Tool {
                     ok: result.ok,
-                    display_style: ToolDisplayStyle::default_tool(),
+                    display_style,
                     display_lines,
                     expanded: false,
                 });
@@ -2615,10 +2626,10 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
                 secret.target.provider
             ),
             width,
-            Style::default().fg(Color::DarkGray),
+            Theme::dim(),
             LineFill::Natural,
         ),
-        styled_line(masked, width, Style::default(), LineFill::Natural),
+        styled_line(masked, width, Theme::text(), LineFill::Natural),
     ]
 }
 
@@ -2692,15 +2703,10 @@ fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Lin
         styled_line(
             format!("edit {label}  enter save, esc cancel"),
             width,
-            Style::default().fg(Color::DarkGray),
+            Theme::dim(),
             LineFill::Natural,
         ),
-        styled_line(
-            input.value.clone(),
-            width,
-            Style::default(),
-            LineFill::Natural,
-        ),
+        styled_line(input.value.clone(), width, Theme::text(), LineFill::Natural),
     ]
 }
 
@@ -2708,7 +2714,7 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
     vec![styled_line(
         format!("waiting for {} browser login  esc cancel", target.provider),
         width,
-        Style::default().fg(Color::DarkGray),
+        Theme::dim(),
         LineFill::Natural,
     )]
 }
@@ -3139,9 +3145,13 @@ mod tests {
         assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
         assert!(matches!(
             entries[2],
-            Entry::Tool { ok: false, ref display_lines, .. }
+            Entry::Tool { ok: false, display_style: ToolDisplayStyle::FileOrCommand, ref display_lines, .. }
                 if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
         ));
+        let lines = entry_lines(&entries[2], 40, 10);
+        assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Red));
+        assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -3172,7 +3182,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_tool_block_shows_single_lavender_status_line() {
+    fn skill_tool_block_shows_single_magenta_status_line() {
         let lines = entry_lines(
             &Entry::Tool {
                 ok: true,
@@ -3185,13 +3195,15 @@ mod tests {
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(92, 80, 140)));
+        assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Magenta));
+        assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
         assert!(rendered.contains("skill caveman"));
         assert_eq!(rendered.matches("skill").count(), 1);
     }
 
     #[test]
-    fn skill_tool_block_uses_red_failure_background() {
+    fn skill_tool_block_uses_subtle_red_failure_background() {
         let lines = entry_lines(
             &Entry::Tool {
                 ok: false,
@@ -3203,7 +3215,9 @@ mod tests {
             10,
         );
 
-        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Rgb(95, 36, 36)));
+        assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::Red));
+        assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
