@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::reasoning::ReasoningLevel;
+use crate::{agent::CompactionConfig, reasoning::ReasoningLevel};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -12,6 +12,9 @@ pub struct Config {
     pub max_tool_output_lines: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
+    pub auto_compact: bool,
+    pub compact_threshold_percent: u8,
+    pub compact_recent_messages: usize,
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
@@ -26,6 +29,9 @@ impl Default for Config {
             max_tool_output_lines: 10,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
+            auto_compact: false,
+            compact_threshold_percent: 85,
+            compact_recent_messages: 8,
             title_provider: None,
             title_model: None,
             title_auth: None,
@@ -70,6 +76,15 @@ impl Config {
         } else if let Some(v) = file.reasoning_effort {
             cfg.reasoning = v.parse()?;
         }
+        if let Some(v) = file.auto_compact {
+            cfg.auto_compact = v;
+        }
+        if let Some(v) = file.compact_threshold_percent {
+            cfg.compact_threshold_percent = v.clamp(1, 100);
+        }
+        if let Some(v) = file.compact_recent_messages {
+            cfg.compact_recent_messages = v.max(1);
+        }
         if let Some(v) = file.title_provider {
             cfg.title_provider = Some(v);
         }
@@ -92,6 +107,16 @@ impl Config {
     }
 }
 
+impl From<&Config> for CompactionConfig {
+    fn from(config: &Config) -> Self {
+        Self {
+            auto_compact: config.auto_compact,
+            threshold_percent: config.compact_threshold_percent,
+            recent_messages: config.compact_recent_messages,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct PartialConfig {
     provider: Option<String>,
@@ -101,6 +126,9 @@ struct PartialConfig {
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
     reasoning_effort: Option<String>,
+    auto_compact: Option<bool>,
+    compact_threshold_percent: Option<u8>,
+    compact_recent_messages: Option<usize>,
     title_provider: Option<String>,
     title_model: Option<String>,
     title_auth: Option<String>,

@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         max_output_bytes: cfg.max_output_bytes,
     };
     let mut agent = Agent::new(provider, registry, ctx);
+    agent.set_compaction_config((&cfg).into());
 
     match run_prompt {
         Some(prompt) => {
@@ -93,7 +94,12 @@ async fn main() -> anyhow::Result<()> {
                     let (session, history) = Session::open_by_id(&cwd, id)?;
                     let session_id = Some(session.id().to_string());
                     agent = agent.with_history(history);
+                    agent.set_session_id(session_id.clone());
+                    let history_session = session.clone();
                     agent.set_message_sink(move |message| session.append_message(message));
+                    agent.set_history_replacement_sink(move |messages| {
+                        history_session.replace_history(messages)
+                    });
                     session_id
                 }
                 Some(None) => {

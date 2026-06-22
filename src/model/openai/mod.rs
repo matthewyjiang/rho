@@ -1,15 +1,22 @@
+use std::sync::Mutex;
+
 use futures_util::StreamExt;
-use serde_json::json;
+use serde_json::{json, Value};
 
 mod auth;
+pub mod cache;
+mod codex_ws;
 mod convert;
 mod stream;
 mod types;
+
+pub use cache::prompt_cache_key_from_session_id;
 
 use auth::{
     load_api_key_auth, load_codex_auth, load_codex_tokens_for_request, refresh_codex_token, Auth,
     CodexAuthSource,
 };
+use codex_ws::{CodexContinuationCandidate, CodexContinuationState};
 use convert::{
     codex_input_items, codex_reasoning_param, convert_openai_response, to_openai_message,
     to_openai_tool, to_responses_tool,
@@ -32,6 +39,7 @@ pub struct OpenAiProvider {
     model: String,
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
+    codex_continuation: Mutex<CodexContinuationState>,
 }
 
 impl OpenAiProvider {
@@ -56,6 +64,7 @@ impl OpenAiProvider {
             model,
             reasoning_effort,
             reasoning_summary,
+            codex_continuation: Mutex::new(CodexContinuationState::default()),
         })
     }
 }
@@ -224,45 +233,36 @@ impl OpenAiProvider {
         source: CodexAuthSource,
         mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
     ) -> Result<ModelResponse, ModelError> {
-        let mut instructions = Vec::new();
-        let input = codex_input_items(request.messages, &mut instructions)?;
-        let tools: Vec<_> = request.tools.into_iter().map(to_responses_tool).collect();
-        let instructions = instructions.join("\n\n");
+        let body = build_codex_responses_body(
+            &self.model,
+            request,
+            self.reasoning_effort.as_deref(),
+            self.reasoning_summary.as_deref(),
+        )?;
+        let continuation_candidate = CodexContinuationCandidate::from_responses_body(&body)?;
+        self.prepare_codex_sse_fallback(&continuation_candidate)?;
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
-        let make_body = || {
-            let mut body = json!({
-                "model": self.model,
-                "instructions": instructions,
-                "input": input,
-                "store": false,
-                "stream": true
-            });
-            if !tools.is_empty() {
-                body["tools"] = json!(tools);
-                body["tool_choice"] = json!("auto");
-            }
-            if let Some(reasoning) = codex_reasoning_param(
-                self.reasoning_effort.as_deref(),
-                self.reasoning_summary.as_deref(),
-            ) {
-                body["reasoning"] = reasoning;
-            }
-            body
-        };
         let make_request = |token: &str| {
             self.client
                 .post(&url)
                 .bearer_auth(token)
                 .header("User-Agent", "codex-cli")
                 .header("originator", "codex_cli_rs")
-                .json(&make_body())
+                .json(&body)
         };
         let mut req = make_request(&tokens.access_token);
         if let Some(account_id) = tokens.account_id.as_deref() {
             req = req.header("ChatGPT-Account-ID", account_id);
         }
-        let response = req.send().await?;
+        let response = match req.send().await {
+            Ok(response) => response,
+            Err(err) => {
+                self.reset_codex_continuation()?;
+                return Err(err.into());
+            }
+        };
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.reset_codex_continuation()?;
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
                 let refreshed =
                     refresh_codex_token(&self.client, refresh_token, source, &tokens).await?;
@@ -270,22 +270,114 @@ impl OpenAiProvider {
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);
                 }
-                let response = req.send().await?;
+                let response = match req.send().await {
+                    Ok(response) => response,
+                    Err(err) => {
+                        self.reset_codex_continuation()?;
+                        return Err(err.into());
+                    }
+                };
                 if !response.status().is_success() {
+                    self.reset_codex_continuation()?;
                     let status = response.status();
                     let body = response.text().await.unwrap_or_default();
                     return Err(ModelError::HttpStatus { status, body });
                 }
-                return collect_codex_sse_response(response, &mut on_event).await;
+                return self
+                    .collect_codex_sse_response(response, &mut on_event, &continuation_candidate)
+                    .await;
             }
         }
         if !response.status().is_success() {
+            self.reset_codex_continuation()?;
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(ModelError::HttpStatus { status, body });
         }
-        collect_codex_sse_response(response, &mut on_event).await
+        self.collect_codex_sse_response(response, &mut on_event, &continuation_candidate)
+            .await
     }
+
+    async fn collect_codex_sse_response(
+        &self,
+        response: reqwest::Response,
+        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        continuation_candidate: &CodexContinuationCandidate,
+    ) -> Result<ModelResponse, ModelError> {
+        match collect_codex_sse_response(response, on_event).await {
+            Ok(output) => {
+                self.record_codex_continuation_success(continuation_candidate, output.response_id)?;
+                Ok(output.response)
+            }
+            Err(err) => {
+                self.reset_codex_continuation()?;
+                Err(err)
+            }
+        }
+    }
+
+    fn prepare_codex_sse_fallback(
+        &self,
+        continuation_candidate: &CodexContinuationCandidate,
+    ) -> Result<(), ModelError> {
+        let mut continuation = self.codex_continuation.lock().map_err(|_| {
+            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
+        })?;
+        let _fallback = continuation.prepare_sse_fallback(continuation_candidate);
+        Ok(())
+    }
+
+    fn record_codex_continuation_success(
+        &self,
+        continuation_candidate: &CodexContinuationCandidate,
+        response_id: Option<String>,
+    ) -> Result<(), ModelError> {
+        let mut continuation = self.codex_continuation.lock().map_err(|_| {
+            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
+        })?;
+        continuation.record_success(continuation_candidate, response_id);
+        Ok(())
+    }
+
+    fn reset_codex_continuation(&self) -> Result<(), ModelError> {
+        let mut continuation = self.codex_continuation.lock().map_err(|_| {
+            ModelError::InvalidResponse("Codex continuation state was poisoned".into())
+        })?;
+        continuation.reset();
+        Ok(())
+    }
+}
+
+fn build_codex_responses_body(
+    model: &str,
+    request: ModelRequest,
+    reasoning_effort: Option<&str>,
+    reasoning_summary: Option<&str>,
+) -> Result<Value, ModelError> {
+    let mut instructions = Vec::new();
+    let input = codex_input_items(request.messages, &mut instructions)?;
+    let tools: Vec<_> = request.tools.into_iter().map(to_responses_tool).collect();
+    let instructions = instructions.join("\n\n");
+    let mut body = json!({
+        "model": model,
+        "instructions": instructions,
+        "input": input,
+        "store": false,
+        "stream": true
+    });
+
+    if let Some(prompt_cache_key) = request.prompt_cache_key {
+        body["prompt_cache_key"] = json!(prompt_cache_key);
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+        body["tool_choice"] = json!("auto");
+    }
+    if let Some(reasoning) = codex_reasoning_param(reasoning_effort, reasoning_summary) {
+        body["reasoning"] = reasoning;
+    }
+
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -335,6 +427,63 @@ mod tests {
     }
 
     #[test]
+    fn codex_responses_body_includes_prompt_cache_key_when_present() {
+        let body = build_codex_responses_body(
+            "gpt-5-codex",
+            ModelRequest {
+                messages: vec![Message::user_text("hello")],
+                tools: Vec::new(),
+                prompt_cache_key: Some("rho:session-1".into()),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(body["prompt_cache_key"], "rho:session-1");
+        assert!(body.get("previous_response_id").is_none());
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn codex_responses_body_omits_prompt_cache_key_when_absent() {
+        let body = build_codex_responses_body(
+            "gpt-5-codex",
+            ModelRequest {
+                messages: vec![Message::user_text("hello")],
+                tools: Vec::new(),
+                prompt_cache_key: None,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(body.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn chat_completions_request_does_not_serialize_prompt_cache_key() {
+        let body = serde_json::to_value(ChatRequest {
+            model: "gpt-4.1".into(),
+            messages: vec![super::types::OpenAiMessage {
+                role: "user".into(),
+                content: Some("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            tool_choice: None,
+            stream: false,
+            stream_options: None,
+        })
+        .unwrap();
+
+        assert!(body.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
     fn extracts_sse_delta_text() {
         let body = concat!(
             "event: response.output_text.delta\n",
@@ -344,6 +493,56 @@ mod tests {
             "data: [DONE]\n"
         );
         assert_eq!(extract_sse_text(body).unwrap(), "Hello world");
+    }
+
+    #[test]
+    fn chat_stream_usage_normalizes_prompt_cached_tokens() {
+        let mut text = String::new();
+        let mut tool_calls = Vec::new();
+        let mut usage = None;
+        handle_openai_stream_line(
+            r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":700}},"choices":[{"delta":{}}]}"#,
+            &mut text,
+            &mut tool_calls,
+            &mut |event| {
+                match event {
+                    ModelEvent::Usage(event_usage) => usage = Some(event_usage),
+                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => {}
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let usage = usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(300));
+        assert_eq!(usage.cache_read_tokens, Some(700));
+        assert_eq!(usage.output_tokens, Some(20));
+        assert_eq!(usage.total_input_tokens(), Some(1000));
+    }
+
+    #[test]
+    fn codex_response_usage_normalizes_input_cached_tokens() {
+        let mut state = CodexSseState::default();
+        let mut usage = None;
+        handle_codex_sse_line(
+            r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":25,"input_tokens_details":{"cached_tokens":700}},"output_text":"done","output":[]}}"#,
+            &mut state,
+            &mut Some(&mut |event| {
+                match event {
+                    ModelEvent::Usage(event_usage) => usage = Some(event_usage),
+                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => {}
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+
+        let usage = usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(300));
+        assert_eq!(usage.cache_read_tokens, Some(700));
+        assert_eq!(usage.output_tokens, Some(25));
+        assert_eq!(usage.total_input_tokens(), Some(1000));
     }
 
     #[test]
@@ -421,6 +620,20 @@ mod tests {
     }
 
     #[test]
+    fn codex_sse_line_collects_response_id() {
+        let mut state = CodexSseState::default();
+        handle_codex_sse_line(
+            r#"data: {"type":"response.completed","response":{"id":"resp_123","output_text":"done","output":null}}"#,
+            &mut state,
+            &mut None,
+        )
+        .unwrap();
+
+        let response = state.into_response().unwrap();
+        assert_eq!(response.response_id.as_deref(), Some("resp_123"));
+    }
+
+    #[test]
     fn codex_sse_line_collects_function_call() {
         let mut state = CodexSseState::default();
         handle_codex_sse_line(
@@ -431,7 +644,7 @@ mod tests {
         .unwrap();
 
         let response = state.into_response().unwrap();
-        let ModelResponse::Assistant(blocks) = response;
+        let ModelResponse::Assistant(blocks) = response.response;
         assert!(matches!(
             blocks.as_slice(),
             [ContentBlock::ToolCall(ToolCall { id, name, arguments })]

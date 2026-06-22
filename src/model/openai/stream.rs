@@ -136,10 +136,15 @@ pub(super) fn convert_streamed_response(
     }
 }
 
+pub(super) struct CodexSseResponse {
+    pub(super) response: ModelResponse,
+    pub(super) response_id: Option<String>,
+}
+
 pub(super) async fn collect_codex_sse_response(
     response: reqwest::Response,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-) -> Result<ModelResponse, ModelError> {
+) -> Result<CodexSseResponse, ModelError> {
     let mut state = CodexSseState::default();
     let mut buffer = Vec::new();
     let mut stream = response.bytes_stream();
@@ -201,10 +206,12 @@ pub(super) struct CodexSseState {
     pub(super) text: String,
     pub(super) completed_text: Option<String>,
     pub(super) tool_calls: Vec<ToolCall>,
+    pub(super) response_id: Option<String>,
 }
 
 impl CodexSseState {
-    pub(super) fn into_response(self) -> Result<ModelResponse, ModelError> {
+    pub(super) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
+        let response_id = self.response_id;
         let mut blocks = Vec::new();
         let text = if self.text.is_empty() {
             self.completed_text.unwrap_or_default()
@@ -220,7 +227,10 @@ impl CodexSseState {
                 "missing response content in SSE".into(),
             ))
         } else {
-            Ok(ModelResponse::Assistant(blocks))
+            Ok(CodexSseResponse {
+                response: ModelResponse::Assistant(blocks),
+                response_id,
+            })
         }
     }
 }
@@ -292,6 +302,14 @@ pub(super) fn handle_codex_sse_line(
             state.tool_calls.push(call);
         }
     } else if event_type == "response.completed" {
+        if let Some(response_id) = value
+            .get("response")
+            .and_then(|response| response.get("id"))
+            .or_else(|| value.get("id"))
+            .and_then(|id| id.as_str())
+        {
+            state.response_id = Some(response_id.to_string());
+        }
         if let Some(usage) = value
             .get("response")
             .and_then(extract_usage)
@@ -328,7 +346,7 @@ pub(super) fn handle_codex_sse_line(
 
 fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
     let usage = value.get("usage")?;
-    let input_tokens = usage
+    let raw_input_tokens = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
         .and_then(|v| v.as_u64());
@@ -364,6 +382,12 @@ fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
         .or_else(|| usage.get("cost"))
         .or_else(|| usage.get("estimated_cost"))
         .and_then(parse_usd_micros);
+
+    let input_tokens = match (raw_input_tokens, cache_read_tokens) {
+        (Some(input), Some(cached)) => Some(input.saturating_sub(cached)),
+        (input, None) => input,
+        (None, Some(_)) => None,
+    };
 
     Some(ModelUsage {
         input_tokens,

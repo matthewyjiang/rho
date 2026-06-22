@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use super::TuiInfo;
-use crate::model::{ModelMetadata, ModelUsage};
+use crate::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusLineState {
@@ -17,6 +17,7 @@ pub(super) struct StatusLineState {
     pub(super) branch: Option<String>,
     pub(super) status: String,
     pub(super) usage: Option<ModelUsage>,
+    pub(super) context_usage: Option<ContextUsage>,
     pub(super) provider: String,
     pub(super) model: String,
     pub(super) reasoning: String,
@@ -30,6 +31,7 @@ impl StatusLineState {
         info: &TuiInfo,
         status: impl Into<String>,
         usage: Option<ModelUsage>,
+        context_usage: Option<ContextUsage>,
         model_metadata: Option<ModelMetadata>,
         model_metadata_loading: bool,
     ) -> Self {
@@ -38,6 +40,7 @@ impl StatusLineState {
             branch: git_branch(&info.cwd),
             status: status.into(),
             usage,
+            context_usage,
             provider: info.provider.clone(),
             model: info.model.clone(),
             reasoning: info.reasoning.to_string(),
@@ -87,9 +90,9 @@ fn format_usage(state: &StatusLineState) -> String {
         if let Some(tokens) = usage.cache_write_tokens {
             parts.push(format!("W{}", compact_number(tokens)));
         }
-        if let (Some(cache_read), Some(input)) = (usage.cache_read_tokens, usage.input_tokens) {
-            if input > 0 {
-                let percent = cache_read as f64 * 100.0 / input as f64;
+        if let Some(cache_read) = usage.cache_read_tokens {
+            if let Some(total_input) = usage.total_input_tokens().filter(|tokens| *tokens > 0) {
+                let percent = cache_read as f64 * 100.0 / total_input as f64;
                 parts.push(format!("CH{percent:.1}%"));
             }
         }
@@ -105,16 +108,14 @@ fn format_usage(state: &StatusLineState) -> String {
     if let Some(label) = state.billing.label() {
         parts.push(format!("({label})"));
     }
-    let context_window = usage.and_then(|usage| usage.context_window).or_else(|| {
+    if let Some(context) = format_context_usage(
+        state.context_usage.as_ref(),
         state
             .model_metadata
             .as_ref()
-            .and_then(ModelMetadata::display_context_window)
-    });
-    if let Some(window) = context_window.filter(|window| *window > 0) {
-        let total = usage.and_then(usage_total_tokens).unwrap_or_default();
-        let percent = total as f64 * 100.0 / window as f64;
-        parts.push(format!("{percent:.1}%/{}", compact_number(window)));
+            .and_then(ModelMetadata::display_context_window),
+    ) {
+        parts.push(context);
     }
     parts.join(" ")
 }
@@ -146,28 +147,34 @@ fn has_pricing(metadata: &ModelMetadata) -> bool {
     metadata.cost_default.is_some() || metadata.cost_long_context.is_some()
 }
 
-fn usage_total_tokens(usage: &ModelUsage) -> Option<u64> {
-    usage.total_tokens.or_else(|| {
-        add_numbers(
-            usage.input_tokens.unwrap_or_default(),
-            usage.output_tokens.unwrap_or_default(),
-        )
-    })
-}
-
-fn add_numbers(left: u64, right: u64) -> Option<u64> {
-    let total = left.saturating_add(right);
-    (total > 0).then_some(total)
+fn format_context_usage(
+    context_usage: Option<&ContextUsage>,
+    metadata_context_window: Option<u64>,
+) -> Option<String> {
+    let window = context_usage
+        .and_then(|usage| usage.context_window)
+        .or(metadata_context_window)
+        .filter(|window| *window > 0)?;
+    let marker = match context_usage.map(|usage| usage.source) {
+        Some(ContextUsageSource::Estimated) => "~",
+        Some(ContextUsageSource::ProviderReported) | None => "",
+        Some(ContextUsageSource::UnknownAfterCompaction) => "?",
+    };
+    let Some(tokens) = context_usage.and_then(|usage| usage.tokens) else {
+        return Some(format!("{marker}/{}", compact_number(window)));
+    };
+    let percent = tokens as f64 * 100.0 / window as f64;
+    Some(format!("{marker}{percent:.1}%/{}", compact_number(window)))
 }
 
 fn estimated_cost_usd_micros(usage: &ModelUsage, metadata: Option<&ModelMetadata>) -> Option<u64> {
     let metadata = metadata?;
     let input = usage.input_tokens.unwrap_or_default();
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let uncached_input = input.saturating_sub(cache_read);
-    let cost = metadata.cost_for_input_tokens(input)?;
+    let total_input = usage.total_input_tokens().unwrap_or_default();
+    let cost = metadata.cost_for_input_tokens(total_input)?;
     let mut micros = 0u128;
-    micros += cost_component(uncached_input, cost.input_micros_per_m);
+    micros += cost_component(input, cost.input_micros_per_m);
     micros += cost_component(
         usage.output_tokens.unwrap_or_default(),
         cost.output_micros_per_m,
@@ -285,4 +292,100 @@ fn truncate_one_line(text: &str, width: usize) -> String {
     text = text.chars().take(width - 1).collect();
     text.push('…');
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::models_dev::ModelCost;
+
+    fn priced_metadata() -> ModelMetadata {
+        ModelMetadata {
+            cost_default: Some(ModelCost {
+                input_micros_per_m: Some(1_000_000),
+                output_micros_per_m: Some(2_000_000),
+                cache_read_micros_per_m: Some(100_000),
+                cache_write_micros_per_m: None,
+            }),
+            ..ModelMetadata::default()
+        }
+    }
+
+    fn test_state(usage: ModelUsage) -> StatusLineState {
+        StatusLineState {
+            cwd: PathBuf::from("/tmp/project"),
+            branch: None,
+            status: "idle".into(),
+            usage: Some(usage),
+            context_usage: None,
+            provider: "openai".into(),
+            model: "gpt-test".into(),
+            reasoning: "low".into(),
+            billing: BillingInfo::Metered,
+            model_metadata: Some(priced_metadata()),
+            model_metadata_loading: false,
+        }
+    }
+
+    #[test]
+    fn estimated_statusline_cost_uses_normalized_input_and_cache_read() {
+        let usage = ModelUsage {
+            input_tokens: Some(300_000),
+            cache_read_tokens: Some(700_000),
+            output_tokens: Some(100_000),
+            ..ModelUsage::default()
+        };
+
+        assert_eq!(
+            estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
+            Some(570_000)
+        );
+    }
+
+    #[test]
+    fn cache_hit_percentage_uses_total_input_tokens() {
+        let usage = ModelUsage {
+            input_tokens: Some(300_000),
+            cache_read_tokens: Some(700_000),
+            output_tokens: Some(100_000),
+            ..ModelUsage::default()
+        };
+
+        let formatted = format_usage(&test_state(usage));
+
+        assert!(formatted.contains("↑300.0k"), "{formatted}");
+        assert!(formatted.contains("R700.0k"), "{formatted}");
+        assert!(formatted.contains("CH70.0%"), "{formatted}");
+        assert!(formatted.contains("$0.570"), "{formatted}");
+    }
+
+    #[test]
+    fn context_percentage_uses_current_context_not_cumulative_usage() {
+        let mut state = test_state(ModelUsage {
+            input_tokens: Some(60_000),
+            output_tokens: Some(40_000),
+            ..ModelUsage::default()
+        });
+        state.context_usage = Some(ContextUsage::estimated(10_000, Some(100_000)));
+        state.model_metadata = Some(ModelMetadata {
+            advertised_context_window: Some(100_000),
+            ..priced_metadata()
+        });
+
+        let formatted = format_usage(&state);
+
+        assert!(formatted.contains("~10.0%/100.0k"), "{formatted}");
+        assert!(!formatted.contains("100.0%/100.0k"), "{formatted}");
+    }
+
+    #[test]
+    fn provider_reported_context_omits_estimate_marker() {
+        let mut state = test_state(ModelUsage::default());
+        state.context_usage = Some(ContextUsage::provider_reported(25_000, Some(100_000)));
+
+        let formatted = format_usage(&state);
+
+        assert!(formatted.contains("25.0%/100.0k"), "{formatted}");
+        assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
+    }
 }

@@ -1,8 +1,17 @@
 use thiserror::Error;
 
+mod compaction;
+
+pub use compaction::CompactionConfig;
+
+use compaction::{
+    build_summary_request_messages, partition_messages_for_compaction,
+    replacement_history_from_summary, should_compact,
+};
+
 use crate::model::{
-    ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
-    ModelUsage,
+    estimate_context_usage, openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage,
+    DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -22,6 +31,7 @@ pub enum AgentEvent {
     StepStarted(usize),
     OutputDelta(String),
     ReasoningDelta(String),
+    ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ToolFinished {
         name: String,
@@ -34,6 +44,7 @@ pub enum AgentEvent {
 }
 
 type MessageSink = Box<dyn FnMut(&Message) -> anyhow::Result<()> + Send>;
+type HistoryReplacementSink = Box<dyn FnMut(&[Message]) -> anyhow::Result<()> + Send>;
 
 pub struct Agent {
     provider: DynModelProvider,
@@ -41,6 +52,10 @@ pub struct Agent {
     ctx: ToolContext,
     messages: Vec<Message>,
     message_sink: Option<MessageSink>,
+    history_replacement_sink: Option<HistoryReplacementSink>,
+    prompt_cache_key: Option<String>,
+    compaction: CompactionConfig,
+    last_context_window: Option<u64>,
 }
 
 impl Agent {
@@ -52,6 +67,10 @@ impl Agent {
             ctx,
             messages,
             message_sink: None,
+            history_replacement_sink: None,
+            prompt_cache_key: None,
+            compaction: CompactionConfig::default(),
+            last_context_window: None,
         }
     }
 
@@ -80,12 +99,34 @@ impl Agent {
         self.message_sink = None;
     }
 
+    pub fn set_history_replacement_sink(
+        &mut self,
+        sink: impl FnMut(&[Message]) -> anyhow::Result<()> + Send + 'static,
+    ) {
+        self.history_replacement_sink = Some(Box::new(sink));
+    }
+
+    pub fn clear_history_replacement_sink(&mut self) {
+        self.history_replacement_sink = None;
+    }
+
+    pub fn set_compaction_config(&mut self, compaction: CompactionConfig) {
+        self.compaction = compaction;
+    }
+
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.prompt_cache_key = session_id
+            .as_deref()
+            .and_then(prompt_cache_key_from_session_id);
+    }
+
     pub fn replace_provider(&mut self, provider: DynModelProvider) {
         self.provider = provider;
     }
 
     pub fn reset(&mut self) {
         self.messages = initial_messages(&self.tools, &self.ctx.cwd);
+        self.last_context_window = None;
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
@@ -116,23 +157,38 @@ impl Agent {
     ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
         self.push_message(Message::user_text(user_prompt))?;
+        self.maybe_compact_history(&specs, &mut on_event).await?;
 
         let mut step = 1usize;
         loop {
             on_event(AgentEvent::StepStarted(step))?;
+            on_event(AgentEvent::ContextUsage(estimate_context_usage(
+                &self.messages,
+                &specs,
+                self.last_context_window,
+            )))?;
+            let mut reported_context_window = None;
             let response = match self
                 .provider
                 .send_turn_stream(
                     ModelRequest {
                         messages: self.messages.clone(),
                         tools: specs.clone(),
+                        prompt_cache_key: self.prompt_cache_key.clone(),
                     },
                     &mut |event| match event {
                         ModelEvent::OutputDelta(text) => on_event(AgentEvent::OutputDelta(text)),
                         ModelEvent::ReasoningDelta(text) => {
                             on_event(AgentEvent::ReasoningDelta(text))
                         }
-                        ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
+                        ModelEvent::Usage(usage) => {
+                            reported_context_window =
+                                usage.context_window.or(reported_context_window);
+                            if let Some(context_usage) = ContextUsage::from_model_usage(&usage) {
+                                on_event(AgentEvent::ContextUsage(context_usage))?;
+                            }
+                            on_event(AgentEvent::Usage(usage))
+                        }
                     },
                 )
                 .await
@@ -148,6 +204,7 @@ impl Agent {
                 }
                 Err(err) => return Err(err.into()),
             };
+            self.last_context_window = reported_context_window.or(self.last_context_window);
             match response {
                 ModelResponse::Assistant(blocks) => {
                     let tool_calls: Vec<_> = blocks
@@ -243,6 +300,67 @@ impl Agent {
             step += 1;
         }
     }
+
+    async fn maybe_compact_history(
+        &mut self,
+        specs: &[crate::tool::ToolSpec],
+        on_event: &mut impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<(), AgentError> {
+        let estimate = estimate_context_usage(&self.messages, specs, self.last_context_window);
+        if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
+            return Ok(());
+        }
+        let Some(partition) =
+            partition_messages_for_compaction(&self.messages, self.compaction.recent_messages)
+        else {
+            return Ok(());
+        };
+
+        let response = self
+            .provider
+            .send_turn(ModelRequest {
+                messages: build_summary_request_messages(&partition.compacted_messages),
+                tools: Vec::new(),
+                prompt_cache_key: self.prompt_cache_key.clone(),
+            })
+            .await?;
+        let ModelResponse::Assistant(blocks) = response;
+        let summary = blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text),
+                ContentBlock::ToolCall(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        if summary.is_empty() {
+            return Err(ModelError::InvalidResponse(
+                "compaction summary response did not include text".into(),
+            )
+            .into());
+        }
+
+        self.messages = replacement_history_from_summary(partition, summary);
+        self.persist_history_replacement()?;
+        on_event(AgentEvent::ContextUsage(
+            ContextUsage::unknown_after_compaction(self.last_context_window),
+        ))?;
+        Ok(())
+    }
+
+    fn persist_history_replacement(&mut self) -> Result<(), AgentError> {
+        if let Some(sink) = &mut self.history_replacement_sink {
+            let first_history_index = self
+                .messages
+                .iter()
+                .position(|message| !matches!(message, Message::System(_)))
+                .unwrap_or(self.messages.len());
+            sink(&self.messages[first_history_index..])?;
+        }
+        Ok(())
+    }
 }
 
 fn should_retry_model_error(error: &ModelError) -> bool {
@@ -263,18 +381,25 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use crate::model::{ModelProvider, ModelRequest, ModelResponse};
+    use crate::model::{ContextUsageSource, ModelProvider, ModelRequest, ModelResponse};
     use crate::tool::{Tool, ToolCall, ToolSpec};
+
+    type RecordedRequests = Arc<Mutex<Vec<(String, Vec<Message>)>>>;
 
     #[derive(Clone, Default)]
     struct RecordingProvider {
         requests: Arc<Mutex<Vec<Vec<Message>>>>,
+        prompt_cache_keys: Arc<Mutex<Vec<Option<String>>>>,
         response: Option<ModelResponse>,
     }
 
     #[async_trait(?Send)]
     impl ModelProvider for RecordingProvider {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            self.prompt_cache_keys
+                .lock()
+                .unwrap()
+                .push(request.prompt_cache_key.clone());
             self.requests.lock().unwrap().push(request.messages);
             Ok(self
                 .response
@@ -347,6 +472,67 @@ mod tests {
         async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
             self.requests.lock().unwrap().push(request.messages);
             Ok(self.responses.lock().unwrap().pop_front().unwrap())
+        }
+    }
+
+    struct UsageStreamingProvider;
+
+    #[async_trait(?Send)]
+    impl ModelProvider for UsageStreamingProvider {
+        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            unreachable!("streaming provider should use send_turn_stream")
+        }
+
+        async fn send_turn_stream(
+            &self,
+            _request: ModelRequest,
+            on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        ) -> Result<ModelResponse, ModelError> {
+            on_event(ModelEvent::Usage(ModelUsage {
+                input_tokens: Some(300),
+                cache_read_tokens: Some(700),
+                context_window: Some(10_000),
+                ..ModelUsage::default()
+            }))?;
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "ok".into(),
+            )]))
+        }
+    }
+
+    struct CompactingProvider {
+        requests: RecordedRequests,
+    }
+
+    #[async_trait(?Send)]
+    impl ModelProvider for CompactingProvider {
+        async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(("summary".into(), request.messages));
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "compacted summary".into(),
+            )]))
+        }
+
+        async fn send_turn_stream(
+            &self,
+            request: ModelRequest,
+            on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        ) -> Result<ModelResponse, ModelError> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(("normal".into(), request.messages));
+            on_event(ModelEvent::Usage(ModelUsage {
+                input_tokens: Some(900),
+                context_window: Some(1_000),
+                ..ModelUsage::default()
+            }))?;
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "ok".into(),
+            )]))
         }
     }
 
@@ -480,6 +666,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn includes_session_derived_prompt_cache_key_in_model_requests() {
+        let provider = RecordingProvider::default();
+        let prompt_cache_keys = provider.prompt_cache_keys.clone();
+        let mut agent = test_agent(provider);
+
+        agent.set_session_id(Some("session / one".into()));
+        agent.run("first".into()).await.unwrap();
+        agent.set_session_id(None);
+        agent.run("second".into()).await.unwrap();
+
+        assert_eq!(
+            *prompt_cache_keys.lock().unwrap(),
+            vec![Some("rho:session-one".into()), None]
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_estimated_context_usage_before_provider_call() {
+        let mut agent = test_agent(RecordingProvider::default());
+        let mut context_events = Vec::new();
+
+        agent
+            .run_with_events("hello".into(), |event| {
+                if let AgentEvent::ContextUsage(usage) = event {
+                    context_events.push(usage);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(context_events.len(), 1);
+        assert_eq!(context_events[0].source, ContextUsageSource::Estimated);
+        assert!(context_events[0].tokens.unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn emits_provider_reported_context_usage_from_model_usage() {
+        let mut agent = test_agent_with_tools(UsageStreamingProvider, ToolRegistry::new());
+        let mut context_events = Vec::new();
+
+        agent
+            .run_with_events("hello".into(), |event| {
+                if let AgentEvent::ContextUsage(usage) = event {
+                    context_events.push(usage);
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(context_events.len(), 2);
+        assert_eq!(context_events[0].source, ContextUsageSource::Estimated);
+        assert_eq!(
+            context_events[1].source,
+            ContextUsageSource::ProviderReported
+        );
+        assert_eq!(context_events[1].tokens, Some(1_000));
+        assert_eq!(context_events[1].context_window, Some(10_000));
+    }
+
+    #[tokio::test]
+    async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut agent = test_agent_with_tools(
+            CompactingProvider {
+                requests: requests.clone(),
+            },
+            ToolRegistry::new(),
+        );
+        agent.set_compaction_config(CompactionConfig {
+            auto_compact: true,
+            threshold_percent: 1,
+            recent_messages: 1,
+        });
+
+        agent.run("first".into()).await.unwrap();
+        agent.run("second".into()).await.unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].0, "normal");
+        assert_eq!(requests[1].0, "summary");
+        assert_eq!(requests[2].0, "normal");
+        assert!(matches!(
+            requests[1].1.as_slice(),
+            [Message::System(_), Message::User(_)]
+        ));
+        assert!(requests[2].1.iter().any(|message| {
+            matches!(message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("compacted summary")))
+        }));
+        assert!(
+            matches!(requests[2].1.last(), Some(Message::User(blocks)) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "second"))
+        );
+    }
+
+    #[test]
+    fn compaction_persists_replacement_history_without_initial_system_message() {
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        let persisted_for_sink = persisted.clone();
+        let mut agent = test_agent(RecordingProvider::default());
+        agent.set_history_replacement_sink(move |messages| {
+            persisted_for_sink
+                .lock()
+                .unwrap()
+                .extend(messages.iter().cloned());
+            Ok(())
+        });
+        agent.messages = vec![
+            Message::System("system".into()),
+            Message::user_text("summary"),
+            Message::user_text("recent"),
+        ];
+
+        agent.persist_history_replacement().unwrap();
+
+        let persisted = persisted.lock().unwrap();
+        assert_eq!(persisted.len(), 2);
+        assert!(matches!(persisted[0], Message::User(_)));
+        assert!(matches!(persisted[1], Message::User(_)));
+    }
+
+    #[tokio::test]
     async fn preserves_history_across_runs() {
         let provider = RecordingProvider::default();
         let requests = provider.requests.clone();
@@ -519,6 +828,7 @@ mod tests {
         ]);
         let provider = RecordingProvider {
             requests: Arc::default(),
+            prompt_cache_keys: Arc::default(),
             response: Some(response),
         };
         let mut tools = ToolRegistry::new();
