@@ -132,13 +132,14 @@ impl Agent {
             {
                 Ok(response) => response,
                 Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
-                Err(err) => {
+                Err(err) if should_retry_model_error(&err) => {
                     self.push_message(Message::user_text(format!(
                         "The previous assistant response could not be processed by the client. Error: {err}\n\nPlease continue from the last request. If you attempted a tool call, emit valid tool-call JSON that exactly matches the required schema."
                     )))?;
                     step += 1;
                     continue;
                 }
+                Err(err) => return Err(err.into()),
             };
             match response {
                 ModelResponse::Assistant(blocks) => {
@@ -215,6 +216,10 @@ impl Agent {
             step += 1;
         }
     }
+}
+
+fn should_retry_model_error(error: &ModelError) -> bool {
+    matches!(error, ModelError::InvalidResponse(_))
 }
 
 fn tool_command(name: &str, arguments: &serde_json::Value) -> Option<String> {
@@ -326,6 +331,45 @@ mod tests {
         )
     }
 
+    struct FailingProvider {
+        requests: Arc<Mutex<usize>>,
+        error: ModelError,
+    }
+
+    #[async_trait(?Send)]
+    impl ModelProvider for FailingProvider {
+        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            *self.requests.lock().unwrap() += 1;
+            Err(match &self.error {
+                ModelError::MissingApiKey => ModelError::MissingApiKey,
+                ModelError::InvalidResponse(message) => {
+                    ModelError::InvalidResponse(message.clone())
+                }
+                _ => unreachable!("test only clones selected errors"),
+            })
+        }
+    }
+
+    struct TransientInvalidResponseProvider {
+        requests: Arc<Mutex<usize>>,
+    }
+
+    #[async_trait(?Send)]
+    impl ModelProvider for TransientInvalidResponseProvider {
+        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+            let mut requests = self.requests.lock().unwrap();
+            *requests += 1;
+            if *requests == 1 {
+                return Err(ModelError::InvalidResponse(
+                    "temporary parse failure".into(),
+                ));
+            }
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "ok".into(),
+            )]))
+        }
+    }
+
     struct OkTool;
 
     #[async_trait]
@@ -350,6 +394,50 @@ mod tests {
                 content: "tool ok".into(),
             })
         }
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_non_recoverable_provider_errors() {
+        let requests = Arc::new(Mutex::new(0));
+        let mut agent = Agent::new(
+            Box::new(FailingProvider {
+                requests: requests.clone(),
+                error: ModelError::MissingApiKey,
+            }),
+            ToolRegistry::new(),
+            ToolContext {
+                cwd: std::env::current_dir().unwrap(),
+                max_output_bytes: 12000,
+            },
+        );
+
+        let err = agent.run("hello".into()).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            AgentError::Provider(ModelError::MissingApiKey)
+        ));
+        assert_eq!(*requests.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_recoverable_invalid_response_errors() {
+        let requests = Arc::new(Mutex::new(0));
+        let mut agent = Agent::new(
+            Box::new(TransientInvalidResponseProvider {
+                requests: requests.clone(),
+            }),
+            ToolRegistry::new(),
+            ToolContext {
+                cwd: std::env::current_dir().unwrap(),
+                max_output_bytes: 12000,
+            },
+        );
+
+        let output = agent.run("hello".into()).await.unwrap();
+
+        assert_eq!(output, "ok");
+        assert_eq!(*requests.lock().unwrap(), 2);
     }
 
     #[tokio::test]

@@ -1,7 +1,9 @@
 mod agent;
+mod auth;
 mod cli;
 mod commands;
 mod config;
+mod credentials;
 mod model;
 mod prompt;
 mod session;
@@ -17,7 +19,7 @@ use clap::Parser;
 use agent::Agent;
 use cli::{Cli, Command};
 use config::Config;
-use model::{build_provider, reasoning_config_value};
+use model::{build_provider, reasoning_config_value, ModelError, UnavailableProvider};
 use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
@@ -55,12 +57,24 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    let provider = build_provider(
+    let provider_result = build_provider(
         &cfg.provider,
         &cfg.model,
         reasoning_config_value(&cfg.reasoning_effort),
         reasoning_config_value(&cfg.reasoning_summary),
-    )?;
+    );
+    let missing_auth_error = provider_result
+        .as_ref()
+        .err()
+        .filter(|err| is_auth_unavailable_error(err))
+        .map(model_error_message);
+    let provider = match provider_result {
+        Ok(provider) => provider,
+        Err(err) if run_prompt.is_none() && is_auth_unavailable_error(&err) => {
+            Box::new(UnavailableProvider::new(err))
+        }
+        Err(err) => return Err(err.into()),
+    };
     let registry = tools::registry();
     let cwd = std::env::current_dir()?;
     let ctx = ToolContext {
@@ -95,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
                     auth: cfg.auth,
                     session_id,
                     config_path,
+                    auth_unavailable: missing_auth_error,
                 },
             )
             .await?;
@@ -104,6 +119,17 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn is_auth_unavailable_error(error: &ModelError) -> bool {
+    matches!(
+        error,
+        ModelError::MissingApiKey | ModelError::MissingCodexAuth | ModelError::Credentials(_)
+    )
+}
+
+fn model_error_message(error: &ModelError) -> String {
+    error.to_string()
 }
 
 fn validate_cli(cli: &Cli) -> anyhow::Result<()> {

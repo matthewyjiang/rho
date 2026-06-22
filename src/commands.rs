@@ -3,6 +3,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
     Login,
+    Logout,
     Model,
     Resume,
     Config,
@@ -35,8 +36,14 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Login,
         name: "login",
-        usage: "/login",
-        description: "show authentication help",
+        usage: "/login [provider]",
+        description: "log in to a provider",
+    },
+    CommandSpec {
+        id: CommandId::Logout,
+        name: "logout",
+        usage: "/logout [provider]",
+        description: "delete provider credentials",
     },
     CommandSpec {
         id: CommandId::Model,
@@ -216,6 +223,24 @@ mod tests {
         let err = parse_command("/nope").unwrap_err();
 
         assert_eq!(err, CommandParseError::Unknown("nope".into()));
+    }
+
+    #[test]
+    fn parses_logout_command_with_provider_argument() {
+        let invocation = parse_command("/logout openai-codex").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Logout);
+        assert_eq!(invocation.args, "openai-codex");
+    }
+
+    #[test]
+    fn login_usage_accepts_provider_argument() {
+        let login = COMMANDS
+            .iter()
+            .find(|command| command.name == "login")
+            .unwrap();
+
+        assert_eq!(login.usage, "/login [provider]");
     }
 
     #[test]

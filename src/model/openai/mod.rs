@@ -6,7 +6,10 @@ mod convert;
 mod stream;
 mod types;
 
-use auth::{load_codex_auth, load_codex_tokens_from_path, refresh_codex_token, Auth};
+use auth::{
+    load_api_key_auth, load_codex_auth, load_codex_tokens_for_request, refresh_codex_token, Auth,
+    CodexAuthSource,
+};
 use convert::{
     codex_input_items, codex_reasoning_param, convert_openai_response, to_openai_message,
     to_openai_tool, to_responses_tool,
@@ -17,7 +20,10 @@ use stream::{
 };
 use types::{ChatRequest, ChatResponse};
 
-use crate::model::{AuthMode, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse};
+use crate::{
+    credentials::CodexTokens,
+    model::{AuthMode, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -36,9 +42,7 @@ impl OpenAiProvider {
         reasoning_summary: Option<String>,
     ) -> Result<Self, ModelError> {
         let auth = match mode {
-            AuthMode::ApiKey => Auth::ApiKey(
-                std::env::var("OPENAI_API_KEY").map_err(|_| ModelError::MissingApiKey)?,
-            ),
+            AuthMode::ApiKey => load_api_key_auth()?,
             AuthMode::Codex => load_codex_auth()?,
         };
         let api_base = match &auth {
@@ -61,35 +65,10 @@ impl ModelProvider for OpenAiProvider {
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
-            Auth::Codex {
-                access_token,
-                refresh_token,
-                account_id,
-                auth_path,
-            } => {
-                let auth_path_for_request = auth_path.clone();
-                let (access_token, refresh_token, account_id) = if let Some(path) = auth_path {
-                    let tokens = load_codex_tokens_from_path(path)?;
-                    (
-                        tokens.access_token,
-                        tokens.refresh_token,
-                        tokens.account_id.or_else(|| account_id.clone()),
-                    )
-                } else {
-                    (
-                        access_token.clone(),
-                        refresh_token.clone(),
-                        account_id.clone(),
-                    )
-                };
-                self.send_codex_responses(
-                    request,
-                    &access_token,
-                    refresh_token.as_deref(),
-                    account_id.as_deref(),
-                    auth_path_for_request.as_deref(),
-                )
-                .await
+            Auth::Codex { tokens, source } => {
+                let request_tokens = load_codex_tokens_for_request(tokens, *source)?;
+                self.send_codex_responses(request, request_tokens, *source)
+                    .await
             }
         }
     }
@@ -104,29 +83,10 @@ impl ModelProvider for OpenAiProvider {
                 self.send_chat_completions_stream(request.clone(), key, on_event)
                     .await
             }
-            Auth::Codex {
-                access_token,
-                refresh_token,
-                account_id,
-                auth_path,
-            } => {
-                let (access_token, refresh_token, account_id, auth_path_for_request) = {
-                    (
-                        access_token.clone(),
-                        refresh_token.clone(),
-                        account_id.clone(),
-                        auth_path.clone(),
-                    )
-                };
-                self.send_codex_responses_stream(
-                    request,
-                    &access_token,
-                    refresh_token.as_deref(),
-                    account_id.as_deref(),
-                    auth_path_for_request.as_deref(),
-                    on_event,
-                )
-                .await
+            Auth::Codex { tokens, source } => {
+                let request_tokens = load_codex_tokens_for_request(tokens, *source)?;
+                self.send_codex_responses_stream(request, request_tokens, *source, on_event)
+                    .await
             }
         }
     }
@@ -225,42 +185,29 @@ impl OpenAiProvider {
     async fn send_codex_responses(
         &self,
         request: ModelRequest,
-        token: &str,
-        refresh_token: Option<&str>,
-        account_id: Option<&str>,
-        auth_path: Option<&std::path::Path>,
+        tokens: CodexTokens,
+        source: CodexAuthSource,
     ) -> Result<ModelResponse, ModelError> {
-        self.send_codex_responses_inner(request, token, refresh_token, account_id, auth_path, None)
+        self.send_codex_responses_inner(request, tokens, source, None)
             .await
     }
 
     async fn send_codex_responses_stream(
         &self,
         request: ModelRequest,
-        token: &str,
-        refresh_token: Option<&str>,
-        account_id: Option<&str>,
-        auth_path: Option<&std::path::Path>,
+        tokens: CodexTokens,
+        source: CodexAuthSource,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        self.send_codex_responses_inner(
-            request,
-            token,
-            refresh_token,
-            account_id,
-            auth_path,
-            Some(on_event),
-        )
-        .await
+        self.send_codex_responses_inner(request, tokens, source, Some(on_event))
+            .await
     }
 
     async fn send_codex_responses_inner(
         &self,
         request: ModelRequest,
-        token: &str,
-        refresh_token: Option<&str>,
-        account_id: Option<&str>,
-        auth_path: Option<&std::path::Path>,
+        tokens: CodexTokens,
+        source: CodexAuthSource,
         mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
     ) -> Result<ModelResponse, ModelError> {
         let mut instructions = Vec::new();
@@ -294,16 +241,17 @@ impl OpenAiProvider {
                 .header("originator", "codex_cli_rs")
                 .json(&make_body())
         };
-        let mut req = make_request(token);
-        if let Some(account_id) = account_id {
+        let mut req = make_request(&tokens.access_token);
+        if let Some(account_id) = tokens.account_id.as_deref() {
             req = req.header("ChatGPT-Account-ID", account_id);
         }
         let response = req.send().await?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            if let Some(refresh_token) = refresh_token {
-                let refreshed = refresh_codex_token(&self.client, refresh_token, auth_path).await?;
+            if let Some(refresh_token) = tokens.refresh_token.as_deref() {
+                let refreshed =
+                    refresh_codex_token(&self.client, refresh_token, source, &tokens).await?;
                 let mut req = make_request(&refreshed.access_token);
-                if let Some(account_id) = refreshed.account_id.as_deref().or(account_id) {
+                if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);
                 }
                 let response = req.send().await?;

@@ -47,8 +47,9 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 | Command | Action |
 | --- | --- |
-| `/login` | Show [authentication](/authentication-and-models) help. A full login flow is not implemented yet. |
-| `/model [provider/model]` | Open an auth-filtered [model picker](/authentication-and-models#providers-and-model-catalog), or switch directly to a provider/model and save it to [configuration](/configuration). |
+| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai` and `openai-codex`. |
+| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai` and `openai-codex`. |
+| `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
 | `/resume [id]` | Show [session resume](/sessions) help. Interactive session switching/listing is not implemented yet. |
 | `/config` | Show the [config](/configuration) path and current key settings. A full config UI is not implemented yet. |
 | `/exit` | Quit the TUI. |
@@ -57,9 +58,17 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel.
 
+## Login and logout
+
+`/login` opens a provider picker. `/login openai` opens a masked API-key entry box. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. Credentials are stored in the native OS credential store, not in config or transcripts.
+
+`/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
+
+Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
+
 ## Model picker
 
-The model picker is populated from Rho's built-in static catalog entries that match the active auth mode. `openai` uses API-key auth models, while `openai-codex` uses Codex auth models.
+The model picker is populated from Rho's built-in static catalog entries for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, while `openai-codex` uses Codex auth models.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 

@@ -11,6 +11,13 @@ pub struct ModelCatalogEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginTarget {
+    pub provider: String,
+    pub auth: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub provider: String,
     pub model: String,
@@ -47,16 +54,51 @@ pub fn model_catalog() -> &'static [ModelCatalogEntry] {
     MODEL_CATALOG.get_or_init(|| parse_model_catalog(MODEL_CATALOG_TOML))
 }
 
-pub fn available_models(auth: &str) -> Vec<ModelCatalogEntry> {
-    available_models_from(model_catalog(), auth)
+pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
+    available_models_for_auths_from(model_catalog(), auths)
 }
 
-pub fn resolve_model_selection(
+pub fn login_targets() -> Vec<LoginTarget> {
+    vec![
+        LoginTarget {
+            provider: "openai".into(),
+            auth: "api-key".into(),
+            label: "OpenAI API key".into(),
+        },
+        LoginTarget {
+            provider: "openai-codex".into(),
+            auth: "codex".into(),
+            label: "Codex OAuth".into(),
+        },
+    ]
+}
+
+pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
+    login_targets()
+        .into_iter()
+        .find(|target| target.provider == provider)
+}
+
+pub fn default_model_for_provider(provider: &str) -> Option<String> {
+    model_catalog()
+        .iter()
+        .find(|entry| entry.provider == provider)
+        .map(|entry| entry.model.clone())
+}
+
+pub fn resolve_model_selection_for_auths(
     input: &str,
     current_provider: &str,
     auth: &str,
+    available_auths: &[String],
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_from(model_catalog(), input, current_provider, auth)
+    resolve_model_selection_from(
+        model_catalog(),
+        input,
+        current_provider,
+        auth,
+        available_auths,
+    )
 }
 
 fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
@@ -84,11 +126,19 @@ fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCa
         .collect()
 }
 
-fn available_models_from(catalog: &[ModelCatalogEntry], auth: &str) -> Vec<ModelCatalogEntry> {
+fn available_models_for_auths_from(
+    catalog: &[ModelCatalogEntry],
+    auths: &[String],
+) -> Vec<ModelCatalogEntry> {
     let mut models = catalog
         .iter()
         .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
-        .filter(|entry| entry.auth_modes.iter().any(|mode| mode == auth))
+        .filter(|entry| {
+            entry
+                .auth_modes
+                .iter()
+                .any(|mode| auths.iter().any(|auth| auth == mode))
+        })
         .cloned()
         .collect::<Vec<_>>();
     models.sort_by(|left, right| {
@@ -126,6 +176,7 @@ fn resolve_model_selection_from(
     input: &str,
     current_provider: &str,
     auth: &str,
+    available_auths: &[String],
 ) -> Result<ModelSelection, ModelSelectionError> {
     let input = input.trim();
     if input.is_empty() {
@@ -157,7 +208,12 @@ fn resolve_model_selection_from(
         });
     }
 
-    let matches = available_models_from(catalog, auth)
+    let auths = if available_auths.is_empty() {
+        vec![auth.to_string()]
+    } else {
+        available_auths.to_vec()
+    };
+    let matches = available_models_for_auths_from(catalog, &auths)
         .into_iter()
         .filter(|entry| entry.model == input)
         .collect::<Vec<_>>();
@@ -202,6 +258,12 @@ mod tests {
                 auth_modes: vec!["api-key".into()],
             },
             ModelCatalogEntry {
+                provider: "openai-codex".into(),
+                model: "unique-codex".into(),
+                display_name: "unique-codex".into(),
+                auth_modes: vec!["codex".into()],
+            },
+            ModelCatalogEntry {
                 provider: "future".into(),
                 model: "future-model".into(),
                 display_name: "future-model".into(),
@@ -224,7 +286,7 @@ mod tests {
 
     #[test]
     fn available_models_filters_to_implemented_providers() {
-        let models = available_models("codex");
+        let models = available_models_for_auths(&["codex".into()]);
 
         assert!(models.iter().all(|entry| entry.provider == "openai-codex"));
         assert!(models
@@ -242,8 +304,32 @@ mod tests {
     }
 
     #[test]
+    fn available_models_for_auths_includes_all_authenticated_providers() {
+        let models = available_models_for_auths(&["api-key".into(), "codex".into()]);
+
+        assert!(models.iter().any(|entry| entry.provider == "openai"));
+        assert!(models.iter().any(|entry| entry.provider == "openai-codex"));
+    }
+
+    #[test]
+    fn login_targets_use_provider_names() {
+        let targets = login_targets();
+
+        assert_eq!(targets[0].provider, "openai");
+        assert_eq!(targets[1].provider, "openai-codex");
+        assert!(login_target_for_provider("api-key").is_none());
+        assert!(login_target_for_provider("codex").is_none());
+    }
+
+    #[test]
     fn resolves_provider_model_selection() {
-        let selection = resolve_model_selection("openai/gpt-5.5", "openai", "codex").unwrap();
+        let selection = resolve_model_selection_for_auths(
+            "openai/gpt-5.5",
+            "openai",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap();
 
         assert_eq!(
             selection,
@@ -259,8 +345,14 @@ mod tests {
     #[test]
     fn resolves_bare_unique_model_to_catalog_provider() {
         let catalog = test_catalog();
-        let selection =
-            resolve_model_selection_from(&catalog, "unique-openai", "openai", "api-key").unwrap();
+        let selection = resolve_model_selection_from(
+            &catalog,
+            "unique-openai",
+            "openai",
+            "api-key",
+            &["api-key".into()],
+        )
+        .unwrap();
 
         assert_eq!(
             selection,
@@ -274,9 +366,37 @@ mod tests {
     }
 
     #[test]
+    fn resolves_bare_model_across_all_available_auths() {
+        let catalog = test_catalog();
+        let selection = resolve_model_selection_from(
+            &catalog,
+            "unique-codex",
+            "openai",
+            "api-key",
+            &["api-key".into(), "codex".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "openai-codex".into(),
+                model: "unique-codex".into(),
+                auth: "codex".into(),
+                from_catalog: true,
+            }
+        );
+    }
+
+    #[test]
     fn resolves_bare_unique_codex_model() {
-        let selection =
-            resolve_model_selection("gpt-5.3-codex-spark", "openai-codex", "codex").unwrap();
+        let selection = resolve_model_selection_for_auths(
+            "gpt-5.3-codex-spark",
+            "openai-codex",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap();
 
         assert_eq!(
             selection,
@@ -291,7 +411,13 @@ mod tests {
 
     #[test]
     fn bare_uncataloged_model_uses_current_provider() {
-        let selection = resolve_model_selection("brand-new-model", "openai", "codex").unwrap();
+        let selection = resolve_model_selection_for_auths(
+            "brand-new-model",
+            "openai",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap();
 
         assert_eq!(
             selection,
@@ -307,8 +433,14 @@ mod tests {
     #[test]
     fn bare_ambiguous_model_returns_error() {
         let catalog = test_catalog();
-        let err = resolve_model_selection_from(&catalog, "shared-model", "openai", "api-key")
-            .unwrap_err();
+        let err = resolve_model_selection_from(
+            &catalog,
+            "shared-model",
+            "openai",
+            "api-key",
+            &["api-key".into()],
+        )
+        .unwrap_err();
 
         assert_eq!(
             err,
@@ -320,7 +452,13 @@ mod tests {
 
     #[test]
     fn unknown_provider_is_rejected() {
-        let err = resolve_model_selection("missing/gpt-5.5", "openai", "codex").unwrap_err();
+        let err = resolve_model_selection_for_auths(
+            "missing/gpt-5.5",
+            "openai",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap_err();
 
         assert_eq!(
             err,

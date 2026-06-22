@@ -1,32 +1,51 @@
 # Authentication and models
 
-Rho supports OpenAI API key auth and Codex OAuth auth. The selected provider, model, and auth mode are stored in [configuration](/configuration).
+Rho supports OpenAI API-key auth and Rho-owned Codex OAuth auth. Provider, model, and auth mode are stored in [configuration](/configuration). Secrets are not stored in config.
 
-## OpenAI API key
+## Interactive login
 
-Set an OpenAI API key and choose a model:
-
-```bash
-export OPENAI_API_KEY=...
-rho --provider openai --auth api-key --model gpt-5.5
-```
-
-The `openai` provider uses API-key authentication.
-
-## Codex OAuth
-
-Rho can use an existing Codex CLI login:
-
-```bash
-codex login
-rho --provider openai-codex --auth codex --model gpt-5.5
-```
-
-Rho reads `CODEX_ACCESS_TOKEN` or `~/.codex/auth.json`. If the default API base is unchanged, Codex auth uses:
+Use `/login` in the interactive TUI:
 
 ```text
-https://chatgpt.com/backend-api/codex/responses
+/login
+/login openai
+/login openai-codex
 ```
+
+`/login` opens a provider picker. Direct args support provider names only:
+
+| Command | Auth flow |
+| --- | --- |
+| `/login openai` | masked OpenAI API-key entry |
+| `/login openai-codex` | browser-based Codex OAuth owned by Rho |
+
+Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
+
+Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
+
+## Logout
+
+Use `/logout` to delete stored credentials from the device:
+
+```text
+/logout
+/logout openai
+/logout openai-codex
+```
+
+`/logout` opens the same provider picker style as `/login`. Direct args support provider names only. If an environment override is still present, the provider remains available after deleting the stored credential.
+
+## Environment overrides
+
+Environment variables are CI/development escape hatches and override stored credentials:
+
+```bash
+OPENAI_API_KEY=...
+CODEX_ACCESS_TOKEN=...
+CODEX_ACCOUNT_ID=... # optional for Codex
+```
+
+For normal interactive setup, prefer `/login`.
 
 ## Providers and model catalog
 
@@ -37,15 +56,15 @@ Rho's implemented providers are:
 | `openai` | `api-key` | OpenAI API-key models |
 | `openai-codex` | `codex` | Codex OAuth models |
 
-Rho uses a built-in static model catalog instead of querying providers for model listings. Codex models live under the `openai-codex` provider, separate from API-key OpenAI models.
+Rho uses a built-in static model catalog instead of querying providers for model listings. The `/model` picker shows models for providers that currently have credentials available through `/login` or env overrides. After logging into another provider, that provider's models appear in the picker. After logout, they disappear unless an env override still supplies auth.
 
-In the [interactive TUI](/interactive-tui), use [`/model`](/interactive-tui#commands) to open a picker filtered to models that match the active auth mode. Use `/model provider/model` to switch explicitly, including to another provider:
+Use `/model provider/model` to switch explicitly, including to another provider:
 
 ```text
 /model openai/gpt-5.5
 /model openai-codex/gpt-5.5
 ```
 
-A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
+A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
 For persistent defaults, see [configuration](/configuration). For one-shot prompts, see [automation and CLI](/automation-cli).
