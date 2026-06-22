@@ -1,8 +1,13 @@
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiPicker};
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
+pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 
-pub(super) fn config_picker(info: &TuiInfo, max_output_bytes: usize) -> UiPicker {
+pub(super) fn config_picker(
+    info: &TuiInfo,
+    max_output_bytes: usize,
+    max_tool_output_lines: usize,
+) -> UiPicker {
     UiPicker::new(
         "Config",
         "type regex filter, enter change, esc cancel",
@@ -32,6 +37,16 @@ pub(super) fn config_picker(info: &TuiInfo, max_output_bytes: usize) -> UiPicker
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: MAX_OUTPUT_BYTES_VALUE.into(),
+            },
+            PickerItem {
+                label: "Max tool output lines".into(),
+                detail: Some("Maximum collapsed tool output lines shown in the TUI.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: max_tool_output_lines.to_string(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: MAX_TOOL_OUTPUT_LINES_VALUE.into(),
             },
         ],
         PickerAction::Config,

@@ -113,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
                     title_provider: cfg.title_provider,
                     title_model: cfg.title_model,
                     title_auth: cfg.title_auth,
+                    max_tool_output_lines: cfg.max_tool_output_lines,
                     session_id,
                     open_resume_picker,
                     config_path,

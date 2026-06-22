@@ -9,6 +9,7 @@ pub struct Config {
     pub provider: String,
     pub model: String,
     pub max_output_bytes: usize,
+    pub max_tool_output_lines: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
     pub title_provider: Option<String>,
@@ -22,6 +23,7 @@ impl Default for Config {
             provider: "openai".into(),
             model: "gpt-5.5".into(),
             max_output_bytes: 12000,
+            max_tool_output_lines: 10,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
             title_provider: None,
@@ -56,6 +58,9 @@ impl Config {
         }
         if let Some(v) = file.max_output_bytes {
             cfg.max_output_bytes = v;
+        }
+        if let Some(v) = file.max_tool_output_lines {
+            cfg.max_tool_output_lines = v.max(1);
         }
         if let Some(v) = file.auth {
             cfg.auth = v;
@@ -92,6 +97,7 @@ struct PartialConfig {
     provider: Option<String>,
     model: Option<String>,
     max_output_bytes: Option<usize>,
+    max_tool_output_lines: Option<usize>,
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
     reasoning_effort: Option<String>,
