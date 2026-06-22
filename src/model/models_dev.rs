@@ -45,7 +45,24 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         "openai" | "openai-codex" => "openai",
         other => other,
     };
-    let response = reqwest::Client::new()
+
+    if let Some(metadata) = read_cached_api()
+        .as_ref()
+        .and_then(|api| model_metadata_from_api(api, upstream_provider, model))
+    {
+        let metadata = apply_builtin_overrides(provider, model, metadata);
+        return Some(apply_local_overrides(provider, model, metadata));
+    }
+
+    let response = fetch_models_dev_api().await?;
+    write_cached_api(&response);
+    let metadata = model_metadata_from_api(&response, upstream_provider, model)?;
+    let metadata = apply_builtin_overrides(provider, model, metadata);
+    Some(apply_local_overrides(provider, model, metadata))
+}
+
+async fn fetch_models_dev_api() -> Option<Value> {
+    reqwest::Client::new()
         .get("https://models.dev/api.json")
         .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
         .send()
@@ -55,10 +72,51 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         .ok()?
         .json::<Value>()
         .await
-        .ok()?;
-    let metadata = model_metadata_from_api(&response, upstream_provider, model)?;
-    let metadata = apply_builtin_overrides(provider, model, metadata);
-    Some(apply_local_overrides(provider, model, metadata))
+        .ok()
+}
+
+fn read_cached_api() -> Option<Value> {
+    let contents = fs::read_to_string(models_dev_cache_path()).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn write_cached_api(value: &Value) {
+    let path = models_dev_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(contents) = serde_json::to_string(value) {
+        let _ = fs::write(path, contents);
+    }
+}
+
+fn models_dev_cache_path() -> PathBuf {
+    cache_dir().join("models.dev/api.json")
+}
+
+fn cache_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
+        return PathBuf::from(path).join("rho");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(path).join("rho").join("cache");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(path) = std::env::var_os("HOME") {
+            return PathBuf::from(path)
+                .join("Library")
+                .join("Caches")
+                .join("rho");
+        }
+    }
+    if let Some(path) = std::env::var_os("HOME") {
+        return PathBuf::from(path).join(".cache").join("rho");
+    }
+    std::env::temp_dir().join("rho-cache")
 }
 
 fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
