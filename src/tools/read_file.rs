@@ -27,6 +27,11 @@ impl Tool for ReadFile {
             }),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

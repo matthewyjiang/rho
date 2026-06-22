@@ -21,6 +21,11 @@ impl Tool for EditFile {
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old_string","new_string"]}),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

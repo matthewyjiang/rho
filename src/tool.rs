@@ -25,6 +25,54 @@ pub struct ToolResult {
     pub content: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolRgb(pub u8, pub u8, pub u8);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolDisplayStyle {
+    pub foreground: ToolRgb,
+    pub success_background: ToolRgb,
+    pub failure_background: ToolRgb,
+}
+
+impl ToolDisplayStyle {
+    pub const fn new(
+        foreground: ToolRgb,
+        success_background: ToolRgb,
+        failure_background: ToolRgb,
+    ) -> Self {
+        Self {
+            foreground,
+            success_background,
+            failure_background,
+        }
+    }
+
+    pub const fn default_tool() -> Self {
+        Self::new(
+            ToolRgb(255, 215, 0),
+            ToolRgb(48, 45, 30),
+            ToolRgb(95, 36, 36),
+        )
+    }
+
+    pub const fn file_or_command() -> Self {
+        Self::new(
+            ToolRgb(255, 255, 255),
+            ToolRgb(25, 75, 45),
+            ToolRgb(95, 36, 36),
+        )
+    }
+
+    pub const fn skill() -> Self {
+        Self::new(
+            ToolRgb(255, 255, 255),
+            ToolRgb(92, 80, 140),
+            ToolRgb(95, 36, 36),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolContext {
     pub cwd: PathBuf,
@@ -51,6 +99,11 @@ pub enum ToolError {
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::default_tool()
+    }
+
     async fn call(
         &self,
         args: Value,

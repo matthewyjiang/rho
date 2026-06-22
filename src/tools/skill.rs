@@ -33,6 +33,10 @@ impl Tool for Skill {
         }
     }
 
+    fn display_style(&self) -> crate::tool::ToolDisplayStyle {
+        crate::tool::ToolDisplayStyle::skill()
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

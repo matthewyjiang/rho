@@ -18,6 +18,11 @@ impl Tool for WriteFile {
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

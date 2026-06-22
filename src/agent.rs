@@ -4,7 +4,7 @@ use crate::model::{
     ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
 };
 use crate::prompt::system_prompt;
-use crate::tool::{ToolContext, ToolError, ToolRegistry, ToolResult};
+use crate::tool::{ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -28,6 +28,7 @@ pub enum AgentEvent {
         command: Option<String>,
         ok: bool,
         content: String,
+        display_style: ToolDisplayStyle,
     },
 }
 
@@ -178,23 +179,27 @@ impl Agent {
                         let name = call.name.clone();
                         let command = tool_command(&name, &call.arguments);
                         let event_content = tool_event_content(&name, &call.arguments, &self.ctx);
-                        let result = match self.tools.get(&call.name) {
-                            Some(tool) => match tool
-                                .call(call.arguments, self.ctx.clone(), call.id.clone())
-                                .await
-                            {
-                                Ok(result) => result,
-                                Err(err) => {
-                                    let result = ToolResult {
-                                        id: call.id,
-                                        ok: false,
-                                        content: err.to_string(),
-                                    };
-                                    self.push_message(Message::ToolResult(result.clone()))?;
-                                    self.push_skipped_tool_results(&tool_calls[index + 1..])?;
-                                    return Err(AgentError::Tool(err));
-                                }
-                            },
+                        let (result, display_style) = match self.tools.get(&call.name) {
+                            Some(tool) => {
+                                let display_style = tool.display_style();
+                                let result = match tool
+                                    .call(call.arguments, self.ctx.clone(), call.id.clone())
+                                    .await
+                                {
+                                    Ok(result) => result,
+                                    Err(err) => {
+                                        let result = ToolResult {
+                                            id: call.id,
+                                            ok: false,
+                                            content: err.to_string(),
+                                        };
+                                        self.push_message(Message::ToolResult(result.clone()))?;
+                                        self.push_skipped_tool_results(&tool_calls[index + 1..])?;
+                                        return Err(AgentError::Tool(err));
+                                    }
+                                };
+                                (result, display_style)
+                            }
                             None => {
                                 let result = ToolResult {
                                     id: call.id,
@@ -215,6 +220,7 @@ impl Agent {
                             command,
                             ok,
                             content: display_content,
+                            display_style,
                         });
                     }
                     for event in tool_events {

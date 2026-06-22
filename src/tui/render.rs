@@ -8,6 +8,7 @@ use ratatui::{
 use regex::RegexBuilder;
 
 use super::{Entry, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
+use crate::tool::{ToolDisplayStyle, ToolRgb};
 
 const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 3;
 
@@ -285,12 +286,14 @@ pub(super) fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             command,
             ok,
             content,
+            display_style,
         } => push_tool_block(
             &mut lines,
             name,
             command.as_deref(),
             *ok,
             content,
+            *display_style,
             inner_width,
         ),
         Entry::Notice(text) => push_wrapped_text(
@@ -329,27 +332,17 @@ fn push_tool_block(
     command: Option<&str>,
     ok: bool,
     content: &str,
+    display_style: ToolDisplayStyle,
     width: usize,
 ) {
-    let style = if name == "skill" {
-        if ok {
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::Rgb(92, 80, 140))
-        } else {
-            Style::default().fg(Color::White).bg(Color::Rgb(95, 36, 36))
-        }
-    } else if matches!(name, "bash" | "read_file" | "write_file") {
-        if ok {
-            Style::default().fg(Color::White).bg(Color::Rgb(25, 75, 45))
-        } else {
-            Style::default().fg(Color::White).bg(Color::Rgb(95, 36, 36))
-        }
+    let background = if ok {
+        display_style.success_background
     } else {
-        Style::default()
-            .fg(Color::Yellow)
-            .bg(Color::Rgb(48, 45, 30))
+        display_style.failure_background
     };
+    let style = Style::default()
+        .fg(tool_color(display_style.foreground))
+        .bg(tool_color(background));
 
     push_wrapped_text(lines, name, width, style, LineFill::PadToWidth);
     if name == "bash" {
@@ -362,6 +355,10 @@ fn push_tool_block(
     } else if !content.trim().is_empty() {
         push_wrapped_text(lines, content, width, style, LineFill::PadToWidth);
     }
+}
+
+fn tool_color(color: ToolRgb) -> Color {
+    Color::Rgb(color.0, color.1, color.2)
 }
 
 pub(super) fn push_wrapped_text(

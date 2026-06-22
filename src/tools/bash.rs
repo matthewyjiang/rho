@@ -19,6 +19,11 @@ impl Tool for Bash {
             input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
         }
     }
+
+    fn display_style(&self) -> ToolDisplayStyle {
+        ToolDisplayStyle::file_or_command()
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,

@@ -45,6 +45,7 @@ use crate::{
         reasoning_config_value, ModelError, UnavailableProvider,
     },
     session::Session,
+    tool::ToolDisplayStyle,
 };
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 18;
@@ -180,6 +181,7 @@ enum Entry {
         command: Option<String>,
         ok: bool,
         content: String,
+        display_style: ToolDisplayStyle,
     },
     Notice(String),
     Error(String),
@@ -1515,11 +1517,13 @@ impl App {
                 command,
                 ok,
                 content,
+                display_style,
             } => Some(Entry::Tool {
                 name,
                 command,
                 ok,
                 content,
+                display_style,
             }),
         }
     }
@@ -1890,6 +1894,7 @@ mod tests {
                 command: None,
                 ok: true,
                 content: "read src/main.rs".into(),
+                display_style: ToolDisplayStyle::file_or_command(),
             },
             Entry::Notice("note".into()),
             Entry::Error("bad".into()),
@@ -1918,6 +1923,7 @@ mod tests {
                 command: Some("cargo test".into()),
                 ok: true,
                 content: "ignored output".into(),
+                display_style: ToolDisplayStyle::file_or_command(),
             },
             40,
         );
@@ -1936,6 +1942,7 @@ mod tests {
                 command: None,
                 ok: true,
                 content: "src/main.rs".into(),
+                display_style: ToolDisplayStyle::file_or_command(),
             },
             40,
         );
@@ -1953,6 +1960,7 @@ mod tests {
                 command: None,
                 ok: true,
                 content: "skill caveman".into(),
+                display_style: ToolDisplayStyle::skill(),
             },
             40,
         );
@@ -1968,6 +1976,7 @@ mod tests {
                 command: None,
                 ok: false,
                 content: "unknown skill".into(),
+                display_style: ToolDisplayStyle::skill(),
             },
             40,
         );
@@ -1983,6 +1992,7 @@ mod tests {
                 command: None,
                 ok: true,
                 content: "src/file.rs:10-24".into(),
+                display_style: ToolDisplayStyle::file_or_command(),
             },
             40,
         );
