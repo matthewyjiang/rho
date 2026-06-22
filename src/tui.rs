@@ -1047,26 +1047,36 @@ impl App {
         match result {
             Ok(answer) => {
                 let remaining = self.unflushed_answer_text(&answer).to_string();
+                let reasoning = std::mem::take(&mut self.reasoning_buffer);
                 self.stream_buffer.clear();
-                self.reasoning_buffer.clear();
                 self.running = false;
+                self.insert_reasoning_output(
+                    terminal,
+                    &reasoning,
+                    self.stream_flushed_text.is_empty(),
+                )?;
                 self.insert_assistant_output(
                     terminal,
                     &remaining,
-                    self.stream_flushed_text.is_empty(),
+                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
                 )?;
                 self.stream_flushed_text.clear();
                 self.status = "ready".into();
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
                 let partial = visible_assistant_stream(&self.stream_buffer).to_string();
+                let reasoning = std::mem::take(&mut self.reasoning_buffer);
                 self.stream_buffer.clear();
-                self.reasoning_buffer.clear();
                 self.running = false;
+                self.insert_reasoning_output(
+                    terminal,
+                    &reasoning,
+                    self.stream_flushed_text.is_empty(),
+                )?;
                 self.insert_assistant_output(
                     terminal,
                     partial.trim(),
-                    self.stream_flushed_text.is_empty(),
+                    self.stream_flushed_text.is_empty() && reasoning.is_empty(),
                 )?;
                 self.stream_flushed_text.clear();
                 self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
@@ -1117,13 +1127,15 @@ impl App {
         if self.stream_flushed_text == flushed {
             lines.push(Line::raw(""));
         }
+        let mut flushed_lines = Vec::new();
         push_wrapped_text(
-            &mut lines,
+            &mut flushed_lines,
             &flushed,
-            width,
+            padded_content_width(width),
             Style::default(),
             LineFill::Natural,
         );
+        lines.extend(flushed_lines.into_iter().map(pad_display_line));
         insert_history_lines(terminal, lines)?;
         Ok(())
     }
@@ -1134,28 +1146,56 @@ impl App {
             .unwrap_or(answer)
     }
 
+    fn insert_reasoning_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        text: &str,
+        include_leading_blank: bool,
+    ) -> std::io::Result<()> {
+        self.insert_padded_output(
+            terminal,
+            text,
+            include_leading_blank,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )
+    }
+
     fn insert_assistant_output(
         &mut self,
         terminal: &mut DefaultTerminal,
         text: &str,
         include_leading_blank: bool,
     ) -> std::io::Result<()> {
+        self.insert_padded_output(terminal, text, include_leading_blank, Style::default())
+    }
+
+    fn insert_padded_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        text: &str,
+        include_leading_blank: bool,
+        style: Style,
+    ) -> std::io::Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+
         let width = terminal.size()?.width as usize;
         let mut lines = Vec::new();
         if include_leading_blank {
             lines.push(Line::raw(""));
         }
-        if !text.is_empty() {
-            let mut text_lines = Vec::new();
-            push_wrapped_text(
-                &mut text_lines,
-                text,
-                padded_content_width(width),
-                Style::default(),
-                LineFill::Natural,
-            );
-            lines.extend(text_lines.into_iter().map(pad_display_line));
-        }
+        let mut text_lines = Vec::new();
+        push_wrapped_text(
+            &mut text_lines,
+            text,
+            padded_content_width(width),
+            style,
+            LineFill::Natural,
+        );
+        lines.extend(text_lines.into_iter().map(pad_display_line));
         lines.push(Line::raw(""));
         insert_history_lines(terminal, lines)
     }
@@ -1566,15 +1606,17 @@ impl App {
             content.push(Line::raw(""));
         }
         if !self.reasoning_buffer.is_empty() {
+            let mut reasoning_lines = Vec::new();
             push_wrapped_text(
-                &mut content,
+                &mut reasoning_lines,
                 &self.reasoning_buffer,
-                width,
+                padded_content_width(width),
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::DIM),
                 LineFill::Natural,
             );
+            content.extend(reasoning_lines.into_iter().map(pad_display_line));
             content.push(Line::raw(""));
         }
         if !visible_stream.is_empty() {
@@ -2018,6 +2060,15 @@ mod tests {
         assert!(app.reasoning_buffer.is_empty());
         assert!(app.running);
         assert_eq!(app.status, "running step 2");
+    }
+
+    #[test]
+    fn active_reasoning_has_side_padding() {
+        let mut app = test_app();
+        app.reasoning_buffer = "thinking".into();
+        let lines = app.active_lines(40);
+
+        assert!(lines.iter().any(|line| line_text(line) == " thinking "));
     }
 
     #[test]
