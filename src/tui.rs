@@ -16,7 +16,7 @@ use crossterm::{
 use ratatui::{
     layout::Position,
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
     DefaultTerminal, Frame, TerminalOptions, Viewport,
 };
@@ -1146,7 +1146,15 @@ impl App {
             lines.push(Line::raw(""));
         }
         if !text.is_empty() {
-            push_wrapped_text(&mut lines, text, width, Style::default(), LineFill::Natural);
+            let mut text_lines = Vec::new();
+            push_wrapped_text(
+                &mut text_lines,
+                text,
+                padded_content_width(width),
+                Style::default(),
+                LineFill::Natural,
+            );
+            lines.extend(text_lines.into_iter().map(pad_display_line));
         }
         lines.push(Line::raw(""));
         insert_history_lines(terminal, lines)
@@ -1570,13 +1578,15 @@ impl App {
             content.push(Line::raw(""));
         }
         if !visible_stream.is_empty() {
+            let mut stream_lines = Vec::new();
             push_wrapped_text(
-                &mut content,
+                &mut stream_lines,
                 visible_stream,
-                width,
+                padded_content_width(width),
                 Style::default(),
                 LineFill::Natural,
             );
+            content.extend(stream_lines.into_iter().map(pad_display_line));
             content.push(Line::raw(""));
         }
 
@@ -1741,6 +1751,23 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
         Style::default().fg(Color::DarkGray),
         LineFill::Natural,
     )]
+}
+
+fn padded_content_width(width: usize) -> usize {
+    width.saturating_sub(2).max(1)
+}
+
+fn pad_display_line(line: Line<'static>) -> Line<'static> {
+    let edge_style = line
+        .spans
+        .first()
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut spans = Vec::with_capacity(line.spans.len() + 2);
+    spans.push(Span::styled(" ", edge_style));
+    spans.extend(line.spans);
+    spans.push(Span::styled(" ", edge_style));
+    Line::from(spans)
 }
 
 fn insert_history_lines(
@@ -2003,7 +2030,7 @@ mod tests {
 
         assert_eq!(line_text(&before_stream[0]), "");
         assert_eq!(line_text(&after_stream[0]), "");
-        assert_eq!(line_text(&after_stream[1]), "hello");
+        assert_eq!(line_text(&after_stream[1]), " hello ");
     }
 
     #[test]
