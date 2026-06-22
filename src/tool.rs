@@ -183,7 +183,36 @@ pub fn truncate(mut s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
-    s.truncate(max);
+    let boundary = previous_char_boundary(&s, max);
+    s.truncate(boundary);
     s.push_str("\n[truncated]");
     s
+}
+
+fn previous_char_boundary(s: &str, index: usize) -> usize {
+    let mut index = index.min(s.len());
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_keeps_ascii_prefix() {
+        assert_eq!(truncate("abcdef".into(), 3), "abc\n[truncated]");
+    }
+
+    #[test]
+    fn truncate_does_not_split_utf8_character() {
+        assert_eq!(truncate("aébc".into(), 2), "a\n[truncated]");
+    }
+
+    #[test]
+    fn truncate_allows_exact_utf8_boundary() {
+        assert_eq!(truncate("aébc".into(), 3), "aé\n[truncated]");
+    }
 }
