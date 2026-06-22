@@ -1325,7 +1325,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rho-agent"
+name = "rho-coding-agent"
 version = "0.3.0"
 dependencies = [
  "anyhow",
