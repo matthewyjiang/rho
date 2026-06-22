@@ -161,9 +161,8 @@ fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                     segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
                 }
                 segments.push(StyledSegment::new(label, Theme::text()));
-                segments.push(StyledSegment::new(" (".to_string(), Theme::text()));
+                segments.push(StyledSegment::new(": ".to_string(), Theme::text()));
                 segments.push(StyledSegment::new(target, Theme::markdown_link()));
-                segments.push(StyledSegment::new(")".to_string(), Theme::text()));
                 rest = &rest[end..];
             }
             Some(MarkdownSpan::RawUrl { start, end }) => {
@@ -350,7 +349,7 @@ mod tests {
 
         assert_eq!(
             line_text(&lines[0]),
-            "use cargo test, then ship the fix, docs (https://example.com), and https://example.com"
+            "use cargo test, then ship the fix, docs: https://example.com, and https://example.com"
         );
         let styles = line_styles(&lines[0]);
         assert!(styles.contains(&Theme::markdown_inline_code()));
