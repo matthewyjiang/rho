@@ -166,6 +166,12 @@ pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Re
     Ok(())
 }
 
+pub(super) fn record_replaced(session: &Session) -> anyhow::Result<()> {
+    let connection = open_index(&session.session_root)?;
+    let record = summarize_session_file(&session.path, &session.cwd)?;
+    upsert_record(&connection, &session.workspace_key, &record)
+}
+
 fn open_index(session_root: &Path) -> anyhow::Result<Connection> {
     fs::create_dir_all(session_root)?;
     set_private_dir_permissions(session_root)?;

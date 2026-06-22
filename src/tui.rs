@@ -44,7 +44,7 @@ use render::{
 use statusline::{statusline_lines, StatusLineState};
 
 use crate::{
-    agent::{Agent, AgentEvent},
+    agent::{Agent, AgentEvent, SessionHistorySink},
     auth::codex_oauth::{self, CodexOAuthError},
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
@@ -57,8 +57,8 @@ use crate::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         models_dev::{cached_model_metadata, fetch_model_metadata},
-        ContentBlock, Message, ModelError, ModelMetadata, ModelRequest, ModelResponse, ModelUsage,
-        UnavailableProvider,
+        ContentBlock, ContextUsage, Message, ModelError, ModelMetadata, ModelRequest,
+        ModelResponse, ModelUsage, UnavailableProvider,
     },
     reasoning::ReasoningLevel,
     session::Session,
@@ -94,6 +94,7 @@ pub struct TuiResult {
 }
 
 pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
+    agent.set_session_id(info.session_id.clone());
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
@@ -136,7 +137,8 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
-    latest_usage: Option<ModelUsage>,
+    cumulative_usage: Option<ModelUsage>,
+    current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
@@ -395,7 +397,8 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_oauth_login: None,
-            latest_usage: None,
+            cumulative_usage: None,
+            current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
             pending_session_title: None,
@@ -407,7 +410,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<TuiResult> {
-        self.start_model_metadata_fetch();
+        self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal, agent)?;
         if self.info.open_resume_picker {
@@ -420,7 +423,7 @@ impl App {
             )?;
         }
         while !self.should_quit {
-            self.poll_model_metadata_fetch();
+            self.poll_model_metadata_fetch(agent);
             self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             terminal.draw(|frame| self.draw(frame))?;
@@ -510,7 +513,10 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 agent.reset();
                 self.info.session_id = None;
-                agent.clear_message_sink();
+                agent.set_session_id(None);
+                agent.clear_history_sink();
+                self.cumulative_usage = None;
+                self.current_context = None;
                 self.insert_entry(
                     terminal,
                     &Entry::Notice("conversation reset; next message starts a new session".into()),
@@ -605,15 +611,17 @@ impl App {
         Ok(())
     }
 
-    fn start_model_metadata_fetch(&mut self) {
+    fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
         }
         if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
+            agent.set_context_window(metadata.display_context_window());
             self.model_metadata = Some(metadata);
             return;
         }
 
+        agent.set_context_window(None);
         self.model_metadata = None;
         let provider = self.info.provider.clone();
         let model = self.info.model.clone();
@@ -622,7 +630,7 @@ impl App {
         }));
     }
 
-    fn poll_model_metadata_fetch(&mut self) {
+    fn poll_model_metadata_fetch(&mut self, agent: &mut Agent) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -631,6 +639,7 @@ impl App {
         }
         if let Some(handle) = self.pending_model_metadata.take() {
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
+                agent.set_context_window(metadata.display_context_window());
                 self.model_metadata = Some(metadata);
             }
         }
@@ -1161,8 +1170,10 @@ impl App {
     fn ensure_session(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
             let session = Session::create(&self.info.cwd)?;
-            self.info.session_id = Some(session.id().to_string());
-            agent.set_message_sink(move |message| session.append_message(message));
+            let session_id = session.id().to_string();
+            self.info.session_id = Some(session_id.clone());
+            agent.set_session_id(Some(session_id));
+            agent.set_history_sink(SessionHistorySink::new(session));
         }
         Ok(())
     }
@@ -1762,7 +1773,7 @@ impl App {
         self.info.auth = auth.clone();
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
-        self.start_model_metadata_fetch();
+        self.start_model_metadata_fetch(agent);
         match Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.provider = provider.clone();
             config.model = model.clone();
@@ -1923,7 +1934,8 @@ impl App {
         let short_id = short_session_id(&full_id);
 
         agent.replace_history(history);
-        agent.set_message_sink(move |message| session.append_message(message));
+        agent.set_session_id(Some(full_id.clone()));
+        agent.set_history_sink(SessionHistorySink::new(session));
         self.info.session_id = Some(full_id);
         self.composer = ComposerMode::Input;
         self.input.clear();
@@ -1934,7 +1946,8 @@ impl App {
         self.stream_flushed_text.clear();
         self.reasoning_buffer.clear();
         self.running = false;
-        self.latest_usage = None;
+        self.cumulative_usage = None;
+        self.current_context = None;
         let entries = transcript_entries_from_messages(agent.messages());
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(
@@ -2059,9 +2072,13 @@ impl App {
                 self.reasoning_buffer.push_str(&text);
                 None
             }
+            AgentEvent::ContextUsage(usage) => {
+                self.current_context = Some(usage);
+                None
+            }
             AgentEvent::Usage(usage) => {
                 let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
-                merge_usage(&mut self.latest_usage, usage);
+                merge_usage(&mut self.cumulative_usage, usage);
                 None
             }
             AgentEvent::ToolFinished {
@@ -2182,7 +2199,8 @@ impl App {
             &StatusLineState::from_tui(
                 &self.info,
                 &self.status,
-                self.latest_usage.clone(),
+                self.cumulative_usage.clone(),
+                self.current_context.clone(),
                 self.model_metadata.clone(),
                 self.pending_model_metadata.is_some(),
             ),
@@ -2491,6 +2509,7 @@ async fn generate_session_title(
                 Message::user_text(format!("First user message:\n\n{first_user_message}")),
             ],
             tools: Vec::new(),
+            prompt_cache_key: None,
         }),
     )
     .await
@@ -2558,9 +2577,10 @@ fn estimated_usage_cost(usage: &ModelUsage, metadata: Option<&ModelMetadata>) ->
     let metadata = metadata?;
     let input = usage.input_tokens.unwrap_or_default();
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let cost = metadata.cost_for_input_tokens(input)?;
+    let total_input = usage.total_input_tokens().unwrap_or_default();
+    let cost = metadata.cost_for_input_tokens(total_input)?;
     let mut micros = 0u128;
-    micros += cost_component(input.saturating_sub(cache_read), cost.input_micros_per_m);
+    micros += cost_component(input, cost.input_micros_per_m);
     micros += cost_component(
         usage.output_tokens.unwrap_or_default(),
         cost.output_micros_per_m,
@@ -2593,7 +2613,7 @@ fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
 
 fn usage_total_tokens(usage: &ModelUsage) -> Option<u64> {
     let total = usage
-        .input_tokens
+        .total_input_tokens()
         .unwrap_or_default()
         .saturating_add(usage.output_tokens.unwrap_or_default());
     (total > 0).then_some(total)
@@ -2956,6 +2976,56 @@ mod tests {
         assert_eq!(
             app.title_model_selection(),
             ("openai".into(), "gpt-5.5".into(), "api-key".into())
+        );
+    }
+
+    #[test]
+    fn estimated_usage_cost_uses_normalized_input_and_cache_read() {
+        let metadata = ModelMetadata {
+            cost_default: Some(crate::model::models_dev::ModelCost {
+                input_micros_per_m: Some(1_000_000),
+                output_micros_per_m: Some(2_000_000),
+                cache_read_micros_per_m: Some(100_000),
+                cache_write_micros_per_m: Some(500_000),
+            }),
+            ..ModelMetadata::default()
+        };
+        let usage = ModelUsage {
+            input_tokens: Some(300_000),
+            cache_read_tokens: Some(700_000),
+            output_tokens: Some(100_000),
+            cache_write_tokens: Some(10_000),
+            ..ModelUsage::default()
+        };
+
+        assert_eq!(estimated_usage_cost(&usage, Some(&metadata)), Some(575_000));
+    }
+
+    #[test]
+    fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
+        let mut app = test_app();
+        app.cumulative_usage = Some(ModelUsage {
+            input_tokens: Some(1_000),
+            output_tokens: Some(500),
+            ..ModelUsage::default()
+        });
+
+        assert!(app
+            .record_agent_event(AgentEvent::ContextUsage(ContextUsage::estimated(
+                250,
+                Some(10_000),
+            )))
+            .is_none());
+
+        assert_eq!(
+            app.current_context,
+            Some(ContextUsage::estimated(250, Some(10_000)))
+        );
+        assert_eq!(
+            app.cumulative_usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens),
+            Some(1_000)
         );
     }
 

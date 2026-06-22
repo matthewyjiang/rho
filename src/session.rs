@@ -59,6 +59,10 @@ enum SessionEntry {
         timestamp: String,
         message: Message,
     },
+    ReplaceHistory {
+        timestamp: String,
+        messages: Vec<Message>,
+    },
 }
 
 impl Session {
@@ -149,6 +153,15 @@ impl Session {
         Ok(())
     }
 
+    pub fn replace_history(&self, messages: &[Message]) -> anyhow::Result<()> {
+        self.append_entry(&SessionEntry::ReplaceHistory {
+            timestamp: timestamp(),
+            messages: messages.to_vec(),
+        })?;
+        let _ = index::record_replaced(self);
+        Ok(())
+    }
+
     fn from_parts(session_root: &Path, cwd: &Path, id: String, path: PathBuf) -> Self {
         Self {
             id,
@@ -213,13 +226,18 @@ fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
 }
 
 fn messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
-    entries
-        .into_iter()
-        .filter_map(|entry| match entry {
-            SessionEntry::Session { .. } => None,
-            SessionEntry::Message { message, .. } => Some(message),
-        })
-        .collect()
+    let mut messages = Vec::new();
+    for entry in entries {
+        match entry {
+            SessionEntry::Session { .. } => {}
+            SessionEntry::Message { message, .. } => messages.push(message),
+            SessionEntry::ReplaceHistory {
+                messages: replacement,
+                ..
+            } => messages = replacement,
+        }
+    }
+    messages
 }
 
 pub(super) fn summarize_session_file(
@@ -251,6 +269,15 @@ pub(super) fn summarize_session_file(
                     updated_at = updated_at.max(timestamp);
                 }
                 messages.push(message);
+            }
+            SessionEntry::ReplaceHistory {
+                timestamp,
+                messages: replacement,
+            } => {
+                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                    updated_at = updated_at.max(timestamp);
+                }
+                messages = replacement;
             }
         }
     }
@@ -533,6 +560,47 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert!(matches!(&messages[0], Message::User(_)));
         assert!(matches!(&messages[1], Message::Assistant(_)));
+    }
+
+    #[test]
+    fn replace_history_round_trips_compacted_messages() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session.append_message(&Message::user_text("old")).unwrap();
+        session
+            .replace_history(&[
+                Message::user_text("summary"),
+                Message::assistant_text("recent answer"),
+            ])
+            .unwrap();
+
+        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert!(
+            matches!(&messages[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
+        );
+        assert!(
+            matches!(&messages[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "recent answer"))
+        );
+    }
+
+    #[test]
+    fn replace_history_updates_session_summary() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session.append_message(&Message::user_text("old")).unwrap();
+        session
+            .replace_history(&[Message::user_text("summary"), Message::user_text("latest")])
+            .unwrap();
+
+        let summaries = Session::list_in_root(&root, &cwd).unwrap();
+
+        assert_eq!(summaries[0].message_count, 2);
+        assert_eq!(summaries[0].first_user_message.as_deref(), Some("summary"));
+        assert_eq!(summaries[0].last_user_message.as_deref(), Some("latest"));
     }
 
     #[test]

@@ -8,6 +8,9 @@ model = "gpt-5.5"
 max_output_bytes = 12000
 auth = "api-key" # or "codex"
 reasoning = "medium" # off, minimal, low, medium, high, or xhigh
+auto_compact = false
+compact_threshold_percent = 85
+compact_recent_messages = 8
 ```
 
 ## CLI overrides
@@ -40,3 +43,7 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 ## Tool output limit
 
 `max_output_bytes` controls how much output Rho keeps from [tool](/tools-workspace) calls such as command output and file reads.
+
+## Auto compaction
+
+`auto_compact` enables summarizing older conversation history when the estimated current context approaches the model window. It is disabled by default. `compact_threshold_percent` controls the trigger point, and `compact_recent_messages` controls how many recent messages are kept verbatim after older history is summarized.

@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
 pub mod catalog;
+pub mod context;
 pub mod models_dev;
 pub mod openai;
 pub mod provider;
@@ -36,6 +37,11 @@ pub enum ContentBlock {
 pub struct ModelRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
+    /// Provider-specific prompt cache key metadata.
+    ///
+    /// Providers must opt in explicitly when their API supports this field. For
+    /// now, rho only serializes this for OpenAI-Codex Responses requests.
+    pub prompt_cache_key: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +51,11 @@ pub enum ModelResponse {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModelUsage {
+    /// Uncached input tokens charged at the normal input-token rate.
+    ///
+    /// Provider adapters that report cached tokens inside their input totals
+    /// should subtract cache reads before filling this field and report cached
+    /// input separately in `cache_read_tokens`.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,
@@ -52,6 +63,18 @@ pub struct ModelUsage {
     pub total_tokens: Option<u64>,
     pub context_window: Option<u64>,
     pub cost_usd_micros: Option<u64>,
+}
+
+impl ModelUsage {
+    /// Input tokens that were present in the request, including cache hits.
+    pub fn total_input_tokens(&self) -> Option<u64> {
+        let has_input = self.input_tokens.is_some() || self.cache_read_tokens.is_some();
+        let total = self
+            .input_tokens
+            .unwrap_or_default()
+            .saturating_add(self.cache_read_tokens.unwrap_or_default());
+        has_input.then_some(total)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +143,7 @@ pub enum AuthMode {
     Codex,
 }
 
+pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;
 pub use provider::{build_provider, UnavailableProvider};

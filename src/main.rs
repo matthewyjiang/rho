@@ -19,10 +19,10 @@ use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
 
-use agent::Agent;
+use agent::{Agent, SessionHistorySink};
 use cli::{Cli, Command};
 use config::Config;
-use model::{build_provider, ModelError, UnavailableProvider};
+use model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider};
 use session::Session;
 use tool::ToolContext;
 use tui::TuiInfo;
@@ -80,6 +80,11 @@ async fn main() -> anyhow::Result<()> {
         max_output_bytes: cfg.max_output_bytes,
     };
     let mut agent = Agent::new(provider, registry, ctx);
+    agent.set_compaction_config((&cfg).into());
+    agent.set_context_window(
+        cached_model_metadata(&cfg.provider, &cfg.model)
+            .and_then(|metadata| metadata.display_context_window()),
+    );
 
     match run_prompt {
         Some(prompt) => {
@@ -93,7 +98,8 @@ async fn main() -> anyhow::Result<()> {
                     let (session, history) = Session::open_by_id(&cwd, id)?;
                     let session_id = Some(session.id().to_string());
                     agent = agent.with_history(history);
-                    agent.set_message_sink(move |message| session.append_message(message));
+                    agent.set_session_id(session_id.clone());
+                    agent.set_history_sink(SessionHistorySink::new(session));
                     session_id
                 }
                 Some(None) => {

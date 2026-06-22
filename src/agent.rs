@@ -1,8 +1,21 @@
 use thiserror::Error;
 
+mod compaction;
+mod context_tracker;
+mod history;
+
+pub use compaction::CompactionConfig;
+pub use history::{HistorySink, SessionHistorySink};
+
+use compaction::{
+    build_summary_request_messages, partition_messages_for_compaction,
+    replacement_history_from_summary, should_compact,
+};
+use context_tracker::ContextTracker;
+
 use crate::model::{
-    ContentBlock, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
-    ModelUsage,
+    openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage, DynModelProvider,
+    Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -22,6 +35,7 @@ pub enum AgentEvent {
     StepStarted(usize),
     OutputDelta(String),
     ReasoningDelta(String),
+    ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ToolFinished {
         name: String,
@@ -33,14 +47,15 @@ pub enum AgentEvent {
     },
 }
 
-type MessageSink = Box<dyn FnMut(&Message) -> anyhow::Result<()> + Send>;
-
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
     ctx: ToolContext,
     messages: Vec<Message>,
-    message_sink: Option<MessageSink>,
+    history_sink: Option<Box<dyn HistorySink>>,
+    prompt_cache_key: Option<String>,
+    compaction: CompactionConfig,
+    context_tracker: ContextTracker,
 }
 
 impl Agent {
@@ -51,7 +66,10 @@ impl Agent {
             tools,
             ctx,
             messages,
-            message_sink: None,
+            history_sink: None,
+            prompt_cache_key: None,
+            compaction: CompactionConfig::default(),
+            context_tracker: ContextTracker::default(),
         }
     }
 
@@ -69,23 +87,36 @@ impl Agent {
         &self.messages
     }
 
-    pub fn set_message_sink(
-        &mut self,
-        sink: impl FnMut(&Message) -> anyhow::Result<()> + Send + 'static,
-    ) {
-        self.message_sink = Some(Box::new(sink));
+    pub fn set_history_sink(&mut self, sink: impl HistorySink + 'static) {
+        self.history_sink = Some(Box::new(sink));
     }
 
-    pub fn clear_message_sink(&mut self) {
-        self.message_sink = None;
+    pub fn clear_history_sink(&mut self) {
+        self.history_sink = None;
+    }
+
+    pub fn set_compaction_config(&mut self, compaction: CompactionConfig) {
+        self.compaction = compaction;
+    }
+
+    pub fn set_context_window(&mut self, context_window: Option<u64>) {
+        self.context_tracker.set_configured_window(context_window);
+    }
+
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.prompt_cache_key = session_id
+            .as_deref()
+            .and_then(prompt_cache_key_from_session_id);
     }
 
     pub fn replace_provider(&mut self, provider: DynModelProvider) {
         self.provider = provider;
+        self.context_tracker.replace_provider();
     }
 
     pub fn reset(&mut self) {
         self.messages = initial_messages(&self.tools, &self.ctx.cwd);
+        self.context_tracker.reset();
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
@@ -102,8 +133,8 @@ impl Agent {
     }
 
     fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
-        if let Some(sink) = &mut self.message_sink {
-            sink(&message)?;
+        if let Some(sink) = &mut self.history_sink {
+            sink.append_message(&message)?;
         }
         self.messages.push(message);
         Ok(())
@@ -119,20 +150,35 @@ impl Agent {
 
         let mut step = 1usize;
         loop {
+            self.maybe_compact_history(&specs, &mut on_event).await?;
             on_event(AgentEvent::StepStarted(step))?;
+            if let Some(context_usage) = self
+                .context_tracker
+                .before_provider_request(&self.messages, &specs)
+            {
+                on_event(AgentEvent::ContextUsage(context_usage))?;
+            }
             let response = match self
                 .provider
                 .send_turn_stream(
                     ModelRequest {
                         messages: self.messages.clone(),
                         tools: specs.clone(),
+                        prompt_cache_key: self.prompt_cache_key.clone(),
                     },
                     &mut |event| match event {
                         ModelEvent::OutputDelta(text) => on_event(AgentEvent::OutputDelta(text)),
                         ModelEvent::ReasoningDelta(text) => {
                             on_event(AgentEvent::ReasoningDelta(text))
                         }
-                        ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
+                        ModelEvent::Usage(usage) => {
+                            if let Some(context_usage) =
+                                self.context_tracker.record_provider_usage(&usage)
+                            {
+                                on_event(AgentEvent::ContextUsage(context_usage))?;
+                            }
+                            on_event(AgentEvent::Usage(usage))
+                        }
                     },
                 )
                 .await
@@ -243,6 +289,74 @@ impl Agent {
             step += 1;
         }
     }
+
+    async fn maybe_compact_history(
+        &mut self,
+        specs: &[crate::tool::ToolSpec],
+        on_event: &mut impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<(), AgentError> {
+        let estimate = self
+            .context_tracker
+            .estimate_for_compaction(&self.messages, specs);
+        if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
+            return Ok(());
+        }
+        let Some(partition) =
+            partition_messages_for_compaction(&self.messages, self.compaction.recent_messages)
+        else {
+            return Ok(());
+        };
+
+        let response = self
+            .provider
+            .send_turn_stream(
+                ModelRequest {
+                    messages: build_summary_request_messages(&partition.compacted_messages),
+                    tools: Vec::new(),
+                    prompt_cache_key: self.prompt_cache_key.clone(),
+                },
+                &mut |event| match event {
+                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => Ok(()),
+                    ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
+                },
+            )
+            .await?;
+        let ModelResponse::Assistant(blocks) = response;
+        let summary = blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text),
+                ContentBlock::ToolCall(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        if summary.is_empty() {
+            return Err(ModelError::InvalidResponse(
+                "compaction summary response did not include text".into(),
+            )
+            .into());
+        }
+
+        self.messages = replacement_history_from_summary(partition, summary);
+        self.persist_history_replacement()?;
+        let context_usage = self.context_tracker.record_compaction();
+        on_event(AgentEvent::ContextUsage(context_usage))?;
+        Ok(())
+    }
+
+    fn persist_history_replacement(&mut self) -> Result<(), AgentError> {
+        if let Some(sink) = &mut self.history_sink {
+            let first_history_index = self
+                .messages
+                .iter()
+                .position(|message| !matches!(message, Message::System(_)))
+                .unwrap_or(self.messages.len());
+            sink.replace_history(&self.messages[first_history_index..])?;
+        }
+        Ok(())
+    }
 }
 
 fn should_retry_model_error(error: &ModelError) -> bool {
@@ -254,475 +368,5 @@ fn initial_messages(tools: &ToolRegistry, cwd: &std::path::Path) -> Vec<Message>
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        collections::VecDeque,
-        sync::{Arc, Mutex},
-    };
-
-    use async_trait::async_trait;
-
-    use super::*;
-    use crate::model::{ModelProvider, ModelRequest, ModelResponse};
-    use crate::tool::{Tool, ToolCall, ToolSpec};
-
-    #[derive(Clone, Default)]
-    struct RecordingProvider {
-        requests: Arc<Mutex<Vec<Vec<Message>>>>,
-        response: Option<ModelResponse>,
-    }
-
-    #[async_trait(?Send)]
-    impl ModelProvider for RecordingProvider {
-        async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-            self.requests.lock().unwrap().push(request.messages);
-            Ok(self
-                .response
-                .clone()
-                .unwrap_or_else(|| ModelResponse::Assistant(vec![ContentBlock::Text("ok".into())])))
-        }
-    }
-
-    fn test_agent(provider: RecordingProvider) -> Agent {
-        test_agent_with_tools(provider, ToolRegistry::new())
-    }
-
-    fn test_agent_with_tools(provider: impl ModelProvider + 'static, tools: ToolRegistry) -> Agent {
-        Agent::new(
-            Box::new(provider),
-            tools,
-            ToolContext {
-                cwd: std::env::current_dir().unwrap(),
-                max_output_bytes: 12000,
-            },
-        )
-    }
-
-    struct FailingProvider {
-        requests: Arc<Mutex<usize>>,
-        error: ModelError,
-    }
-
-    #[async_trait(?Send)]
-    impl ModelProvider for FailingProvider {
-        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
-            *self.requests.lock().unwrap() += 1;
-            Err(match &self.error {
-                ModelError::MissingApiKey => ModelError::MissingApiKey,
-                ModelError::InvalidResponse(message) => {
-                    ModelError::InvalidResponse(message.clone())
-                }
-                _ => unreachable!("test only clones selected errors"),
-            })
-        }
-    }
-
-    struct TransientInvalidResponseProvider {
-        requests: Arc<Mutex<usize>>,
-    }
-
-    #[async_trait(?Send)]
-    impl ModelProvider for TransientInvalidResponseProvider {
-        async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
-            let mut requests = self.requests.lock().unwrap();
-            *requests += 1;
-            if *requests == 1 {
-                return Err(ModelError::InvalidResponse(
-                    "temporary parse failure".into(),
-                ));
-            }
-            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "ok".into(),
-            )]))
-        }
-    }
-
-    struct SequencedProvider {
-        requests: Arc<Mutex<Vec<Vec<Message>>>>,
-        responses: Mutex<VecDeque<ModelResponse>>,
-    }
-
-    #[async_trait(?Send)]
-    impl ModelProvider for SequencedProvider {
-        async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-            self.requests.lock().unwrap().push(request.messages);
-            Ok(self.responses.lock().unwrap().pop_front().unwrap())
-        }
-    }
-
-    struct OkTool;
-
-    #[async_trait]
-    impl Tool for OkTool {
-        fn spec(&self) -> ToolSpec {
-            ToolSpec {
-                name: "ok_tool".into(),
-                description: "test tool".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            }
-        }
-
-        async fn call(
-            &self,
-            _args: serde_json::Value,
-            _ctx: ToolContext,
-            id: String,
-        ) -> Result<ToolResult, ToolError> {
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: "tool ok".into(),
-            })
-        }
-    }
-
-    struct FailingTool;
-
-    #[async_trait]
-    impl Tool for FailingTool {
-        fn spec(&self) -> ToolSpec {
-            ToolSpec {
-                name: "failing_tool".into(),
-                description: "test failing tool".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            }
-        }
-
-        async fn call(
-            &self,
-            _args: serde_json::Value,
-            _ctx: ToolContext,
-            _id: String,
-        ) -> Result<ToolResult, ToolError> {
-            Err(ToolError::Message("tool failed".into()))
-        }
-    }
-
-    #[tokio::test]
-    async fn does_not_retry_non_recoverable_provider_errors() {
-        let requests = Arc::new(Mutex::new(0));
-        let mut agent = Agent::new(
-            Box::new(FailingProvider {
-                requests: requests.clone(),
-                error: ModelError::MissingApiKey,
-            }),
-            ToolRegistry::new(),
-            ToolContext {
-                cwd: std::env::current_dir().unwrap(),
-                max_output_bytes: 12000,
-            },
-        );
-
-        let err = agent.run("hello".into()).await.unwrap_err();
-
-        assert!(matches!(
-            err,
-            AgentError::Provider(ModelError::MissingApiKey)
-        ));
-        assert_eq!(*requests.lock().unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn retries_recoverable_invalid_response_errors() {
-        let requests = Arc::new(Mutex::new(0));
-        let mut agent = Agent::new(
-            Box::new(TransientInvalidResponseProvider {
-                requests: requests.clone(),
-            }),
-            ToolRegistry::new(),
-            ToolContext {
-                cwd: std::env::current_dir().unwrap(),
-                max_output_bytes: 12000,
-            },
-        );
-
-        let output = agent.run("hello".into()).await.unwrap();
-
-        assert_eq!(output, "ok");
-        assert_eq!(*requests.lock().unwrap(), 2);
-    }
-
-    #[test]
-    fn load_skill_truncates_contents_before_persisting() {
-        let root = tempfile::tempdir().unwrap();
-        let skill = crate::skills::Skill {
-            name: "long-skill".into(),
-            description: "long skill".into(),
-            path: root.path().join(".agents/skills/long-skill/SKILL.md"),
-            contents: "abcdefghijklmnopqrstuvwxyz".into(),
-        };
-        let persisted = Arc::new(Mutex::new(Vec::new()));
-        let persisted_for_sink = persisted.clone();
-        let mut agent = Agent::new(
-            Box::new(RecordingProvider::default()),
-            ToolRegistry::new(),
-            ToolContext {
-                cwd: root.path().to_path_buf(),
-                max_output_bytes: 8,
-            },
-        );
-        agent.set_message_sink(move |message| {
-            persisted_for_sink.lock().unwrap().push(message.clone());
-            Ok(())
-        });
-
-        agent.load_skill(&skill).unwrap();
-
-        let persisted = persisted.lock().unwrap();
-        let Message::User(blocks) = persisted.last().unwrap() else {
-            panic!("expected persisted user message");
-        };
-        let [ContentBlock::Text(text)] = blocks.as_slice() else {
-            panic!("expected single text block");
-        };
-        assert!(text.contains("abcdefgh\n[truncated]"));
-        assert!(!text.contains("ijklmnopqrstuvwxyz"));
-    }
-
-    #[tokio::test]
-    async fn preserves_history_across_runs() {
-        let provider = RecordingProvider::default();
-        let requests = provider.requests.clone();
-        let mut agent = test_agent(provider);
-
-        agent.run("first".into()).await.unwrap();
-        agent.run("second".into()).await.unwrap();
-
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(matches!(requests[1][0], Message::System(_)));
-        assert!(
-            matches!(requests[1][1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "first"))
-        );
-        assert!(
-            matches!(requests[1][2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "ok"))
-        );
-        assert!(
-            matches!(requests[1][3], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "second"))
-        );
-    }
-
-    #[tokio::test]
-    async fn persists_all_tool_results_before_interrupting_tool_events() {
-        let persisted = Arc::new(Mutex::new(Vec::new()));
-        let response = ModelResponse::Assistant(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call_1".into(),
-                name: "ok_tool".into(),
-                arguments: serde_json::json!({}),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call_2".into(),
-                name: "ok_tool".into(),
-                arguments: serde_json::json!({}),
-            }),
-        ]);
-        let provider = RecordingProvider {
-            requests: Arc::default(),
-            response: Some(response),
-        };
-        let mut tools = ToolRegistry::new();
-        tools.register(OkTool);
-        let mut agent = test_agent_with_tools(provider, tools);
-        let persisted_for_sink = persisted.clone();
-        agent.set_message_sink(move |message| {
-            persisted_for_sink.lock().unwrap().push(message.clone());
-            Ok(())
-        });
-
-        let err = agent
-            .run_with_events("run tools".into(), |event| match event {
-                AgentEvent::ToolFinished { .. } => Err(ModelError::Interrupted),
-                _ => Ok(()),
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, AgentError::Provider(ModelError::Interrupted)));
-        let persisted = persisted.lock().unwrap();
-        let tool_result_count = persisted
-            .iter()
-            .filter(|message| matches!(message, Message::ToolResult(_)))
-            .count();
-        assert_eq!(tool_result_count, 2);
-    }
-
-    #[tokio::test]
-    async fn tool_errors_are_returned_to_model_without_stopping_loop() {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "failing_tool".into(),
-            arguments: serde_json::json!({}),
-        })]);
-        let provider = SequencedProvider {
-            requests: requests.clone(),
-            responses: Mutex::new(VecDeque::from([
-                response,
-                ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
-            ])),
-        };
-        let mut tools = ToolRegistry::new();
-        tools.register(FailingTool);
-        let mut agent = test_agent_with_tools(provider, tools);
-        let mut tool_events = Vec::new();
-
-        let output = agent
-            .run_with_events("run tool".into(), |event| {
-                if let AgentEvent::ToolFinished { ok, content, .. } = event {
-                    tool_events.push((ok, content));
-                }
-                Ok(())
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(output, "recovered");
-        assert_eq!(tool_events, vec![(false, "tool failed".into())]);
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(matches!(
-            requests[1].last(),
-            Some(Message::ToolResult(ToolResult { ok: false, content, .. })) if content == "tool failed"
-        ));
-    }
-
-    #[tokio::test]
-    async fn unknown_tools_are_returned_to_model_without_stopping_loop() {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "missing_tool".into(),
-            arguments: serde_json::json!({}),
-        })]);
-        let provider = SequencedProvider {
-            requests: requests.clone(),
-            responses: Mutex::new(VecDeque::from([
-                response,
-                ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
-            ])),
-        };
-        let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
-
-        let output = agent.run("run tool".into()).await.unwrap();
-
-        assert_eq!(output, "recovered");
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(matches!(
-            requests[1].last(),
-            Some(Message::ToolResult(ToolResult { ok: false, content, .. })) if content == "Unknown tool: missing_tool"
-        ));
-    }
-
-    #[test]
-    fn read_file_event_content_shows_requested_line_range() {
-        let cwd = std::env::current_dir().unwrap();
-        let content = crate::tools::read_file::ReadFile
-            .display_content(
-                &serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 15}),
-                &ToolContext {
-                    cwd,
-                    max_output_bytes: 12000,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(content, "src/main.rs:10-24");
-    }
-
-    #[test]
-    fn skill_event_content_shows_skill_name_without_full_content() {
-        let cwd = std::env::current_dir().unwrap();
-        let content = crate::tools::skill::Skill
-            .display_content(
-                &serde_json::json!({"name": "caveman"}),
-                &ToolContext {
-                    cwd,
-                    max_output_bytes: 12000,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(content, "skill caveman");
-    }
-
-    #[test]
-    fn read_file_event_content_keeps_plain_path_without_range() {
-        let cwd = std::env::current_dir().unwrap();
-        let content = crate::tools::read_file::ReadFile
-            .display_content(
-                &serde_json::json!({"path": "src/main.rs"}),
-                &ToolContext {
-                    cwd,
-                    max_output_bytes: 12000,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(content, "src/main.rs");
-    }
-
-    #[test]
-    fn read_file_event_content_uses_default_range_bounds() {
-        let cwd = std::env::current_dir().unwrap();
-        let context = ToolContext {
-            cwd,
-            max_output_bytes: 12000,
-        };
-
-        let from_offset = crate::tools::read_file::ReadFile
-            .display_content(
-                &serde_json::json!({"path": "src/main.rs", "offset": 10}),
-                &context,
-            )
-            .unwrap();
-        let from_limit = crate::tools::read_file::ReadFile
-            .display_content(
-                &serde_json::json!({"path": "src/main.rs", "limit": 20}),
-                &context,
-            )
-            .unwrap();
-
-        assert_eq!(from_offset, "src/main.rs:10-end");
-        assert_eq!(from_limit, "src/main.rs:1-20");
-    }
-
-    #[test]
-    fn replace_history_keeps_initial_system_message() {
-        let mut agent = test_agent(RecordingProvider::default());
-
-        agent.replace_history(vec![
-            Message::user_text("previous user"),
-            Message::assistant_text("previous assistant"),
-        ]);
-
-        assert_eq!(agent.messages.len(), 3);
-        assert!(matches!(agent.messages[0], Message::System(_)));
-        assert!(
-            matches!(agent.messages[1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous user"))
-        );
-        assert!(
-            matches!(agent.messages[2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous assistant"))
-        );
-    }
-
-    #[tokio::test]
-    async fn reset_clears_history_back_to_system_prompt() {
-        let provider = RecordingProvider::default();
-        let requests = provider.requests.clone();
-        let mut agent = test_agent(provider);
-
-        agent.run("first".into()).await.unwrap();
-        agent.reset();
-        agent.run("after reset".into()).await.unwrap();
-
-        let requests = requests.lock().unwrap();
-        let last = requests.last().unwrap();
-        assert_eq!(last.len(), 2);
-        assert!(matches!(last[0], Message::System(_)));
-        assert!(
-            matches!(last[1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "after reset"))
-        );
-    }
-}
+#[path = "agent_tests.rs"]
+mod tests;
