@@ -151,10 +151,9 @@ struct CompleteStreamPrefix {
 fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
     wrap_line_at_whitespace_ranges(text, width)
         .into_iter()
-        .filter(|range| {
+        .rfind(|range| {
             range.end < text.len() || text[range.clone()].chars().count() >= width.max(1)
         })
-        .last()
         .map(|range| CompleteStreamPrefix {
             byte_index: range.end,
             ends_with_wrap: true,
