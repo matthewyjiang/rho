@@ -55,13 +55,14 @@ pub struct Agent {
     messages: Vec<Message>,
     history_sink: Option<Box<dyn HistorySink>>,
     prompt_cache_key: Option<String>,
+    include_system_prompt: bool,
     compaction: CompactionConfig,
     context_tracker: ContextTracker,
 }
 
 impl Agent {
     pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
-        let messages = initial_messages(&tools, &ctx.cwd);
+        let messages = initial_messages(&tools, &ctx.cwd, true);
         Self {
             provider,
             tools,
@@ -69,9 +70,16 @@ impl Agent {
             messages,
             history_sink: None,
             prompt_cache_key: None,
+            include_system_prompt: true,
             compaction: CompactionConfig::default(),
             context_tracker: ContextTracker::default(),
         }
+    }
+
+    pub fn without_system_prompt(mut self) -> Self {
+        self.include_system_prompt = false;
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
+        self
     }
 
     pub fn with_history(mut self, history: Vec<Message>) -> Self {
@@ -80,7 +88,7 @@ impl Agent {
     }
 
     pub fn replace_history(&mut self, history: Vec<Message>) {
-        self.messages = initial_messages(&self.tools, &self.ctx.cwd);
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
         self.messages.extend(history);
     }
 
@@ -116,7 +124,7 @@ impl Agent {
     }
 
     pub fn reset(&mut self) {
-        self.messages = initial_messages(&self.tools, &self.ctx.cwd);
+        self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
         self.context_tracker.reset();
     }
 
@@ -365,8 +373,16 @@ fn should_retry_model_error(error: &ModelError) -> bool {
     matches!(error, ModelError::InvalidResponse(_))
 }
 
-fn initial_messages(tools: &ToolRegistry, cwd: &std::path::Path) -> Vec<Message> {
-    vec![Message::System(system_prompt(&tools.specs(), cwd))]
+fn initial_messages(
+    tools: &ToolRegistry,
+    cwd: &std::path::Path,
+    include_system_prompt: bool,
+) -> Vec<Message> {
+    if include_system_prompt {
+        vec![Message::System(system_prompt(&tools.specs(), cwd))]
+    } else {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
