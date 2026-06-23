@@ -2978,7 +2978,12 @@ impl App {
             },
             ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
-                x: picker.filter.chars().count().saturating_add(2) as u16,
+                x: picker
+                    .filter
+                    .chars()
+                    .count()
+                    .saturating_add(2)
+                    .min(width.saturating_sub(1)) as u16,
                 y: 0,
             },
         }
@@ -3312,15 +3317,23 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
     let masked = "•".repeat(secret.value.chars().count());
     vec![
         styled_line(
-            format!(
-                "enter API key for {}  enter save, esc cancel",
-                secret.target.provider
+            truncate_one_line(
+                &format!(
+                    "enter API key for {}  enter save, esc cancel",
+                    secret.target.provider
+                ),
+                width,
             ),
             width,
             Theme::dim(),
             LineFill::Natural,
         ),
-        styled_line(masked, width, Theme::text(), LineFill::Natural),
+        styled_line(
+            truncate_one_line(&masked, width),
+            width,
+            Theme::text(),
+            LineFill::Natural,
+        ),
     ]
 }
 
@@ -3392,18 +3405,26 @@ fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Lin
     let label = input.key.label();
     vec![
         styled_line(
-            format!("edit {label}  enter save, esc cancel"),
+            truncate_one_line(&format!("edit {label}  enter save, esc cancel"), width),
             width,
             Theme::dim(),
             LineFill::Natural,
         ),
-        styled_line(input.value.clone(), width, Theme::text(), LineFill::Natural),
+        styled_line(
+            truncate_one_line(&input.value, width),
+            width,
+            Theme::text(),
+            LineFill::Natural,
+        ),
     ]
 }
 
 fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>> {
     vec![styled_line(
-        format!("waiting for {} browser login  esc cancel", target.provider),
+        truncate_one_line(
+            &format!("waiting for {} browser login  esc cancel", target.provider),
+            width,
+        ),
         width,
         Theme::dim(),
         LineFill::Natural,
@@ -4217,6 +4238,39 @@ mod tests {
             "{bottom:?}"
         );
         assert!(!bottom.trim().is_empty(), "{bottom:?}");
+    }
+
+    #[test]
+    fn long_picker_filter_does_not_clip_bottom_status() {
+        let mut app = test_app();
+        let mut picker = UiPicker::new(
+            "models",
+            "enter select",
+            vec![PickerItem {
+                label: "gpt-5.5".into(),
+                detail: None,
+                preview: None,
+                badge: None,
+                value: "gpt-5.5".into(),
+            }],
+            PickerAction::SelectModel,
+        );
+        picker.filter = "x".repeat(120);
+        app.composer = ComposerMode::Picker(picker);
+        let height = app.desired_inline_viewport_height(40, 24);
+        let backend = TestBackend::new(40, height);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )
+        .unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
+        assert!(bottom.contains("ready"), "{bottom:?}");
     }
 
     #[test]
