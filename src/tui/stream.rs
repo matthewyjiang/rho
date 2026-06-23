@@ -1,4 +1,4 @@
-use super::render::complete_visual_prefix;
+use super::{markdown::markdown_stream_prefix, render::complete_visual_prefix};
 
 #[derive(Debug, Default)]
 pub(super) struct AppendOnlyStream {
@@ -28,9 +28,18 @@ impl AppendOnlyStream {
     }
 
     pub(super) fn drain_renderable(&mut self, inner_width: usize) -> Option<StreamFragment> {
+        self.drain_renderable_with_prefix(inner_width, |_pending, byte_index| byte_index)
+    }
+
+    pub(super) fn drain_renderable_markdown(
+        &mut self,
+        inner_width: usize,
+        in_code_block: bool,
+    ) -> Option<StreamFragment> {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
-        let prefix = complete_visual_prefix(&self.pending[scan_start..], inner_width);
+        let pending = &self.pending[scan_start..];
+        let prefix = markdown_stream_prefix(pending, inner_width, in_code_block);
         let split_at = scan_start + prefix.byte_index;
         if split_at == 0 {
             return None;
@@ -56,6 +65,27 @@ impl AppendOnlyStream {
 
     fn should_skip_leading_newline(&self) -> bool {
         self.previous_emission_ended_at_wrap && self.pending.starts_with('\n')
+    }
+
+    fn drain_renderable_with_prefix(
+        &mut self,
+        inner_width: usize,
+        renderable_prefix: impl FnOnce(&str, usize) -> usize,
+    ) -> Option<StreamFragment> {
+        let skip_leading_newline = self.should_skip_leading_newline();
+        let scan_start = usize::from(skip_leading_newline);
+        let pending = &self.pending[scan_start..];
+        let prefix = complete_visual_prefix(pending, inner_width);
+        let renderable_byte_index = renderable_prefix(pending, prefix.byte_index);
+        let split_at = scan_start + renderable_byte_index;
+        if split_at == 0 {
+            return None;
+        }
+        Some(self.take_pending_prefix(
+            split_at,
+            skip_leading_newline,
+            prefix.ends_with_wrap && renderable_byte_index == prefix.byte_index,
+        ))
     }
 
     fn take_pending_prefix(

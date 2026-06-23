@@ -4,7 +4,7 @@ use ratatui::{
 };
 
 use super::{
-    render::{wrap_line_at_whitespace_ranges, wrap_line_hard},
+    render::{complete_visual_prefix, wrap_line_at_whitespace_ranges, wrap_line_hard},
     theme::Theme,
 };
 
@@ -69,6 +69,118 @@ impl StyledSegment {
     fn new(text: String, style: Style) -> Self {
         Self { text, style }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MarkdownStreamPrefix {
+    pub(super) byte_index: usize,
+    pub(super) ends_with_wrap: bool,
+}
+
+pub(super) fn markdown_stream_prefix(
+    text: &str,
+    width: usize,
+    in_code_block: bool,
+) -> MarkdownStreamPrefix {
+    let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
+    let current_line_in_code_block =
+        line_starts_in_code_block(text, current_line_start, in_code_block);
+    let mut prefix = MarkdownStreamPrefix {
+        byte_index: current_line_start,
+        ends_with_wrap: false,
+    };
+
+    let current_line = &text[current_line_start..];
+    if current_line.is_empty() || starts_with_code_fence_fragment(current_line) {
+        return prefix;
+    }
+
+    if current_line_in_code_block {
+        let complete = complete_visual_prefix(current_line, code_block_stream_content_width(width));
+        if complete.byte_index > 0 {
+            prefix.byte_index = current_line_start + complete.byte_index;
+            prefix.ends_with_wrap = complete.ends_with_wrap;
+        }
+        return prefix;
+    }
+
+    let rendered_line = markdown_inline_text(current_line);
+    let complete = complete_visual_prefix(&rendered_line, width);
+    if complete.byte_index == 0 {
+        return prefix;
+    }
+
+    let rendered_prefix = &rendered_line[..complete.byte_index];
+    for candidate in current_line
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(current_line.len()))
+        .skip(1)
+    {
+        let absolute_candidate = current_line_start + candidate;
+        if markdown_safe_prefix_len(text, absolute_candidate, in_code_block) != absolute_candidate {
+            continue;
+        }
+        let candidate_rendered = markdown_inline_text(&current_line[..candidate]);
+        if candidate_rendered == rendered_prefix {
+            prefix.byte_index = absolute_candidate;
+            prefix.ends_with_wrap = complete.ends_with_wrap;
+        }
+    }
+
+    prefix
+}
+
+fn markdown_safe_prefix_len(text: &str, candidate_byte_index: usize, in_code_block: bool) -> usize {
+    let candidate_byte_index = candidate_byte_index.min(text.len());
+    let prefix = &text[..candidate_byte_index];
+    let current_line_start = prefix
+        .rfind('\n')
+        .map_or(0, |index| index + '\n'.len_utf8());
+    let current_line_in_code_block =
+        line_starts_in_code_block(prefix, current_line_start, in_code_block);
+
+    let current_line = &prefix[current_line_start..];
+    if current_line.is_empty() {
+        return candidate_byte_index;
+    }
+    if starts_with_code_fence_fragment(current_line) {
+        return current_line_start;
+    }
+    if current_line_in_code_block || !has_unresolved_inline_markdown(current_line) {
+        candidate_byte_index
+    } else {
+        current_line_start
+    }
+}
+
+fn line_starts_in_code_block(text: &str, line_start: usize, in_code_block: bool) -> bool {
+    let mut current_line_in_code_block = in_code_block;
+    for complete_line in text[..line_start].split_inclusive('\n') {
+        if complete_line
+            .trim_end_matches('\n')
+            .trim_start()
+            .starts_with("```")
+        {
+            current_line_in_code_block = !current_line_in_code_block;
+        }
+    }
+    current_line_in_code_block
+}
+
+fn code_block_stream_content_width(width: usize) -> usize {
+    let width = width.max(1);
+    match width {
+        1 => 1,
+        2 | 3 => width - 1,
+        width => width - 4,
+    }
+}
+
+fn starts_with_code_fence_fragment(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    !trimmed.is_empty()
+        && (trimmed.starts_with("```") || (trimmed.len() < 3 && "```".starts_with(trimmed)))
 }
 
 fn is_markdown_divider(line: &str) -> bool {
@@ -269,20 +381,198 @@ fn next_raw_url(line: &str) -> Option<MarkdownSpan> {
     (end > start).then_some(MarkdownSpan::RawUrl { start, end })
 }
 
-fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan> {
-    let start = line.find(marker)?;
-    if marker == "*" && line[start..].starts_with("**") {
-        return None;
+fn has_unresolved_inline_markdown(line: &str) -> bool {
+    let Some(code_ranges) = complete_delimiter_ranges(line, "`", &[]) else {
+        return true;
+    };
+    let Some(link_ranges) = complete_link_ranges(line, &code_ranges) else {
+        return true;
+    };
+    let ignored_ranges = [code_ranges, link_ranges].concat();
+
+    has_unclosed_raw_url(line, &ignored_ranges)
+        || complete_delimiter_ranges(line, "**", &ignored_ranges).is_none()
+        || complete_delimiter_ranges(line, "*", &ignored_ranges).is_none()
+        || complete_delimiter_ranges(line, "_", &ignored_ranges).is_none()
+}
+
+fn complete_link_ranges(
+    line: &str,
+    ignored_ranges: &[std::ops::Range<usize>],
+) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut ranges = Vec::new();
+    let mut search_from = 0;
+    while let Some(start) = find_char_outside_ranges(line, '[', search_from, ignored_ranges) {
+        let close_label =
+            find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)?;
+        let target_start = close_label + "](".len();
+        if !line[close_label + ']'.len_utf8()..].starts_with('(') || target_start >= line.len() {
+            return None;
+        }
+        let target_end = line[target_start..].find(')')? + target_start;
+        if close_label == start + '['.len_utf8() || target_end == target_start {
+            return None;
+        }
+        ranges.push(start..target_end + ')'.len_utf8());
+        search_from = target_end + ')'.len_utf8();
     }
-    let content_start = start + marker.len();
-    let relative_end = line[content_start..].find(marker)?;
-    let end = content_start + relative_end;
-    (end > content_start).then_some(MarkdownSpan::Styled {
-        start,
-        marker_len: marker.len(),
-        end,
-        style,
-    })
+    Some(ranges)
+}
+
+fn complete_delimiter_ranges(
+    line: &str,
+    marker: &str,
+    ignored_ranges: &[std::ops::Range<usize>],
+) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut ranges = Vec::new();
+    let mut search_from = 0;
+    while let Some(start) = find_marker_outside_ranges(line, marker, search_from, ignored_ranges) {
+        if marker == "*" && line[start..].starts_with("**") {
+            search_from = start + marker.len();
+            continue;
+        }
+        if marker == "_" && !is_valid_underscore_delimiter(line, start) {
+            search_from = start + marker.len();
+            continue;
+        }
+
+        let content_start = start + marker.len();
+        let mut end_search_from = content_start;
+        let mut matched_end = None;
+        while let Some(end) =
+            find_marker_outside_ranges(line, marker, end_search_from, ignored_ranges)
+        {
+            if marker == "*" && line[end..].starts_with("**") {
+                end_search_from = end + marker.len();
+                continue;
+            }
+            if marker == "_" && !is_valid_underscore_delimiter(line, end) {
+                end_search_from = end + marker.len();
+                continue;
+            }
+            if end > content_start {
+                matched_end = Some(end);
+            }
+            break;
+        }
+        let end = matched_end?;
+        ranges.push(start..end + marker.len());
+        search_from = end + marker.len();
+    }
+    Some(ranges)
+}
+
+fn has_unclosed_raw_url(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> bool {
+    let mut search_from = 0;
+    while let Some(start) = next_raw_url_start(line, search_from) {
+        if !is_inside_ranges(start, ignored_ranges)
+            && !line[start..].chars().any(char::is_whitespace)
+        {
+            return true;
+        }
+        search_from = start + "http://".len();
+    }
+    false
+}
+
+fn next_raw_url_start(line: &str, search_from: usize) -> Option<usize> {
+    ["https://", "http://"]
+        .into_iter()
+        .filter_map(|scheme| {
+            line[search_from..]
+                .find(scheme)
+                .map(|index| search_from + index)
+        })
+        .min()
+}
+
+fn find_char_outside_ranges(
+    line: &str,
+    needle: char,
+    search_from: usize,
+    ignored_ranges: &[std::ops::Range<usize>],
+) -> Option<usize> {
+    line[search_from..]
+        .char_indices()
+        .map(|(index, ch)| (search_from + index, ch))
+        .find(|(index, ch)| *ch == needle && !is_inside_ranges(*index, ignored_ranges))
+        .map(|(index, _)| index)
+}
+
+fn find_marker_outside_ranges(
+    line: &str,
+    marker: &str,
+    search_from: usize,
+    ignored_ranges: &[std::ops::Range<usize>],
+) -> Option<usize> {
+    let mut current = search_from;
+    while let Some(relative_index) = line[current..].find(marker) {
+        let index = current + relative_index;
+        if !is_inside_ranges(index, ignored_ranges) {
+            return Some(index);
+        }
+        current = index + marker.len();
+    }
+    None
+}
+
+fn is_inside_ranges(index: usize, ranges: &[std::ops::Range<usize>]) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.start <= index && index < range.end)
+}
+
+fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan> {
+    let mut search_from = 0;
+    while let Some(relative_start) = line[search_from..].find(marker) {
+        let start = search_from + relative_start;
+        if marker == "*" && line[start..].starts_with("**") {
+            search_from = start + marker.len();
+            continue;
+        }
+        if marker == "_" && !is_valid_underscore_delimiter(line, start) {
+            search_from = start + marker.len();
+            continue;
+        }
+
+        let content_start = start + marker.len();
+        let mut end_search_from = content_start;
+        while let Some(relative_end) = line[end_search_from..].find(marker) {
+            let end = end_search_from + relative_end;
+            if marker == "_" && !is_valid_underscore_delimiter(line, end) {
+                end_search_from = end + marker.len();
+                continue;
+            }
+            if end > content_start {
+                return Some(MarkdownSpan::Styled {
+                    start,
+                    marker_len: marker.len(),
+                    end,
+                    style,
+                });
+            }
+            break;
+        }
+        search_from = content_start;
+    }
+    None
+}
+
+fn is_valid_underscore_delimiter(line: &str, marker_start: usize) -> bool {
+    let before = line[..marker_start].chars().next_back();
+    let after = line[marker_start + 1..].chars().next();
+    !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn markdown_inline_text(line: &str) -> String {
+    markdown_inline_segments(line)
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect()
 }
 
 fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
@@ -373,6 +663,22 @@ mod tests {
     }
 
     #[test]
+    fn preserves_underscores_inside_identifiers() {
+        let mut in_code_block = false;
+        let lines = markdown_lines(
+            "keep foo_bar_baz literal but style _this_",
+            120,
+            &mut in_code_block,
+        );
+
+        assert_eq!(
+            line_text(&lines[0]),
+            "keep foo_bar_baz literal but style this"
+        );
+        assert!(line_styles(&lines[0]).contains(&Theme::markdown_italic()));
+    }
+
+    #[test]
     fn renders_code_blocks_with_closed_borders() {
         let mut in_code_block = false;
         let lines = markdown_lines("```rust\nlet x = 1;\n```", 20, &mut in_code_block);
@@ -381,6 +687,19 @@ mod tests {
         assert_eq!(line_text(&lines[1]), "│ let x = 1;       │");
         assert_eq!(line_text(&lines[2]), "╰──────────────────╯");
         assert_eq!(lines[1].spans[0].style, Theme::markdown_code_block());
+    }
+
+    #[test]
+    fn code_blocks_preserve_markdown_markers_as_literal_text() {
+        let mut in_code_block = false;
+        let lines = markdown_lines(
+            "```rust\nfn __init__() { println!(\"*ok*\"); }\n```",
+            80,
+            &mut in_code_block,
+        );
+
+        assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
+        assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
     }
 
     #[test]
