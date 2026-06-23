@@ -135,6 +135,7 @@ struct App {
     current_stream_kind: Option<StreamKind>,
     current_turn_start: Option<usize>,
     running: bool,
+    loading_spinner: LoadingSpinner,
     paste_burst: PasteBurst,
     transcript: Vec<Entry>,
     last_inserted_was_tool: bool,
@@ -211,6 +212,50 @@ struct CommandChoice {
     usage: String,
     description: String,
     kind: CommandChoiceKind,
+}
+
+#[derive(Clone, Debug, Default)]
+struct LoadingSpinner {
+    started_at: Option<Instant>,
+}
+
+impl LoadingSpinner {
+    const FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+
+    fn start(&mut self) {
+        self.started_at = Some(Instant::now());
+    }
+
+    fn start_if_needed(&mut self) {
+        if self.started_at.is_none() {
+            self.start();
+        }
+    }
+
+    fn stop(&mut self) {
+        self.started_at = None;
+    }
+
+    fn frame_at(&self, now: Instant) -> &'static str {
+        let Some(started_at) = self.started_at else {
+            return Self::FRAMES[0];
+        };
+        let interval_ms = Self::FRAME_INTERVAL.as_millis().max(1);
+        let frame = now
+            .saturating_duration_since(started_at)
+            .as_millis()
+            .checked_div(interval_ms)
+            .unwrap_or(0) as usize;
+        Self::FRAMES[frame % Self::FRAMES.len()]
+    }
+
+    fn line(&self, now: Instant) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(self.frame_at(now), Theme::accent()),
+            Span::styled(" working", Theme::dim()),
+        ])
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,6 +481,7 @@ impl App {
             current_stream_kind: None,
             current_turn_start: None,
             running: false,
+            loading_spinner: LoadingSpinner::default(),
             paste_burst: PasteBurst::default(),
             transcript: Vec::new(),
             last_inserted_was_tool: false,
@@ -1327,30 +1373,60 @@ impl App {
         self.reset_streams();
         self.status = "running".into();
         self.running = true;
+        self.loading_spinner.start();
+        self.resize_inline_viewport_if_needed(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        let result = agent
-            .run_with_events(prompt, |event| {
-                let mut should_draw = self.handle_agent_event(event, terminal)?;
-                match poll_stream_control()? {
-                    StreamControl::Interrupt => return Err(crate::model::ModelError::Interrupted),
-                    StreamControl::Resize => {
-                        self.reflow_history(terminal)?;
-                        self.drain_streams(terminal)?;
-                        should_draw = true;
-                    }
-                    StreamControl::Continue => {}
-                }
-                if should_draw {
-                    let _ = terminal.draw(|frame| self.draw(frame));
-                }
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = {
+            let mut run_future = Box::pin(agent.run_with_events(prompt, move |event| {
+                let _ = event_tx.send(event);
                 Ok(())
-            })
-            .await;
+            }));
+            loop {
+                tokio::select! {
+                    result = &mut run_future => {
+                        let mut result = result;
+                        while let Ok(event) = event_rx.try_recv() {
+                            if let Err(err) = self.handle_queued_agent_event(event, terminal) {
+                                result = Err(crate::agent::AgentError::Provider(err));
+                                break;
+                            }
+                        }
+                        terminal.draw(|frame| self.draw(frame))?;
+                        break result;
+                    }
+                    Some(event) = event_rx.recv() => {
+                        if let Err(err) = self.handle_queued_agent_event(event, terminal) {
+                            break Err(crate::agent::AgentError::Provider(err));
+                        }
+                        match self.handle_stream_control(terminal) {
+                            Ok(StreamControl::Interrupt) => {
+                                break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
+                            }
+                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
+                        }
+                        terminal.draw(|frame| self.draw(frame))?;
+                    }
+                    _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                        match self.handle_stream_control(terminal) {
+                            Ok(StreamControl::Interrupt) => {
+                                break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
+                            }
+                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
+                        }
+                        terminal.draw(|frame| self.draw(frame))?;
+                    }
+                }
+            }
+        };
 
         match result {
             Ok(answer) => {
                 self.running = false;
+                self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
                 self.insert_final_answer_suffix(terminal, &answer)?;
                 self.reset_streams();
@@ -1359,6 +1435,7 @@ impl App {
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
                 self.running = false;
+                self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
                 self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
                 self.reset_streams();
@@ -1369,6 +1446,7 @@ impl App {
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.running = false;
+                self.loading_spinner.stop();
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
                 self.status = "error".into();
             }
@@ -1381,6 +1459,31 @@ impl App {
         self.assistant_stream_in_code_block = false;
         self.reasoning_stream.reset();
         self.current_stream_kind = None;
+    }
+
+    fn loading_active(&self) -> bool {
+        self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
+    }
+
+    fn handle_queued_agent_event(
+        &mut self,
+        event: AgentEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<(), crate::model::ModelError> {
+        self.handle_agent_event(event, terminal)?;
+        Ok(())
+    }
+
+    fn handle_stream_control(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<StreamControl, crate::model::ModelError> {
+        let control = poll_stream_control()?;
+        if matches!(control, StreamControl::Resize) {
+            self.reflow_history(terminal)?;
+            self.drain_streams(terminal)?;
+        }
+        Ok(control)
     }
 
     fn handle_agent_event(
@@ -2177,6 +2280,7 @@ impl App {
             AgentEvent::StepStarted(step) => {
                 self.reset_streams();
                 self.running = true;
+                self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
                 None
             }
@@ -2208,7 +2312,7 @@ impl App {
     fn draw(&self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let width = area.width as usize;
-        let lines = self.active_lines_for_height(width, area.height as usize);
+        let lines = self.active_lines_at_for_height(width, area.height as usize, Instant::now());
         let composer_line_count = self.composer_lines(width).len() as u16;
         let statusline_count = self.statusline_lines(width).len() as u16;
         let command_line_count = self.command_suggestion_lines(width).len() as u16;
@@ -2234,13 +2338,23 @@ impl App {
     }
 
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
-        self.active_lines_for_height(width, INLINE_VIEWPORT_HEIGHT as usize)
+        self.active_lines_at_for_height(width, INLINE_VIEWPORT_HEIGHT as usize, Instant::now())
     }
 
+    #[cfg(test)]
     fn active_lines_for_height(&self, width: usize, viewport_height: usize) -> Vec<Line<'static>> {
+        self.active_lines_at_for_height(width, viewport_height, Instant::now())
+    }
+
+    fn active_lines_at_for_height(
+        &self,
+        width: usize,
+        viewport_height: usize,
+        now: Instant,
+    ) -> Vec<Line<'static>> {
         let mut content = Vec::new();
-        if self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty() {
-            content.push(Line::raw(""));
+        if self.loading_active() {
+            content.push(self.loading_spinner.line(now));
         }
 
         let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
@@ -3491,7 +3605,7 @@ mod tests {
         let lines = app.active_lines(40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert_eq!(line_text(&lines[0]), "");
+        assert!(line_text(&lines[0]).contains("working"), "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -3505,7 +3619,34 @@ mod tests {
         let default_lines = app.active_lines_for_height(40, INLINE_VIEWPORT_HEIGHT as usize);
 
         assert_eq!(line_text(&small_lines[0]), "─".repeat(40));
-        assert_eq!(line_text(&default_lines[0]), "");
+        assert!(line_text(&default_lines[0]).contains("working"));
+    }
+
+    #[test]
+    fn loading_spinner_advances_frames() {
+        let started_at = Instant::now();
+        let spinner = LoadingSpinner {
+            started_at: Some(started_at),
+        };
+
+        assert_eq!(spinner.frame_at(started_at), "⠋");
+        assert_eq!(
+            spinner.frame_at(started_at + LoadingSpinner::FRAME_INTERVAL),
+            "⠙"
+        );
+    }
+
+    #[test]
+    fn active_lines_hide_spinner_when_idle() {
+        let app = test_app();
+        let rendered = app
+            .active_lines_at_for_height(40, INLINE_VIEWPORT_HEIGHT as usize, Instant::now())
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!rendered.contains("working"), "{rendered}");
     }
 
     #[test]
