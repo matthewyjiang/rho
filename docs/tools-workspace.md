@@ -4,14 +4,20 @@ Rho uses the current working directory as the workspace for file reads, edits, a
 
 ## Built-in tools
 
-Rho currently ships five compiled-in tools:
+Rho currently ships these compiled-in workspace tools on all platforms:
 
 ```text
 list_dir
 read_file
 write_file
 edit_file
-bash
+```
+
+It also exposes the `skill` tool and one native shell tool for the current platform:
+
+```text
+bash        macOS and Linux
+powershell  Windows
 ```
 
 These tools can read and modify files and run shell commands in the working directory.

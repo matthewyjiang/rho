@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{agent::CompactionConfig, reasoning::ReasoningLevel};
+use crate::{agent::CompactionConfig, paths, reasoning::ReasoningLevel};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -41,10 +41,7 @@ impl Default for Config {
 
 impl Config {
     pub fn default_path() -> anyhow::Result<PathBuf> {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-        Ok(home.join(".rho").join("config.toml"))
+        Ok(paths::rho_dir()?.join("config.toml"))
     }
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {

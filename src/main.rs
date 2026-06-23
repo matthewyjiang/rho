@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod credentials;
 mod model;
+mod paths;
 mod prompt;
 mod reasoning;
 mod session;

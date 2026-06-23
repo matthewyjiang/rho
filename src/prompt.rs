@@ -5,7 +5,7 @@ use crate::{skills, tool::ToolSpec};
 pub const BASE_SYSTEM_PROMPT: &str = "You are an expert coding assistant operating inside rho, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
 pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::paths::home_dir();
     system_prompt_with_home(tools, cwd, home.as_deref())
 }
 
