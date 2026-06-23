@@ -4,11 +4,15 @@ use std::{
     io::Write,
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 use futures_util::{task::noop_waker_ref, FutureExt};
+use tokio::sync::mpsc;
 
 use crossterm::{
     event::{
@@ -136,6 +140,8 @@ struct App {
     current_turn_start: Option<usize>,
     running: bool,
     loading_spinner: LoadingSpinner,
+    active_tool_call: bool,
+    queued_prompts: VecDeque<String>,
     paste_burst: PasteBurst,
     transcript: Vec<Entry>,
     last_inserted_was_tool: bool,
@@ -482,6 +488,8 @@ impl App {
             current_turn_start: None,
             running: false,
             loading_spinner: LoadingSpinner::default(),
+            active_tool_call: false,
+            queued_prompts: VecDeque::new(),
             paste_burst: PasteBurst::default(),
             transcript: Vec::new(),
             last_inserted_was_tool: false,
@@ -1360,6 +1368,22 @@ impl App {
         self.input.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
+        self.run_prompt_turn(prompt, terminal, agent).await?;
+        while !self.should_quit {
+            let Some(prompt) = self.queued_prompts.pop_front() else {
+                break;
+            };
+            self.run_prompt_turn(prompt, terminal, agent).await?;
+        }
+        Ok(())
+    }
+
+    async fn run_prompt_turn(
+        &mut self,
+        prompt: String,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
         self.ensure_session(agent)?;
         if !agent
             .messages()
@@ -1377,10 +1401,31 @@ impl App {
         self.resize_inline_viewport_if_needed(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.active_tool_call = false;
+        let interrupt_requested = Arc::new(AtomicBool::new(false));
+        let tool_call_active = Arc::new(AtomicBool::new(false));
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let result = {
+            let callback_interrupt_requested = Arc::clone(&interrupt_requested);
+            let callback_tool_call_active = Arc::clone(&tool_call_active);
             let mut run_future = Box::pin(agent.run_with_events(prompt, move |event| {
+                match &event {
+                    AgentEvent::ToolStarted => {
+                        callback_tool_call_active.store(true, Ordering::SeqCst)
+                    }
+                    AgentEvent::ToolFinished { .. } => {
+                        callback_tool_call_active.store(false, Ordering::SeqCst)
+                    }
+                    AgentEvent::StepStarted(_)
+                    | AgentEvent::OutputDelta(_)
+                    | AgentEvent::ReasoningDelta(_)
+                    | AgentEvent::ContextUsage(_)
+                    | AgentEvent::Usage(_) => {}
+                }
                 let _ = event_tx.send(event);
+                if callback_interrupt_requested.load(Ordering::SeqCst) {
+                    return Err(crate::model::ModelError::Interrupted);
+                }
                 Ok(())
             }));
             loop {
@@ -1400,29 +1445,44 @@ impl App {
                         if let Err(err) = self.handle_queued_agent_event(event, terminal) {
                             break Err(crate::agent::AgentError::Provider(err));
                         }
-                        match self.handle_stream_control(terminal) {
+                        match self.handle_running_terminal_events(
+                            terminal,
+                            &interrupt_requested,
+                            &tool_call_active,
+                        ) {
                             Ok(StreamControl::Interrupt) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
                             }
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                     _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
-                        match self.handle_stream_control(terminal) {
+                        match self.handle_running_terminal_events(
+                            terminal,
+                            &interrupt_requested,
+                            &tool_call_active,
+                        ) {
                             Ok(StreamControl::Interrupt) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
                             }
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                 }
             }
         };
 
+        while let Ok(event) = event_rx.try_recv() {
+            self.handle_agent_event(event, terminal)?;
+        }
+        self.active_tool_call = false;
+        tool_call_active.store(false, Ordering::SeqCst);
         match result {
             Ok(answer) => {
                 self.running = false;
@@ -1431,7 +1491,14 @@ impl App {
                 self.insert_final_answer_suffix(terminal, &answer)?;
                 self.reset_streams();
                 self.current_turn_start = None;
-                self.status = "ready".into();
+                self.status = if self.queued_prompts.is_empty() {
+                    "ready".into()
+                } else {
+                    format!(
+                        "running next queued message ({})",
+                        self.queued_prompts.len()
+                    )
+                };
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
                 self.running = false;
@@ -1451,7 +1518,415 @@ impl App {
                 self.status = "error".into();
             }
         }
+        terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    fn insert_running_paste(&mut self, text: &str) {
+        match &mut self.composer {
+            ComposerMode::Input => self.insert_input_text(text),
+            ComposerMode::SecretInput(secret) => secret.insert_text(text),
+            ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
+            ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
+        }
+    }
+
+    fn handle_key_during_turn(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        if self.handle_running_config_number_key(key, terminal)? {
+            return Ok(());
+        }
+        if self.handle_running_picker_key(key, terminal)? {
+            return Ok(());
+        }
+        if self.handle_running_command_palette_key(key, terminal)? {
+            return Ok(());
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                if self.ctrl_c_streak == 0 {
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.clamp_command_selection();
+                    self.status = "input cleared; press esc to interrupt model".into();
+                    self.ctrl_c_streak = 1;
+                } else {
+                    self.should_quit = true;
+                }
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                self.toggle_latest_tool_output(terminal)?;
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+                self.status = "reset is unavailable while a model turn is running".into();
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::ALT, KeyCode::Backspace) => {
+                self.delete_word_before_cursor();
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Backspace) => {
+                self.backspace_input();
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Delete) => {
+                self.delete_input();
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::ALT, KeyCode::Left) => {
+                self.input_cursor = previous_word_boundary(&self.input, self.input_cursor);
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::ALT, KeyCode::Right) => {
+                self.input_cursor = next_word_boundary(&self.input, self.input_cursor);
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Left) => {
+                self.input_cursor = self.input_cursor.saturating_sub(1);
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Right) => {
+                self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Home) => {
+                self.input_cursor = 0;
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::End) => {
+                self.input_cursor = self.input_char_len();
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
+                self.insert_input_char('\n');
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+            }
+            (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
+                self.insert_input_char('\n');
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Enter) => {
+                if self
+                    .paste_burst
+                    .should_insert_newline_for_enter(Instant::now())
+                {
+                    self.insert_input_char('\n');
+                } else {
+                    self.submit_during_turn(terminal)?;
+                }
+                self.ctrl_c_streak = 0;
+            }
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.insert_input_char(ch);
+                self.paste_burst.record_plain_char(Instant::now());
+                self.ctrl_c_streak = 0;
+            }
+            _ => {
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+            }
+        }
+        self.clamp_command_selection();
+        Ok(())
+    }
+
+    fn submit_during_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let prompt = self.input.trim().to_string();
+        if prompt.is_empty() {
+            self.input.clear();
+            self.input_cursor = 0;
+            self.clamp_command_selection();
+            return Ok(());
+        }
+
+        match commands::parse_command(&self.input) {
+            Ok(Some(invocation)) => {
+                self.input.clear();
+                self.input_cursor = 0;
+                self.clamp_command_selection();
+                self.execute_command_during_turn(invocation, terminal)?;
+            }
+            Ok(None) => {
+                self.queue_prompt(prompt, terminal)?;
+            }
+            Err(commands::CommandParseError::Unknown(name)) => {
+                self.input.clear();
+                self.input_cursor = 0;
+                self.clamp_command_selection();
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "unknown or unavailable command '/{name}' while a model turn is running"
+                    )),
+                )?;
+                self.status = "command unavailable while running".into();
+            }
+        }
+        Ok(())
+    }
+
+    fn queue_prompt(
+        &mut self,
+        prompt: String,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.input.clear();
+        self.input_cursor = 0;
+        self.clamp_command_selection();
+        self.queued_prompts.push_back(prompt);
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "queued message {} for after the current turn",
+                self.queued_prompts.len()
+            )),
+        )?;
+        self.status = format!("queued {} message(s)", self.queued_prompts.len());
+        Ok(())
+    }
+
+    fn execute_command_during_turn(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        match invocation.id {
+            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Skills => self.execute_skills_command(terminal),
+            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
+            CommandId::Model | CommandId::Login | CommandId::Logout | CommandId::Resume => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "/{} is unavailable while a model turn is running",
+                        invocation.name
+                    )),
+                )?;
+                self.status = "command unavailable while running".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn handle_running_command_palette_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !self.command_palette_visible() {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                let matches = self.command_matches();
+                if !matches.is_empty() {
+                    self.command_selection = if self.command_selection == 0 {
+                        matches.len() - 1
+                    } else {
+                        self.command_selection - 1
+                    };
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                let matches = self.command_matches();
+                if !matches.is_empty() {
+                    self.command_selection = (self.command_selection + 1) % matches.len();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
+                    self.input = input;
+                    self.input_cursor = cursor;
+                    self.command_palette_dismissed = false;
+                    self.clamp_command_selection();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                if let Some(choice) = self.selected_command() {
+                    let (input, cursor) = self.complete_command_choice(&choice);
+                    self.input = input;
+                    self.input_cursor = cursor;
+                    self.clamp_command_selection();
+                }
+                self.submit_during_turn(terminal)?;
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Esc) => {
+                self.command_palette_dismissed = true;
+                self.command_selection = 0;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn handle_running_picker_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::Picker(_)) {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.select_previous();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.select_next();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.complete_filter();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.pop_filter_char();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
+                    picker.push_filter_char(ch);
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                self.submit_picker_selection_during_turn(terminal)?;
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                self.composer = ComposerMode::Input;
+                self.status = "running".into();
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    fn submit_picker_selection_during_turn(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let Some((action, value)) = self.active_picker_selection() else {
+            self.composer = ComposerMode::Input;
+            self.status = "running".into();
+            return Ok(());
+        };
+
+        if !matches!(action, PickerAction::Config) {
+            self.composer = ComposerMode::Input;
+        }
+        match action {
+            PickerAction::InsertSkillCommand => {
+                self.input = format!("/skill:{value}");
+                self.input_cursor = self.input_char_len();
+                self.command_palette_dismissed = true;
+                self.status = "skill command inserted".into();
+            }
+            PickerAction::Config => self.submit_config_selection_during_turn(&value, terminal)?,
+            PickerAction::SelectTitleModel => {
+                self.refresh_available_auths();
+                let (provider, _model, auth) = self.title_model_selection();
+                match catalog::resolve_model_selection_for_auths(
+                    &value,
+                    &provider,
+                    &auth,
+                    &self.available_auths,
+                ) {
+                    Ok(selection) => self.select_title_model(selection, terminal)?,
+                    Err(err) => {
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "title model switch failed".into();
+                    }
+                }
+            }
+            PickerAction::SelectModel
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::ResumeSession => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(
+                        "that picker action is unavailable while a model turn is running".into(),
+                    ),
+                )?;
+                self.status = "picker action unavailable while running".into();
+            }
+        }
+        Ok(())
+    }
+
+    fn submit_config_selection_during_turn(
+        &mut self,
+        value: &str,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        match value {
+            config_picker::MAX_OUTPUT_BYTES_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::MaxOutputBytes,
+                    config.max_output_bytes,
+                ));
+                self.status = "edit max output bytes".into();
+            }
+            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::MaxToolOutputLines,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "edit max tool output lines".into();
+            }
+            config_picker::REASONING_VALUE => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(
+                        "reasoning changes are unavailable while a model turn is running".into(),
+                    ),
+                )?;
+                self.status = "config action unavailable while running".into();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_running_config_number_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::ConfigNumberInput(_)) {
+            return Ok(false);
+        }
+        self.handle_config_number_key(key, terminal)
     }
 
     fn reset_streams(&mut self) {
@@ -1474,16 +1949,62 @@ impl App {
         Ok(())
     }
 
-    fn handle_stream_control(
+    fn handle_running_terminal_events(
         &mut self,
         terminal: &mut DefaultTerminal,
+        interrupt_requested: &AtomicBool,
+        tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, crate::model::ModelError> {
-        let control = poll_stream_control()?;
-        if matches!(control, StreamControl::Resize) {
-            self.reflow_history(terminal)?;
-            self.drain_streams(terminal)?;
+        let mut control = StreamControl::Continue;
+        while event::poll(Duration::from_millis(0))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
+                        return Ok(
+                            self.request_running_interrupt(interrupt_requested, tool_call_active)
+                        );
+                    }
+                    self.handle_key_during_turn(key, terminal).map_err(|err| {
+                        crate::model::ModelError::InvalidResponse(err.to_string())
+                    })?;
+                    if self.should_quit {
+                        return Ok(
+                            self.request_running_interrupt(interrupt_requested, tool_call_active)
+                        );
+                    }
+                }
+                Event::Paste(text) => {
+                    let text = normalize_paste(&text);
+                    self.insert_running_paste(&text);
+                    self.paste_burst.clear();
+                }
+                Event::Resize(_, _) => {
+                    self.reflow_history(terminal)?;
+                    self.drain_streams(terminal)?;
+                    control = StreamControl::Resize;
+                }
+                _ => {}
+            }
         }
         Ok(control)
+    }
+
+    fn running_escape_has_overlay_target(&self) -> bool {
+        self.command_palette_visible() || !matches!(self.composer, ComposerMode::Input)
+    }
+
+    fn request_running_interrupt(
+        &mut self,
+        interrupt_requested: &AtomicBool,
+        tool_call_active: &AtomicBool,
+    ) -> StreamControl {
+        interrupt_requested.store(true, Ordering::SeqCst);
+        if tool_call_active.load(Ordering::SeqCst) {
+            self.status = "interrupt requested; waiting for tool result".into();
+            StreamControl::Continue
+        } else {
+            StreamControl::Interrupt
+        }
     }
 
     fn handle_agent_event(
@@ -1507,7 +2028,9 @@ impl App {
             other => {
                 if matches!(
                     other,
-                    AgentEvent::StepStarted(_) | AgentEvent::ToolFinished { .. }
+                    AgentEvent::StepStarted(_)
+                        | AgentEvent::ToolStarted
+                        | AgentEvent::ToolFinished { .. }
                 ) {
                     self.finish_streams(terminal)?;
                 }
@@ -2280,8 +2803,13 @@ impl App {
             AgentEvent::StepStarted(step) => {
                 self.reset_streams();
                 self.running = true;
+                self.active_tool_call = false;
                 self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
+                None
+            }
+            AgentEvent::ToolStarted => {
+                self.active_tool_call = true;
                 None
             }
             AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
@@ -2300,12 +2828,15 @@ impl App {
                 display_style,
                 display_lines,
                 ..
-            } => Some(Entry::Tool {
-                ok,
-                display_style,
-                display_lines,
-                expanded: false,
-            }),
+            } => {
+                self.active_tool_call = false;
+                Some(Entry::Tool {
+                    ok,
+                    display_style,
+                    display_lines,
+                    expanded: false,
+                })
+            }
         }
     }
 
@@ -3114,19 +3645,6 @@ enum StreamControl {
     Continue,
     Interrupt,
     Resize,
-}
-
-fn poll_stream_control() -> Result<StreamControl, crate::model::ModelError> {
-    if !event::poll(Duration::from_millis(0))? {
-        return Ok(StreamControl::Continue);
-    }
-    match event::read()? {
-        Event::Key(key) if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc => {
-            Ok(StreamControl::Interrupt)
-        }
-        Event::Resize(_, _) => Ok(StreamControl::Resize),
-        _ => Ok(StreamControl::Continue),
-    }
 }
 
 #[cfg(test)]

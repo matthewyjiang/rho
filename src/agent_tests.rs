@@ -606,6 +606,39 @@ async fn preserves_history_across_runs() {
 }
 
 #[tokio::test]
+async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call_1".into(),
+        name: "ok_tool".into(),
+        arguments: serde_json::json!({}),
+    })]);
+    let provider = RecordingProvider {
+        requests: Arc::default(),
+        prompt_cache_keys: Arc::default(),
+        response: Some(response),
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(OkTool);
+    let mut agent = test_agent_with_tools(provider, tools);
+    agent.set_history_sink(RecordingHistorySink::append_target(persisted.clone()));
+
+    let err = agent
+        .run_with_events("run tools".into(), |event| match event {
+            AgentEvent::ToolStarted => Err(ModelError::Interrupted),
+            _ => Ok(()),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, AgentError::Provider(ModelError::Interrupted)));
+    let persisted = persisted.lock().unwrap();
+    assert!(persisted
+        .iter()
+        .all(|message| !matches!(message, Message::Assistant(_) | Message::ToolResult(_))));
+}
+
+#[tokio::test]
 async fn persists_all_tool_results_before_interrupting_tool_events() {
     let persisted = Arc::new(Mutex::new(Vec::new()));
     let response = ModelResponse::Assistant(vec![

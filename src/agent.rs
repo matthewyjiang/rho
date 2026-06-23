@@ -33,6 +33,7 @@ pub enum AgentError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
     StepStarted(usize),
+    ToolStarted,
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
@@ -216,6 +217,7 @@ impl Agent {
                         return Ok(answer);
                     }
 
+                    on_event(AgentEvent::ToolStarted)?;
                     self.push_message(Message::Assistant(blocks))?;
                     let mut tool_events = Vec::new();
                     for call in tool_calls.iter().cloned() {
