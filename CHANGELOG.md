@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.8.0...rho-coding-agent-v0.9.0) (2026-06-23)
+
+
+### Features
+
+* **install:** add prebuilt binary installers ([#45](https://github.com/matthewyjiang/rho/issues/45)) ([247538d](https://github.com/matthewyjiang/rho/commit/247538dac72b854c49adcac222f63ad33f877b3a))
+
 ## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.7.0...rho-coding-agent-v0.8.0) (2026-06-23)
 
 
