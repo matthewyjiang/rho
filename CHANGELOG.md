@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.7.0...rho-coding-agent-v0.8.0) (2026-06-23)
+
+
+### Features
+
+* **cli:** add context override flags ([#42](https://github.com/matthewyjiang/rho/issues/42)) ([53aa63e](https://github.com/matthewyjiang/rho/commit/53aa63e8c69607781eb9e3a722abc6b3005a0306))
+
 ## [0.7.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.6.0...rho-coding-agent-v0.7.0) (2026-06-23)
 
 
