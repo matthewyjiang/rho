@@ -23,12 +23,17 @@ Options:
       --provider <PROVIDER>
       --model <MODEL>
       --config <CONFIG>
-      --auth <AUTH>          [possible values: api-key, codex]
-  -R, --resume <RESUME>      Resume an existing session by UUID or UUID prefix
-  -h, --help                 Print help
+      --auth <AUTH>              [possible values: api-key, codex]
+      --no-system-prompt         Do not send rho's system prompt, including AGENTS.md and skill context
+      --no-tools                 Do not expose any tools to the model
+      --reasoning <REASONING>    Override reasoning level [possible values: off, minimal, low, medium, high, xhigh]
+  -R, --resume <RESUME>          Resume an existing session by UUID or UUID prefix
+  -h, --help                     Print help
 ```
 
-Provider, model, auth, and config options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration).
+Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration).
+
+`--no-system-prompt` and `--no-tools` only affect the current run and are not written to config.
 
 ## `rho run`
 
@@ -45,4 +50,6 @@ Options:
   -h, --help   Print help
 ```
 
-`rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI. It runs in the current working directory and can read files, write files, edit files, and run shell commands when the model chooses those tools.
+`rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It runs in the current working directory and can read files, write files, edit files, and run shell commands when the model chooses those tools.
+
+Use `--no-tools` to remove tool access and send only the raw prompt and model response behavior.

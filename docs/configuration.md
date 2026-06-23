@@ -15,11 +15,12 @@ compact_recent_messages = 8
 
 ## CLI overrides
 
-Passing `--provider`, `--model`, or `--auth` updates the config file and makes the choice the future default.
+Passing `--provider`, `--model`, `--auth`, or `--reasoning` updates the config file and makes the choice the future default.
 
 ```bash
 rho --provider openai --auth api-key --model gpt-5.5
 rho --provider openai-codex --auth codex --model gpt-5.5
+rho --reasoning high
 ```
 
 These values select [authentication and models](/authentication-and-models).
@@ -29,6 +30,8 @@ You can load and save a specific config file with:
 ```bash
 rho --config ~/.rho/config.toml
 ```
+
+`--no-system-prompt` and `--no-tools` are only available on the command line and apply only to the current run.
 
 ## TUI updates
 
