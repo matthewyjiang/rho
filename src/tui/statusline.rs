@@ -14,6 +14,7 @@ pub(super) struct StatusLineState {
     pub(super) branch: Option<String>,
     pub(super) status: String,
     pub(super) usage: Option<ModelUsage>,
+    pub(super) latest_usage: Option<ModelUsage>,
     pub(super) context_usage: Option<ContextUsage>,
     pub(super) provider: String,
     pub(super) model: String,
@@ -28,6 +29,7 @@ impl StatusLineState {
         info: &TuiInfo,
         status: impl Into<String>,
         usage: Option<ModelUsage>,
+        latest_usage: Option<ModelUsage>,
         context_usage: Option<ContextUsage>,
         model_metadata: Option<ModelMetadata>,
         model_metadata_loading: bool,
@@ -37,6 +39,7 @@ impl StatusLineState {
             branch: git_branch(&info.cwd),
             status: status.into(),
             usage,
+            latest_usage,
             context_usage,
             provider: info.provider.clone(),
             model: info.model.clone(),
@@ -87,11 +90,8 @@ fn format_usage(state: &StatusLineState) -> String {
         if let Some(tokens) = usage.cache_write_tokens {
             parts.push(format!("W{}", compact_number(tokens)));
         }
-        if let Some(cache_read) = usage.cache_read_tokens {
-            if let Some(total_input) = usage.total_input_tokens().filter(|tokens| *tokens > 0) {
-                let percent = cache_read as f64 * 100.0 / total_input as f64;
-                parts.push(format!("CH{percent:.1}%"));
-            }
+        if let Some(percent) = cache_hit_percent(state.latest_usage.as_ref()) {
+            parts.push(format!("CH{percent:.1}%"));
         }
         if let Some(cost) = usage
             .cost_usd_micros
@@ -142,6 +142,16 @@ impl BillingInfo {
 
 fn has_pricing(metadata: &ModelMetadata) -> bool {
     metadata.cost_default.is_some() || metadata.cost_long_context.is_some()
+}
+
+fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
+    let usage = usage?;
+    let cache_read = usage.cache_read_tokens?;
+    let prompt_tokens = usage
+        .input_tokens
+        .unwrap_or_default()
+        .saturating_add(cache_read);
+    (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
 }
 
 fn format_context_usage(
@@ -313,7 +323,8 @@ mod tests {
             cwd: PathBuf::from("/tmp/project"),
             branch: None,
             status: "idle".into(),
-            usage: Some(usage),
+            usage: Some(usage.clone()),
+            latest_usage: Some(usage),
             context_usage: None,
             provider: "openai".into(),
             model: "gpt-test".into(),
@@ -340,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_hit_percentage_uses_total_input_tokens() {
+    fn cache_hit_percentage_uses_latest_usage_prompt_tokens() {
         let usage = ModelUsage {
             input_tokens: Some(300_000),
             cache_read_tokens: Some(700_000),
@@ -354,6 +365,32 @@ mod tests {
         assert!(formatted.contains("R700.0k"), "{formatted}");
         assert!(formatted.contains("CH70.0%"), "{formatted}");
         assert!(formatted.contains("$0.570"), "{formatted}");
+    }
+
+    #[test]
+    fn cache_hit_percentage_uses_latest_usage_not_cumulative_totals() {
+        let mut state = test_state(ModelUsage {
+            input_tokens: Some(1_000_000),
+            cache_read_tokens: Some(1_000_000),
+            output_tokens: Some(100_000),
+            cache_write_tokens: Some(500_000),
+            ..ModelUsage::default()
+        });
+        state.latest_usage = Some(ModelUsage {
+            input_tokens: Some(100_000),
+            cache_read_tokens: Some(900_000),
+            cache_write_tokens: Some(500_000),
+            ..ModelUsage::default()
+        });
+
+        let formatted = format_usage(&state);
+
+        assert!(formatted.contains("↑1.0M"), "{formatted}");
+        assert!(formatted.contains("R1.0M"), "{formatted}");
+        assert!(formatted.contains("W500.0k"), "{formatted}");
+        assert!(formatted.contains("CH90.0%"), "{formatted}");
+        assert!(!formatted.contains("CH40.0%"), "{formatted}");
+        assert!(!formatted.contains("CH60.0%"), "{formatted}");
     }
 
     #[test]

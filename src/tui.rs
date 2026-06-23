@@ -147,6 +147,7 @@ struct App {
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
     cumulative_usage: Option<ModelUsage>,
+    latest_usage: Option<ModelUsage>,
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
@@ -447,6 +448,7 @@ impl App {
             using_unavailable_provider,
             pending_oauth_login: None,
             cumulative_usage: None,
+            latest_usage: None,
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
@@ -567,6 +569,7 @@ impl App {
                 agent.set_session_id(None);
                 agent.clear_history_sink();
                 self.cumulative_usage = None;
+                self.latest_usage = None;
                 self.current_context = None;
                 self.insert_entry(
                     terminal,
@@ -2061,6 +2064,7 @@ impl App {
         self.reset_streams();
         self.running = false;
         self.cumulative_usage = None;
+        self.latest_usage = None;
         self.current_context = None;
         let entries = transcript_entries_from_messages(agent.messages());
         let width = terminal.size()?.width as usize;
@@ -2183,6 +2187,7 @@ impl App {
             }
             AgentEvent::Usage(usage) => {
                 let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
+                self.latest_usage = Some(usage.clone());
                 merge_usage(&mut self.cumulative_usage, usage);
                 None
             }
@@ -2306,6 +2311,7 @@ impl App {
                 &self.info,
                 &self.status,
                 self.cumulative_usage.clone(),
+                self.latest_usage.clone(),
                 self.current_context.clone(),
                 self.model_metadata.clone(),
                 self.pending_model_metadata.is_some(),
@@ -3126,6 +3132,48 @@ mod tests {
                 .as_ref()
                 .and_then(|usage| usage.input_tokens),
             Some(1_000)
+        );
+    }
+
+    #[test]
+    fn usage_event_tracks_latest_usage_separately_from_cumulative_totals() {
+        let mut app = test_app();
+
+        assert!(app
+            .record_agent_event(AgentEvent::Usage(ModelUsage {
+                input_tokens: Some(100),
+                output_tokens: Some(20),
+                cache_read_tokens: Some(400),
+                ..ModelUsage::default()
+            }))
+            .is_none());
+        assert!(app
+            .record_agent_event(AgentEvent::Usage(ModelUsage {
+                input_tokens: Some(300),
+                output_tokens: Some(40),
+                cache_read_tokens: Some(700),
+                ..ModelUsage::default()
+            }))
+            .is_none());
+
+        assert_eq!(
+            app.latest_usage,
+            Some(ModelUsage {
+                input_tokens: Some(300),
+                output_tokens: Some(40),
+                cache_read_tokens: Some(700),
+                ..ModelUsage::default()
+            })
+        );
+        assert_eq!(
+            app.cumulative_usage,
+            Some(ModelUsage {
+                input_tokens: Some(400),
+                output_tokens: Some(60),
+                cache_read_tokens: Some(1_100),
+                total_tokens: Some(1_040),
+                ..ModelUsage::default()
+            })
         );
     }
 
