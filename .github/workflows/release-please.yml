@@ -13,6 +13,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v4
@@ -21,17 +24,76 @@ jobs:
           command: manifest
           config-file: .release-please-config.json
       - uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         with:
           ref: ${{ steps.release.outputs.tag_name }}
       - name: Install Rust
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         uses: swatinem/rust-cache@v2
       - name: Publish crate
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created == 'true' }}
         run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-binaries:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    name: release binary ${{ matrix.target }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+      - name: Build binary
+        run: cargo build --release --locked --bin rho
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/release/rho dist/rho
+          tar -C dist -czf rho-${{ matrix.target }}.tar.gz rho
+          shasum -a 256 rho-${{ matrix.target }}.tar.gz > rho-${{ matrix.target }}.tar.gz.sha256
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/rho.exe dist/rho.exe
+          Compress-Archive -Path dist/rho.exe -DestinationPath rho-${{ matrix.target }}.zip -Force
+          $Hash = (Get-FileHash -Algorithm SHA256 rho-${{ matrix.target }}.zip).Hash.ToLowerInvariant()
+          "$Hash  rho-${{ matrix.target }}.zip" | Out-File -Encoding ascii rho-${{ matrix.target }}.zip.sha256
+      - name: Upload Unix release assets
+        if: runner.os != 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: gh release upload "$TAG" rho-${{ matrix.target }}.tar.gz rho-${{ matrix.target }}.tar.gz.sha256 --clobber
+      - name: Upload Windows release assets
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        shell: pwsh
+        run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
