@@ -230,6 +230,46 @@ fn markdown_drain_waits_when_second_raw_url_is_incomplete() {
 }
 
 #[test]
+fn markdown_drain_allows_complete_literal_brackets() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("arr[0] ");
+    let fragment = stream.drain_renderable_markdown(6, false).unwrap();
+    assert_eq!(fragment.text.as_str(), "arr[0]");
+    assert_eq!(stream.emitted_text(), "arr[0]");
+}
+
+#[test]
+fn markdown_drain_allows_literal_unmatched_markers() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("* item ");
+    let fragment = stream.drain_renderable_markdown(6, false).unwrap();
+    assert_eq!(fragment.text.as_str(), "* item");
+    assert_eq!(stream.emitted_text(), "* item");
+}
+
+#[test]
+fn markdown_drain_emits_complete_long_spans() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("**supercalifragilistic** ");
+    let fragment = stream.drain_renderable_markdown(5, false).unwrap();
+    assert_eq!(fragment.text.as_str(), "**supercalifragilistic**");
+    assert_eq!(stream.emitted_text(), "**supercalifragilistic**");
+}
+
+#[test]
+fn markdown_drain_hard_wraps_code_block_content() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("ab cd");
+    let fragment = stream.drain_renderable_markdown(8, true).unwrap();
+    assert_eq!(fragment.text.as_str(), "ab c");
+    assert_eq!(stream.emitted_text(), "ab c");
+}
+
+#[test]
 fn reset_clears_pending_emitted_and_leading_blank_state() {
     let mut stream = AppendOnlyStream::default();
     stream.push_delta("done\n");

@@ -4,7 +4,7 @@ use ratatui::{
 };
 
 use super::{
-    render::{complete_visual_prefix, wrap_line_at_whitespace_ranges, wrap_line_hard},
+    render::{wrap_line_at_whitespace_ranges, wrap_line_hard},
     theme::Theme,
 };
 
@@ -96,7 +96,8 @@ pub(super) fn markdown_stream_prefix(
     }
 
     if current_line_in_code_block {
-        let complete = complete_visual_prefix(current_line, code_block_stream_content_width(width));
+        let complete =
+            complete_hard_wrap_prefix(current_line, code_block_stream_content_width(width));
         if complete.byte_index > 0 {
             prefix.byte_index = current_line_start + complete.byte_index;
             prefix.ends_with_wrap = complete.ends_with_wrap;
@@ -105,7 +106,7 @@ pub(super) fn markdown_stream_prefix(
     }
 
     let rendered_line = markdown_inline_text(current_line);
-    let complete = complete_visual_prefix(&rendered_line, width);
+    let complete = complete_word_wrap_prefix(&rendered_line, width);
     if complete.byte_index == 0 {
         return prefix;
     }
@@ -121,14 +122,61 @@ pub(super) fn markdown_stream_prefix(
         if markdown_safe_prefix_len(text, absolute_candidate, in_code_block) != absolute_candidate {
             continue;
         }
-        let candidate_rendered = markdown_inline_text(&current_line[..candidate]);
+        let candidate_source = &current_line[..candidate];
+        let candidate_rendered = markdown_inline_text(candidate_source);
         if candidate_rendered == rendered_prefix {
             prefix.byte_index = absolute_candidate;
             prefix.ends_with_wrap = complete.ends_with_wrap;
+        } else if candidate_source.len() != candidate_rendered.len()
+            && !candidate_source
+                .chars()
+                .last()
+                .is_some_and(char::is_whitespace)
+            && candidate_rendered.starts_with(rendered_prefix)
+        {
+            prefix.byte_index = absolute_candidate;
+            prefix.ends_with_wrap = false;
         }
     }
 
     prefix
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CompleteStreamPrefix {
+    byte_index: usize,
+    ends_with_wrap: bool,
+}
+
+fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
+    wrap_line_at_whitespace_ranges(text, width)
+        .into_iter()
+        .filter(|range| {
+            range.end < text.len() || text[range.clone()].chars().count() >= width.max(1)
+        })
+        .last()
+        .map(|range| CompleteStreamPrefix {
+            byte_index: range.end,
+            ends_with_wrap: true,
+        })
+        .unwrap_or_default()
+}
+
+fn complete_hard_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
+    let width = width.max(1);
+    let complete_chars = text.chars().count() / width * width;
+    if complete_chars == 0 {
+        return CompleteStreamPrefix::default();
+    }
+    let byte_index = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .nth(complete_chars)
+        .unwrap_or(text.len());
+    CompleteStreamPrefix {
+        byte_index,
+        ends_with_wrap: true,
+    }
 }
 
 fn markdown_safe_prefix_len(text: &str, candidate_byte_index: usize, in_code_block: bool) -> usize {
@@ -406,7 +454,11 @@ fn complete_link_ranges(
         let close_label =
             find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)?;
         let target_start = close_label + "](".len();
-        if !line[close_label + ']'.len_utf8()..].starts_with('(') || target_start >= line.len() {
+        if !line[close_label + ']'.len_utf8()..].starts_with('(') {
+            search_from = close_label + ']'.len_utf8();
+            continue;
+        }
+        if target_start >= line.len() {
             return None;
         }
         let target_end = line[target_start..].find(')')? + target_start;
@@ -431,7 +483,7 @@ fn complete_delimiter_ranges(
             search_from = start + marker.len();
             continue;
         }
-        if marker == "_" && !is_valid_underscore_delimiter(line, start) {
+        if !is_valid_stream_delimiter(line, marker, start) {
             search_from = start + marker.len();
             continue;
         }
@@ -446,7 +498,7 @@ fn complete_delimiter_ranges(
                 end_search_from = end + marker.len();
                 continue;
             }
-            if marker == "_" && !is_valid_underscore_delimiter(line, end) {
+            if !is_valid_stream_delimiter(line, marker, end) {
                 end_search_from = end + marker.len();
                 continue;
             }
@@ -460,6 +512,18 @@ fn complete_delimiter_ranges(
         search_from = end + marker.len();
     }
     Some(ranges)
+}
+
+fn is_valid_stream_delimiter(line: &str, marker: &str, marker_start: usize) -> bool {
+    let before = line[..marker_start].chars().next_back();
+    let after = line[marker_start + marker.len()..].chars().next();
+    if after.is_some_and(char::is_whitespace)
+        || before.is_some_and(char::is_whitespace) && after.is_none()
+    {
+        return false;
+    }
+    marker != "_"
+        || !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
 }
 
 fn has_unclosed_raw_url(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> bool {
