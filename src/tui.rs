@@ -19,11 +19,12 @@ use crossterm::{
     execute,
 };
 use ratatui::{
+    backend::CrosstermBackend,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
-    DefaultTerminal, Frame, TerminalOptions, Viewport,
+    DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
 };
 mod config_picker;
 mod login;
@@ -150,6 +151,7 @@ struct App {
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
+    inline_viewport_height: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -449,6 +451,7 @@ impl App {
             model_metadata: None,
             pending_model_metadata: None,
             pending_session_title: None,
+            inline_viewport_height: INLINE_VIEWPORT_HEIGHT,
         }
     }
 
@@ -473,6 +476,7 @@ impl App {
             self.poll_model_metadata_fetch(agent);
             self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
+            self.resize_inline_viewport_if_needed(terminal)?;
             terminal.draw(|frame| self.draw(frame))?;
             if event::poll(Duration::from_millis(100))? {
                 match event::read()? {
@@ -2199,7 +2203,7 @@ impl App {
     fn draw(&self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let width = area.width as usize;
-        let lines = self.active_lines(width);
+        let lines = self.active_lines_for_height(width, area.height as usize);
         let composer_line_count = self.composer_lines(width).len() as u16;
         let statusline_count = self.statusline_lines(width).len() as u16;
         let command_line_count = self.command_suggestion_lines(width).len() as u16;
@@ -2225,6 +2229,10 @@ impl App {
     }
 
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
+        self.active_lines_for_height(width, INLINE_VIEWPORT_HEIGHT as usize)
+    }
+
+    fn active_lines_for_height(&self, width: usize, viewport_height: usize) -> Vec<Line<'static>> {
         let mut content = Vec::new();
         if self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty() {
             content.push(Line::raw(""));
@@ -2242,7 +2250,7 @@ impl App {
         let mut lines = Vec::new();
         let composer_height =
             composer_lines.len() + statusline_lines.len() + command_lines.len() + 2;
-        let available_content = (INLINE_VIEWPORT_HEIGHT as usize).saturating_sub(composer_height);
+        let available_content = viewport_height.saturating_sub(composer_height);
         let skip = content.len().saturating_sub(available_content);
         lines.extend(content.into_iter().skip(skip));
         lines.push(divider.clone());
@@ -2264,6 +2272,32 @@ impl App {
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
         }
+    }
+
+    fn desired_inline_viewport_height(&self, width: usize, terminal_height: u16) -> u16 {
+        let height = self.active_lines(width).len() as u16;
+        height.max(1).min(terminal_height.max(1))
+    }
+
+    fn resize_inline_viewport_if_needed(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<()> {
+        let size = terminal.size()?;
+        let desired_height = self.desired_inline_viewport_height(size.width as usize, size.height);
+        if desired_height == self.inline_viewport_height {
+            return Ok(());
+        }
+
+        clear_terminal_for_history_reflow(terminal)?;
+        *terminal = Terminal::with_options(
+            CrosstermBackend::new(std::io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Inline(desired_height),
+            },
+        )?;
+        self.inline_viewport_height = desired_height;
+        self.replay_history(terminal)
     }
 
     fn statusline_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -2431,6 +2465,10 @@ impl App {
 
     fn reflow_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         clear_terminal_for_history_reflow(terminal)?;
+        self.replay_history(terminal)
+    }
+
+    fn replay_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
         let mut lines = session_header_lines(&self.info, width);
         let mut previous_was_tool = false;
@@ -2975,11 +3013,18 @@ fn poll_stream_control() -> Result<StreamControl, crate::model::ModelError> {
 mod tests {
     use super::*;
     use crate::credentials::MemoryCredentialStore;
+    use ratatui::{backend::TestBackend, Terminal, TerminalOptions, Viewport};
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
             .iter()
             .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    fn buffer_row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
             .collect()
     }
 
@@ -3401,6 +3446,70 @@ mod tests {
         assert_eq!(line_text(&lines[0]), "");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
+    }
+
+    #[test]
+    fn active_lines_for_height_uses_actual_viewport_height() {
+        let mut app = test_app();
+        app.running = true;
+
+        let small_lines = app.active_lines_for_height(40, 4);
+        let default_lines = app.active_lines_for_height(40, INLINE_VIEWPORT_HEIGHT as usize);
+
+        assert_eq!(line_text(&small_lines[0]), "─".repeat(40));
+        assert_eq!(line_text(&default_lines[0]), "");
+    }
+
+    #[test]
+    fn desired_inline_viewport_height_shrinks_to_live_lines() {
+        let app = test_app();
+
+        assert!(app.desired_inline_viewport_height(60, 24) < INLINE_VIEWPORT_HEIGHT);
+    }
+
+    #[test]
+    fn draw_anchors_last_live_line_to_viewport_bottom() {
+        let app = test_app();
+        let height = app.desired_inline_viewport_height(60, 24);
+        let backend = TestBackend::new(60, height);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )
+        .unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
+        assert!(bottom.contains("ready"), "{bottom:?}");
+    }
+
+    #[test]
+    fn command_palette_anchors_last_suggestion_to_viewport_bottom() {
+        let mut app = test_app();
+        app.input = "/m".into();
+        app.input_cursor = 2;
+        app.clamp_command_selection();
+        let height = app.desired_inline_viewport_height(60, 24);
+        let backend = TestBackend::new(60, height);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )
+        .unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
+        assert!(
+            bottom.contains("/model") || bottom.contains("/"),
+            "{bottom:?}"
+        );
+        assert!(!bottom.trim().is_empty(), "{bottom:?}");
     }
 
     #[test]
