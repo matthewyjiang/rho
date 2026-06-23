@@ -1,8 +1,12 @@
-use super::{Entry, PickerBadgeTone, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT};
-use crate::tool::{ToolDisplayStyle, ToolRgb};
+use super::{
+    markdown::push_wrapped_markdown,
+    theme::{Theme, ToolStyle},
+    Entry, PickerBadgeTone, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT,
+};
+use crate::tool::ToolDisplayStyle;
 use ratatui::{
     layout::Position,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 
@@ -23,23 +27,13 @@ impl LineFill {
 pub(super) fn session_header_lines(_info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
     let divider = "─".repeat(width.max(1));
     vec![
-        Line::styled(divider.clone(), Style::default().fg(Color::DarkGray)),
+        Line::styled(divider.clone(), Theme::dim()),
         Line::from(vec![
-            Span::styled(
-                "rho",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
-            Span::styled(
-                env!("CARGO_PKG_VERSION"),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
         ]),
-        Line::styled(divider, Style::default().fg(Color::DarkGray)),
+        Line::styled(divider, Theme::dim()),
         Line::raw(""),
     ]
 }
@@ -54,14 +48,14 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         lines.push(styled_line(
             "  no matches".to_string(),
             width,
-            Style::default().fg(Color::DarkGray),
+            Theme::dim(),
             LineFill::Natural,
         ));
         lines.push(Line::raw(""));
         lines.push(styled_line(
             picker_footer_text(picker),
             width,
-            Style::default().fg(Color::DarkGray),
+            Theme::dim(),
             LineFill::Natural,
         ));
         return lines;
@@ -87,7 +81,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     lines.push(styled_line(
         format!("  ({}/{})", selected_position + 1, matching_indices.len()),
         width,
-        Style::default().fg(Color::DarkGray),
+        Theme::dim(),
         LineFill::Natural,
     ));
     lines.push(Line::raw(""));
@@ -101,7 +95,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
                 truncate_one_line(detail, width.saturating_sub(2).max(1))
             ),
             width,
-            Style::default().fg(Color::DarkGray),
+            Theme::dim(),
             LineFill::Natural,
         ));
         lines.push(Line::raw(""));
@@ -109,7 +103,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     lines.push(styled_line(
         picker_footer_text(picker),
         width,
-        Style::default().fg(Color::DarkGray),
+        Theme::dim(),
         LineFill::Natural,
     ));
     lines
@@ -117,9 +111,9 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
 
 fn picker_filter_line(picker: &UiPicker) -> Line<'static> {
     Line::from(vec![
-        Span::styled(">", Style::default().fg(Color::White)),
+        Span::styled(">", Theme::text_strong()),
         Span::raw(" "),
-        Span::styled(picker.filter.clone(), Style::default().fg(Color::White)),
+        Span::styled(picker.filter.clone(), Theme::text_strong()),
     ])
 }
 
@@ -150,9 +144,9 @@ fn picker_item_line(
 ) -> Line<'static> {
     let marker = if selected { "→" } else { " " };
     let row_style = if selected {
-        Style::default().fg(Color::Cyan)
+        Theme::accent()
     } else {
-        Style::default().fg(Color::White)
+        Theme::text()
     };
     let label = truncate_one_line(&item.label, label_width);
     let mut used_width = 2 + label_width;
@@ -172,7 +166,7 @@ fn picker_item_line(
             spans.push(Span::raw("  "));
             spans.push(Span::styled(
                 truncate_one_line(preview, remaining),
-                Style::default().fg(Color::DarkGray),
+                Theme::dim(),
             ));
         }
     }
@@ -202,9 +196,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
 
 fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
-        PickerBadgeTone::Selected => Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
+        PickerBadgeTone::Selected => Theme::warning(),
     }
 }
 
@@ -333,23 +325,18 @@ pub(super) fn entry_lines(
             &mut lines,
             text,
             inner_width,
-            Style::default().fg(Color::White).bg(Color::Rgb(36, 44, 54)),
+            Theme::user_message(),
             LineFill::PadToWidth,
         ),
-        Entry::Assistant(text) => push_wrapped_text(
-            &mut lines,
-            text,
-            inner_width,
-            Style::default(),
-            LineFill::Natural,
-        ),
+        Entry::Assistant(text) => {
+            let mut in_code_block = false;
+            push_wrapped_markdown(&mut lines, text, inner_width, &mut in_code_block);
+        }
         Entry::Reasoning(text) => push_wrapped_text(
             &mut lines,
             text,
             inner_width,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
+            Theme::dim().add_modifier(Modifier::DIM),
             LineFill::Natural,
         ),
         Entry::Tool {
@@ -371,16 +358,14 @@ pub(super) fn entry_lines(
             &mut lines,
             text,
             inner_width,
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
+            Theme::dim_italic(),
             LineFill::Natural,
         ),
         Entry::Error(text) => push_wrapped_text(
             &mut lines,
             text,
             inner_width,
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Theme::error(),
             LineFill::Natural,
         ),
     }
@@ -406,14 +391,7 @@ fn push_tool_block(
     max_tool_output_lines: usize,
     expanded: bool,
 ) {
-    let background = if ok {
-        display_style.success_background
-    } else {
-        display_style.failure_background
-    };
-    let style = Style::default()
-        .fg(tool_color(display_style.foreground))
-        .bg(tool_color(background));
+    let style = tool_style(display_style).for_result(ok);
 
     let logical_lines = tool_logical_lines(display_lines);
     let max_tool_output_lines = max_tool_output_lines.max(1);
@@ -455,8 +433,12 @@ fn tool_logical_lines(display_lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn tool_color(color: ToolRgb) -> Color {
-    Color::Rgb(color.0, color.1, color.2)
+fn tool_style(style: ToolDisplayStyle) -> ToolStyle {
+    match style {
+        ToolDisplayStyle::DefaultTool => Theme::tool_default(),
+        ToolDisplayStyle::FileOrCommand => Theme::tool_file_or_command(),
+        ToolDisplayStyle::Skill => Theme::tool_skill(),
+    }
 }
 
 pub(super) fn push_wrapped_text(
@@ -545,7 +527,10 @@ fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-fn wrap_line_at_whitespace_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+pub(super) fn wrap_line_at_whitespace_ranges(
+    line: &str,
+    width: usize,
+) -> Vec<std::ops::Range<usize>> {
     let width = width.max(1);
     if line.is_empty() {
         return std::iter::once(0..0).collect();
@@ -601,7 +586,7 @@ fn wrap_line_at_whitespace_ranges(line: &str, width: usize) -> Vec<std::ops::Ran
     ranges
 }
 
-fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
     if line.is_empty() {
         return vec![String::new()];
     }
@@ -630,6 +615,48 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect()
+    }
+
+    fn line_styles(line: &Line<'_>) -> Vec<Style> {
+        line.spans.iter().map(|span| span.style).collect()
+    }
+
+    #[test]
+    fn assistant_markdown_styles_inline_code_bold_and_italic() {
+        let lines = entry_lines(
+            &Entry::Assistant("use `cargo test`, then **ship** the *fix*".into()),
+            80,
+            10,
+        );
+
+        let content = &lines[1];
+        assert_eq!(line_text(content), " use cargo test, then ship the fix ");
+        let styles = line_styles(content);
+        assert!(styles.contains(&Theme::markdown_inline_code()));
+        assert!(styles.contains(&Theme::markdown_bold()));
+        assert!(styles.contains(&Theme::markdown_italic()));
+        assert_eq!(Theme::markdown_bold().fg, None);
+        assert_eq!(Theme::markdown_italic().fg, None);
+    }
+
+    #[test]
+    fn assistant_markdown_styles_code_blocks() {
+        let lines = entry_lines(&Entry::Assistant("```rust\nlet x = 1;\n```".into()), 80, 10);
+
+        assert!(line_text(&lines[1]).contains("╭"));
+        assert!(line_text(&lines[2]).contains("│ let x = 1;"));
+        assert!(line_text(&lines[3]).contains("╰"));
+        assert_eq!(lines[2].spans[1].style, Theme::markdown_code_block());
+    }
+
+    #[test]
+    fn assistant_markdown_renders_divider_lines() {
+        let lines = entry_lines(&Entry::Assistant("before\n---\nafter".into()), 20, 10);
+
+        assert_eq!(line_text(&lines[1]), " before ");
+        assert_eq!(line_text(&lines[2]), format!(" {} ", "─".repeat(18)));
+        assert_eq!(lines[2].spans[1].style, Theme::dim());
+        assert_eq!(line_text(&lines[3]), " after ");
     }
 
     #[test]
