@@ -249,8 +249,21 @@ impl Theme {
     }
 
     fn dim_block(background: Color) -> Style {
-        Style::default().fg(Color::White).bg(background)
+        Style::default()
+            .fg(block_foreground(background))
+            .bg(background)
     }
+}
+
+fn block_foreground(background: Color) -> Color {
+    match background {
+        Color::Rgb(red, green, blue) if relative_luminance(red, green, blue) > 0.55 => Color::Black,
+        _ => Color::White,
+    }
+}
+
+fn relative_luminance(red: u8, green: u8, blue: u8) -> f32 {
+    (0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)) / 255.0
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -321,13 +334,17 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     }
 
     let mut bytes = Vec::new();
+    let mut palette = None;
     let deadline = Instant::now() + Duration::from_millis(80);
     let mut handle = stdin.lock();
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && palette.is_none() {
         let mut buffer = [0u8; 1024];
         match handle.read(&mut buffer) {
             Ok(0) => std::thread::sleep(Duration::from_millis(2)),
-            Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+            Ok(count) => {
+                bytes.extend_from_slice(&buffer[..count]);
+                palette = parse_palette_response(&String::from_utf8_lossy(&bytes));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(2));
             }
@@ -339,7 +356,7 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     }
 
     let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-    Ok(parse_palette_response(&String::from_utf8_lossy(&bytes)))
+    Ok(palette)
 }
 
 #[cfg(not(unix))]
@@ -442,6 +459,12 @@ mod tests {
 
         assert_eq!(palette.background, Rgb::new(0, 0, 0));
         assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
+    }
+
+    #[test]
+    fn chooses_dark_block_foreground_for_light_rgb_backgrounds() {
+        assert_eq!(block_foreground(Color::Rgb(240, 240, 240)), Color::Black);
+        assert_eq!(block_foreground(Color::Rgb(20, 20, 20)), Color::White);
     }
 
     #[test]

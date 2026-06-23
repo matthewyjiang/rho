@@ -1441,7 +1441,9 @@ impl App {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let fragment = match kind {
-            StreamKind::Assistant => self.assistant_stream.drain_renderable(inner_width),
+            StreamKind::Assistant => self
+                .assistant_stream
+                .drain_renderable_markdown(inner_width, self.assistant_stream_in_code_block),
             StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
         };
         if let Some(fragment) = fragment {
