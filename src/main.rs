@@ -22,9 +22,11 @@ use clap::Parser;
 use agent::{Agent, SessionHistorySink};
 use cli::{Cli, Command};
 use config::Config;
-use model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider};
+use model::{
+    build_provider, catalog, models_dev::cached_model_metadata, ModelError, UnavailableProvider,
+};
 use session::Session;
-use tool::ToolContext;
+use tool::{ToolContext, ToolRegistry};
 use tui::TuiInfo;
 
 #[tokio::main]
@@ -33,19 +35,7 @@ async fn main() -> anyhow::Result<()> {
     validate_cli(&cli)?;
     let config_path = cli.config.clone();
     let mut cfg = Config::load(config_path.clone())?;
-    let mut save_config = false;
-    if let Some(provider) = cli.provider {
-        cfg.provider = provider;
-        save_config = true;
-    }
-    if let Some(model) = cli.model {
-        cfg.model = model;
-        save_config = true;
-    }
-    if let Some(auth) = cli.auth {
-        cfg.auth = auth;
-        save_config = true;
-    }
+    let save_config = apply_cli_overrides(&mut cfg, &cli)?;
     if save_config {
         cfg.save(config_path.clone())?;
     }
@@ -73,13 +63,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(err) => return Err(err.into()),
     };
-    let registry = tools::registry();
+    let registry = if cli.no_tools {
+        ToolRegistry::new()
+    } else {
+        tools::registry()
+    };
     let cwd = std::env::current_dir()?;
     let ctx = ToolContext {
         cwd: cwd.clone(),
         max_output_bytes: cfg.max_output_bytes,
     };
     let mut agent = Agent::new(provider, registry, ctx);
+    if cli.no_system_prompt {
+        agent = agent.without_system_prompt();
+    }
     agent.set_compaction_config((&cfg).into());
     agent.set_context_window(
         cached_model_metadata(&cfg.provider, &cfg.model)
@@ -153,6 +150,51 @@ fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn apply_cli_overrides(cfg: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
+    let mut save_config = false;
+    if let Some(provider) = &cli.provider {
+        cfg.provider = provider.clone();
+        if let Some(target) = catalog::login_target_for_provider(provider) {
+            cfg.auth = target.auth;
+        }
+        save_config = true;
+    }
+    if let Some(model) = &cli.model {
+        apply_model_override(cfg, model)?;
+        save_config = true;
+    }
+    if let Some(auth) = &cli.auth {
+        cfg.auth = auth.clone();
+        save_config = true;
+    }
+    if let Some(reasoning) = cli.reasoning {
+        cfg.reasoning = reasoning;
+        save_config = true;
+    }
+    Ok(save_config)
+}
+
+fn apply_model_override(cfg: &mut Config, model: &str) -> anyhow::Result<()> {
+    let Some((provider, model_name)) = model.split_once('/') else {
+        cfg.model = model.to_string();
+        return Ok(());
+    };
+    let provider = provider.trim();
+    let model_name = model_name.trim();
+    if provider.is_empty() || model_name.is_empty() {
+        anyhow::bail!("--model provider/model cannot have an empty provider or model");
+    }
+    if !catalog::implemented_providers().contains(&provider) {
+        anyhow::bail!("unknown provider '{provider}' for --model provider/model");
+    }
+    cfg.provider = provider.to_string();
+    cfg.model = model_name.to_string();
+    if let Some(target) = catalog::login_target_for_provider(provider) {
+        cfg.auth = target.auth;
+    }
+    Ok(())
+}
+
 fn automation_prompt(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
     automation_prompt_with_stdin(parts, read_stdin, &mut io::stdin())
 }
@@ -194,6 +236,9 @@ mod tests {
             model: None,
             config: None,
             auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
             resume: Some(Some("session-id".into())),
             command: Some(Command::Run {
                 stdin: true,
@@ -204,6 +249,98 @@ mod tests {
         let err = validate_cli(&cli).unwrap_err();
 
         assert!(err.to_string().contains("--resume is only supported"));
+    }
+
+    #[test]
+    fn cli_model_override_with_provider_selects_matching_auth() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: Some("openai-codex/gpt-5.4-mini".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.provider, "openai-codex");
+        assert_eq!(cfg.model, "gpt-5.4-mini");
+        assert_eq!(cfg.auth, "codex");
+    }
+
+    #[test]
+    fn cli_unqualified_model_override_keeps_provider() {
+        let mut cfg = Config {
+            provider: "openai-codex".into(),
+            auth: "codex".into(),
+            ..Config::default()
+        };
+        let cli = Cli {
+            provider: None,
+            model: Some("custom-model".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "openai-codex");
+        assert_eq!(cfg.model, "custom-model");
+        assert_eq!(cfg.auth, "codex");
+    }
+
+    #[test]
+    fn cli_auth_override_wins_after_model_provider_auth() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: Some("openai-codex/gpt-5.4-mini".into()),
+            config: None,
+            auth: Some("api-key".into()),
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "openai-codex");
+        assert_eq!(cfg.model, "gpt-5.4-mini");
+        assert_eq!(cfg.auth, "api-key");
+    }
+
+    #[test]
+    fn cli_reasoning_override_updates_config() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: Some(crate::reasoning::ReasoningLevel::High),
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.reasoning, crate::reasoning::ReasoningLevel::High);
     }
 
     #[test]

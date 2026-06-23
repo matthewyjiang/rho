@@ -51,6 +51,7 @@ impl HistorySink for RecordingHistorySink {
 #[derive(Clone, Default)]
 struct RecordingProvider {
     requests: Arc<Mutex<Vec<Vec<Message>>>>,
+    tools: Arc<Mutex<Vec<Vec<ToolSpec>>>>,
     prompt_cache_keys: Arc<Mutex<Vec<Option<String>>>>,
     response: Option<ModelResponse>,
 }
@@ -62,6 +63,7 @@ impl ModelProvider for RecordingProvider {
             .lock()
             .unwrap()
             .push(request.prompt_cache_key.clone());
+        self.tools.lock().unwrap().push(request.tools.clone());
         self.requests.lock().unwrap().push(request.messages);
         Ok(self
             .response
@@ -615,6 +617,7 @@ async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
     })]);
     let provider = RecordingProvider {
         requests: Arc::default(),
+        tools: Arc::default(),
         prompt_cache_keys: Arc::default(),
         response: Some(response),
     };
@@ -655,6 +658,7 @@ async fn persists_all_tool_results_before_interrupting_tool_events() {
     ]);
     let provider = RecordingProvider {
         requests: Arc::default(),
+        tools: Arc::default(),
         prompt_cache_keys: Arc::default(),
         response: Some(response),
     };
@@ -838,6 +842,44 @@ fn replace_history_keeps_initial_system_message() {
     assert!(
         matches!(agent.messages[2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous assistant"))
     );
+}
+
+#[tokio::test]
+async fn empty_tool_registry_sends_no_tool_specs() {
+    let provider = RecordingProvider::default();
+    let tools = provider.tools.clone();
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+
+    agent.run("hello".into()).await.unwrap();
+
+    let tools = tools.lock().unwrap();
+    assert!(tools.last().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn without_system_prompt_sends_only_user_message() {
+    let provider = RecordingProvider::default();
+    let requests = provider.requests.clone();
+    let mut agent = test_agent(provider).without_system_prompt();
+
+    assert!(agent.messages().is_empty());
+
+    agent.run("hello".into()).await.unwrap();
+
+    let requests = requests.lock().unwrap();
+    let request = requests.last().unwrap();
+    assert_eq!(request.len(), 1);
+    assert!(matches!(request[0], Message::User(_)));
+}
+
+#[test]
+fn replace_history_without_system_prompt_keeps_history_only() {
+    let mut agent = test_agent(RecordingProvider::default()).without_system_prompt();
+
+    agent.replace_history(vec![Message::user_text("previous user")]);
+
+    assert_eq!(agent.messages().len(), 1);
+    assert!(matches!(agent.messages()[0], Message::User(_)));
 }
 
 #[tokio::test]

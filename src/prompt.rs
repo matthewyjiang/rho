@@ -36,7 +36,11 @@ Do not invent tool results. When done, answer directly.
         }
     }
 
-    let skills = skills::discover_with_home(cwd, home);
+    let skills = if tools.iter().any(|tool| tool.name == "skill") {
+        skills::discover_with_home(cwd, home)
+    } else {
+        Vec::new()
+    };
     if !skills.is_empty() {
         out.push_str("\nAvailable skills from skill files, in discovery order:\n");
         out.push_str("Use the skill tool to load a skill when the task matches its description. If a skill references relative paths, resolve them against the skill directory.\n");
@@ -172,7 +176,8 @@ mod tests {
         )
         .unwrap();
 
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path()));
+        let prompt =
+            system_prompt_with_home(&[skill_tool_spec()], project.path(), Some(home.path()));
 
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("<name>rho-skill</name>"));
@@ -182,5 +187,31 @@ mod tests {
             skill_dir.join("SKILL.md").display()
         )));
         assert!(!prompt.contains("rho skill rules"));
+    }
+
+    #[test]
+    fn skips_skills_when_skill_tool_is_unavailable() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let skill_dir = home.path().join(".rho/skills/rho-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: rho-skill\ndescription: rho skill desc\n---\nrho skill rules",
+        )
+        .unwrap();
+
+        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path()));
+
+        assert!(!prompt.contains("<available_skills>"));
+        assert!(!prompt.contains("rho-skill"));
+    }
+
+    fn skill_tool_spec() -> ToolSpec {
+        ToolSpec {
+            name: "skill".into(),
+            description: "load skills".into(),
+            input_schema: serde_json::json!({}),
+        }
     }
 }
