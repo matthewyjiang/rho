@@ -41,7 +41,7 @@ pub(super) fn session_header_lines(_info: &TuiInfo, width: usize) -> Vec<Line<'s
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(MAX_PICKER_ITEMS + 7);
-    lines.push(picker_filter_line(picker));
+    lines.push(picker_filter_line(picker, width));
     lines.push(Line::raw(""));
 
     if matching_indices.is_empty() {
@@ -53,7 +53,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         ));
         lines.push(Line::raw(""));
         lines.push(styled_line(
-            picker_footer_text(picker),
+            truncate_one_line(&picker_footer_text(picker), width),
             width,
             Theme::dim(),
             LineFill::Natural,
@@ -101,7 +101,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         lines.push(Line::raw(""));
     }
     lines.push(styled_line(
-        picker_footer_text(picker),
+        truncate_one_line(&picker_footer_text(picker), width),
         width,
         Theme::dim(),
         LineFill::Natural,
@@ -109,11 +109,18 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     lines
 }
 
-fn picker_filter_line(picker: &UiPicker) -> Line<'static> {
+fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
+    if width <= 1 {
+        return Line::from(Span::styled(">", Theme::text_strong()));
+    }
+
     Line::from(vec![
         Span::styled(">", Theme::text_strong()),
         Span::raw(" "),
-        Span::styled(picker.filter.clone(), Theme::text_strong()),
+        Span::styled(
+            truncate_one_line(&picker.filter, width.saturating_sub(2)),
+            Theme::text_strong(),
+        ),
     ])
 }
 
