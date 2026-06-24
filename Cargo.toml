@@ -1,6 +1,6 @@
 [package]
 name = "rho-coding-agent"
-version = "0.9.3"
+version = "0.10.0"
 edition = "2021"
 description = "A lightweight agent harness inspired by Pi"
 license = "MIT"

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.3...rho-coding-agent-v0.10.0) (2026-06-24)
+
+
+### Features
+
+* **model:** add anthropic provider and registry ([#60](https://github.com/matthewyjiang/rho/issues/60)) ([037468c](https://github.com/matthewyjiang/rho/commit/037468c466baa2d305f37fdc001376a38838a0a7))
+
+
+### Bug Fixes
+
+* **auth:** chunk large windows credentials ([#57](https://github.com/matthewyjiang/rho/issues/57)) ([8515a41](https://github.com/matthewyjiang/rho/commit/8515a4177014dd6bcc08be9ffe64331649e27f20))
+
 ## [0.9.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.2...rho-coding-agent-v0.9.3) (2026-06-24)
 
 
