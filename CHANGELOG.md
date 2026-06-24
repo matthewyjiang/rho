@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.1...rho-coding-agent-v0.9.2) (2026-06-24)
+
+
+### Bug Fixes
+
+* **tui:** tolerate unsupported keyboard enhancements ([#51](https://github.com/matthewyjiang/rho/issues/51)) ([176283c](https://github.com/matthewyjiang/rho/commit/176283c98ac5a0b7123ae3793e0dd15d5af000a4))
+
 ## [0.9.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.0...rho-coding-agent-v0.9.1) (2026-06-24)
 
 
