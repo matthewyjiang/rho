@@ -34,4 +34,5 @@ check() {
 package() {
     cd "rho-$_tagname"
     install -Dm755 "target/release/rho" "$pkgdir/usr/bin/rho"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
