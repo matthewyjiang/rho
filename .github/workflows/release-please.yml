@@ -66,6 +66,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
+        with:
+          cache-targets: false
       - name: Build binary
         run: cargo build --release --locked --bin rho
       - name: Package Unix binary
