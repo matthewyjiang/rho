@@ -1,0 +1,51 @@
+name: publish-arch-package
+
+on:
+  push:
+    tags:
+      - "rho-coding-agent-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Sy --noconfirm base-devel git pacman-contrib rust sqlite
+
+      - name: Checkout package repo
+        uses: actions/checkout@v4
+
+      - name: Build package
+        run: |
+          set -euo pipefail
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm"
+
+      - name: Checkout mjiang-extras
+        uses: actions/checkout@v4
+        with:
+          repository: matthewyjiang/mjiang-extras
+          token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+          path: mjiang-extras
+
+      - name: Publish package files
+        run: |
+          set -euo pipefail
+
+          chmod +x mjiang-extras/scripts/publish-packages.sh
+          mjiang-extras/scripts/publish-packages.sh --repo-dir mjiang-extras ./*.pkg.tar.zst
+
+          cd mjiang-extras
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add x86_64/
+          git commit -m "Update packages from ${{ github.repository }}" || exit 0
+          git push
