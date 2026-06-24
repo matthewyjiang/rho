@@ -51,12 +51,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            cache-targets: false
           - os: macos-13
             target: x86_64-apple-darwin
+            cache-targets: true
           - os: macos-14
             target: aarch64-apple-darwin
+            cache-targets: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            cache-targets: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,14 +71,15 @@ jobs:
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
         with:
-          cache-targets: false
+          cache-targets: ${{ matrix.cache-targets }}
+          shared-key: release-binaries-${{ matrix.target }}
       - name: Build binary
-        run: cargo build --release --locked --bin rho
+        run: cargo build --release --locked --bin rho --target ${{ matrix.target }}
       - name: Package Unix binary
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/release/rho dist/rho
+          cp target/${{ matrix.target }}/release/rho dist/rho
           tar -C dist -czf rho-${{ matrix.target }}.tar.gz rho
           shasum -a 256 rho-${{ matrix.target }}.tar.gz > rho-${{ matrix.target }}.tar.gz.sha256
       - name: Package Windows binary
@@ -82,7 +87,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/rho.exe dist/rho.exe
+          Copy-Item target/${{ matrix.target }}/release/rho.exe dist/rho.exe
           Compress-Archive -Path dist/rho.exe -DestinationPath rho-${{ matrix.target }}.zip -Force
           $Hash = (Get-FileHash -Algorithm SHA256 rho-${{ matrix.target }}.zip).Hash.ToLowerInvariant()
           "$Hash  rho-${{ matrix.target }}.zip" | Out-File -Encoding ascii rho-${{ matrix.target }}.zip.sha256
