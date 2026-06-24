@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, sync::OnceLock};
+use std::{collections::HashMap, sync::OnceLock};
 
 use ratatui::style::{Color, Modifier, Style};
 
@@ -47,6 +47,7 @@ impl TerminalPalette {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
 enum AnsiColor {
     Red,
     Green,
@@ -57,6 +58,7 @@ enum AnsiColor {
     Gray,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl AnsiColor {
     const fn index(self) -> u8 {
         match self {
@@ -302,7 +304,7 @@ fn query_terminal_palette() -> Option<TerminalPalette> {
 
 #[cfg(unix)]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
     use std::time::{Duration, Instant};
 
@@ -364,6 +366,7 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(None)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     let mut background = None;
     let mut ansi = HashMap::new();
@@ -393,6 +396,7 @@ fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     .filter(|palette| palette.ansi.len() >= 7)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn osc_sequences(response: &str) -> Vec<&str> {
     let mut sequences = Vec::new();
     let mut rest = response;
@@ -409,6 +413,7 @@ fn osc_sequences(response: &str) -> Vec<&str> {
     sequences
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> {
     match (bel_end, st_end) {
         (Some(bel), Some(st)) => Some(bel.min(st)),
@@ -418,6 +423,7 @@ fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> 
     }
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse_rgb_response(response: &str) -> Option<Rgb> {
     let rgb = response.strip_prefix("rgb:")?;
     let mut components = rgb.split('/');
@@ -428,12 +434,14 @@ fn parse_rgb_response(response: &str) -> Option<Rgb> {
     ))
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse_xterm_component(component: &str) -> Option<u8> {
     let value = u16::from_str_radix(component, 16).ok()?;
     let max = (1u32 << (component.len() * 4)) - 1;
     Some(((value as u32 * 255 + max / 2) / max) as u8)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
     match index {
         1 => Some(AnsiColor::Red),
