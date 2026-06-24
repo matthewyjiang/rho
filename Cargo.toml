@@ -28,7 +28,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 regex = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32" }
 keyring = "4.1.2"
 rand = "0.8"
 sha2 = "0.10"
@@ -36,6 +36,10 @@ base64 = "0.22"
 url = "2"
 webbrowser = "1"
 libc = "0.2"
+
+[features]
+default = ["bundled-sqlite"]
+bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]
 tempfile = "3"
