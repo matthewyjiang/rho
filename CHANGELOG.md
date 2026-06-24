@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.0...rho-coding-agent-v0.9.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **windows:** improve installer and shell support ([#47](https://github.com/matthewyjiang/rho/issues/47)) ([4d6da5b](https://github.com/matthewyjiang/rho/commit/4d6da5b7912a9a76a0b1cceee5ce491f45d7ed8f))
+
 ## [0.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.8.0...rho-coding-agent-v0.9.0) (2026-06-23)
 
 
