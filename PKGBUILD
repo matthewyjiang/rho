@@ -21,12 +21,16 @@ prepare() {
 build() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
+    export SQLITE3_LIB_DIR=/usr/lib
+    export SQLITE3_INCLUDE_DIR=/usr/include
     cargo build --release --locked --bin rho --no-default-features
 }
 
 check() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
+    export SQLITE3_LIB_DIR=/usr/lib
+    export SQLITE3_INCLUDE_DIR=/usr/include
     cargo test --release --locked --no-default-features
 }
 
