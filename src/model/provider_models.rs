@@ -219,7 +219,7 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
 
 fn is_supported_openai_model(model: &str) -> bool {
     let is_reasoning =
-        model.starts_with('o') && model.chars().nth(1).map_or(false, |c| c.is_ascii_digit());
+        model.starts_with('o') && model.chars().nth(1).is_some_and(|c| c.is_ascii_digit());
     let is_gpt = model.starts_with("gpt-")
         && !model.contains("realtime")
         && !model.contains("audio")
