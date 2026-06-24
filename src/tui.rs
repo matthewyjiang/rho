@@ -109,16 +109,19 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
         viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
     });
     Theme::initialize_from_terminal();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
-    enable_modified_keys()?;
-    execute!(
-        std::io::stdout(),
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )?;
+    let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
+    let modified_keys_enabled = enable_modified_keys().is_ok();
+    let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
     let result = App::new(info).run(&mut terminal, agent).await;
-    execute!(std::io::stdout(), PopKeyboardEnhancementFlags)?;
-    disable_modified_keys()?;
-    execute!(std::io::stdout(), DisableBracketedPaste)?;
+    if keyboard_enhancements_enabled {
+        let _ = disable_keyboard_enhancements();
+    }
+    if modified_keys_enabled {
+        let _ = disable_modified_keys();
+    }
+    if bracketed_paste_enabled {
+        let _ = disable_bracketed_paste();
+    }
     ratatui::restore();
     if let Ok(result) = &result {
         print_exit_lines(&result.exit_lines)?;
@@ -3605,6 +3608,25 @@ fn next_word_boundary(input: &str, cursor: usize) -> usize {
         index += 1;
     }
     index
+}
+
+fn enable_bracketed_paste() -> std::io::Result<()> {
+    execute!(std::io::stdout(), EnableBracketedPaste)
+}
+
+fn disable_bracketed_paste() -> std::io::Result<()> {
+    execute!(std::io::stdout(), DisableBracketedPaste)
+}
+
+fn enable_keyboard_enhancements() -> std::io::Result<()> {
+    execute!(
+        std::io::stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )
+}
+
+fn disable_keyboard_enhancements() -> std::io::Result<()> {
+    execute!(std::io::stdout(), PopKeyboardEnhancementFlags)
 }
 
 fn enable_modified_keys() -> std::io::Result<()> {
