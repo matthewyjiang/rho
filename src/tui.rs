@@ -59,17 +59,18 @@ use crate::{
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
     credentials::{
-        available_auth_modes, delete_anthropic_api_key, delete_codex_tokens, delete_openai_api_key,
-        provider_has_credentials, provider_has_env_override, save_anthropic_api_key,
-        save_codex_tokens, save_openai_api_key, CodexTokens, CredentialStore, OsCredentialStore,
+        available_auth_modes, delete_provider_credentials, provider_has_credentials,
+        provider_has_env_override, save_codex_tokens, save_provider_api_key, CodexTokens,
+        CredentialStore, OsCredentialStore,
     },
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models,
-        ContentBlock, ContextUsage, Message, ModelError, ModelMetadata, ModelRequest,
-        ModelResponse, ModelUsage, UnavailableProvider,
+        registry::{self, ProviderAuthKind},
+        ContentBlock, ContextUsage, Message, ModelMetadata, ModelRequest, ModelResponse,
+        ModelUsage, UnavailableProvider,
     },
     reasoning::ReasoningLevel,
     session::Session,
@@ -2255,18 +2256,16 @@ impl App {
     ) -> anyhow::Result<()> {
         let providers = if invocation.args.trim().is_empty() {
             self.refresh_available_auths();
-            let mut providers = Vec::new();
-            if self.available_auths.iter().any(|auth| auth == "api-key") {
-                providers.push("openai".to_string());
-            }
-            if self
-                .available_auths
+            registry::providers()
                 .iter()
-                .any(|auth| auth == "anthropic-api-key")
-            {
-                providers.push("anthropic".to_string());
-            }
-            providers
+                .filter(|provider| provider.model_refresh.is_some())
+                .filter(|provider| {
+                    self.available_auths
+                        .iter()
+                        .any(|auth| auth == provider.auth)
+                })
+                .map(|provider| provider.name.to_string())
+                .collect()
         } else {
             vec![invocation.args.trim().to_string()]
         };
@@ -2275,7 +2274,7 @@ impl App {
             self.insert_entry(
                 terminal,
                 &Entry::Notice(
-                    "no API-key providers are configured. run /login openai or /login anthropic."
+                    "no refreshable providers are configured. run /login for a provider with model list support."
                         .into(),
                 ),
             )?;
@@ -3767,7 +3766,7 @@ enum StreamControl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::MemoryCredentialStore;
+    use crate::credentials::{save_anthropic_api_key, save_openai_api_key, MemoryCredentialStore};
     use ratatui::{backend::TestBackend, Terminal, TerminalOptions, Viewport};
 
     fn line_text(line: &Line<'_>) -> String {

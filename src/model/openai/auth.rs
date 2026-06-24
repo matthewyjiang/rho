@@ -2,9 +2,9 @@ use serde::Deserialize;
 
 use crate::{
     credentials::{
-        load_codex_tokens, load_openai_api_key, save_codex_tokens, CodexTokens, OsCredentialStore,
+        load_codex_tokens, load_provider_api_key, save_codex_tokens, CodexTokens, OsCredentialStore,
     },
-    model::ModelError,
+    model::{registry, ModelError},
 };
 
 pub(super) enum Auth {
@@ -30,11 +30,20 @@ struct RefreshResponse {
 }
 
 pub(super) fn load_api_key_auth() -> Result<Auth, ModelError> {
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+    let descriptor = registry::provider_descriptor("openai")
+        .ok_or_else(|| ModelError::UnsupportedProvider("openai".into()))?;
+    let registry::ProviderAuthKind::ApiKey {
+        env_var, missing, ..
+    } = descriptor.auth_kind
+    else {
+        return Err(ModelError::UnsupportedProvider("openai".into()));
+    };
+    if let Ok(key) = std::env::var(env_var) {
         return Ok(Auth::ApiKey(key));
     }
     let store = OsCredentialStore;
-    let key = load_openai_api_key(&store)?.ok_or(ModelError::MissingApiKey)?;
+    let key = load_provider_api_key(&store, descriptor.name)?
+        .ok_or_else(|| registry::missing_credential_error(missing))?;
     Ok(Auth::ApiKey(key))
 }
 

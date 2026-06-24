@@ -1,15 +1,26 @@
 use std::{fs, path::PathBuf};
 
+#[cfg(test)]
+use std::{
+    cell::RefCell,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use reqwest::Url;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    credentials::{load_anthropic_api_key, load_openai_api_key, OsCredentialStore},
-    model::ModelError,
-    paths,
+    credentials::{load_provider_api_key, OsCredentialStore},
+    model::{
+        registry::{self, missing_credential_error, ProviderAuthKind, ProviderModelRefreshKind},
+        ModelError,
+    },
 };
+
+#[cfg(not(test))]
+use crate::paths;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderModel {
@@ -31,12 +42,6 @@ pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderMode
         .find(|entry| entry.model == model)
 }
 
-#[cfg(test)]
-pub fn cached_provider_models(_provider: &str) -> Vec<ProviderModel> {
-    Vec::new()
-}
-
-#[cfg(not(test))]
 pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
     let Ok(connection) = open_provider_models_cache() else {
         return Vec::new();
@@ -63,10 +68,12 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
 }
 
 pub async fn refresh_provider_models(provider: &str) -> Result<ProviderModelRefresh, ModelError> {
-    let models = match provider {
-        "openai" => fetch_openai_models().await?,
-        "anthropic" => fetch_anthropic_models().await?,
-        other => return Err(ModelError::UnsupportedProvider(other.to_string())),
+    let descriptor = registry::provider_descriptor(provider)
+        .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
+    let models = match descriptor.model_refresh {
+        Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider).await?,
+        Some(ProviderModelRefreshKind::Anthropic) => fetch_anthropic_models(provider).await?,
+        None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
     replace_cached_provider_models(provider, &models)?;
     Ok(ProviderModelRefresh {
@@ -111,8 +118,8 @@ fn replace_cached_provider_models(
     Ok(())
 }
 
-async fn fetch_openai_models() -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_openai_api_key_auth()?;
+async fn fetch_openai_models(provider: &str) -> Result<Vec<ProviderModel>, ModelError> {
+    let key = load_api_key_auth(provider)?;
     let response: OpenAiModelsResponse = reqwest::Client::new()
         .get("https://api.openai.com/v1/models")
         .bearer_auth(key)
@@ -126,7 +133,7 @@ async fn fetch_openai_models() -> Result<Vec<ProviderModel>, ModelError> {
         .into_iter()
         .filter(|model| is_supported_openai_model(&model.id))
         .map(|model| ProviderModel {
-            provider: "openai".to_string(),
+            provider: provider.to_string(),
             display_name: model.id.clone(),
             model: model.id,
             max_output_tokens: None,
@@ -137,8 +144,8 @@ async fn fetch_openai_models() -> Result<Vec<ProviderModel>, ModelError> {
     Ok(models)
 }
 
-async fn fetch_anthropic_models() -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_anthropic_api_key_auth()?;
+async fn fetch_anthropic_models(provider: &str) -> Result<Vec<ProviderModel>, ModelError> {
+    let key = load_api_key_auth(provider)?;
     let client = reqwest::Client::new();
     let mut models = Vec::new();
     let mut after_id = None::<String>;
@@ -165,7 +172,7 @@ async fn fetch_anthropic_models() -> Result<Vec<ProviderModel>, ModelError> {
                 .into_iter()
                 .filter(|model| model.id.starts_with("claude-"))
                 .map(|model| ProviderModel {
-                    provider: "anthropic".to_string(),
+                    provider: provider.to_string(),
                     display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
                     model: model.id,
                     max_output_tokens: model.max_tokens,
@@ -184,20 +191,20 @@ async fn fetch_anthropic_models() -> Result<Vec<ProviderModel>, ModelError> {
     Ok(models)
 }
 
-fn load_openai_api_key_auth() -> Result<String, ModelError> {
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+fn load_api_key_auth(provider: &str) -> Result<String, ModelError> {
+    let descriptor = registry::provider_descriptor(provider)
+        .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
+    let ProviderAuthKind::ApiKey {
+        env_var, missing, ..
+    } = descriptor.auth_kind
+    else {
+        return Err(ModelError::UnsupportedProvider(provider.to_string()));
+    };
+    if let Ok(key) = std::env::var(env_var) {
         return Ok(key);
     }
     let store = OsCredentialStore;
-    load_openai_api_key(&store)?.ok_or(ModelError::MissingApiKey)
-}
-
-fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        return Ok(key);
-    }
-    let store = OsCredentialStore;
-    load_anthropic_api_key(&store)?.ok_or(ModelError::MissingAnthropicApiKey)
+    load_provider_api_key(&store, provider)?.ok_or_else(|| missing_credential_error(missing))
 }
 
 fn is_supported_openai_model(model: &str) -> bool {
@@ -267,25 +274,84 @@ fn provider_models_sqlite_path() -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(path) = test_cache_dir() {
+            return path;
+        }
+        return default_test_cache_dir();
+    }
+    #[cfg(not(test))]
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
         return PathBuf::from(path).join("rho");
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(not(test))]
     {
-        if let Some(path) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(path).join("rho").join("cache");
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+                return PathBuf::from(path).join("rho").join("cache");
+            }
         }
-    }
-    #[cfg(target_os = "macos")]
-    {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(path) = paths::home_dir() {
+                return path.join("Library").join("Caches").join("rho");
+            }
+        }
         if let Some(path) = paths::home_dir() {
-            return path.join("Library").join("Caches").join("rho");
+            return path.join(".cache").join("rho");
         }
+        std::env::temp_dir().join("rho-cache")
     }
-    if let Some(path) = paths::home_dir() {
-        return path.join(".cache").join("rho");
-    }
-    std::env::temp_dir().join("rho-cache")
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CACHE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_cache_dir() -> Option<PathBuf> {
+    TEST_CACHE_DIR.with(|path| path.borrow().clone())
+}
+
+#[cfg(test)]
+fn default_test_cache_dir() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "rho-provider-models-default-test-cache-{}",
+        std::process::id()
+    ))
+}
+
+#[cfg(test)]
+pub fn with_provider_models_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    TEST_CACHE_DIR.with(|cache_dir| {
+        let previous = cache_dir.replace(Some(path));
+        let result = f();
+        cache_dir.replace(previous);
+        result
+    })
+}
+
+#[cfg(test)]
+pub fn replace_cached_provider_models_for_tests(
+    provider: &str,
+    models: &[ProviderModel],
+) -> Result<(), ModelError> {
+    replace_cached_provider_models(provider, models)
+}
+
+#[cfg(test)]
+fn unique_test_cache_dir(name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("test clock should be after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "rho-provider-models-{name}-{}-{nanos}",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]
@@ -298,5 +364,115 @@ mod tests {
         assert!(is_supported_openai_model("o3"));
         assert!(!is_supported_openai_model("text-embedding-3-large"));
         assert!(!is_supported_openai_model("whisper-1"));
+    }
+
+    #[test]
+    fn provider_model_cache_replaces_one_provider_and_preserves_max_tokens() {
+        let cache_dir = unique_test_cache_dir("replace");
+        with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            replace_cached_provider_models(
+                "openai",
+                &[ProviderModel {
+                    provider: "openai".into(),
+                    model: "gpt-5.5".into(),
+                    display_name: "gpt-5.5".into(),
+                    max_output_tokens: None,
+                }],
+            )
+            .unwrap();
+            replace_cached_provider_models(
+                "anthropic",
+                &[
+                    ProviderModel {
+                        provider: "anthropic".into(),
+                        model: "claude-b".into(),
+                        display_name: "Claude B".into(),
+                        max_output_tokens: Some(64_000),
+                    },
+                    ProviderModel {
+                        provider: "anthropic".into(),
+                        model: "claude-a".into(),
+                        display_name: "Claude A".into(),
+                        max_output_tokens: Some(32_000),
+                    },
+                ],
+            )
+            .unwrap();
+            replace_cached_provider_models(
+                "anthropic",
+                &[ProviderModel {
+                    provider: "anthropic".into(),
+                    model: "claude-c".into(),
+                    display_name: "Claude C".into(),
+                    max_output_tokens: Some(16_000),
+                }],
+            )
+            .unwrap();
+
+            assert_eq!(
+                cached_provider_models("openai"),
+                vec![ProviderModel {
+                    provider: "openai".into(),
+                    model: "gpt-5.5".into(),
+                    display_name: "gpt-5.5".into(),
+                    max_output_tokens: None,
+                }]
+            );
+            assert_eq!(
+                cached_provider_models("anthropic"),
+                vec![ProviderModel {
+                    provider: "anthropic".into(),
+                    model: "claude-c".into(),
+                    display_name: "Claude C".into(),
+                    max_output_tokens: Some(16_000),
+                }]
+            );
+        });
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn provider_model_cache_migrates_old_schema() {
+        let cache_dir = unique_test_cache_dir("migration");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let connection = Connection::open(cache_dir.join("provider-models.sqlite3")).unwrap();
+        connection
+            .execute_batch(
+                "create table provider_models (
+                    provider text not null,
+                    model text not null,
+                    display_name text not null,
+                    raw_json text,
+                    updated_at integer not null,
+                    primary key(provider, model)
+                );
+                create table provider_model_refresh (
+                    provider text primary key,
+                    updated_at integer not null,
+                    error text
+                );",
+            )
+            .unwrap();
+        drop(connection);
+
+        with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            replace_cached_provider_models(
+                "anthropic",
+                &[ProviderModel {
+                    provider: "anthropic".into(),
+                    model: "claude-sonnet".into(),
+                    display_name: "Claude Sonnet".into(),
+                    max_output_tokens: Some(64_000),
+                }],
+            )
+            .unwrap();
+
+            assert_eq!(
+                cached_provider_model("anthropic", "claude-sonnet")
+                    .and_then(|model| model.max_output_tokens),
+                Some(64_000)
+            );
+        });
+        let _ = fs::remove_dir_all(cache_dir);
     }
 }

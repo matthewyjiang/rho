@@ -2,10 +2,12 @@ mod convert;
 mod stream;
 mod types;
 
-use crate::credentials::{load_anthropic_api_key, OsCredentialStore};
+use crate::credentials::{load_provider_api_key, OsCredentialStore};
 use crate::model::{
-    models_dev::cached_model_metadata, provider_models::cached_provider_model, ModelError,
-    ModelEvent, ModelProvider, ModelRequest, ModelResponse,
+    models_dev::cached_model_metadata,
+    provider_models::cached_provider_model,
+    registry::{self, ProviderAuthKind},
+    ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
 };
 
 use convert::{convert_anthropic_response, split_system_and_messages, to_anthropic_tool};
@@ -107,11 +109,20 @@ fn anthropic_max_tokens(model: &str) -> u32 {
 }
 
 fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+    let descriptor = registry::provider_descriptor("anthropic")
+        .ok_or_else(|| ModelError::UnsupportedProvider("anthropic".into()))?;
+    let ProviderAuthKind::ApiKey {
+        env_var, missing, ..
+    } = descriptor.auth_kind
+    else {
+        return Err(ModelError::UnsupportedProvider("anthropic".into()));
+    };
+    if let Ok(key) = std::env::var(env_var) {
         return Ok(key);
     }
     let store = OsCredentialStore;
-    load_anthropic_api_key(&store)?.ok_or(ModelError::MissingAnthropicApiKey)
+    load_provider_api_key(&store, descriptor.name)?
+        .ok_or_else(|| registry::missing_credential_error(missing))
 }
 
 async fn error_for_status_with_body(

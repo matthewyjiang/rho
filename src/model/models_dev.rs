@@ -177,10 +177,9 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
 }
 
 fn upstream_provider(provider: &str) -> &str {
-    match provider {
-        "openai" | "openai-codex" => "openai",
-        other => other,
-    }
+    crate::model::registry::provider_descriptor(provider)
+        .map(|descriptor| descriptor.metadata_upstream)
+        .unwrap_or(provider)
 }
 
 fn models_dev_sqlite_path() -> PathBuf {

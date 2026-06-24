@@ -10,6 +10,7 @@ pub mod models_dev;
 pub mod openai;
 pub mod provider;
 pub mod provider_models;
+pub mod registry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -141,7 +142,7 @@ pub trait ModelProvider: Send + Sync {
 
 pub type DynModelProvider = Box<dyn ModelProvider>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthMode {
     ApiKey,
     Codex,

@@ -4,8 +4,12 @@ use std::{collections::HashMap, sync::Mutex};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::model::registry::{self, ProviderAuthKind};
+
 const SERVICE: &str = "rho";
+#[cfg(test)]
 const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
+#[cfg(test)]
 const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 const CHUNK_MANIFEST_SUFFIX: &str = ":chunks";
@@ -382,28 +386,72 @@ impl CredentialStore for MemoryCredentialStore {
     }
 }
 
+pub fn load_provider_api_key(
+    store: &dyn CredentialStore,
+    provider: &str,
+) -> CredentialResult<Option<String>> {
+    let Some(ProviderAuthKind::ApiKey { account, .. }) =
+        registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    else {
+        return Ok(None);
+    };
+    store.get_secret(account)
+}
+
+pub fn save_provider_api_key(
+    store: &dyn CredentialStore,
+    provider: &str,
+    key: &str,
+) -> CredentialResult<()> {
+    let Some(ProviderAuthKind::ApiKey { account, .. }) =
+        registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    else {
+        return Err(CredentialError::InvalidData(format!(
+            "provider '{provider}' does not use API key credentials"
+        )));
+    };
+    store.set_secret(account, key)
+}
+
+pub fn delete_provider_credentials(
+    store: &dyn CredentialStore,
+    provider: &str,
+) -> CredentialResult<bool> {
+    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
+        Some(ProviderAuthKind::ApiKey { account, .. }) => store.delete_secret(account),
+        Some(ProviderAuthKind::CodexOAuth { account, .. }) => store.delete_secret(account),
+        None => Ok(false),
+    }
+}
+
+#[allow(dead_code)]
 pub fn load_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    store.get_secret(OPENAI_API_KEY_ACCOUNT)
+    load_provider_api_key(store, "openai")
 }
 
+#[allow(dead_code)]
 pub fn save_openai_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    store.set_secret(OPENAI_API_KEY_ACCOUNT, key)
+    save_provider_api_key(store, "openai", key)
 }
 
+#[allow(dead_code)]
 pub fn delete_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(OPENAI_API_KEY_ACCOUNT)
+    delete_provider_credentials(store, "openai")
 }
 
+#[allow(dead_code)]
 pub fn load_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    store.get_secret(ANTHROPIC_API_KEY_ACCOUNT)
+    load_provider_api_key(store, "anthropic")
 }
 
+#[allow(dead_code)]
 pub fn save_anthropic_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    store.set_secret(ANTHROPIC_API_KEY_ACCOUNT, key)
+    save_provider_api_key(store, "anthropic", key)
 }
 
+#[allow(dead_code)]
 pub fn delete_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(ANTHROPIC_API_KEY_ACCOUNT)
+    delete_provider_credentials(store, "anthropic")
 }
 
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
@@ -424,17 +472,21 @@ pub fn save_codex_tokens(
     store.set_secret(CODEX_TOKENS_ACCOUNT, &secret)
 }
 
+#[allow(dead_code)]
 pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
     store.delete_secret(CODEX_TOKENS_ACCOUNT)
 }
 
 pub fn provider_has_env_override(provider: &str) -> bool {
-    match provider {
-        "openai" => std::env::var_os("OPENAI_API_KEY").is_some(),
-        "anthropic" => std::env::var_os("ANTHROPIC_API_KEY").is_some(),
-        "openai-codex" => std::env::var_os("CODEX_ACCESS_TOKEN").is_some(),
-        _ => false,
-    }
+    let Some(descriptor) = registry::provider_descriptor(provider) else {
+        return false;
+    };
+    let env_var = match descriptor.auth_kind {
+        ProviderAuthKind::ApiKey { env_var, .. } | ProviderAuthKind::CodexOAuth { env_var, .. } => {
+            env_var
+        }
+    };
+    std::env::var_os(env_var).is_some()
 }
 
 pub fn provider_has_credentials(
@@ -444,26 +496,19 @@ pub fn provider_has_credentials(
     if provider_has_env_override(provider) {
         return Ok(true);
     }
-    match provider {
-        "openai" => Ok(load_openai_api_key(store)?.is_some()),
-        "anthropic" => Ok(load_anthropic_api_key(store)?.is_some()),
-        "openai-codex" => Ok(load_codex_tokens(store)?.is_some()),
-        _ => Ok(false),
+    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
+        Some(ProviderAuthKind::ApiKey { account, .. }) => Ok(store.get_secret(account)?.is_some()),
+        Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
+        None => Ok(false),
     }
 }
 
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
-    let mut modes = Vec::new();
-    if provider_has_credentials(store, "openai").unwrap_or(false) {
-        modes.push("api-key".to_string());
-    }
-    if provider_has_credentials(store, "openai-codex").unwrap_or(false) {
-        modes.push("codex".to_string());
-    }
-    if provider_has_credentials(store, "anthropic").unwrap_or(false) {
-        modes.push("anthropic-api-key".to_string());
-    }
-    modes
+    registry::providers()
+        .iter()
+        .filter(|provider| provider_has_credentials(store, provider.name).unwrap_or(false))
+        .map(|provider| provider.auth.to_string())
+        .collect()
 }
 
 #[cfg(test)]

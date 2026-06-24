@@ -2,7 +2,10 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::model::provider_models;
+use crate::model::{
+    provider_models,
+    registry::{self, ProviderModelSource},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
@@ -35,6 +38,12 @@ pub enum ModelSelectionError {
     AmbiguousModel { model: String },
     #[error("model selection cannot be empty")]
     Empty,
+    #[error("model '{model}' is not available for provider '{provider}'. {hint}")]
+    UnavailableModel {
+        provider: String,
+        model: String,
+        hint: &'static str,
+    },
 }
 
 #[derive(Deserialize)]
@@ -43,12 +52,10 @@ struct ModelCatalogFile {
 }
 
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
-const IMPLEMENTED_PROVIDERS: &[&str] = &["openai", "openai-codex", "anthropic"];
-
 static MODEL_CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
 pub fn implemented_providers() -> &'static [&'static str] {
-    IMPLEMENTED_PROVIDERS
+    registry::provider_ids()
 }
 
 pub fn model_catalog() -> &'static [ModelCatalogEntry] {
@@ -60,23 +67,14 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 }
 
 pub fn login_targets() -> Vec<LoginTarget> {
-    vec![
-        LoginTarget {
-            provider: "openai".into(),
-            auth: "api-key".into(),
-            label: "OpenAI API key".into(),
-        },
-        LoginTarget {
-            provider: "openai-codex".into(),
-            auth: "codex".into(),
-            label: "Codex OAuth".into(),
-        },
-        LoginTarget {
-            provider: "anthropic".into(),
-            auth: "anthropic-api-key".into(),
-            label: "Anthropic API key".into(),
-        },
-    ]
+    registry::providers()
+        .iter()
+        .map(|provider| LoginTarget {
+            provider: provider.name.into(),
+            auth: provider.auth.into(),
+            label: provider.login_label.into(),
+        })
+        .collect()
 }
 
 pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
@@ -86,16 +84,18 @@ pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
 }
 
 pub fn default_model_for_provider(provider: &str) -> Option<String> {
-    if matches!(provider, "openai" | "anthropic") {
-        return provider_models::cached_provider_models(provider)
-            .into_iter()
-            .next()
-            .map(|entry| entry.model);
+    match registry::provider_descriptor(provider)?.model_source {
+        ProviderModelSource::CachedProviderModels => {
+            provider_models::cached_provider_models(provider)
+                .into_iter()
+                .next()
+                .map(|entry| entry.model)
+        }
+        ProviderModelSource::StaticCatalog => model_catalog()
+            .iter()
+            .find(|entry| entry.provider == provider)
+            .map(|entry| entry.model.clone()),
     }
-    model_catalog()
-        .iter()
-        .find(|entry| entry.provider == provider)
-        .map(|entry| entry.model.clone())
 }
 
 pub fn resolve_model_selection_for_auths(
@@ -144,6 +144,7 @@ fn available_models_for_auths_from(
     let mut models = catalog
         .iter()
         .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
+        .filter(|entry| provider_uses_static_catalog(&entry.provider))
         .filter(|entry| {
             entry
                 .auth_modes
@@ -152,11 +153,12 @@ fn available_models_for_auths_from(
         })
         .cloned()
         .collect::<Vec<_>>();
-    if auths.iter().any(|auth| auth == "api-key") {
-        models.extend(cached_provider_entries("openai", "api-key"));
-    }
-    if auths.iter().any(|auth| auth == "anthropic-api-key") {
-        models.extend(cached_provider_entries("anthropic", "anthropic-api-key"));
+    for provider in registry::providers()
+        .iter()
+        .filter(|provider| provider.model_source == ProviderModelSource::CachedProviderModels)
+        .filter(|provider| auths.iter().any(|auth| auth == provider.auth))
+    {
+        models.extend(cached_provider_entries(provider.name, provider.auth));
     }
     models.sort_by(|left, right| {
         left.provider
@@ -179,11 +181,45 @@ fn cached_provider_entries(provider: &str, auth: &str) -> Vec<ModelCatalogEntry>
 }
 
 fn provider_default_auth(provider: &str) -> Option<&'static str> {
-    match provider {
-        "openai" => Some("api-key"),
-        "openai-codex" => Some("codex"),
-        "anthropic" => Some("anthropic-api-key"),
-        _ => None,
+    registry::provider_descriptor(provider).map(|descriptor| descriptor.auth)
+}
+
+fn provider_uses_cached_models(provider: &str) -> bool {
+    registry::provider_descriptor(provider)
+        .map(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
+        .unwrap_or(false)
+}
+
+fn provider_uses_static_catalog(provider: &str) -> bool {
+    registry::provider_descriptor(provider)
+        .map(|descriptor| descriptor.model_source == ProviderModelSource::StaticCatalog)
+        .unwrap_or(false)
+}
+
+fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
+    let hint = if provider_uses_cached_models(provider) {
+        "Run /refresh-model-list to update available models."
+    } else {
+        "Choose a model from the provider allowlist."
+    };
+    ModelSelectionError::UnavailableModel {
+        provider: provider.to_string(),
+        model: model.to_string(),
+        hint,
+    }
+}
+
+fn selection_from_provider_model(
+    provider: &str,
+    model: &provider_models::ProviderModel,
+) -> ModelSelection {
+    ModelSelection {
+        provider: provider.to_string(),
+        model: model.model.clone(),
+        auth: provider_default_auth(provider)
+            .unwrap_or("api-key")
+            .to_string(),
+        from_catalog: true,
     }
 }
 
@@ -219,10 +255,15 @@ fn resolve_model_selection_from(
         if provider.is_empty() || model.is_empty() {
             return Err(ModelSelectionError::Empty);
         }
-        if !IMPLEMENTED_PROVIDERS.contains(&provider) {
+        if !implemented_providers().contains(&provider) {
             return Err(ModelSelectionError::UnknownProvider {
                 provider: provider.to_string(),
             });
+        }
+        if provider_uses_cached_models(provider) {
+            return provider_models::cached_provider_model(provider, model)
+                .map(|entry| selection_from_provider_model(provider, &entry))
+                .ok_or_else(|| unavailable_model_error(provider, model));
         }
         if let Some(entry) = catalog
             .iter()
@@ -230,12 +271,7 @@ fn resolve_model_selection_from(
         {
             return Ok(selection_from_entry(entry));
         }
-        return Ok(ModelSelection {
-            provider: provider.to_string(),
-            model: model.to_string(),
-            auth: provider_default_auth(provider).unwrap_or(auth).to_string(),
-            from_catalog: false,
-        });
+        return Err(unavailable_model_error(provider, model));
     }
 
     let auths = if available_auths.is_empty() {
@@ -249,14 +285,7 @@ fn resolve_model_selection_from(
         .collect::<Vec<_>>();
     match matches.as_slice() {
         [entry] => Ok(selection_from_entry(entry)),
-        [] => Ok(ModelSelection {
-            provider: current_provider.to_string(),
-            model: input.to_string(),
-            auth: provider_default_auth(current_provider)
-                .unwrap_or(auth)
-                .to_string(),
-            from_catalog: false,
-        }),
+        [] => Err(unavailable_model_error(current_provider, input)),
         _ => Err(ModelSelectionError::AmbiguousModel {
             model: input.to_string(),
         }),
@@ -266,6 +295,12 @@ fn resolve_model_selection_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::model::provider_models::{
+        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+        ProviderModel,
+    };
 
     fn test_catalog() -> Vec<ModelCatalogEntry> {
         vec![
@@ -306,6 +341,37 @@ mod tests {
                 auth_modes: vec!["api-key".into()],
             },
         ]
+    }
+
+    fn unique_cache_dir(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("rho-catalog-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn with_cached_provider_models<T>(
+        provider: &str,
+        models: Vec<ProviderModel>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let cache_dir = unique_cache_dir(provider);
+        let result = with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            replace_cached_provider_models_for_tests(provider, &models).unwrap();
+            f()
+        });
+        let _ = std::fs::remove_dir_all(cache_dir);
+        result
+    }
+
+    fn provider_model(provider: &str, model: &str) -> ProviderModel {
+        ProviderModel {
+            provider: provider.into(),
+            model: model.into(),
+            display_name: model.into(),
+            max_output_tokens: None,
+        }
     }
 
     #[test]
@@ -359,66 +425,80 @@ mod tests {
 
     #[test]
     fn resolves_provider_model_selection() {
-        let selection = resolve_model_selection_for_auths(
-            "openai/gpt-5.5",
-            "openai",
-            "codex",
-            &["codex".into()],
-        )
-        .unwrap();
+        with_cached_provider_models("openai", vec![provider_model("openai", "gpt-5.5")], || {
+            let selection = resolve_model_selection_for_auths(
+                "openai/gpt-5.5",
+                "openai",
+                "codex",
+                &["codex".into()],
+            )
+            .unwrap();
 
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "openai".into(),
-                model: "gpt-5.5".into(),
-                auth: "api-key".into(),
-                from_catalog: false,
-            }
-        );
+            assert_eq!(
+                selection,
+                ModelSelection {
+                    provider: "openai".into(),
+                    model: "gpt-5.5".into(),
+                    auth: "api-key".into(),
+                    from_catalog: true,
+                }
+            );
+        });
     }
 
     #[test]
     fn resolves_anthropic_provider_model_selection() {
-        let selection = resolve_model_selection_for_auths(
-            "anthropic/claude-sonnet-4-5",
-            "openai",
-            "api-key",
-            &["anthropic-api-key".into()],
-        )
-        .unwrap();
+        with_cached_provider_models(
+            "anthropic",
+            vec![provider_model("anthropic", "claude-sonnet-4-5")],
+            || {
+                let selection = resolve_model_selection_for_auths(
+                    "anthropic/claude-sonnet-4-5",
+                    "openai",
+                    "api-key",
+                    &["anthropic-api-key".into()],
+                )
+                .unwrap();
 
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "anthropic".into(),
-                model: "claude-sonnet-4-5".into(),
-                auth: "anthropic-api-key".into(),
-                from_catalog: false,
-            }
+                assert_eq!(
+                    selection,
+                    ModelSelection {
+                        provider: "anthropic".into(),
+                        model: "claude-sonnet-4-5".into(),
+                        auth: "anthropic-api-key".into(),
+                        from_catalog: true,
+                    }
+                );
+            },
         );
     }
 
     #[test]
-    fn resolves_bare_unique_model_to_catalog_provider() {
-        let catalog = test_catalog();
-        let selection = resolve_model_selection_from(
-            &catalog,
-            "unique-openai",
+    fn resolves_bare_cached_api_model_to_provider() {
+        with_cached_provider_models(
             "openai",
-            "api-key",
-            &["api-key".into()],
-        )
-        .unwrap();
+            vec![provider_model("openai", "unique-openai")],
+            || {
+                let catalog = test_catalog();
+                let selection = resolve_model_selection_from(
+                    &catalog,
+                    "unique-openai",
+                    "openai",
+                    "api-key",
+                    &["api-key".into()],
+                )
+                .unwrap();
 
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "openai".into(),
-                model: "unique-openai".into(),
-                auth: "api-key".into(),
-                from_catalog: true,
-            }
+                assert_eq!(
+                    selection,
+                    ModelSelection {
+                        provider: "openai".into(),
+                        model: "unique-openai".into(),
+                        auth: "api-key".into(),
+                        from_catalog: true,
+                    }
+                );
+            },
         );
     }
 
@@ -447,24 +527,30 @@ mod tests {
 
     #[test]
     fn resolves_bare_unique_anthropic_model() {
-        let catalog = test_catalog();
-        let selection = resolve_model_selection_from(
-            &catalog,
-            "unique-anthropic",
-            "openai",
-            "api-key",
-            &["api-key".into(), "anthropic-api-key".into()],
-        )
-        .unwrap();
+        with_cached_provider_models(
+            "anthropic",
+            vec![provider_model("anthropic", "unique-anthropic")],
+            || {
+                let catalog = test_catalog();
+                let selection = resolve_model_selection_from(
+                    &catalog,
+                    "unique-anthropic",
+                    "openai",
+                    "api-key",
+                    &["api-key".into(), "anthropic-api-key".into()],
+                )
+                .unwrap();
 
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "anthropic".into(),
-                model: "unique-anthropic".into(),
-                auth: "anthropic-api-key".into(),
-                from_catalog: true,
-            }
+                assert_eq!(
+                    selection,
+                    ModelSelection {
+                        provider: "anthropic".into(),
+                        model: "unique-anthropic".into(),
+                        auth: "anthropic-api-key".into(),
+                        from_catalog: true,
+                    }
+                );
+            },
         );
     }
 
@@ -490,53 +576,9 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_uncataloged_provider_model_uses_default_auth() {
-        let selection = resolve_model_selection_for_auths(
+    fn anthropic_uncached_provider_model_is_rejected() {
+        let err = resolve_model_selection_for_auths(
             "anthropic/custom-model",
-            "openai",
-            "api-key",
-            &["api-key".into()],
-        )
-        .unwrap();
-
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "anthropic".into(),
-                model: "custom-model".into(),
-                auth: "anthropic-api-key".into(),
-                from_catalog: false,
-            }
-        );
-    }
-
-    #[test]
-    fn bare_uncataloged_model_uses_current_provider() {
-        let selection = resolve_model_selection_for_auths(
-            "brand-new-model",
-            "openai",
-            "codex",
-            &["codex".into()],
-        )
-        .unwrap();
-
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "openai".into(),
-                model: "brand-new-model".into(),
-                auth: "api-key".into(),
-                from_catalog: false,
-            }
-        );
-    }
-
-    #[test]
-    fn bare_ambiguous_model_returns_error() {
-        let catalog = test_catalog();
-        let err = resolve_model_selection_from(
-            &catalog,
-            "shared-model",
             "openai",
             "api-key",
             &["api-key".into()],
@@ -545,8 +587,81 @@ mod tests {
 
         assert_eq!(
             err,
-            ModelSelectionError::AmbiguousModel {
-                model: "shared-model".into()
+            ModelSelectionError::UnavailableModel {
+                provider: "anthropic".into(),
+                model: "custom-model".into(),
+                hint: "Run /refresh-model-list to update available models.",
+            }
+        );
+    }
+
+    #[test]
+    fn bare_uncached_current_provider_model_is_rejected() {
+        let err = resolve_model_selection_for_auths(
+            "brand-new-model",
+            "openai",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ModelSelectionError::UnavailableModel {
+                provider: "openai".into(),
+                model: "brand-new-model".into(),
+                hint: "Run /refresh-model-list to update available models.",
+            }
+        );
+    }
+
+    #[test]
+    fn bare_ambiguous_model_returns_error() {
+        with_cached_provider_models(
+            "openai",
+            vec![provider_model("openai", "shared-model")],
+            || {
+                let catalog = vec![ModelCatalogEntry {
+                    provider: "openai-codex".into(),
+                    model: "shared-model".into(),
+                    display_name: "shared-model".into(),
+                    auth_modes: vec!["codex".into()],
+                }];
+                let err = resolve_model_selection_from(
+                    &catalog,
+                    "shared-model",
+                    "openai",
+                    "api-key",
+                    &["api-key".into(), "codex".into()],
+                )
+                .unwrap_err();
+
+                assert_eq!(
+                    err,
+                    ModelSelectionError::AmbiguousModel {
+                        model: "shared-model".into()
+                    }
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn non_allowlisted_codex_model_is_rejected() {
+        let err = resolve_model_selection_for_auths(
+            "openai-codex/custom-model",
+            "openai-codex",
+            "codex",
+            &["codex".into()],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ModelSelectionError::UnavailableModel {
+                provider: "openai-codex".into(),
+                model: "custom-model".into(),
+                hint: "Choose a model from the provider allowlist.",
             }
         );
     }
