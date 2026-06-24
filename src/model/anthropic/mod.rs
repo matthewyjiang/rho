@@ -26,7 +26,6 @@ pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
     model: String,
-    max_tokens: u32,
 }
 
 impl AnthropicProvider {
@@ -36,7 +35,6 @@ impl AnthropicProvider {
             client: reqwest::Client::new(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
-            max_tokens: anthropic_max_tokens(&model),
             model,
         })
     }
@@ -58,7 +56,7 @@ impl AnthropicProvider {
         }
         Ok(AnthropicRequest {
             model: self.model.clone(),
-            max_tokens: self.max_tokens,
+            max_tokens: anthropic_max_tokens(&self.model),
             system: system.map(|text| {
                 vec![AnthropicSystemBlock::text(
                     text,
@@ -210,7 +208,6 @@ mod tests {
             api_key: "test-key".into(),
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),
-            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 

@@ -90,11 +90,19 @@ pub fn default_model_for_provider(provider: &str) -> Option<String> {
                 .into_iter()
                 .next()
                 .map(|entry| entry.model)
+                .or_else(|| builtin_default_model(provider))
         }
         ProviderModelSource::StaticCatalog => model_catalog()
             .iter()
             .find(|entry| entry.provider == provider)
             .map(|entry| entry.model.clone()),
+    }
+}
+
+fn builtin_default_model(provider: &str) -> Option<String> {
+    match provider {
+        "anthropic" => Some("claude-sonnet-4-5".into()),
+        _ => None,
     }
 }
 

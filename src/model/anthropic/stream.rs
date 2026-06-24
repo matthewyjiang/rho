@@ -17,6 +17,7 @@ pub(super) fn trim_sse_line_end(line: &mut Vec<u8>) {
 #[derive(Default)]
 pub(super) struct AnthropicSseState {
     blocks: Vec<StreamedBlock>,
+    last_output_tokens: u64,
 }
 
 #[derive(Default)]
@@ -181,7 +182,11 @@ pub(super) fn handle_anthropic_stream_line(
             }
         }
         Some("message_delta") => {
-            if let Some(usage) = value.get("usage").and_then(parse_usage) {
+            if let Some(mut usage) = value.get("usage").and_then(parse_usage) {
+                let cumulative = usage.output_tokens.unwrap_or(0);
+                let delta = cumulative.saturating_sub(state.last_output_tokens);
+                state.last_output_tokens = cumulative;
+                usage.output_tokens = Some(delta);
                 on_event(ModelEvent::Usage(usage_to_model_usage(usage)))?;
             }
         }

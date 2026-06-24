@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_anthropic_provider_override_without_cache_rejects_old_default_model() {
+    fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
         let mut cfg = Config::default();
         let cli = Cli {
             provider: Some("anthropic".into()),
@@ -409,14 +409,11 @@ mod tests {
             command: None,
         };
 
-        let err = apply_cli_overrides(&mut cfg, &cli).unwrap_err();
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
 
-        assert!(err
-            .to_string()
-            .contains("no cached models for provider 'anthropic'"));
-        assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.model, "gpt-5.5");
-        assert_eq!(cfg.auth, "api-key");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.auth, "anthropic-api-key");
     }
 
     #[test]
