@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.2...rho-coding-agent-v0.9.3) (2026-06-24)
+
+
+### Bug Fixes
+
+* **auth:** use localhost for Codex OAuth redirect ([#55](https://github.com/matthewyjiang/rho/issues/55)) ([1484983](https://github.com/matthewyjiang/rho/commit/14849830444bca9e9c6ebe7c0c638d77f3c830df))
+* **windows:** silence terminal theme warnings ([#54](https://github.com/matthewyjiang/rho/issues/54)) ([88c3e33](https://github.com/matthewyjiang/rho/commit/88c3e33bcac46db8668fcb7964c3b006851d6af5))
+
 ## [0.9.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.1...rho-coding-agent-v0.9.2) (2026-06-24)
 
 
