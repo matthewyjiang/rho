@@ -177,8 +177,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::ToolResult;
     use crate::model::anthropic::types::AnthropicCacheCreation;
+    use crate::tool::ToolResult;
 
     #[test]
     fn converts_messages_and_tools_to_anthropic_shape() {
