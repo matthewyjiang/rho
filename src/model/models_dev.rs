@@ -203,15 +203,12 @@ fn cache_dir() -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
-        if let Some(path) = std::env::var_os("HOME") {
-            return PathBuf::from(path)
-                .join("Library")
-                .join("Caches")
-                .join("rho");
+        if let Some(path) = crate::paths::home_dir() {
+            return path.join("Library").join("Caches").join("rho");
         }
     }
-    if let Some(path) = std::env::var_os("HOME") {
-        return PathBuf::from(path).join(".cache").join("rho");
+    if let Some(path) = crate::paths::home_dir() {
+        return path.join(".cache").join("rho");
     }
     std::env::temp_dir().join("rho-cache")
 }
@@ -329,7 +326,7 @@ fn local_overrides_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("RHO_MODELS_PATH") {
         return Some(path.into());
     }
-    Some(PathBuf::from(std::env::var_os("HOME")?).join(".rho/models.toml"))
+    Some(crate::paths::rho_dir().ok()?.join("models.toml"))
 }
 
 fn merge_toml_override(

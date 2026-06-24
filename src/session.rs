@@ -433,10 +433,7 @@ fn session_id_from_path(path: &Path) -> Option<String> {
 }
 
 fn session_root() -> anyhow::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    Ok(home.join(".rho").join("sessions"))
+    Ok(crate::paths::rho_dir()?.join("sessions"))
 }
 
 fn session_dir_in_root(session_root: &Path, cwd: &Path) -> PathBuf {

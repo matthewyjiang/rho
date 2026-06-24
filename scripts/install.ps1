@@ -3,15 +3,54 @@ $ErrorActionPreference = "Stop"
 $Repo = "matthewyjiang/rho"
 $BinName = "rho.exe"
 $Version = if ($env:RHO_VERSION) { $env:RHO_VERSION } else { "latest" }
+$IsWindowsHost = if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) { $IsWindows } else { $true }
+if (-not $IsWindowsHost) {
+    throw "install.ps1 only supports Windows. On Linux or macOS, use scripts/install.sh instead."
+}
 $InstallDir = if ($env:RHO_INSTALL_DIR) { $env:RHO_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\rho\bin" }
 $Target = "x86_64-pc-windows-msvc"
 $Asset = "rho-$Target.zip"
 
-function Get-AssetUrl {
-    if ($Version -eq "latest") {
-        return "https://github.com/$Repo/releases/latest/download/$Asset"
+function Invoke-Download($Uri, $OutFile, $Required) {
+    try {
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+        return $true
+    } catch {
+        if ($Required) {
+            throw "failed to download $Uri. Check that the release exists and includes $Asset. Original error: $($_.Exception.Message)"
+        }
+        return $false
     }
-    return "https://github.com/$Repo/releases/download/$Version/$Asset"
+}
+
+function Invoke-GitHubApi($Uri) {
+    try {
+        return Invoke-RestMethod -Uri $Uri -Headers @{ "User-Agent" = "rho-installer" }
+    } catch {
+        throw "failed to query $Uri. Original error: $($_.Exception.Message)"
+    }
+}
+
+function Get-ReleaseTag {
+    if ($Version -eq "latest") {
+        $Release = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/latest"
+        if ([string]::IsNullOrWhiteSpace($Release.tag_name)) {
+            throw "failed to determine latest release tag from GitHub API"
+        }
+        return $Release.tag_name
+    }
+    if ($Version -like "rho-coding-agent-*") {
+        return $Version
+    }
+    if ($Version -match "^\d+\.\d+\.\d+([+-].*)?$") {
+        return "rho-coding-agent-v$Version"
+    }
+    return "rho-coding-agent-$Version"
+}
+
+function Get-AssetUrl {
+    $ReleaseTag = Get-ReleaseTag
+    return "https://github.com/$Repo/releases/download/$ReleaseTag/$Asset"
 }
 
 function Add-ToUserPath($Dir) {
@@ -43,10 +82,12 @@ $Checksum = "$Archive.sha256"
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 try {
     Write-Host "downloading rho for $Target..."
-    Invoke-WebRequest -Uri $Url -OutFile $Archive
+    Invoke-Download $Url $Archive $true | Out-Null
 
     try {
-        Invoke-WebRequest -Uri "$Url.sha256" -OutFile $Checksum
+        if (-not (Invoke-Download "$Url.sha256" $Checksum $false)) {
+            throw "checksum file is unavailable"
+        }
         $Expected = ((Get-Content $Checksum -Raw) -split "\s+")[0].Trim().ToLowerInvariant()
         $Actual = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
         if ($Actual -ne $Expected) {

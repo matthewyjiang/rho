@@ -12,7 +12,7 @@ pub struct Skill {
 }
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::paths::home_dir();
     discover_with_home(cwd, home.as_deref())
 }
 

@@ -50,7 +50,7 @@ impl ToolDisplayStyle {
 
     pub fn for_tool_name(name: &str) -> Self {
         match name {
-            "bash" | "edit_file" | "list_dir" | "read_file" | "write_file" => {
+            "bash" | "powershell" | "edit_file" | "list_dir" | "read_file" | "write_file" => {
                 Self::file_or_command()
             }
             "skill" => Self::skill(),
@@ -219,6 +219,10 @@ mod tests {
         );
         assert_eq!(
             ToolDisplayStyle::for_tool_name("bash"),
+            ToolDisplayStyle::FileOrCommand
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("powershell"),
             ToolDisplayStyle::FileOrCommand
         );
         assert_eq!(

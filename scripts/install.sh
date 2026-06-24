@@ -49,14 +49,32 @@ platform() {
   esac
 }
 
+release_tag() {
+  case "$VERSION" in
+    latest)
+      api="https://api.github.com/repos/$REPO/releases/latest"
+      if command -v curl >/dev/null 2>&1; then
+        curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+          -H 'User-Agent: rho-installer' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1
+      else
+        wget -q --header='User-Agent: rho-installer' "$api" -O - | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1
+      fi
+      ;;
+    rho-coding-agent-*) printf '%s' "$VERSION" ;;
+    [0-9]*.[0-9]*.[0-9]*) printf 'rho-coding-agent-v%s' "$VERSION" ;;
+    *) printf 'rho-coding-agent-%s' "$VERSION" ;;
+  esac
+}
+
 asset_url() {
   target="$1"
   asset="rho-$target.tar.gz"
-  if [ "$VERSION" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download/%s' "$REPO" "$asset"
-  else
-    printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$VERSION" "$asset"
+  tag="$(release_tag)"
+  if [ -z "$tag" ]; then
+    echo "error: could not determine latest release tag from GitHub API" >&2
+    exit 1
   fi
+  printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$tag" "$asset"
 }
 
 need_cmd uname

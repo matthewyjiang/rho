@@ -271,11 +271,10 @@ fn find_git_dir(cwd: &Path) -> Option<PathBuf> {
 }
 
 fn compact_cwd(path: &Path) -> String {
-    let Ok(home) = std::env::var("HOME") else {
+    let Some(home) = crate::paths::home_dir() else {
         return path.display().to_string();
     };
 
-    let home = Path::new(&home);
     if let Ok(rest) = path.strip_prefix(home) {
         let rel = rest.display().to_string();
         if rel.is_empty() {

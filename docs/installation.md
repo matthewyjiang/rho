@@ -24,14 +24,14 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 $env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
-To install a specific release, set `RHO_VERSION`:
+To install a specific release, set `RHO_VERSION`. Accepted forms include `v0.9.0`, `0.9.0`, and the full release tag `rho-coding-agent-v0.9.0`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_VERSION=v0.8.0 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_VERSION=v0.9.0 sh
 ```
 
 ```powershell
-$env:RHO_VERSION = "v0.8.0"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+$env:RHO_VERSION = "v0.9.0"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
 If a prebuilt binary is not available for your platform, install from crates.io with Cargo:
