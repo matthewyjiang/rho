@@ -6,7 +6,7 @@ pkgdesc="A lightweight agent harness inspired by Pi"
 arch=('x86_64')
 url="https://github.com/matthewyjiang/rho"
 license=('MIT')
-depends=('gcc-libs' 'glibc')
+depends=('gcc-libs' 'glibc' 'sqlite')
 makedepends=('cargo')
 options=(!lto)
 _tagname="rho-coding-agent-v$pkgver"
@@ -22,13 +22,13 @@ prepare() {
 build() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
-    cargo build --release --locked --bin rho
+    cargo build --release --locked --bin rho --no-default-features
 }
 
 check() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
-    cargo test --release --locked
+    cargo test --release --locked --no-default-features
 }
 
 package() {
