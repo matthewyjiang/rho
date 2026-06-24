@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::model::{
-    AuthMode, DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
-    OpenAiProvider,
+    AnthropicProvider, AuthMode, DynModelProvider, ModelError, ModelProvider, ModelRequest,
+    ModelResponse, OpenAiProvider,
 };
 use crate::reasoning::ReasoningLevel;
 
@@ -13,22 +13,22 @@ pub fn build_provider(
 ) -> Result<DynModelProvider, ModelError> {
     let reasoning_effort = reasoning.effort().map(str::to_string);
     let reasoning_summary = reasoning.summary().map(str::to_string);
-    let provider = match provider {
-        "openai" => OpenAiProvider::new_with_reasoning(
+    match provider {
+        "openai" => Ok(Box::new(OpenAiProvider::new_with_reasoning(
             model.to_string(),
             AuthMode::ApiKey,
             reasoning_effort,
             reasoning_summary,
-        ),
-        "openai-codex" => OpenAiProvider::new_with_reasoning(
+        )?) as DynModelProvider),
+        "openai-codex" => Ok(Box::new(OpenAiProvider::new_with_reasoning(
             model.to_string(),
             AuthMode::Codex,
             reasoning_effort,
             reasoning_summary,
-        ),
-        other => return Err(ModelError::UnsupportedProvider(other.to_string())),
-    }?;
-    Ok(Box::new(provider))
+        )?) as DynModelProvider),
+        "anthropic" => Ok(Box::new(AnthropicProvider::new(model.to_string())?) as DynModelProvider),
+        other => Err(ModelError::UnsupportedProvider(other.to_string())),
+    }
 }
 
 #[derive(Debug)]
@@ -53,6 +53,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
     match error {
         ModelError::MissingApiKey => ModelError::MissingApiKey,
         ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
+        ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
         ModelError::UnsupportedProvider(provider) => {
             ModelError::UnsupportedProvider(provider.clone())

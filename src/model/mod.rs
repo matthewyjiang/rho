@@ -3,11 +3,13 @@ use thiserror::Error;
 
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
+pub mod anthropic;
 pub mod catalog;
 pub mod context;
 pub mod models_dev;
 pub mod openai;
 pub mod provider;
+pub mod provider_models;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -90,6 +92,8 @@ pub enum ModelError {
     MissingApiKey,
     #[error("missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override")]
     MissingCodexAuth,
+    #[error("missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override")]
+    MissingAnthropicApiKey,
     #[error("credential store error: {0}")]
     Credentials(#[from] crate::credentials::CredentialError),
     #[error("request failed: {0}")]
@@ -143,6 +147,7 @@ pub enum AuthMode {
     Codex,
 }
 
+pub use anthropic::AnthropicProvider;
 pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;

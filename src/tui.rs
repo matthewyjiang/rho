@@ -59,14 +59,15 @@ use crate::{
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
     credentials::{
-        available_auth_modes, delete_codex_tokens, delete_openai_api_key, provider_has_credentials,
-        provider_has_env_override, save_codex_tokens, save_openai_api_key, CodexTokens,
-        CredentialStore, OsCredentialStore,
+        available_auth_modes, delete_anthropic_api_key, delete_codex_tokens, delete_openai_api_key,
+        provider_has_credentials, provider_has_env_override, save_anthropic_api_key,
+        save_codex_tokens, save_openai_api_key, CodexTokens, CredentialStore, OsCredentialStore,
     },
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         models_dev::{cached_model_metadata, fetch_model_metadata},
+        provider_models::refresh_provider_models,
         ContentBlock, ContextUsage, Message, ModelError, ModelMetadata, ModelRequest,
         ModelResponse, ModelUsage, UnavailableProvider,
     },
@@ -1708,7 +1709,11 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::Model | CommandId::Login | CommandId::Logout | CommandId::Resume => {
+            CommandId::Model
+            | CommandId::RefreshModelList
+            | CommandId::Login
+            | CommandId::Logout
+            | CommandId::Resume => {
                 self.insert_entry(
                     terminal,
                     &Entry::Notice(format!(
@@ -2218,6 +2223,10 @@ impl App {
                     .await
             }
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
+            CommandId::RefreshModelList => {
+                self.execute_refresh_model_list_command(invocation, terminal)
+                    .await
+            }
             CommandId::Login => {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
@@ -2236,6 +2245,67 @@ impl App {
         self.insert_entry(terminal, &Entry::Notice("exiting rho".into()))?;
         self.should_quit = true;
         self.status = "exiting".into();
+        Ok(())
+    }
+
+    async fn execute_refresh_model_list_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let providers = if invocation.args.trim().is_empty() {
+            self.refresh_available_auths();
+            let mut providers = Vec::new();
+            if self.available_auths.iter().any(|auth| auth == "api-key") {
+                providers.push("openai".to_string());
+            }
+            if self
+                .available_auths
+                .iter()
+                .any(|auth| auth == "anthropic-api-key")
+            {
+                providers.push("anthropic".to_string());
+            }
+            providers
+        } else {
+            vec![invocation.args.trim().to_string()]
+        };
+
+        if providers.is_empty() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(
+                    "no API-key providers are configured. run /login openai or /login anthropic."
+                        .into(),
+                ),
+            )?;
+            self.status = "model refresh skipped".into();
+            return Ok(());
+        }
+
+        self.status = "refreshing model list".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        for provider in providers {
+            match refresh_provider_models(&provider).await {
+                Ok(refresh) => {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Notice(format!(
+                            "refreshed {} model list: {} models",
+                            refresh.provider,
+                            refresh.models.len()
+                        )),
+                    )?;
+                }
+                Err(err) => {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!("failed to refresh {provider} model list: {err}")),
+                    )?;
+                }
+            }
+        }
+        self.status = "model list refresh complete".into();
         Ok(())
     }
 
@@ -2280,7 +2350,9 @@ impl App {
         if picker.items.is_empty() {
             self.insert_entry(
                 terminal,
-                &Entry::Notice("no providers configured. run /login to sign in.".into()),
+                &Entry::Notice(
+                    "no cached API models. run /refresh-model-list after signing in.".into(),
+                ),
             )?;
             self.status = "ready".into();
             return Ok(());
@@ -2328,7 +2400,9 @@ impl App {
         if picker.items.is_empty() {
             self.insert_entry(
                 terminal,
-                &Entry::Notice("no providers configured. run /login to sign in.".into()),
+                &Entry::Notice(
+                    "no cached API models. run /refresh-model-list after signing in.".into(),
+                ),
             )?;
             self.status = "ready".into();
             return Ok(());
@@ -4435,6 +4509,7 @@ mod tests {
 
         assert!(rendered.contains("openai"), "{rendered}");
         assert!(rendered.contains("openai-codex"), "{rendered}");
+        assert!(rendered.contains("anthropic"), "{rendered}");
         assert!(!rendered.contains("api-key"), "{rendered}");
         assert!(!rendered.contains("> codex"), "{rendered}");
     }
@@ -4453,6 +4528,7 @@ mod tests {
             },
         )
         .unwrap();
+        save_anthropic_api_key(store.as_ref(), "sk-ant-test").unwrap();
         let mut app = App::new_with_credentials(
             TuiInfo {
                 cwd: PathBuf::from("/tmp/project"),
@@ -4475,7 +4551,11 @@ mod tests {
 
         let models = catalog::available_models_for_auths(&app.available_auths);
 
-        assert!(models.iter().any(|model| model.provider == "openai"));
+        assert!(app.available_auths.iter().any(|auth| auth == "api-key"));
+        assert!(app
+            .available_auths
+            .iter()
+            .any(|auth| auth == "anthropic-api-key"));
         assert!(models.iter().any(|model| model.provider == "openai-codex"));
     }
 

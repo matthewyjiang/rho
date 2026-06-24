@@ -45,7 +45,7 @@ impl App {
             self.insert_entry(
                 terminal,
                 &Entry::Error(format!(
-                    "unsupported login provider '{provider}'. Use /login openai or /login openai-codex"
+                    "unsupported login provider '{provider}'. Use /login openai, /login openai-codex, or /login anthropic"
                 )),
             )?;
             self.status = "login failed".into();
@@ -53,9 +53,14 @@ impl App {
         };
 
         match target.provider.as_str() {
-            "openai" => {
+            "openai" | "anthropic" => {
+                let provider = target.provider.clone();
                 self.composer = ComposerMode::SecretInput(SecretInput::new(target));
-                self.status = "enter OpenAI API key".into();
+                self.status = match provider.as_str() {
+                    "openai" => "enter OpenAI API key".into(),
+                    "anthropic" => "enter Anthropic API key".into(),
+                    _ => unreachable!("catalog returned unsupported API key provider"),
+                };
                 Ok(())
             }
             "openai-codex" => self.start_codex_login(target, terminal, agent).await,
@@ -75,7 +80,12 @@ impl App {
             self.status = "login failed".into();
             return Ok(());
         }
-        match save_openai_api_key(self.credential_store.as_ref(), &key) {
+        let saved = match target.provider.as_str() {
+            "openai" => save_openai_api_key(self.credential_store.as_ref(), &key),
+            "anthropic" => save_anthropic_api_key(self.credential_store.as_ref(), &key),
+            other => unreachable!("unsupported API key login provider {other}"),
+        };
+        match saved {
             Ok(()) => self.finish_login(target, terminal, agent).await,
             Err(err) => {
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
@@ -287,7 +297,7 @@ impl App {
             self.insert_entry(
                 terminal,
                 &Entry::Error(format!(
-                    "unsupported logout provider '{provider}'. Use /logout openai or /logout openai-codex"
+                    "unsupported logout provider '{provider}'. Use /logout openai, /logout openai-codex, or /logout anthropic"
                 )),
             )?;
             self.status = "logout failed".into();
@@ -297,6 +307,7 @@ impl App {
         let deleted = match target.provider.as_str() {
             "openai" => delete_openai_api_key(self.credential_store.as_ref()),
             "openai-codex" => delete_codex_tokens(self.credential_store.as_ref()),
+            "anthropic" => delete_anthropic_api_key(self.credential_store.as_ref()),
             _ => unreachable!("catalog returned unsupported logout provider"),
         };
 
@@ -353,6 +364,7 @@ impl App {
         let error = match target.provider.as_str() {
             "openai" => ModelError::MissingApiKey,
             "openai-codex" => ModelError::MissingCodexAuth,
+            "anthropic" => ModelError::MissingAnthropicApiKey,
             other => ModelError::UnsupportedProvider(other.to_string()),
         };
         self.info.auth_unavailable = Some(error.to_string());

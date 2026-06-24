@@ -51,6 +51,10 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
+    if cfg.provider == "anthropic" && cached_model_metadata(&cfg.provider, &cfg.model).is_none() {
+        let _ = model::models_dev::fetch_model_metadata(&cfg.provider, &cfg.model).await;
+    }
+
     let provider_result = build_provider(&cfg.provider, &cfg.model, cfg.reasoning);
     let missing_auth_error = provider_result
         .as_ref()
@@ -136,7 +140,10 @@ async fn main() -> anyhow::Result<()> {
 fn is_auth_unavailable_error(error: &ModelError) -> bool {
     matches!(
         error,
-        ModelError::MissingApiKey | ModelError::MissingCodexAuth | ModelError::Credentials(_)
+        ModelError::MissingApiKey
+            | ModelError::MissingCodexAuth
+            | ModelError::MissingAnthropicApiKey
+            | ModelError::Credentials(_)
     )
 }
 
@@ -273,6 +280,51 @@ mod tests {
         assert_eq!(cfg.provider, "openai-codex");
         assert_eq!(cfg.model, "gpt-5.4-mini");
         assert_eq!(cfg.auth, "codex");
+    }
+
+    #[test]
+    fn cli_anthropic_model_override_selects_matching_auth() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: Some("anthropic/claude-sonnet-4-5".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.auth, "anthropic-api-key");
+    }
+
+    #[test]
+    fn cli_anthropic_provider_override_selects_matching_auth() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("anthropic".into()),
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.auth, "anthropic-api-key");
     }
 
     #[test]

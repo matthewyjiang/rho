@@ -6,6 +6,7 @@ use thiserror::Error;
 
 const SERVICE: &str = "rho";
 const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
+const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 const CHUNK_MANIFEST_SUFFIX: &str = ":chunks";
 const CHUNK_ACCOUNT_INFIX: &str = ":chunk:";
@@ -25,7 +26,7 @@ pub struct CodexTokens {
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY or CODEX_ACCESS_TOKEN.")]
+    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, or CODEX_ACCESS_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -393,6 +394,18 @@ pub fn delete_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<bo
     store.delete_secret(OPENAI_API_KEY_ACCOUNT)
 }
 
+pub fn load_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
+    store.get_secret(ANTHROPIC_API_KEY_ACCOUNT)
+}
+
+pub fn save_anthropic_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
+    store.set_secret(ANTHROPIC_API_KEY_ACCOUNT, key)
+}
+
+pub fn delete_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    store.delete_secret(ANTHROPIC_API_KEY_ACCOUNT)
+}
+
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
     let Some(secret) = store.get_secret(CODEX_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -418,6 +431,7 @@ pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool
 pub fn provider_has_env_override(provider: &str) -> bool {
     match provider {
         "openai" => std::env::var_os("OPENAI_API_KEY").is_some(),
+        "anthropic" => std::env::var_os("ANTHROPIC_API_KEY").is_some(),
         "openai-codex" => std::env::var_os("CODEX_ACCESS_TOKEN").is_some(),
         _ => false,
     }
@@ -432,6 +446,7 @@ pub fn provider_has_credentials(
     }
     match provider {
         "openai" => Ok(load_openai_api_key(store)?.is_some()),
+        "anthropic" => Ok(load_anthropic_api_key(store)?.is_some()),
         "openai-codex" => Ok(load_codex_tokens(store)?.is_some()),
         _ => Ok(false),
     }
@@ -444,6 +459,9 @@ pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
     }
     if provider_has_credentials(store, "openai-codex").unwrap_or(false) {
         modes.push("codex".to_string());
+    }
+    if provider_has_credentials(store, "anthropic").unwrap_or(false) {
+        modes.push("anthropic-api-key".to_string());
     }
     modes
 }
@@ -461,6 +479,28 @@ mod tests {
         assert_eq!(load_openai_api_key(&store).unwrap(), Some("sk-test".into()));
         assert!(delete_openai_api_key(&store).unwrap());
         assert_eq!(load_openai_api_key(&store).unwrap(), None);
+    }
+
+    #[test]
+    fn anthropic_api_key_round_trips_through_memory_store() {
+        let store = MemoryCredentialStore::default();
+
+        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
+        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+        assert_eq!(
+            load_anthropic_api_key(&store).unwrap(),
+            Some("sk-ant-test".into())
+        );
+        assert!(delete_anthropic_api_key(&store).unwrap());
+        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
+    }
+
+    #[test]
+    fn available_auth_modes_includes_anthropic_api_key() {
+        let store = MemoryCredentialStore::default();
+        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+
+        assert!(available_auth_modes(&store).contains(&"anthropic-api-key".into()));
     }
 
     #[test]
@@ -500,6 +540,7 @@ mod tests {
     fn credential_account_names_are_stable() {
         assert_eq!(SERVICE, "rho");
         assert_eq!(OPENAI_API_KEY_ACCOUNT, "provider:openai:api-key");
+        assert_eq!(ANTHROPIC_API_KEY_ACCOUNT, "provider:anthropic:api-key");
         assert_eq!(CODEX_TOKENS_ACCOUNT, "provider:openai-codex:tokens");
     }
 

@@ -6,6 +6,7 @@ pub enum CommandId {
     Logout,
     Model,
     TitleModel,
+    RefreshModelList,
     Resume,
     Config,
     Skills,
@@ -58,6 +59,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "title-model",
         usage: "/title-model [model]",
         description: "show or switch session title model",
+    },
+    CommandSpec {
+        id: CommandId::RefreshModelList,
+        name: "refresh-model-list",
+        usage: "/refresh-model-list [provider]",
+        description: "refresh cached API provider models",
     },
     CommandSpec {
         id: CommandId::Resume,
@@ -223,6 +230,17 @@ mod tests {
 
         assert_eq!(invocation.id, CommandId::Skills);
         assert_eq!(invocation.name, "skills");
+    }
+
+    #[test]
+    fn parses_refresh_model_list_command_with_provider_argument() {
+        let invocation = parse_command("/refresh-model-list anthropic")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(invocation.id, CommandId::RefreshModelList);
+        assert_eq!(invocation.name, "refresh-model-list");
+        assert_eq!(invocation.args, "anthropic");
     }
 
     #[test]
