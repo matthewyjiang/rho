@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.10.0...rho-coding-agent-v0.11.0) (2026-06-24)
+
+
+### Features
+
+* **packaging:** add Arch Linux package and mjiang-extras publishing ([#61](https://github.com/matthewyjiang/rho/issues/61)) ([c419184](https://github.com/matthewyjiang/rho/commit/c419184933805ba8d2da814a7fc26124678f25ba))
+
+
+### Bug Fixes
+
+* **packaging:** disable LTO to fix linking with Arch's lld ([#65](https://github.com/matthewyjiang/rho/issues/65)) ([11fbb4d](https://github.com/matthewyjiang/rho/commit/11fbb4d11fddf82e1ad5035a63d4e7d4b6731c59))
+* **packaging:** set SQLITE3_LIB_DIR to fix system SQLite linking ([#63](https://github.com/matthewyjiang/rho/issues/63)) ([1803d5b](https://github.com/matthewyjiang/rho/commit/1803d5b5fae93d62e651c1ea47326e488b504971))
+* **packaging:** use bundled SQLite instead of fighting system detection ([#64](https://github.com/matthewyjiang/rho/issues/64)) ([defb2f7](https://github.com/matthewyjiang/rho/commit/defb2f7e96d87746690f98b4317c47cd0ccc3456))
+* **packaging:** use system SQLite and disable LTO ([#66](https://github.com/matthewyjiang/rho/issues/66)) ([d91b7d9](https://github.com/matthewyjiang/rho/commit/d91b7d9bde5144c97f1c8739db9a2db140430966))
+
 ## [0.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.9.3...rho-coding-agent-v0.10.0) (2026-06-24)
 
 
