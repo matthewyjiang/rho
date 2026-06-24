@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    credentials::{load_provider_api_key, OsCredentialStore},
+    credentials::{load_provider_api_key, CredentialStore},
     model::{
         registry::{self, missing_credential_error, ProviderAuthKind, ProviderModelRefreshKind},
         ModelError,
@@ -67,12 +67,17 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
     rows.filter_map(Result::ok).collect()
 }
 
-pub async fn refresh_provider_models(provider: &str) -> Result<ProviderModelRefresh, ModelError> {
+pub async fn refresh_provider_models_with_store(
+    provider: &str,
+    store: &dyn CredentialStore,
+) -> Result<ProviderModelRefresh, ModelError> {
     let descriptor = registry::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let models = match descriptor.model_refresh {
-        Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider).await?,
-        Some(ProviderModelRefreshKind::Anthropic) => fetch_anthropic_models(provider).await?,
+        Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
+        Some(ProviderModelRefreshKind::Anthropic) => {
+            fetch_anthropic_models(provider, store).await?
+        }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
     replace_cached_provider_models(provider, &models)?;
@@ -118,8 +123,11 @@ fn replace_cached_provider_models(
     Ok(())
 }
 
-async fn fetch_openai_models(provider: &str) -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_api_key_auth(provider)?;
+async fn fetch_openai_models(
+    provider: &str,
+    store: &dyn CredentialStore,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let key = load_api_key_auth(provider, store)?;
     let response: OpenAiModelsResponse = reqwest::Client::new()
         .get("https://api.openai.com/v1/models")
         .bearer_auth(key)
@@ -144,8 +152,11 @@ async fn fetch_openai_models(provider: &str) -> Result<Vec<ProviderModel>, Model
     Ok(models)
 }
 
-async fn fetch_anthropic_models(provider: &str) -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_api_key_auth(provider)?;
+async fn fetch_anthropic_models(
+    provider: &str,
+    store: &dyn CredentialStore,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let key = load_api_key_auth(provider, store)?;
     let client = reqwest::Client::new();
     let mut models = Vec::new();
     let mut after_id = None::<String>;
@@ -191,7 +202,7 @@ async fn fetch_anthropic_models(provider: &str) -> Result<Vec<ProviderModel>, Mo
     Ok(models)
 }
 
-fn load_api_key_auth(provider: &str) -> Result<String, ModelError> {
+fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<String, ModelError> {
     let descriptor = registry::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let ProviderAuthKind::ApiKey {
@@ -203,8 +214,7 @@ fn load_api_key_auth(provider: &str) -> Result<String, ModelError> {
     if let Ok(key) = std::env::var(env_var) {
         return Ok(key);
     }
-    let store = OsCredentialStore;
-    load_provider_api_key(&store, provider)?.ok_or_else(|| missing_credential_error(missing))
+    load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing))
 }
 
 fn is_supported_openai_model(model: &str) -> bool {
@@ -279,7 +289,7 @@ fn cache_dir() -> PathBuf {
         if let Some(path) = test_cache_dir() {
             return path;
         }
-        return default_test_cache_dir();
+        default_test_cache_dir()
     }
     #[cfg(not(test))]
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
@@ -357,6 +367,7 @@ fn unique_test_cache_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::{save_provider_api_key, MemoryCredentialStore};
 
     #[test]
     fn openai_model_filter_keeps_chat_families() {
@@ -364,6 +375,17 @@ mod tests {
         assert!(is_supported_openai_model("o3"));
         assert!(!is_supported_openai_model("text-embedding-3-large"));
         assert!(!is_supported_openai_model("whisper-1"));
+    }
+
+    #[test]
+    fn load_api_key_auth_reads_the_supplied_store() {
+        let store = MemoryCredentialStore::default();
+        save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
+
+        assert_eq!(
+            load_api_key_auth("anthropic", &store).unwrap(),
+            "sk-ant-test"
+        );
     }
 
     #[test]

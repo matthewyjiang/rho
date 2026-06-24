@@ -12,7 +12,10 @@ use crate::model::{
 
 use convert::{convert_anthropic_response, split_system_and_messages, to_anthropic_tool};
 use stream::collect_anthropic_sse_response;
-use types::{AnthropicRequest, AnthropicResponse};
+use types::{
+    AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage, AnthropicRequest,
+    AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+};
 
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -43,18 +46,28 @@ impl AnthropicProvider {
         request: ModelRequest,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let (system, messages) = split_system_and_messages(request.messages)?;
-        let tools = request
+        let (system, mut messages) = split_system_and_messages(request.messages)?;
+        mark_cache_control_points(&mut messages);
+        let mut tools = request
             .tools
             .into_iter()
             .map(to_anthropic_tool)
             .collect::<Vec<_>>();
+        if let Some(tool) = tools.last_mut() {
+            tool.cache_control = Some(AnthropicCacheControl::ephemeral());
+        }
         Ok(AnthropicRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
-            system,
+            system: system.map(|text| {
+                vec![AnthropicSystemBlock::text(
+                    text,
+                    Some(AnthropicCacheControl::ephemeral()),
+                )]
+            }),
             messages,
             tools: (!tools.is_empty()).then_some(tools),
+            cache_control: None,
             stream,
         })
     }
@@ -94,6 +107,38 @@ impl AnthropicProvider {
 
     fn messages_url(&self) -> String {
         format!("{}/messages", self.api_base.trim_end_matches('/'))
+    }
+}
+
+fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
+    let marker = AnthropicCacheControl::ephemeral();
+    for message in messages.iter_mut().rev() {
+        if message.role == AnthropicRole::User {
+            let Some(block) = message.content.last_mut() else {
+                return;
+            };
+            if let AnthropicContentBlock::Text { cache_control, .. }
+            | AnthropicContentBlock::ToolResult { cache_control, .. } = block
+            {
+                *cache_control = Some(marker);
+                return;
+            }
+        }
+    }
+
+    for message in messages.iter_mut().rev() {
+        if message.role != AnthropicRole::Assistant {
+            continue;
+        }
+        if let Some(AnthropicContentBlock::Text { cache_control, .. }) = message
+            .content
+            .iter_mut()
+            .rev()
+            .find(|block| matches!(block, AnthropicContentBlock::Text { .. }))
+        {
+            *cache_control = Some(marker);
+            return;
+        }
     }
 }
 
@@ -198,9 +243,18 @@ mod tests {
         let value = serde_json::to_value(body).unwrap();
         assert_eq!(value["model"], "claude-sonnet-4-5");
         assert_eq!(value["max_tokens"], DEFAULT_MAX_TOKENS);
-        assert_eq!(value["system"], "system prompt");
+        assert_eq!(value["system"][0]["text"], "system prompt");
+        assert_eq!(
+            value["system"][0]["cache_control"],
+            json!({"type":"ephemeral"})
+        );
         assert_eq!(value["stream"], true);
         assert_eq!(value["tools"][0]["name"], "bash");
+        assert_eq!(
+            value["tools"][0]["cache_control"],
+            json!({"type":"ephemeral"})
+        );
+        assert!(value.get("cache_control").is_none());
         assert!(value.get("prompt_cache_key").is_none());
         assert_eq!(value["messages"][1]["content"][0]["type"], "tool_use");
     }

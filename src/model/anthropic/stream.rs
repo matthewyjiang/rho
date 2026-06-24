@@ -39,7 +39,10 @@ impl AnthropicSseState {
         let mut blocks = Vec::new();
         for (index, block) in self.blocks.into_iter().enumerate() {
             if !block.text.is_empty() {
-                blocks.push(AnthropicContentBlock::Text { text: block.text });
+                blocks.push(AnthropicContentBlock::Text {
+                    text: block.text,
+                    cache_control: None,
+                });
             }
             if let Some(id) = block.tool_id {
                 let name = block.tool_name.ok_or_else(|| {

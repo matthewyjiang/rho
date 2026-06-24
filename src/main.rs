@@ -59,11 +59,11 @@ async fn main() -> anyhow::Result<()> {
     let missing_auth_error = provider_result
         .as_ref()
         .err()
-        .filter(|err| is_auth_unavailable_error(err))
+        .filter(|err| is_interactive_startup_unavailable_error(err))
         .map(model_error_message);
     let provider = match provider_result {
         Ok(provider) => provider,
-        Err(err) if run_prompt.is_none() && is_auth_unavailable_error(&err) => {
+        Err(err) if run_prompt.is_none() && is_interactive_startup_unavailable_error(&err) => {
             Box::new(UnavailableProvider::new(err))
         }
         Err(err) => return Err(err.into()),
@@ -137,13 +137,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn is_auth_unavailable_error(error: &ModelError) -> bool {
+fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
     matches!(
         error,
         ModelError::MissingApiKey
             | ModelError::MissingCodexAuth
             | ModelError::MissingAnthropicApiKey
             | ModelError::Credentials(_)
+            | ModelError::UnsupportedProvider(_)
     )
 }
 
@@ -212,7 +213,7 @@ fn apply_model_override(cfg: &mut Config, model: &str) -> anyhow::Result<()> {
         model,
         &cfg.provider,
         &cfg.auth,
-        &[cfg.auth.clone()],
+        std::slice::from_ref(&cfg.auth),
     )?;
     cfg.provider = selection.provider;
     cfg.model = selection.model;
@@ -289,6 +290,13 @@ mod tests {
         });
         let _ = std::fs::remove_dir_all(cache_dir);
         result
+    }
+
+    #[test]
+    fn unsupported_provider_is_nonfatal_for_interactive_startup() {
+        assert!(is_interactive_startup_unavailable_error(
+            &ModelError::UnsupportedProvider("anthropic".into())
+        ));
     }
 
     #[test]

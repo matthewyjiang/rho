@@ -175,6 +175,8 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         self.refresh_available_auths();
+        self.refresh_model_list_after_login(&target, terminal)
+            .await?;
         if self.using_unavailable_provider {
             if self.activate_provider_after_login(&target, terminal, agent)? {
                 self.insert_entry(
@@ -203,6 +205,46 @@ impl App {
                 )),
             )?;
             self.status = "login saved".into();
+        }
+        Ok(())
+    }
+
+    async fn refresh_model_list_after_login(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+            return Ok(());
+        };
+        if descriptor.model_refresh.is_none() {
+            return Ok(());
+        }
+
+        self.status = format!("refreshing {} model list", target.provider);
+        terminal.draw(|frame| self.draw(frame))?;
+        match refresh_provider_models_with_store(&target.provider, self.credential_store.as_ref())
+            .await
+        {
+            Ok(refresh) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "refreshed {} model list: {} models",
+                        refresh.provider,
+                        refresh.models.len()
+                    )),
+                )?;
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "stored credentials for {}, but failed to refresh its model list: {err}",
+                        target.provider
+                    )),
+                )?;
+            }
         }
         Ok(())
     }

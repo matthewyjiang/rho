@@ -6,6 +6,20 @@ use super::types::{
     AnthropicUsage,
 };
 
+fn resolved_cache_read_tokens(usage: &AnthropicUsage) -> Option<u64> {
+    usage.cache_read_input_tokens
+}
+
+fn resolved_cache_write_tokens(usage: &AnthropicUsage) -> Option<u64> {
+    usage.cache_creation_input_tokens.or_else(|| {
+        usage.cache_creation.as_ref().and_then(|cache| {
+            cache
+                .ephemeral_1h_input_tokens
+                .or(cache.ephemeral_5m_input_tokens)
+        })
+    })
+}
+
 pub(super) fn split_system_and_messages(
     messages: Vec<Message>,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
@@ -31,6 +45,7 @@ pub(super) fn split_system_and_messages(
                     tool_use_id: result.id,
                     content: result.content,
                     is_error: !result.ok,
+                    cache_control: None,
                 }],
             ),
         }
@@ -53,16 +68,23 @@ fn push_message(
 
 fn user_block(block: ContentBlock) -> AnthropicContentBlock {
     match block {
-        ContentBlock::Text(text) => AnthropicContentBlock::Text { text },
+        ContentBlock::Text(text) => AnthropicContentBlock::Text {
+            text,
+            cache_control: None,
+        },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::Text {
             text: render_tool_call(&call),
+            cache_control: None,
         },
     }
 }
 
 fn assistant_block(block: ContentBlock) -> AnthropicContentBlock {
     match block {
-        ContentBlock::Text(text) => AnthropicContentBlock::Text { text },
+        ContentBlock::Text(text) => AnthropicContentBlock::Text {
+            text,
+            cache_control: None,
+        },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::ToolUse {
             id: call.id,
             name: call.name,
@@ -82,6 +104,7 @@ pub(super) fn to_anthropic_tool(tool: ToolSpec) -> AnthropicTool {
         name: tool.name,
         description: tool.description,
         input_schema: tool.input_schema,
+        cache_control: None,
     }
 }
 
@@ -98,10 +121,10 @@ pub(super) fn convert_content_blocks(
     let mut blocks = Vec::new();
     for block in content {
         match block {
-            AnthropicContentBlock::Text { text } if !text.is_empty() => {
+            AnthropicContentBlock::Text { text, .. } if !text.is_empty() => {
                 blocks.push(ContentBlock::Text(text));
             }
-            AnthropicContentBlock::Text { text: _ } => {}
+            AnthropicContentBlock::Text { text: _, .. } => {}
             AnthropicContentBlock::ToolUse { id, name, input } => {
                 blocks.push(ContentBlock::ToolCall(ToolCall {
                     id,
@@ -126,21 +149,23 @@ pub(super) fn convert_content_blocks(
 }
 
 pub(super) fn usage_to_model_usage(usage: AnthropicUsage) -> ModelUsage {
+    let cache_read_tokens = resolved_cache_read_tokens(&usage);
+    let cache_write_tokens = resolved_cache_write_tokens(&usage);
     let total_tokens = usage
         .input_tokens
         .unwrap_or_default()
-        .saturating_add(usage.cache_read_input_tokens.unwrap_or_default())
-        .saturating_add(usage.cache_creation_input_tokens.unwrap_or_default())
+        .saturating_add(cache_read_tokens.unwrap_or_default())
+        .saturating_add(cache_write_tokens.unwrap_or_default())
         .saturating_add(usage.output_tokens.unwrap_or_default());
     let has_total = usage.input_tokens.is_some()
-        || usage.cache_read_input_tokens.is_some()
-        || usage.cache_creation_input_tokens.is_some()
+        || cache_read_tokens.is_some()
+        || cache_write_tokens.is_some()
         || usage.output_tokens.is_some();
     ModelUsage {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
-        cache_read_tokens: usage.cache_read_input_tokens,
-        cache_write_tokens: usage.cache_creation_input_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
         total_tokens: has_total.then_some(total_tokens),
         context_window: None,
         cost_usd_micros: None,
@@ -153,6 +178,7 @@ mod tests {
 
     use super::*;
     use crate::tool::ToolResult;
+    use crate::model::anthropic::types::AnthropicCacheCreation;
 
     #[test]
     fn converts_messages_and_tools_to_anthropic_shape() {
@@ -195,6 +221,7 @@ mod tests {
                 tool_use_id: "toolu_1".into(),
                 content: "/repo".into(),
                 is_error: false,
+                cache_control: None,
             }
         );
     }
@@ -215,6 +242,7 @@ mod tests {
                 tool_use_id: "toolu_1".into(),
                 content: "failed".into(),
                 is_error: true,
+                cache_control: None,
             }
         );
     }
@@ -237,7 +265,10 @@ mod tests {
     fn converts_response_text_and_tool_use() {
         let response = AnthropicResponse {
             content: vec![
-                AnthropicContentBlock::Text { text: "hi".into() },
+                AnthropicContentBlock::Text {
+                    text: "hi".into(),
+                    cache_control: None,
+                },
                 AnthropicContentBlock::ToolUse {
                     id: "toolu_1".into(),
                     name: "bash".into(),
@@ -260,10 +291,29 @@ mod tests {
             output_tokens: Some(4),
             cache_read_input_tokens: Some(3),
             cache_creation_input_tokens: Some(2),
+            cache_creation: None,
         });
 
         assert_eq!(usage.input_tokens, Some(10));
         assert_eq!(usage.output_tokens, Some(4));
+        assert_eq!(usage.cache_read_tokens, Some(3));
+        assert_eq!(usage.cache_write_tokens, Some(2));
+        assert_eq!(usage.total_tokens, Some(19));
+    }
+
+    #[test]
+    fn maps_nested_cache_creation_usage() {
+        let usage = usage_to_model_usage(AnthropicUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(4),
+            cache_read_input_tokens: Some(3),
+            cache_creation_input_tokens: None,
+            cache_creation: Some(AnthropicCacheCreation {
+                ephemeral_1h_input_tokens: Some(2),
+                ephemeral_5m_input_tokens: None,
+            }),
+        });
+
         assert_eq!(usage.cache_read_tokens, Some(3));
         assert_eq!(usage.cache_write_tokens, Some(2));
         assert_eq!(usage.total_tokens, Some(19));

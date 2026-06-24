@@ -67,7 +67,7 @@ use crate::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         models_dev::{cached_model_metadata, fetch_model_metadata},
-        provider_models::refresh_provider_models,
+        provider_models::refresh_provider_models_with_store,
         registry::{self, ProviderAuthKind},
         ContentBlock, ContextUsage, Message, ModelMetadata, ModelRequest, ModelResponse,
         ModelUsage, UnavailableProvider,
@@ -2285,7 +2285,9 @@ impl App {
         self.status = "refreshing model list".into();
         terminal.draw(|frame| self.draw(frame))?;
         for provider in providers {
-            match refresh_provider_models(&provider).await {
+            match refresh_provider_models_with_store(&provider, self.credential_store.as_ref())
+                .await
+            {
                 Ok(refresh) => {
                     self.insert_entry(
                         terminal,

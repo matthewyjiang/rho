@@ -69,13 +69,16 @@ pub struct ModelUsage {
 }
 
 impl ModelUsage {
-    /// Input tokens that were present in the request, including cache hits.
+    /// Input tokens that were present in the request, including cache hits and writes.
     pub fn total_input_tokens(&self) -> Option<u64> {
-        let has_input = self.input_tokens.is_some() || self.cache_read_tokens.is_some();
+        let has_input = self.input_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_write_tokens.is_some();
         let total = self
             .input_tokens
             .unwrap_or_default()
-            .saturating_add(self.cache_read_tokens.unwrap_or_default());
+            .saturating_add(self.cache_read_tokens.unwrap_or_default())
+            .saturating_add(self.cache_write_tokens.unwrap_or_default());
         has_input.then_some(total)
     }
 }

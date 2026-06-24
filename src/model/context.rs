@@ -179,13 +179,14 @@ mod tests {
         let usage = ModelUsage {
             input_tokens: Some(300),
             cache_read_tokens: Some(700),
+            cache_write_tokens: Some(2_000),
             context_window: Some(10_000),
             ..ModelUsage::default()
         };
 
         assert_eq!(
             ContextUsage::from_model_usage(&usage),
-            Some(ContextUsage::provider_reported(1_000, Some(10_000)))
+            Some(ContextUsage::provider_reported(3_000, Some(10_000)))
         );
     }
 }
