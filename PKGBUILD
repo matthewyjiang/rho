@@ -8,6 +8,7 @@ url="https://github.com/matthewyjiang/rho"
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
+options=(!lto)
 _tagname="rho-coding-agent-v$pkgver"
 source=("$pkgname-$pkgver.tar.gz::https://github.com/matthewyjiang/rho/archive/refs/tags/$_tagname.tar.gz")
 sha256sums=('SKIP')
