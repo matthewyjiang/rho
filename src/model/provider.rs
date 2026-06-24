@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::model::{
-    AuthMode, DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
+    registry::{provider_descriptor, ProviderRuntime},
+    AnthropicProvider, DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
     OpenAiProvider,
 };
 use crate::reasoning::ReasoningLevel;
@@ -13,22 +14,19 @@ pub fn build_provider(
 ) -> Result<DynModelProvider, ModelError> {
     let reasoning_effort = reasoning.effort().map(str::to_string);
     let reasoning_summary = reasoning.summary().map(str::to_string);
-    let provider = match provider {
-        "openai" => OpenAiProvider::new_with_reasoning(
+    let descriptor = provider_descriptor(provider)
+        .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
+    match descriptor.runtime {
+        ProviderRuntime::OpenAi { auth_mode } => Ok(Box::new(OpenAiProvider::new_with_reasoning(
             model.to_string(),
-            AuthMode::ApiKey,
+            auth_mode,
             reasoning_effort,
             reasoning_summary,
-        ),
-        "openai-codex" => OpenAiProvider::new_with_reasoning(
-            model.to_string(),
-            AuthMode::Codex,
-            reasoning_effort,
-            reasoning_summary,
-        ),
-        other => return Err(ModelError::UnsupportedProvider(other.to_string())),
-    }?;
-    Ok(Box::new(provider))
+        )?) as DynModelProvider),
+        ProviderRuntime::Anthropic => {
+            Ok(Box::new(AnthropicProvider::new(model.to_string())?) as DynModelProvider)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -53,6 +51,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
     match error {
         ModelError::MissingApiKey => ModelError::MissingApiKey,
         ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
+        ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
         ModelError::UnsupportedProvider(provider) => {
             ModelError::UnsupportedProvider(provider.clone())

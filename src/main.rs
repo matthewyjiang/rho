@@ -51,15 +51,19 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
+    if cfg.provider == "anthropic" && cached_model_metadata(&cfg.provider, &cfg.model).is_none() {
+        let _ = model::models_dev::fetch_model_metadata(&cfg.provider, &cfg.model).await;
+    }
+
     let provider_result = build_provider(&cfg.provider, &cfg.model, cfg.reasoning);
     let missing_auth_error = provider_result
         .as_ref()
         .err()
-        .filter(|err| is_auth_unavailable_error(err))
+        .filter(|err| is_interactive_startup_unavailable_error(err))
         .map(model_error_message);
     let provider = match provider_result {
         Ok(provider) => provider,
-        Err(err) if run_prompt.is_none() && is_auth_unavailable_error(&err) => {
+        Err(err) if run_prompt.is_none() && is_interactive_startup_unavailable_error(&err) => {
             Box::new(UnavailableProvider::new(err))
         }
         Err(err) => return Err(err.into()),
@@ -133,10 +137,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn is_auth_unavailable_error(error: &ModelError) -> bool {
+fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
     matches!(
         error,
-        ModelError::MissingApiKey | ModelError::MissingCodexAuth | ModelError::Credentials(_)
+        ModelError::MissingApiKey
+            | ModelError::MissingCodexAuth
+            | ModelError::MissingAnthropicApiKey
+            | ModelError::Credentials(_)
+            | ModelError::UnsupportedProvider(_)
     )
 }
 
@@ -154,10 +162,7 @@ fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
 fn apply_cli_overrides(cfg: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
     let mut save_config = false;
     if let Some(provider) = &cli.provider {
-        cfg.provider = provider.clone();
-        if let Some(target) = catalog::login_target_for_provider(provider) {
-            cfg.auth = target.auth;
-        }
+        apply_provider_override(cfg, provider, cli.model.is_some())?;
         save_config = true;
     }
     if let Some(model) = &cli.model {
@@ -175,24 +180,44 @@ fn apply_cli_overrides(cfg: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
     Ok(save_config)
 }
 
-fn apply_model_override(cfg: &mut Config, model: &str) -> anyhow::Result<()> {
-    let Some((provider, model_name)) = model.split_once('/') else {
-        cfg.model = model.to_string();
-        return Ok(());
-    };
-    let provider = provider.trim();
-    let model_name = model_name.trim();
-    if provider.is_empty() || model_name.is_empty() {
-        anyhow::bail!("--model provider/model cannot have an empty provider or model");
-    }
+fn apply_provider_override(
+    cfg: &mut Config,
+    provider: &str,
+    has_model_override: bool,
+) -> anyhow::Result<()> {
     if !catalog::implemented_providers().contains(&provider) {
-        anyhow::bail!("unknown provider '{provider}' for --model provider/model");
+        anyhow::bail!("unknown provider '{provider}' for --provider");
     }
+    let auth = catalog::login_target_for_provider(provider).map(|target| target.auth);
+    let model = if has_model_override {
+        None
+    } else {
+        Some(catalog::default_model_for_provider(provider).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no cached models for provider '{provider}'. Run /refresh-model-list {provider} or pass a cached provider/model with --model"
+            )
+        })?)
+    };
     cfg.provider = provider.to_string();
-    cfg.model = model_name.to_string();
-    if let Some(target) = catalog::login_target_for_provider(provider) {
-        cfg.auth = target.auth;
+    if let Some(auth) = auth {
+        cfg.auth = auth;
     }
+    if let Some(model) = model {
+        cfg.model = model;
+    }
+    Ok(())
+}
+
+fn apply_model_override(cfg: &mut Config, model: &str) -> anyhow::Result<()> {
+    let selection = catalog::resolve_model_selection_for_auths(
+        model,
+        &cfg.provider,
+        &cfg.auth,
+        std::slice::from_ref(&cfg.auth),
+    )?;
+    cfg.provider = selection.provider;
+    cfg.model = selection.model;
+    cfg.auth = selection.auth;
     Ok(())
 }
 
@@ -229,6 +254,50 @@ fn automation_prompt_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::model::provider_models::{
+        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+        ProviderModel,
+    };
+
+    fn unique_cache_dir(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("rho-main-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn with_cached_provider_models<T>(
+        provider: &str,
+        models: Vec<&str>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let cache_dir = unique_cache_dir(provider);
+        let provider_models = models
+            .into_iter()
+            .map(|model| ProviderModel {
+                provider: provider.into(),
+                model: model.into(),
+                display_name: model.into(),
+                max_output_tokens: None,
+            })
+            .collect::<Vec<_>>();
+        let result = with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            replace_cached_provider_models_for_tests(provider, &provider_models).unwrap();
+            f()
+        });
+        let _ = std::fs::remove_dir_all(cache_dir);
+        result
+    }
+
+    #[test]
+    fn unsupported_provider_is_nonfatal_for_interactive_startup() {
+        assert!(is_interactive_startup_unavailable_error(
+            &ModelError::UnsupportedProvider("anthropic".into())
+        ));
+    }
 
     #[test]
     fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
@@ -276,7 +345,79 @@ mod tests {
     }
 
     #[test]
-    fn cli_unqualified_model_override_keeps_provider() {
+    fn cli_anthropic_model_override_selects_matching_auth() {
+        with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: None,
+                model: Some("anthropic/claude-sonnet-4-5".into()),
+                config: None,
+                auth: None,
+                no_system_prompt: false,
+                no_tools: false,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
+
+            let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+            assert!(save_config);
+            assert_eq!(cfg.provider, "anthropic");
+            assert_eq!(cfg.model, "claude-sonnet-4-5");
+            assert_eq!(cfg.auth, "anthropic-api-key");
+        });
+    }
+
+    #[test]
+    fn cli_anthropic_provider_override_uses_cached_default() {
+        with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: Some("anthropic".into()),
+                model: None,
+                config: None,
+                auth: None,
+                no_system_prompt: false,
+                no_tools: false,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
+
+            let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+            assert!(save_config);
+            assert_eq!(cfg.provider, "anthropic");
+            assert_eq!(cfg.model, "claude-sonnet-4-5");
+            assert_eq!(cfg.auth, "anthropic-api-key");
+        });
+    }
+
+    #[test]
+    fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("anthropic".into()),
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.auth, "anthropic-api-key");
+    }
+
+    #[test]
+    fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
         let mut cfg = Config {
             provider: "openai-codex".into(),
             auth: "codex".into(),
@@ -284,7 +425,7 @@ mod tests {
         };
         let cli = Cli {
             provider: None,
-            model: Some("custom-model".into()),
+            model: Some("gpt-5.4-mini".into()),
             config: None,
             auth: None,
             no_system_prompt: false,
@@ -297,7 +438,7 @@ mod tests {
         apply_cli_overrides(&mut cfg, &cli).unwrap();
 
         assert_eq!(cfg.provider, "openai-codex");
-        assert_eq!(cfg.model, "custom-model");
+        assert_eq!(cfg.model, "gpt-5.4-mini");
         assert_eq!(cfg.auth, "codex");
     }
 

@@ -3,11 +3,14 @@ use thiserror::Error;
 
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 
+pub mod anthropic;
 pub mod catalog;
 pub mod context;
 pub mod models_dev;
 pub mod openai;
 pub mod provider;
+pub mod provider_models;
+pub mod registry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
@@ -66,13 +69,16 @@ pub struct ModelUsage {
 }
 
 impl ModelUsage {
-    /// Input tokens that were present in the request, including cache hits.
+    /// Input tokens that were present in the request, including cache hits and writes.
     pub fn total_input_tokens(&self) -> Option<u64> {
-        let has_input = self.input_tokens.is_some() || self.cache_read_tokens.is_some();
+        let has_input = self.input_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_write_tokens.is_some();
         let total = self
             .input_tokens
             .unwrap_or_default()
-            .saturating_add(self.cache_read_tokens.unwrap_or_default());
+            .saturating_add(self.cache_read_tokens.unwrap_or_default())
+            .saturating_add(self.cache_write_tokens.unwrap_or_default());
         has_input.then_some(total)
     }
 }
@@ -90,6 +96,8 @@ pub enum ModelError {
     MissingApiKey,
     #[error("missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override")]
     MissingCodexAuth,
+    #[error("missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override")]
+    MissingAnthropicApiKey,
     #[error("credential store error: {0}")]
     Credentials(#[from] crate::credentials::CredentialError),
     #[error("request failed: {0}")]
@@ -137,12 +145,13 @@ pub trait ModelProvider: Send + Sync {
 
 pub type DynModelProvider = Box<dyn ModelProvider>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthMode {
     ApiKey,
     Codex,
 }
 
+pub use anthropic::AnthropicProvider;
 pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;

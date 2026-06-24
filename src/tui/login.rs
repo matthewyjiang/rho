@@ -45,21 +45,26 @@ impl App {
             self.insert_entry(
                 terminal,
                 &Entry::Error(format!(
-                    "unsupported login provider '{provider}'. Use /login openai or /login openai-codex"
+                    "unsupported login provider '{provider}'. Use /login {}",
+                    catalog::implemented_providers().join(", /login ")
                 )),
             )?;
             self.status = "login failed".into();
             return Ok(());
         };
 
-        match target.provider.as_str() {
-            "openai" => {
+        let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+            unreachable!("catalog returned unsupported login provider")
+        };
+        match descriptor.auth_kind {
+            ProviderAuthKind::ApiKey { entry_label, .. } => {
                 self.composer = ComposerMode::SecretInput(SecretInput::new(target));
-                self.status = "enter OpenAI API key".into();
+                self.status = format!("enter {entry_label}");
                 Ok(())
             }
-            "openai-codex" => self.start_codex_login(target, terminal, agent).await,
-            _ => unreachable!("catalog returned unsupported login provider"),
+            ProviderAuthKind::CodexOAuth { .. } => {
+                self.start_codex_login(target, terminal, agent).await
+            }
         }
     }
 
@@ -75,7 +80,8 @@ impl App {
             self.status = "login failed".into();
             return Ok(());
         }
-        match save_openai_api_key(self.credential_store.as_ref(), &key) {
+        let saved = save_provider_api_key(self.credential_store.as_ref(), &target.provider, &key);
+        match saved {
             Ok(()) => self.finish_login(target, terminal, agent).await,
             Err(err) => {
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
@@ -169,15 +175,18 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         self.refresh_available_auths();
+        self.refresh_model_list_after_login(&target, terminal)
+            .await?;
         if self.using_unavailable_provider {
-            self.activate_provider_after_login(&target, terminal, agent)?;
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(format!(
-                    "stored credentials for {} and selected {}/{}",
-                    target.provider, self.info.provider, self.info.model
-                )),
-            )?;
+            if self.activate_provider_after_login(&target, terminal, agent)? {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "stored credentials for {} and selected {}/{}",
+                        target.provider, self.info.provider, self.info.model
+                    )),
+                )?;
+            }
         } else if target.provider == self.info.provider {
             self.reload_active_provider_after_login(&target, terminal, agent)?;
             self.insert_entry(
@@ -196,6 +205,46 @@ impl App {
                 )),
             )?;
             self.status = "login saved".into();
+        }
+        Ok(())
+    }
+
+    async fn refresh_model_list_after_login(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+            return Ok(());
+        };
+        if descriptor.model_refresh.is_none() {
+            return Ok(());
+        }
+
+        self.status = format!("refreshing {} model list", target.provider);
+        terminal.draw(|frame| self.draw(frame))?;
+        match refresh_provider_models_with_store(&target.provider, self.credential_store.as_ref())
+            .await
+        {
+            Ok(refresh) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!(
+                        "refreshed {} model list: {} models",
+                        refresh.provider,
+                        refresh.models.len()
+                    )),
+                )?;
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!(
+                        "stored credentials for {}, but failed to refresh its model list: {err}",
+                        target.provider
+                    )),
+                )?;
+            }
         }
         Ok(())
     }
@@ -234,9 +283,18 @@ impl App {
         target: &LoginTarget,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
-    ) -> anyhow::Result<()> {
-        let model = catalog::default_model_for_provider(&target.provider)
-            .unwrap_or_else(|| self.info.model.clone());
+    ) -> anyhow::Result<bool> {
+        let Some(model) = catalog::default_model_for_provider(&target.provider) else {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(format!(
+                    "stored credentials for {}, but no cached models are available. Run /refresh-model-list {} before switching to it.",
+                    target.provider, target.provider
+                )),
+            )?;
+            self.status = "login saved".into();
+            return Ok(false);
+        };
         let new_provider = match build_provider(&target.provider, &model, self.info.reasoning) {
             Ok(provider) => provider,
             Err(err) => {
@@ -248,7 +306,7 @@ impl App {
                     )),
                 )?;
                 self.status = "login saved".into();
-                return Ok(());
+                return Ok(false);
             }
         };
 
@@ -273,7 +331,7 @@ impl App {
                 self.status = "config save failed".into();
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(super) async fn logout_provider(
@@ -287,18 +345,15 @@ impl App {
             self.insert_entry(
                 terminal,
                 &Entry::Error(format!(
-                    "unsupported logout provider '{provider}'. Use /logout openai or /logout openai-codex"
+                    "unsupported logout provider '{provider}'. Use /logout {}",
+                    catalog::implemented_providers().join(", /logout ")
                 )),
             )?;
             self.status = "logout failed".into();
             return Ok(());
         };
 
-        let deleted = match target.provider.as_str() {
-            "openai" => delete_openai_api_key(self.credential_store.as_ref()),
-            "openai-codex" => delete_codex_tokens(self.credential_store.as_ref()),
-            _ => unreachable!("catalog returned unsupported logout provider"),
-        };
+        let deleted = delete_provider_credentials(self.credential_store.as_ref(), &target.provider);
 
         match deleted {
             Ok(deleted) => {
@@ -350,11 +405,7 @@ impl App {
             return false;
         }
 
-        let error = match target.provider.as_str() {
-            "openai" => ModelError::MissingApiKey,
-            "openai-codex" => ModelError::MissingCodexAuth,
-            other => ModelError::UnsupportedProvider(other.to_string()),
-        };
+        let error = registry::missing_credentials_error(&target.provider);
         self.info.auth_unavailable = Some(error.to_string());
         self.using_unavailable_provider = true;
         agent.replace_provider(Box::new(UnavailableProvider::new(error)));
