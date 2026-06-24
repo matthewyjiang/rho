@@ -6,7 +6,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     time::timeout,
 };
 use url::Url;
@@ -17,7 +17,9 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const SCOPE: &str = "openid profile email offline_access api.connectors.read api.connectors.invoke";
-const CALLBACK_HOST: &str = "127.0.0.1";
+const CALLBACK_BIND_HOST_IPV4: &str = "127.0.0.1";
+const CALLBACK_BIND_HOST_IPV6: &str = "::1";
+const CALLBACK_REDIRECT_HOST: &str = "localhost";
 const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_PATH: &str = "/auth/callback";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
@@ -76,9 +78,7 @@ struct IdTokenAuthClaims {
 }
 
 pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
-    let listener = TcpListener::bind((CALLBACK_HOST, CALLBACK_PORT))
-        .await
-        .map_err(CodexOAuthError::Bind)?;
+    let listeners = bind_callback_listeners().await?;
     let request = build_oauth_request();
 
     webbrowser::open(&request.authorize_url)
@@ -86,7 +86,7 @@ pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
 
     let code = match timeout(
         CALLBACK_TIMEOUT,
-        wait_for_callback(&listener, &request.state),
+        wait_for_callback(&listeners, &request.state),
     )
     .await
     {
@@ -106,7 +106,7 @@ pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
 }
 
 pub fn build_oauth_request() -> OAuthRequest {
-    let redirect_uri = format!("http://{CALLBACK_HOST}:{CALLBACK_PORT}{CALLBACK_PATH}");
+    let redirect_uri = format!("http://{CALLBACK_REDIRECT_HOST}:{CALLBACK_PORT}{CALLBACK_PATH}");
     build_oauth_request_with_values(random_token(32), random_token(64), redirect_uri)
 }
 
@@ -150,14 +150,37 @@ fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest)
 }
 
+struct CallbackListeners {
+    ipv4: Option<TcpListener>,
+    ipv6: Option<TcpListener>,
+}
+
+async fn bind_callback_listeners() -> Result<CallbackListeners, CodexOAuthError> {
+    let ipv4 = TcpListener::bind((CALLBACK_BIND_HOST_IPV4, CALLBACK_PORT)).await;
+    let ipv6 = TcpListener::bind((CALLBACK_BIND_HOST_IPV6, CALLBACK_PORT)).await;
+
+    match (ipv4, ipv6) {
+        (Ok(ipv4), Ok(ipv6)) => Ok(CallbackListeners {
+            ipv4: Some(ipv4),
+            ipv6: Some(ipv6),
+        }),
+        (Ok(ipv4), Err(_)) => Ok(CallbackListeners {
+            ipv4: Some(ipv4),
+            ipv6: None,
+        }),
+        (Err(_), Ok(ipv6)) => Ok(CallbackListeners {
+            ipv4: None,
+            ipv6: Some(ipv6),
+        }),
+        (Err(ipv4), Err(_)) => Err(CodexOAuthError::Bind(ipv4)),
+    }
+}
+
 async fn wait_for_callback(
-    listener: &TcpListener,
+    listeners: &CallbackListeners,
     expected_state: &str,
 ) -> Result<CallbackOutcome, CodexOAuthError> {
-    let (mut stream, _) = listener
-        .accept()
-        .await
-        .map_err(CodexOAuthError::CallbackIo)?;
+    let mut stream = accept_callback(listeners).await?;
     let mut buffer = vec![0_u8; 8192];
     let len = stream
         .read(&mut buffer)
@@ -179,6 +202,27 @@ async fn wait_for_callback(
     );
     let _ = stream.write_all(response.as_bytes()).await;
     outcome
+}
+
+async fn accept_callback(listeners: &CallbackListeners) -> Result<TcpStream, CodexOAuthError> {
+    match (&listeners.ipv4, &listeners.ipv6) {
+        (Some(ipv4), Some(ipv6)) => {
+            tokio::select! {
+                result = ipv4.accept() => result,
+                result = ipv6.accept() => result,
+            }
+        }
+        (Some(ipv4), None) => ipv4.accept().await,
+        (None, Some(ipv6)) => ipv6.accept().await,
+        (None, None) => {
+            return Err(CodexOAuthError::CallbackIo(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "no OAuth callback listeners were available",
+            )))
+        }
+    }
+    .map(|(stream, _)| stream)
+    .map_err(CodexOAuthError::CallbackIo)
 }
 
 pub fn parse_callback_request_line(
@@ -276,7 +320,7 @@ mod tests {
         let request = build_oauth_request_with_values(
             "state123".into(),
             "verifier123".into(),
-            "http://127.0.0.1:1455/auth/callback".into(),
+            "http://localhost:1455/auth/callback".into(),
         );
         let url = Url::parse(&request.authorize_url).unwrap();
         let query = url.query_pairs().into_owned().collect::<HashMap<_, _>>();
