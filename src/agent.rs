@@ -152,7 +152,17 @@ impl Agent {
     pub async fn run_with_events(
         &mut self,
         user_prompt: String,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<String, AgentError> {
+        self.run_with_events_and_steering(user_prompt, on_event, || Ok(None))
+            .await
+    }
+
+    pub async fn run_with_events_and_steering(
+        &mut self,
+        user_prompt: String,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        mut next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
     ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
         self.push_message(Message::user_text(user_prompt))?;
@@ -222,77 +232,88 @@ impl Agent {
                             .collect::<Vec<_>>()
                             .join("\n");
                         self.push_message(Message::assistant_text(answer.clone()))?;
-                        return Ok(answer);
-                    }
-
-                    on_event(AgentEvent::ToolStarted)?;
-                    self.push_message(Message::Assistant(blocks))?;
-                    let mut tool_events = Vec::new();
-                    for call in tool_calls.iter().cloned() {
-                        let name = call.name.clone();
-                        let (result, display_style, command, event_content, display_lines) =
-                            match self.tools.get(&call.name) {
-                                Some(tool) => {
-                                    let display_style = tool.display_style();
-                                    let command = tool.display_command(&call.arguments);
-                                    let event_content =
-                                        tool.display_content(&call.arguments, &self.ctx);
-                                    let result = match tool
-                                        .call(
-                                            call.arguments.clone(),
-                                            self.ctx.clone(),
-                                            call.id.clone(),
+                        let Some(steer) = next_steer()? else {
+                            return Ok(answer);
+                        };
+                        self.push_message(Message::user_text(steer))?;
+                    } else {
+                        on_event(AgentEvent::ToolStarted)?;
+                        self.push_message(Message::Assistant(blocks))?;
+                        let mut tool_events = Vec::new();
+                        for call in tool_calls.iter().cloned() {
+                            let name = call.name.clone();
+                            let (result, display_style, command, event_content, display_lines) =
+                                match self.tools.get(&call.name) {
+                                    Some(tool) => {
+                                        let display_style = tool.display_style();
+                                        let command = tool.display_command(&call.arguments);
+                                        let event_content =
+                                            tool.display_content(&call.arguments, &self.ctx);
+                                        let result = match tool
+                                            .call(
+                                                call.arguments.clone(),
+                                                self.ctx.clone(),
+                                                call.id.clone(),
+                                            )
+                                            .await
+                                        {
+                                            Ok(result) => result,
+                                            Err(err) => ToolResult {
+                                                id: call.id.clone(),
+                                                ok: false,
+                                                content: err.to_string(),
+                                            },
+                                        };
+                                        let mut display_lines =
+                                            tool.display_lines(&call.arguments, &self.ctx, &result);
+                                        if !result.ok
+                                            && !display_lines
+                                                .iter()
+                                                .any(|line| line == &result.content)
+                                        {
+                                            display_lines.push(result.content.clone());
+                                        }
+                                        (
+                                            result,
+                                            display_style,
+                                            command,
+                                            event_content,
+                                            display_lines,
                                         )
-                                        .await
-                                    {
-                                        Ok(result) => result,
-                                        Err(err) => ToolResult {
+                                    }
+                                    None => {
+                                        let result = ToolResult {
                                             id: call.id.clone(),
                                             ok: false,
-                                            content: err.to_string(),
-                                        },
-                                    };
-                                    let mut display_lines =
-                                        tool.display_lines(&call.arguments, &self.ctx, &result);
-                                    if !result.ok
-                                        && !display_lines.iter().any(|line| line == &result.content)
-                                    {
-                                        display_lines.push(result.content.clone());
+                                            content: format!("Unknown tool: {}", call.name),
+                                        };
+                                        let display_lines =
+                                            vec![call.name.clone(), result.content.clone()];
+                                        (
+                                            result,
+                                            ToolDisplayStyle::default_tool(),
+                                            None,
+                                            None,
+                                            display_lines,
+                                        )
                                     }
-                                    (result, display_style, command, event_content, display_lines)
-                                }
-                                None => {
-                                    let result = ToolResult {
-                                        id: call.id.clone(),
-                                        ok: false,
-                                        content: format!("Unknown tool: {}", call.name),
-                                    };
-                                    let display_lines =
-                                        vec![call.name.clone(), result.content.clone()];
-                                    (
-                                        result,
-                                        ToolDisplayStyle::default_tool(),
-                                        None,
-                                        None,
-                                        display_lines,
-                                    )
-                                }
-                            };
-                        let display_content =
-                            event_content.unwrap_or_else(|| result.content.clone());
-                        let ok = result.ok;
-                        self.push_message(Message::ToolResult(result))?;
-                        tool_events.push(AgentEvent::ToolFinished {
-                            name,
-                            command,
-                            ok,
-                            content: display_content,
-                            display_style,
-                            display_lines,
-                        });
-                    }
-                    for event in tool_events {
-                        on_event(event)?;
+                                };
+                            let display_content =
+                                event_content.unwrap_or_else(|| result.content.clone());
+                            let ok = result.ok;
+                            self.push_message(Message::ToolResult(result))?;
+                            tool_events.push(AgentEvent::ToolFinished {
+                                name,
+                                command,
+                                ok,
+                                content: display_content,
+                                display_style,
+                                display_lines,
+                            });
+                        }
+                        for event in tool_events {
+                            on_event(event)?;
+                        }
                     }
                 }
             }

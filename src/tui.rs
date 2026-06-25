@@ -6,7 +6,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -146,6 +146,7 @@ struct App {
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
+    steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<String>,
     input_history: Vec<String>,
     input_history_cursor: Option<usize>,
@@ -497,6 +498,7 @@ impl App {
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
+            steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
             input_history: Vec::new(),
             input_history_cursor: None,
@@ -1515,30 +1517,36 @@ impl App {
         self.active_tool_call = false;
         let interrupt_requested = Arc::new(AtomicBool::new(false));
         let tool_call_active = Arc::new(AtomicBool::new(false));
+        let steering_prompts = Arc::new(Mutex::new(VecDeque::new()));
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let result = {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
             let callback_tool_call_active = Arc::clone(&tool_call_active);
-            let mut run_future = Box::pin(agent.run_with_events(prompt, move |event| {
-                match &event {
-                    AgentEvent::ToolStarted => {
-                        callback_tool_call_active.store(true, Ordering::SeqCst)
+            let run_steering_prompts = Arc::clone(&steering_prompts);
+            let mut run_future = Box::pin(agent.run_with_events_and_steering(
+                prompt,
+                move |event| {
+                    match &event {
+                        AgentEvent::ToolStarted => {
+                            callback_tool_call_active.store(true, Ordering::SeqCst)
+                        }
+                        AgentEvent::ToolFinished { .. } => {
+                            callback_tool_call_active.store(false, Ordering::SeqCst)
+                        }
+                        AgentEvent::StepStarted(_)
+                        | AgentEvent::OutputDelta(_)
+                        | AgentEvent::ReasoningDelta(_)
+                        | AgentEvent::ContextUsage(_)
+                        | AgentEvent::Usage(_) => {}
                     }
-                    AgentEvent::ToolFinished { .. } => {
-                        callback_tool_call_active.store(false, Ordering::SeqCst)
+                    let _ = event_tx.send(event);
+                    if callback_interrupt_requested.load(Ordering::SeqCst) {
+                        return Err(crate::model::ModelError::Interrupted);
                     }
-                    AgentEvent::StepStarted(_)
-                    | AgentEvent::OutputDelta(_)
-                    | AgentEvent::ReasoningDelta(_)
-                    | AgentEvent::ContextUsage(_)
-                    | AgentEvent::Usage(_) => {}
-                }
-                let _ = event_tx.send(event);
-                if callback_interrupt_requested.load(Ordering::SeqCst) {
-                    return Err(crate::model::ModelError::Interrupted);
-                }
-                Ok(())
-            }));
+                    Ok(())
+                },
+                move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
+            ));
             loop {
                 tokio::select! {
                     result = &mut run_future => {
@@ -1567,6 +1575,7 @@ impl App {
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.drain_steering_prompts_to(&steering_prompts);
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
@@ -1582,6 +1591,7 @@ impl App {
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.drain_steering_prompts_to(&steering_prompts);
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
@@ -1631,6 +1641,14 @@ impl App {
         }
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    fn drain_steering_prompts_to(&mut self, target: &Arc<Mutex<VecDeque<String>>>) {
+        if self.steering_prompts.is_empty() {
+            return;
+        }
+        let mut target = target.lock().unwrap();
+        target.extend(self.steering_prompts.drain(..));
     }
 
     fn insert_running_paste(&mut self, text: &str) {
@@ -1735,8 +1753,8 @@ impl App {
                 self.input_cursor = self.input_char_len();
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.insert_input_char('\n');
+            (KeyModifiers::ALT, KeyCode::Enter) => {
+                self.queue_prompt_after_turn(terminal)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -1789,7 +1807,7 @@ impl App {
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
-                self.queue_prompt(prompt, terminal)?;
+                self.queue_steering_prompt(prompt, terminal)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
@@ -1805,6 +1823,38 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn queue_steering_prompt(
+        &mut self,
+        prompt: String,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.reset_input_history_navigation();
+        self.input.clear();
+        self.input_cursor = 0;
+        self.clamp_command_selection();
+        self.steering_prompts.push_back(prompt);
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "queued steer {} for after the current output or tool call",
+                self.steering_prompts.len()
+            )),
+        )?;
+        self.status = format!("queued {} steer(s)", self.steering_prompts.len());
+        Ok(())
+    }
+
+    fn queue_prompt_after_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let prompt = self.input.trim().to_string();
+        if prompt.is_empty() {
+            self.input.clear();
+            self.input_cursor = 0;
+            self.clamp_command_selection();
+            return Ok(());
+        }
+        self.queue_prompt(prompt, terminal)
     }
 
     fn queue_prompt(
