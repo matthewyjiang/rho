@@ -117,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
                     provider: cfg.provider,
                     model: cfg.model,
                     reasoning: cfg.reasoning,
+                    show_reasoning_output: cfg.show_reasoning_output,
                     auth: cfg.auth,
                     title_provider: cfg.title_provider,
                     title_model: cfg.title_model,

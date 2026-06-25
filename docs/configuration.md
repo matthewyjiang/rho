@@ -8,6 +8,7 @@ model = "gpt-5.5"
 max_output_bytes = 12000
 auth = "api-key" # or "codex"
 reasoning = "medium" # off, minimal, low, medium, high, or xhigh
+show_reasoning_output = true
 auto_compact = false
 compact_threshold_percent = 85
 compact_recent_messages = 8
@@ -35,13 +36,15 @@ rho --config ~/.rho/config.toml
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`, saves immediately, and applies to the current session. The `max_output_bytes` row opens a numeric input and saves for the next session.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
 [`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) for providers with available auth, and `/model provider/model` can switch explicitly.
 
 ## Reasoning options
 
 `reasoning` is the user-facing thinking level. Supported values are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`. For supported OpenAI Responses providers, `off` omits the reasoning object. Other levels send `reasoning.summary = "auto"`; `minimal` maps to effort `low`, while `low`, `medium`, `high`, and `xhigh` map to matching effort values.
+
+`show_reasoning_output` controls whether streamed reasoning text is displayed and stored in the TUI transcript. It defaults to `true`. Changing it from `/config` applies to the next model call.
 
 ## Tool output limit
 

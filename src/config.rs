@@ -12,6 +12,7 @@ pub struct Config {
     pub max_tool_output_lines: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
+    pub show_reasoning_output: bool,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_recent_messages: usize,
@@ -29,6 +30,7 @@ impl Default for Config {
             max_tool_output_lines: 10,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
+            show_reasoning_output: true,
             auto_compact: false,
             compact_threshold_percent: 85,
             compact_recent_messages: 8,
@@ -72,6 +74,9 @@ impl Config {
             cfg.reasoning = v;
         } else if let Some(v) = file.reasoning_effort {
             cfg.reasoning = v.parse()?;
+        }
+        if let Some(v) = file.show_reasoning_output {
+            cfg.show_reasoning_output = v;
         }
         if let Some(v) = file.auto_compact {
             cfg.auto_compact = v;
@@ -123,10 +128,32 @@ struct PartialConfig {
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
     reasoning_effort: Option<String>,
+    show_reasoning_output: Option<bool>,
     auto_compact: Option<bool>,
     compact_threshold_percent: Option<u8>,
     compact_recent_messages: Option<usize>,
     title_provider: Option<String>,
     title_model: Option<String>,
     title_auth: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn default_shows_reasoning_output() {
+        assert!(Config::default().show_reasoning_output);
+    }
+
+    #[test]
+    fn loads_reasoning_output_visibility() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "show_reasoning_output = false\n").unwrap();
+
+        let config = Config::load(Some(path)).unwrap();
+
+        assert!(!config.show_reasoning_output);
+    }
 }

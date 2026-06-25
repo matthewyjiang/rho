@@ -89,6 +89,7 @@ pub struct TuiInfo {
     pub provider: String,
     pub model: String,
     pub reasoning: ReasoningLevel,
+    pub show_reasoning_output: bool,
     pub auth: String,
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
@@ -143,6 +144,7 @@ struct App {
     reasoning_stream: AppendOnlyStream,
     current_stream_kind: Option<StreamKind>,
     current_turn_start: Option<usize>,
+    active_turn_show_reasoning_output: bool,
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
@@ -483,6 +485,7 @@ impl App {
             .as_ref()
             .map(|_| "no providers configured; run /login to sign in".into())
             .unwrap_or_else(|| "ready".into());
+        let active_turn_show_reasoning_output = info.show_reasoning_output;
         Self {
             info,
             input: String::new(),
@@ -495,6 +498,7 @@ impl App {
             reasoning_stream: AppendOnlyStream::default(),
             current_stream_kind: None,
             current_turn_start: None,
+            active_turn_show_reasoning_output,
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
@@ -980,6 +984,7 @@ impl App {
             }
             (_, KeyCode::Esc) => {
                 let config = Config::load(self.info.config_path.clone())?;
+                self.info.show_reasoning_output = config.show_reasoning_output;
                 self.composer = ComposerMode::Picker(config_picker::config_picker(
                     &self.info,
                     config.max_output_bytes,
@@ -1507,6 +1512,7 @@ impl App {
         }
         self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
         self.current_turn_start = Some(self.transcript.len());
+        self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
         self.status = "running".into();
         self.running = true;
@@ -2100,6 +2106,9 @@ impl App {
                 )?;
                 self.status = "config action unavailable while running".into();
             }
+            config_picker::SHOW_REASONING_OUTPUT_VALUE => {
+                self.toggle_reasoning_output(terminal)?;
+            }
             _ => {}
         }
         Ok(())
@@ -2207,6 +2216,9 @@ impl App {
                 Ok(switched || drained)
             }
             AgentEvent::ReasoningDelta(text) => {
+                if !self.active_turn_show_reasoning_output {
+                    return Ok(false);
+                }
                 let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
                 self.reasoning_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
@@ -2664,6 +2676,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match value {
             config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
+            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(terminal),
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -2714,6 +2727,7 @@ impl App {
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            self.info.show_reasoning_output = config.show_reasoning_output;
             self.composer = ComposerMode::Picker(config_picker::config_picker(
                 &self.info,
                 config.max_output_bytes,
@@ -2733,6 +2747,44 @@ impl App {
                 )?;
                 self.status = "config save failed".into();
             }
+        }
+        Ok(())
+    }
+
+    fn toggle_reasoning_output(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let show_reasoning_output = !self.info.show_reasoning_output;
+        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.show_reasoning_output = show_reasoning_output;
+            config.save(self.info.config_path.clone())
+        });
+        match save_result {
+            Ok(()) => {
+                self.info.show_reasoning_output = show_reasoning_output;
+                self.status = if show_reasoning_output {
+                    "reasoning output: shown".into()
+                } else {
+                    "reasoning output: hidden".into()
+                };
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not save reasoning output setting: {err}")),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            self.info.show_reasoning_output = config.show_reasoning_output;
+            self.composer = ComposerMode::Picker(config_picker::config_picker(
+                &self.info,
+                config.max_output_bytes,
+                config.max_tool_output_lines,
+            ));
         }
         Ok(())
     }
@@ -2973,6 +3025,7 @@ impl App {
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let config = Config::load(self.info.config_path.clone())?;
         self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
+        self.info.show_reasoning_output = config.show_reasoning_output;
         self.composer = ComposerMode::Picker(config_picker::config_picker(
             &self.info,
             config.max_output_bytes,
@@ -3986,6 +4039,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                show_reasoning_output: true,
                 auth: "api-key".into(),
                 title_provider: None,
                 title_model: None,
@@ -4720,6 +4774,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                show_reasoning_output: true,
                 auth: "api-key".into(),
                 title_provider: None,
                 title_model: None,

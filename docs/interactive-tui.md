@@ -51,7 +51,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai` and `openai-codex`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
 | `/resume [id]` | Show [session resume](/sessions) help. Interactive session switching/listing is not implemented yet. |
-| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; max output bytes changes save for the next session. |
+| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility applies on the next model call; max output bytes changes save for the next session. |
 | `/exit` | Quit the TUI. |
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
