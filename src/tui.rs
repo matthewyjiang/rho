@@ -6,7 +6,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -146,7 +146,11 @@ struct App {
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
+    steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<String>,
+    input_history: Vec<String>,
+    input_history_cursor: Option<usize>,
+    input_history_draft: Option<String>,
     paste_burst: PasteBurst,
     transcript: Vec<Entry>,
     last_inserted_was_tool: bool,
@@ -494,7 +498,11 @@ impl App {
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
+            steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
+            input_history: Vec::new(),
+            input_history_cursor: None,
+            input_history_draft: None,
             paste_burst: PasteBurst::default(),
             transcript: Vec::new(),
             last_inserted_was_tool: false,
@@ -664,21 +672,32 @@ impl App {
                 self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
+            (KeyModifiers::ALT, KeyCode::Up) => {
+                if self.recall_last_queued_prompt() {
+                    self.status = format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    );
+                }
+                self.ctrl_c_streak = 0;
+            }
             (_, KeyCode::Up) => {
                 let width = terminal.size()?.width as usize;
-                self.input_cursor = self.input_cursor.saturating_sub(width.max(1));
+                self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Down) => {
                 let width = terminal.size()?.width as usize;
-                self.input_cursor = (self.input_cursor + width.max(1)).min(self.input_char_len());
+                self.recall_input_history_or_move_cursor(HistoryDirection::Next, width);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Home) => {
+                self.reset_input_history_navigation();
                 self.input_cursor = 0;
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
+                self.reset_input_history_navigation();
                 self.input_cursor = self.input_char_len();
                 self.ctrl_c_streak = 0;
             }
@@ -1139,7 +1158,90 @@ impl App {
             .unwrap_or(self.input.len())
     }
 
+    fn reset_input_history_navigation(&mut self) {
+        self.input_history_cursor = None;
+        self.input_history_draft = None;
+    }
+
+    fn push_input_history(&mut self, prompt: &str) {
+        if prompt.is_empty() || self.input_history.last().is_some_and(|last| last == prompt) {
+            return;
+        }
+        self.input_history.push(prompt.to_string());
+    }
+
+    fn recall_input_history(&mut self, direction: HistoryDirection) -> bool {
+        if self.input_history.is_empty() {
+            return false;
+        }
+
+        let next_cursor = match (direction, self.input_history_cursor) {
+            (HistoryDirection::Previous, None) => {
+                self.input_history_draft = Some(self.input.clone());
+                self.input_history.len() - 1
+            }
+            (HistoryDirection::Previous, Some(0)) => 0,
+            (HistoryDirection::Previous, Some(cursor)) => cursor - 1,
+            (HistoryDirection::Next, None) => return false,
+            (HistoryDirection::Next, Some(cursor)) if cursor + 1 < self.input_history.len() => {
+                cursor + 1
+            }
+            (HistoryDirection::Next, Some(_)) => {
+                self.input = self.input_history_draft.take().unwrap_or_default();
+                self.input_cursor = self.input_char_len();
+                self.input_history_cursor = None;
+                self.input_changed();
+                return true;
+            }
+        };
+
+        self.input = self.input_history[next_cursor].clone();
+        self.input_cursor = self.input_char_len();
+        self.input_history_cursor = Some(next_cursor);
+        self.input_changed();
+        true
+    }
+
+    fn recall_input_history_or_move_cursor(
+        &mut self,
+        direction: HistoryDirection,
+        terminal_width: usize,
+    ) {
+        let visual_lines = input_visual_lines(&self.input, terminal_width);
+        let cursor_position = input_cursor_position(&self.input, self.input_cursor, terminal_width);
+        let can_recall = match direction {
+            HistoryDirection::Previous => cursor_position.y == 0,
+            HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
+        };
+
+        if can_recall && self.recall_input_history(direction) {
+            return;
+        }
+
+        let width = terminal_width.max(1);
+        match direction {
+            HistoryDirection::Previous => {
+                self.input_cursor = self.input_cursor.saturating_sub(width);
+            }
+            HistoryDirection::Next => {
+                self.input_cursor = (self.input_cursor + width).min(self.input_char_len());
+            }
+        }
+    }
+
+    fn recall_last_queued_prompt(&mut self) -> bool {
+        let Some(prompt) = self.queued_prompts.pop_back() else {
+            return false;
+        };
+        self.input = prompt;
+        self.input_cursor = self.input_char_len();
+        self.reset_input_history_navigation();
+        self.input_changed();
+        true
+    }
+
     fn insert_input_char(&mut self, ch: char) {
+        self.reset_input_history_navigation();
         let byte_index = self.input_byte_index(self.input_cursor);
         self.input.insert(byte_index, ch);
         self.input_cursor += 1;
@@ -1147,6 +1249,7 @@ impl App {
     }
 
     fn insert_input_text(&mut self, text: &str) {
+        self.reset_input_history_navigation();
         let byte_index = self.input_byte_index(self.input_cursor);
         self.input.insert_str(byte_index, text);
         self.input_cursor += text.chars().count();
@@ -1157,6 +1260,7 @@ impl App {
         if self.input_cursor == 0 {
             return;
         }
+        self.reset_input_history_navigation();
         let start = self.input_byte_index(self.input_cursor - 1);
         let end = self.input_byte_index(self.input_cursor);
         self.input.replace_range(start..end, "");
@@ -1168,6 +1272,7 @@ impl App {
         if self.input_cursor >= self.input_char_len() {
             return;
         }
+        self.reset_input_history_navigation();
         let start = self.input_byte_index(self.input_cursor);
         let end = self.input_byte_index(self.input_cursor + 1);
         self.input.replace_range(start..end, "");
@@ -1175,6 +1280,7 @@ impl App {
     }
 
     fn delete_word_before_cursor(&mut self) {
+        self.reset_input_history_navigation();
         let start_cursor = previous_word_boundary(&self.input, self.input_cursor);
         let start = self.input_byte_index(start_cursor);
         let end = self.input_byte_index(self.input_cursor);
@@ -1389,6 +1495,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
+        self.push_input_history(&prompt);
+        self.reset_input_history_navigation();
         self.ensure_session(agent)?;
         if !agent
             .messages()
@@ -1409,30 +1517,36 @@ impl App {
         self.active_tool_call = false;
         let interrupt_requested = Arc::new(AtomicBool::new(false));
         let tool_call_active = Arc::new(AtomicBool::new(false));
+        let steering_prompts = Arc::new(Mutex::new(VecDeque::new()));
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let result = {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
             let callback_tool_call_active = Arc::clone(&tool_call_active);
-            let mut run_future = Box::pin(agent.run_with_events(prompt, move |event| {
-                match &event {
-                    AgentEvent::ToolStarted => {
-                        callback_tool_call_active.store(true, Ordering::SeqCst)
+            let run_steering_prompts = Arc::clone(&steering_prompts);
+            let mut run_future = Box::pin(agent.run_with_events_and_steering(
+                prompt,
+                move |event| {
+                    match &event {
+                        AgentEvent::ToolStarted => {
+                            callback_tool_call_active.store(true, Ordering::SeqCst)
+                        }
+                        AgentEvent::ToolFinished { .. } => {
+                            callback_tool_call_active.store(false, Ordering::SeqCst)
+                        }
+                        AgentEvent::StepStarted(_)
+                        | AgentEvent::OutputDelta(_)
+                        | AgentEvent::ReasoningDelta(_)
+                        | AgentEvent::ContextUsage(_)
+                        | AgentEvent::Usage(_) => {}
                     }
-                    AgentEvent::ToolFinished { .. } => {
-                        callback_tool_call_active.store(false, Ordering::SeqCst)
+                    let _ = event_tx.send(event);
+                    if callback_interrupt_requested.load(Ordering::SeqCst) {
+                        return Err(crate::model::ModelError::Interrupted);
                     }
-                    AgentEvent::StepStarted(_)
-                    | AgentEvent::OutputDelta(_)
-                    | AgentEvent::ReasoningDelta(_)
-                    | AgentEvent::ContextUsage(_)
-                    | AgentEvent::Usage(_) => {}
-                }
-                let _ = event_tx.send(event);
-                if callback_interrupt_requested.load(Ordering::SeqCst) {
-                    return Err(crate::model::ModelError::Interrupted);
-                }
-                Ok(())
-            }));
+                    Ok(())
+                },
+                move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
+            ));
             loop {
                 tokio::select! {
                     result = &mut run_future => {
@@ -1461,6 +1575,7 @@ impl App {
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.drain_steering_prompts_to(&steering_prompts);
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
@@ -1476,6 +1591,7 @@ impl App {
                             Ok(StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
+                        self.drain_steering_prompts_to(&steering_prompts);
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
@@ -1525,6 +1641,14 @@ impl App {
         }
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    fn drain_steering_prompts_to(&mut self, target: &Arc<Mutex<VecDeque<String>>>) {
+        if self.steering_prompts.is_empty() {
+            return;
+        }
+        let mut target = target.lock().unwrap();
+        target.extend(self.steering_prompts.drain(..));
     }
 
     fn insert_running_paste(&mut self, text: &str) {
@@ -1600,16 +1724,37 @@ impl App {
                 self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
+            (KeyModifiers::ALT, KeyCode::Up) => {
+                if self.recall_last_queued_prompt() {
+                    self.status = format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    );
+                }
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Up) => {
+                let width = terminal.size()?.width as usize;
+                self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
+                self.ctrl_c_streak = 0;
+            }
+            (_, KeyCode::Down) => {
+                let width = terminal.size()?.width as usize;
+                self.recall_input_history_or_move_cursor(HistoryDirection::Next, width);
+                self.ctrl_c_streak = 0;
+            }
             (_, KeyCode::Home) => {
+                self.reset_input_history_navigation();
                 self.input_cursor = 0;
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
+                self.reset_input_history_navigation();
                 self.input_cursor = self.input_char_len();
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.insert_input_char('\n');
+            (KeyModifiers::ALT, KeyCode::Enter) => {
+                self.queue_prompt_after_turn(terminal)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -1662,7 +1807,7 @@ impl App {
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
-                self.queue_prompt(prompt, terminal)?;
+                self.queue_steering_prompt(prompt, terminal)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
@@ -1680,11 +1825,44 @@ impl App {
         Ok(())
     }
 
+    fn queue_steering_prompt(
+        &mut self,
+        prompt: String,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.reset_input_history_navigation();
+        self.input.clear();
+        self.input_cursor = 0;
+        self.clamp_command_selection();
+        self.steering_prompts.push_back(prompt);
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "queued steer {} for after the current output or tool call",
+                self.steering_prompts.len()
+            )),
+        )?;
+        self.status = format!("queued {} steer(s)", self.steering_prompts.len());
+        Ok(())
+    }
+
+    fn queue_prompt_after_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let prompt = self.input.trim().to_string();
+        if prompt.is_empty() {
+            self.input.clear();
+            self.input_cursor = 0;
+            self.clamp_command_selection();
+            return Ok(());
+        }
+        self.queue_prompt(prompt, terminal)
+    }
+
     fn queue_prompt(
         &mut self,
         prompt: String,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        self.reset_input_history_navigation();
         self.input.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
@@ -3765,6 +3943,12 @@ enum StreamControl {
     Resize,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum HistoryDirection {
+    Previous,
+    Next,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4683,6 +4867,71 @@ mod tests {
         assert_eq!(picker.selected_item().unwrap().value, "model-b");
         picker.select_next();
         assert_eq!(picker.selected_item().unwrap().value, "model-a");
+    }
+
+    #[test]
+    fn input_history_recalls_previous_messages_and_restores_draft() {
+        let mut app = test_app();
+        app.push_input_history("first message");
+        app.push_input_history("second message");
+        app.input = "draft".into();
+        app.input_cursor = app.input_char_len();
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+        assert_eq!(app.input, "second message");
+        assert_eq!(app.input_cursor, "second message".chars().count());
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+        assert_eq!(app.input, "first message");
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+        assert_eq!(app.input, "second message");
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+        assert_eq!(app.input, "draft");
+        assert_eq!(app.input_history_cursor, None);
+    }
+
+    #[test]
+    fn editing_input_exits_history_navigation() {
+        let mut app = test_app();
+        app.push_input_history("previous");
+        app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+
+        app.insert_input_char('!');
+
+        assert_eq!(app.input, "previous!");
+        assert_eq!(app.input_history_cursor, None);
+        assert_eq!(app.input_history_draft, None);
+    }
+
+    #[test]
+    fn alt_up_recalls_last_queued_message_for_editing() {
+        let mut app = test_app();
+        app.queued_prompts.push_back("first queued".into());
+        app.queued_prompts.push_back("second queued".into());
+
+        assert!(app.recall_last_queued_prompt());
+
+        assert_eq!(app.input, "second queued");
+        assert_eq!(app.input_cursor, "second queued".chars().count());
+        assert_eq!(app.queued_prompts, VecDeque::from(["first queued".into()]));
+    }
+
+    #[test]
+    fn alt_up_removed_queued_messages_do_not_enter_prompt_history() {
+        let mut app = test_app();
+        app.queued_prompts.push_back("first queued".into());
+        app.queued_prompts.push_back("second queued".into());
+
+        assert!(app.recall_last_queued_prompt());
+        app.input.clear();
+        app.input_cursor = 0;
+        assert!(app.recall_last_queued_prompt());
+
+        assert_eq!(app.input, "first queued");
+        assert!(app.queued_prompts.is_empty());
+        assert!(!app.recall_input_history(HistoryDirection::Previous));
     }
 
     #[test]
