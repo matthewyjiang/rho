@@ -1894,7 +1894,8 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::Model
+            CommandId::New
+            | CommandId::Model
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
@@ -2409,6 +2410,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::New => self.execute_new_command(terminal, agent),
             CommandId::Model => {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
@@ -2436,6 +2438,37 @@ impl App {
         self.insert_entry(terminal, &Entry::Notice("exiting rho".into()))?;
         self.should_quit = true;
         self.status = "exiting".into();
+        Ok(())
+    }
+
+    fn execute_new_command(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        agent.reset();
+        agent.set_session_id(None);
+        agent.clear_history_sink();
+        self.info.session_id = None;
+        self.composer = ComposerMode::Input;
+        self.input.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.queued_prompts.clear();
+        self.steering_prompts.clear();
+        self.reset_streams();
+        self.running = false;
+        self.active_tool_call = false;
+        self.cumulative_usage = None;
+        self.latest_usage = None;
+        self.current_context = None;
+        self.pending_session_title = None;
+        self.current_turn_start = None;
+        self.transcript.clear();
+        self.last_inserted_was_tool = false;
+        self.reflow_history(terminal)?;
+        self.status = "new session".into();
         Ok(())
     }
 

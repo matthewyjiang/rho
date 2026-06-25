@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
+    New,
     Login,
     Logout,
     Model,
@@ -36,6 +37,12 @@ pub enum CommandParseError {
 }
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        id: CommandId::New,
+        name: "new",
+        usage: "/new",
+        description: "start a new session",
+    },
     CommandSpec {
         id: CommandId::Login,
         name: "login",
@@ -187,6 +194,7 @@ mod tests {
 
         assert_eq!(matches.len(), COMMANDS.len());
         assert!(matches.iter().any(|command| command.name == "model"));
+        assert!(matches.iter().any(|command| command.name == "new"));
     }
 
     #[test]
@@ -230,6 +238,14 @@ mod tests {
 
         assert_eq!(invocation.id, CommandId::Skills);
         assert_eq!(invocation.name, "skills");
+    }
+
+    #[test]
+    fn parses_new_command() {
+        let invocation = parse_command("/new").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::New);
+        assert_eq!(invocation.name, "new");
     }
 
     #[test]
