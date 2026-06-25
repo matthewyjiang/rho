@@ -96,9 +96,10 @@ Most editing keys work the way they do in a normal terminal input.
 | --- | --- |
 | `esc` | Interrupt the current response, or hide the command palette when it is open |
 | `/` at start | Open the command palette |
-| `up` / `down` | Select a command while the palette is open |
+| `up` / `down` | Re-enter previous prompts, or select a command while the palette is open |
 | `tab` | Complete the selected command while the palette is open |
-| `enter` | Send a prompt, or run a selected slash command |
+| `enter` | Send a prompt, run a selected slash command, or queue a prompt while a response is running |
+| `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
 | `ctrl-c` | Clear input, then quit if pressed again |
 
