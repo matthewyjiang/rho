@@ -1,5 +1,6 @@
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiPicker};
 pub(super) const REASONING_VALUE: &str = "reasoning";
+pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 
@@ -25,6 +26,23 @@ pub(super) fn config_picker(
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: REASONING_VALUE.into(),
+            },
+            PickerItem {
+                label: "Show reasoning output".into(),
+                detail: Some(
+                    "Controls whether model reasoning text is shown in the TUI. Applies next turn."
+                        .into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: if info.show_reasoning_output {
+                        "shown".into()
+                    } else {
+                        "hidden".into()
+                    },
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: SHOW_REASONING_OUTPUT_VALUE.into(),
             },
             PickerItem {
                 label: "Max output bytes".into(),
