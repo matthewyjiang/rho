@@ -2974,6 +2974,56 @@ impl App {
         }
     }
 
+    fn refresh_main_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
+        let filter = match &self.composer {
+            ComposerMode::Picker(picker) => picker.filter.clone(),
+            _ => String::new(),
+        };
+        let config = Config::load(self.info.config_path.clone())?;
+        let mut picker = config_picker::config_picker(
+            &self.info,
+            config.max_output_bytes,
+            config.max_tool_output_lines,
+        );
+        Self::restore_picker_position(&mut picker, selected_value, filter);
+        self.composer = ComposerMode::Picker(picker);
+        Ok(())
+    }
+
+    fn refresh_web_search_config_picker(&mut self, selected_value: &str) {
+        let filter = match &self.composer {
+            ComposerMode::Picker(picker) => picker.filter.clone(),
+            _ => String::new(),
+        };
+        let mut picker = config_picker::web_search_config_picker(&self.info);
+        Self::restore_picker_position(&mut picker, selected_value, filter);
+        self.composer = ComposerMode::Picker(picker);
+    }
+
+    fn restore_picker_position(picker: &mut UiPicker, selected_value: &str, filter: String) {
+        picker.filter = filter;
+        if let Some(index) = picker
+            .items
+            .iter()
+            .position(|item| item.value == selected_value)
+        {
+            picker.selected = index;
+            if picker.selected_item().is_some() {
+                return;
+            }
+        }
+        picker.filter.clear();
+        if let Some(index) = picker
+            .items
+            .iter()
+            .position(|item| item.value == selected_value)
+        {
+            picker.selected = index;
+        } else {
+            picker.select_first_match();
+        }
+    }
+
     fn cycle_reasoning(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -3003,11 +3053,7 @@ impl App {
         ) {
             let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
-            self.composer = ComposerMode::Picker(config_picker::config_picker(
-                &self.info,
-                config.max_output_bytes,
-                config.max_tool_output_lines,
-            ));
+            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {
             Ok(()) => {
@@ -3055,16 +3101,12 @@ impl App {
         ) {
             let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
-            self.composer = ComposerMode::Picker(config_picker::config_picker(
-                &self.info,
-                config.max_output_bytes,
-                config.max_tool_output_lines,
-            ));
+            self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
         }
         Ok(())
     }
 
-    fn cycle_web_search_provider(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn cycle_web_search_provider(&mut self, _terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let mut config = Config::load(self.info.config_path.clone())?;
         config.web_search_provider = match config.web_search_provider.as_str() {
             "auto" => "openai",
@@ -3077,13 +3119,7 @@ impl App {
         .into();
         let provider = config.web_search_provider.clone();
         config.save(self.info.config_path.clone())?;
-        self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "web search provider set to {provider}; applies next session"
-            )),
-        )?;
+        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
         self.status = format!("web search: {provider}");
         Ok(())
     }
