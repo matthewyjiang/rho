@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.11.0...rho-coding-agent-v0.12.0) (2026-06-26)
+
+
+### Features
+
+* **tui:** add new session slash command ([#73](https://github.com/matthewyjiang/rho/issues/73)) ([f8a4bde](https://github.com/matthewyjiang/rho/commit/f8a4bde7ff8673a7460bc6c34cdb985bf95877a1))
+* **tui:** add prompt history and queued edits ([#68](https://github.com/matthewyjiang/rho/issues/68)) ([8bf14bd](https://github.com/matthewyjiang/rho/commit/8bf14bdf6c90d48279b0be8d07609390fe2745ee))
+* **tui:** add reasoning output toggle ([#72](https://github.com/matthewyjiang/rho/issues/72)) ([5fd989c](https://github.com/matthewyjiang/rho/commit/5fd989c28aeb86e928dd6f7929f8f81d17770b2f))
+* **web:** add zero-config web access tools ([#77](https://github.com/matthewyjiang/rho/issues/77)) ([e3a0052](https://github.com/matthewyjiang/rho/commit/e3a00527af165a1fce3dad53a81716847c1f420a))
+
 ## [0.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.10.0...rho-coding-agent-v0.11.0) (2026-06-24)
 
 
