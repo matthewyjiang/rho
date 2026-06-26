@@ -13,14 +13,19 @@ write_file
 edit_file
 ```
 
-It also exposes the `skill` tool and one native shell tool for the current platform:
+It also exposes the `skill` tool, web access tools with zero-config invocation, and one native shell tool for the current platform:
 
 ```text
-bash        macOS and Linux
-powershell  Windows
+web_search          search with optional provider credentials and store snippets by default
+fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
+get_search_content  retrieve stored content from a prior web_search or fetch_content call
+bash                macOS and Linux
+powershell          Windows
 ```
 
-These tools can read and modify files and run shell commands in the working directory.
+Web access tools keep normal prompts small. They return concise previews, snippets, citations or warnings when available, and response handles for stored content. `web_search` uses optional provider credentials for live results and stores fetched source pages only when `includeContent` succeeds. GitHub repository URLs prefer a local clone so the agent can inspect real files; oversized repositories fall back to the GitHub API unless `forceClone` is set.
+
+These tools can read and modify files, run shell commands in the working directory, and fetch external or local content when invoked.
 
 ## File writes and diffs
 

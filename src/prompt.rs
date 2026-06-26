@@ -14,6 +14,7 @@ fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) 
     out.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
+Web access is available through tool schemas; invoke it only when needed and retrieve stored content handles selectively.
 
 Use structured tool calls when available. Do not write tool calls in prose.
 
@@ -180,6 +181,17 @@ mod tests {
             skill_dir.join("SKILL.md").display()
         )));
         assert!(!prompt.contains("rho skill rules"));
+    }
+
+    #[test]
+    fn keeps_web_access_guidance_concise_and_lazy() {
+        let project = TempDir::new().unwrap();
+
+        let prompt = system_prompt_with_home(&[], project.path(), None);
+
+        assert!(prompt.contains("Web access is available through tool schemas"));
+        assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
+        assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
     }
 
     #[test]
