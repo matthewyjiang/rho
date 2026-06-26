@@ -19,6 +19,10 @@ pub struct Config {
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
+    pub web_search_provider: String,
+    pub web_search_openai_api_key: Option<String>,
+    pub web_search_exa_api_key: Option<String>,
+    pub web_search_brave_api_key: Option<String>,
 }
 
 impl Default for Config {
@@ -37,6 +41,10 @@ impl Default for Config {
             title_provider: None,
             title_model: None,
             title_auth: None,
+            web_search_provider: "auto".into(),
+            web_search_openai_api_key: None,
+            web_search_exa_api_key: None,
+            web_search_brave_api_key: None,
         }
     }
 }
@@ -96,6 +104,18 @@ impl Config {
         if let Some(v) = file.title_auth {
             cfg.title_auth = Some(v);
         }
+        if let Some(v) = file.web_search_provider {
+            cfg.web_search_provider = normalize_web_search_provider(v);
+        }
+        if let Some(v) = file.web_search_openai_api_key {
+            cfg.web_search_openai_api_key = non_empty_secret(v);
+        }
+        if let Some(v) = file.web_search_exa_api_key {
+            cfg.web_search_exa_api_key = non_empty_secret(v);
+        }
+        if let Some(v) = file.web_search_brave_api_key {
+            cfg.web_search_brave_api_key = non_empty_secret(v);
+        }
         Ok(cfg)
     }
 
@@ -135,6 +155,22 @@ struct PartialConfig {
     title_provider: Option<String>,
     title_model: Option<String>,
     title_auth: Option<String>,
+    web_search_provider: Option<String>,
+    web_search_openai_api_key: Option<String>,
+    web_search_exa_api_key: Option<String>,
+    web_search_brave_api_key: Option<String>,
+}
+
+fn normalize_web_search_provider(provider: String) -> String {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "auto" | "openai" | "exa" | "brave" | "disabled" => provider.trim().to_ascii_lowercase(),
+        _ => "auto".into(),
+    }
+}
+
+fn non_empty_secret(secret: String) -> Option<String> {
+    let secret = secret.trim().to_string();
+    (!secret.is_empty()).then_some(secret)
 }
 
 #[cfg(test)]
@@ -155,5 +191,28 @@ mod tests {
         let config = Config::load(Some(path)).unwrap();
 
         assert!(!config.show_reasoning_output);
+    }
+
+    #[test]
+    fn loads_web_search_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+web_search_provider = "exa"
+web_search_openai_api_key = " sk-test "
+web_search_exa_api_key = "exa-test"
+web_search_brave_api_key = "BSA-test"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load(Some(path)).unwrap();
+
+        assert_eq!(config.web_search_provider, "exa");
+        assert_eq!(config.web_search_openai_api_key.as_deref(), Some("sk-test"));
+        assert_eq!(config.web_search_exa_api_key.as_deref(), Some("exa-test"));
+        assert_eq!(config.web_search_brave_api_key.as_deref(), Some("BSA-test"));
     }
 }

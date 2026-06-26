@@ -9,9 +9,9 @@ pub mod skill;
 pub mod web;
 pub mod write_file;
 
-use crate::tool::ToolRegistry;
+use crate::{config::Config, tool::ToolRegistry};
 
-pub fn registry() -> ToolRegistry {
+pub fn registry(config: &Config) -> ToolRegistry {
     let mut r = ToolRegistry::new();
     r.register(list_dir::ListDir);
     r.register(read_file::ReadFile);
@@ -22,8 +22,9 @@ pub fn registry() -> ToolRegistry {
     #[cfg(windows)]
     r.register(powershell::PowerShell);
     r.register(skill::Skill);
-    if web::is_web_search_available() {
-        r.register(web::WebSearch);
+    let web_search = web::WebSearch::from_config(config);
+    if web_search.is_available() {
+        r.register(web_search);
     }
     r.register(web::FetchContent);
     r.register(web::GetSearchContent);
@@ -36,7 +37,7 @@ mod tests {
 
     #[test]
     fn registry_includes_available_web_access_tools() {
-        let registry = registry();
+        let registry = registry(&Config::default());
         let names = registry
             .specs()
             .into_iter()
@@ -45,8 +46,25 @@ mod tests {
 
         assert_eq!(
             names.contains(&"web_search".to_string()),
-            web::is_web_search_available()
+            web::WebSearch::from_config(&Config::default()).is_available()
         );
+        assert!(names.contains(&"fetch_content".to_string()));
+        assert!(names.contains(&"get_search_content".to_string()));
+    }
+
+    #[test]
+    fn registry_omits_web_search_when_disabled() {
+        let config = Config {
+            web_search_provider: "disabled".into(),
+            ..Config::default()
+        };
+        let names = registry(&config)
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        assert!(!names.contains(&"web_search".to_string()));
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
     }

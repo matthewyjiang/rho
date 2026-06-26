@@ -17,6 +17,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
+    config::Config,
     credentials::{load_codex_tokens, CodexTokens, OsCredentialStore},
     tool::*,
 };
@@ -28,6 +29,9 @@ const HTTP_TIMEOUT_SECS: u64 = 30;
 const COMMAND_TIMEOUT_SECS: u64 = 60;
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
+const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
+const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
 const OPENAI_SEARCH_MODEL: &str = "gpt-4.1-mini";
 const CODEX_SEARCH_MODEL: &str = "gpt-5.4";
 
@@ -48,14 +52,41 @@ struct StoredItem {
     metadata: Value,
 }
 
-pub struct WebSearch;
+pub struct WebSearch {
+    config: SearchBackendConfig,
+}
 pub struct FetchContent;
 pub struct GetSearchContent;
 
-pub fn is_web_search_available() -> bool {
-    resolve_openai_search_auth().is_ok()
-        || std::env::var("BRAVE_SEARCH_API_KEY").is_ok()
-        || std::env::var("BRAVE_API_KEY").is_ok()
+#[derive(Clone, Debug, Default)]
+pub struct SearchBackendConfig {
+    provider: String,
+    openai_api_key: Option<String>,
+    exa_api_key: Option<String>,
+    brave_api_key: Option<String>,
+}
+
+impl WebSearch {
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            config: SearchBackendConfig {
+                provider: config.web_search_provider.clone(),
+                openai_api_key: config.web_search_openai_api_key.clone(),
+                exa_api_key: config.web_search_exa_api_key.clone(),
+                brave_api_key: config.web_search_brave_api_key.clone(),
+            },
+        }
+    }
+
+    pub fn is_available(&self) -> bool {
+        match self.config.provider.as_str() {
+            "disabled" => false,
+            "openai" => resolve_openai_search_auth(&self.config).is_ok(),
+            "brave" => resolve_brave_api_key(&self.config).is_some(),
+            "auto" | "exa" => true,
+            _ => true,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -128,7 +159,11 @@ impl Tool for WebSearch {
         let args: WebSearchArgs = serde_json::from_value(args)?;
         let queries = collect_queries(args.query, args.queries)?;
         let num_results = args.num_results.unwrap_or(5).clamp(1, 20);
-        let provider = args.provider.unwrap_or_else(|| "auto".into());
+        let provider = args
+            .provider
+            .unwrap_or_else(|| self.config.provider.clone())
+            .trim()
+            .to_ascii_lowercase();
         let workflow = args.workflow.unwrap_or_else(|| "summary-review".into());
         let include_content = args.include_content.unwrap_or(false);
         let response_id = new_response_id();
@@ -142,6 +177,7 @@ impl Tool for WebSearch {
                 &provider,
                 args.recency_filter.as_deref(),
                 args.domain_filter.as_deref(),
+                &self.config,
             )
             .await;
             match result {
@@ -512,17 +548,28 @@ async fn run_search_query(
     provider: &str,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
+    config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
     match provider {
-        "auto" => match openai_search(query, num_results, recency_filter, domain_filter).await {
-            Ok(results) => Ok(results),
-            Err(_) => brave_search(query, num_results, recency_filter, domain_filter).await,
-        },
-        "openai" => openai_search(query, num_results, recency_filter, domain_filter).await,
-        "brave" => brave_search(query, num_results, recency_filter, domain_filter).await,
-        "parallel" | "tavily" | "exa" | "perplexity" | "gemini" => Err(ToolError::Message(
-            format!("provider '{provider}' is not configured in this local MVP"),
-        )),
+        "auto" => {
+            if let Ok(results) =
+                openai_search(query, num_results, recency_filter, domain_filter, config).await
+            {
+                return Ok(results);
+            }
+            if let Ok(results) =
+                exa_search(query, num_results, recency_filter, domain_filter, config).await
+            {
+                return Ok(results);
+            }
+            brave_search(query, num_results, recency_filter, domain_filter, config).await
+        }
+        "openai" => openai_search(query, num_results, recency_filter, domain_filter, config).await,
+        "exa" => exa_search(query, num_results, recency_filter, domain_filter, config).await,
+        "brave" => brave_search(query, num_results, recency_filter, domain_filter, config).await,
+        "parallel" | "tavily" | "perplexity" | "gemini" => Err(ToolError::Message(format!(
+            "provider '{provider}' is not configured in this local MVP"
+        ))),
         other => Err(ToolError::Message(format!(
             "unknown search provider: {other}"
         ))),
@@ -558,7 +605,7 @@ impl OpenAiSearchAuth {
     }
 }
 
-fn resolve_openai_search_auth() -> Result<OpenAiSearchAuth, ToolError> {
+fn resolve_openai_search_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolError> {
     if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
         return Ok(OpenAiSearchAuth::Codex(CodexTokens {
             access_token,
@@ -573,6 +620,9 @@ fn resolve_openai_search_auth() -> Result<OpenAiSearchAuth, ToolError> {
     if let Ok(key) = std::env::var("OPENAI_API_KEY") {
         return Ok(OpenAiSearchAuth::ApiKey(key));
     }
+    if let Some(key) = config.openai_api_key.clone() {
+        return Ok(OpenAiSearchAuth::ApiKey(key));
+    }
     Err(ToolError::Message(
         "OpenAI web search unavailable: sign in with /login openai-codex or set OPENAI_API_KEY"
             .into(),
@@ -584,8 +634,9 @@ async fn openai_search(
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
+    config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let auth = resolve_openai_search_auth()?;
+    let auth = resolve_openai_search_auth(config)?;
     let mut request = http_client()
         .post(auth.endpoint())
         .bearer_auth(auth.bearer_token())
@@ -915,15 +966,258 @@ fn citation_snippet(text: &str, start: Option<u64>, end: Option<u64>) -> String 
         .collect()
 }
 
-async fn brave_search(
+async fn exa_search(
+    query: &str,
+    num_results: usize,
+    recency_filter: Option<&str>,
+    domain_filter: Option<&[String]>,
+    config: &SearchBackendConfig,
+) -> Result<Vec<SearchItem>, ToolError> {
+    if let Some(key) = std::env::var("EXA_API_KEY")
+        .ok()
+        .or_else(|| config.exa_api_key.clone())
+    {
+        exa_api_search(query, num_results, recency_filter, domain_filter, &key).await
+    } else {
+        exa_mcp_search(query, num_results, recency_filter, domain_filter).await
+    }
+}
+
+async fn exa_api_search(
+    query: &str,
+    num_results: usize,
+    recency_filter: Option<&str>,
+    domain_filter: Option<&[String]>,
+    key: &str,
+) -> Result<Vec<SearchItem>, ToolError> {
+    let use_search = recency_filter.is_some() || domain_filter.is_some() || num_results != 5;
+    let domain_filters = exa_domain_filters(domain_filter);
+    let mut body = if use_search {
+        json!({
+            "query": query,
+            "type": "auto",
+            "numResults": num_results.min(20),
+            "contents": {"text": {"maxCharacters": 3000}, "highlights": true},
+        })
+    } else {
+        json!({"query": query, "text": true})
+    };
+    if let Some(start) = recency_filter.and_then(exa_start_published_date) {
+        body["startPublishedDate"] = json!(start);
+    }
+    if let Some(include) = domain_filters.get("includeDomains") {
+        body["includeDomains"] = include.clone();
+    }
+    if let Some(exclude) = domain_filters.get("excludeDomains") {
+        body["excludeDomains"] = exclude.clone();
+    }
+
+    let response = http_client()
+        .post(if use_search {
+            EXA_SEARCH_URL
+        } else {
+            EXA_ANSWER_URL
+        })
+        .header("x-api-key", key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|err| ToolError::Message(format!("Exa request failed: {err}")))?;
+    let status = response.status();
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|err| ToolError::Message(format!("Exa response was not JSON: {err}")))?;
+    if !status.is_success() {
+        return Err(ToolError::Message(format!(
+            "Exa search failed: HTTP {status}: {value}"
+        )));
+    }
+    Ok(value
+        .get(if use_search { "results" } else { "citations" })
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(num_results.min(20))
+        .filter_map(|item| {
+            let url = item.get("url").and_then(Value::as_str)?.to_string();
+            let snippet = item
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("snippet").and_then(Value::as_str))
+                .unwrap_or_default()
+                .chars()
+                .take(500)
+                .collect();
+            Some(SearchItem {
+                title: item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                url: Some(url),
+                snippet,
+            })
+        })
+        .collect())
+}
+
+async fn exa_mcp_search(
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let key = std::env::var("BRAVE_SEARCH_API_KEY")
+    let response = http_client()
+        .post(EXA_MCP_URL)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "web_search_exa",
+                "arguments": {
+                    "query": exa_mcp_query(query, recency_filter, domain_filter),
+                    "numResults": num_results.min(20),
+                    "livecrawl": "fallback",
+                    "type": "auto",
+                    "contextMaxCharacters": 3000,
+                }
+            }
+        }))
+        .send()
+        .await
+        .map_err(|err| ToolError::Message(format!("Exa MCP request failed: {err}")))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|err| ToolError::Message(format!("Exa MCP response failed: {err}")))?;
+    if !status.is_success() {
+        return Err(ToolError::Message(format!(
+            "Exa MCP failed: HTTP {status}: {}",
+            text.chars().take(300).collect::<String>()
+        )));
+    }
+    let text = parse_exa_mcp_text(&text)?;
+    Ok(parse_exa_mcp_results(&text)
+        .into_iter()
+        .take(num_results.min(20))
+        .collect())
+}
+
+fn parse_exa_mcp_text(body: &str) -> Result<String, ToolError> {
+    for payload in body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+        .chain(std::iter::once(body.trim()))
+    {
+        if payload.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(payload) else {
+            continue;
+        };
+        if let Some(error) = value.get("error") {
+            return Err(ToolError::Message(format!("Exa MCP error: {error}")));
+        }
+        if let Some(text) = value
+            .get("result")
+            .and_then(|result| result.get("content"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find_map(|item| item.get("text").and_then(Value::as_str))
+        {
+            return Ok(text.to_string());
+        }
+    }
+    Err(ToolError::Message("Exa MCP returned empty content".into()))
+}
+
+fn parse_exa_mcp_results(text: &str) -> Vec<SearchItem> {
+    text.split("\n---")
+        .filter_map(|block| {
+            let title = block
+                .lines()
+                .find_map(|line| line.strip_prefix("Title: "))
+                .unwrap_or("result")
+                .trim();
+            let url = block
+                .lines()
+                .find_map(|line| line.strip_prefix("URL: "))
+                .map(str::trim)?;
+            let content = block
+                .split("\nText: ")
+                .nth(1)
+                .or_else(|| block.split("\nHighlights:\n").nth(1))
+                .unwrap_or_default()
+                .trim()
+                .chars()
+                .take(500)
+                .collect();
+            Some(SearchItem {
+                title: Some(title.to_string()),
+                url: Some(url.to_string()),
+                snippet: content,
+            })
+        })
+        .collect()
+}
+
+fn exa_mcp_query(
+    query: &str,
+    recency_filter: Option<&str>,
+    domain_filter: Option<&[String]>,
+) -> String {
+    let mut parts = vec![query.to_string()];
+    if let Some(filters) = domain_filter {
+        parts.extend(filters.iter().map(|domain| {
+            if let Some(domain) = domain.strip_prefix('-') {
+                format!("-site:{domain}")
+            } else {
+                format!("site:{domain}")
+            }
+        }));
+    }
+    if let Some(recency) = recency_filter.and_then(openai_recency_label) {
+        parts.push(recency.to_string());
+    }
+    parts.join(" ")
+}
+
+fn exa_domain_filters(domain_filter: Option<&[String]>) -> serde_json::Map<String, Value> {
+    let filters = normalize_domain_filters(domain_filter);
+    let mut map = serde_json::Map::new();
+    if !filters.allowed.is_empty() {
+        map.insert("includeDomains".into(), json!(filters.allowed));
+    }
+    if !filters.blocked.is_empty() {
+        map.insert("excludeDomains".into(), json!(filters.blocked));
+    }
+    map
+}
+
+fn exa_start_published_date(_recency_filter: &str) -> Option<String> {
+    None
+}
+
+fn resolve_brave_api_key(config: &SearchBackendConfig) -> Option<String> {
+    std::env::var("BRAVE_SEARCH_API_KEY")
         .or_else(|_| std::env::var("BRAVE_API_KEY"))
-        .map_err(|_| ToolError::Message("BRAVE_SEARCH_API_KEY is not set".into()))?;
+        .ok()
+        .or_else(|| config.brave_api_key.clone())
+}
+
+async fn brave_search(
+    query: &str,
+    num_results: usize,
+    recency_filter: Option<&str>,
+    domain_filter: Option<&[String]>,
+    config: &SearchBackendConfig,
+) -> Result<Vec<SearchItem>, ToolError> {
+    let key = resolve_brave_api_key(config)
+        .ok_or_else(|| ToolError::Message("BRAVE_SEARCH_API_KEY is not set".into()))?;
     let filtered_query = apply_domain_filter(query, domain_filter);
     let count = num_results.to_string();
     let mut request = http_client()
@@ -1921,7 +2215,8 @@ mod tests {
     async fn web_search_stores_stub_content_when_provider_is_unavailable() {
         let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
         let ctx = test_context();
-        let result = WebSearch
+        let web_search = WebSearch::from_config(&Config::default());
+        let result = web_search
             .call(args.clone(), ctx.clone(), "call_1".into())
             .await
             .unwrap();
@@ -1931,7 +2226,7 @@ mod tests {
         assert_eq!(value["storedContentAvailable"], true);
         let response_id = value.get("responseId").unwrap().as_str().unwrap();
 
-        let display_lines = WebSearch.display_lines(&args, &ctx, &result);
+        let display_lines = web_search.display_lines(&args, &ctx, &result);
         assert_eq!(display_lines.len(), 1);
         assert_eq!(
             display_lines,
@@ -2101,6 +2396,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_exa_mcp_results() {
+        let text = "Title: Example\nURL: https://example.com\nText: useful snippet\n---\nTitle: Other\nURL: https://other.test\nHighlights:\nother snippet";
+
+        let results = parse_exa_mcp_results(text);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title.as_deref(), Some("Example"));
+        assert_eq!(results[0].url.as_deref(), Some("https://example.com"));
+        assert_eq!(results[0].snippet, "useful snippet");
+        assert_eq!(results[1].snippet, "other snippet");
+    }
+
+    #[test]
     fn extracts_openai_web_search_sources() {
         let output = vec![json!({
             "type": "message",
@@ -2203,7 +2511,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_web_search_query() {
-        let err = WebSearch
+        let err = WebSearch::from_config(&Config::default())
             .call(json!({"query": "   "}), test_context(), "call_1".into())
             .await
             .unwrap_err();
@@ -2225,7 +2533,10 @@ mod tests {
 
     #[test]
     fn tool_specs_use_requested_names() {
-        assert_eq!(WebSearch.spec().name, "web_search");
+        assert_eq!(
+            WebSearch::from_config(&Config::default()).spec().name,
+            "web_search"
+        );
         assert_eq!(FetchContent.spec().name, "fetch_content");
         assert_eq!(GetSearchContent.spec().name, "get_search_content");
     }

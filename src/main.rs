@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let registry = if cli.no_tools {
         ToolRegistry::new()
     } else {
-        tools::registry()
+        tools::registry(&cfg)
     };
     let cwd = std::env::current_dir()?;
     let ctx = ToolContext {
