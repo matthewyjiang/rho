@@ -902,7 +902,7 @@ fn citation_snippet(text: &str, start: Option<u64>, end: Option<u64>) -> String 
     let after = (end as usize).saturating_add(100).min(text.len());
     text.get(before..after)
         .unwrap_or_default()
-        .replace(|ch| matches!(ch, '[' | ']' | '(' | ')'), "")
+        .replace(['[', ']', '(', ')'], "")
         .trim()
         .chars()
         .take(300)
