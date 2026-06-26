@@ -22,7 +22,9 @@ pub fn registry() -> ToolRegistry {
     #[cfg(windows)]
     r.register(powershell::PowerShell);
     r.register(skill::Skill);
-    r.register(web::WebSearch);
+    if web::is_web_search_available() {
+        r.register(web::WebSearch);
+    }
     r.register(web::FetchContent);
     r.register(web::GetSearchContent);
     r
@@ -33,7 +35,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_includes_web_access_tools() {
+    fn registry_includes_available_web_access_tools() {
         let registry = registry();
         let names = registry
             .specs()
@@ -41,7 +43,10 @@ mod tests {
             .map(|spec| spec.name)
             .collect::<Vec<_>>();
 
-        assert!(names.contains(&"web_search".to_string()));
+        assert_eq!(
+            names.contains(&"web_search".to_string()),
+            web::is_web_search_available()
+        );
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
     }

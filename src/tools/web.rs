@@ -52,6 +52,12 @@ pub struct WebSearch;
 pub struct FetchContent;
 pub struct GetSearchContent;
 
+pub fn is_web_search_available() -> bool {
+    resolve_openai_search_auth().is_ok()
+        || std::env::var("BRAVE_SEARCH_API_KEY").is_ok()
+        || std::env::var("BRAVE_API_KEY").is_ok()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WebSearchArgs {
