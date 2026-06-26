@@ -1107,12 +1107,8 @@ impl App {
                     }
                     config.save(self.info.config_path.clone())
                 })?;
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
                 self.insert_entry(terminal, &Entry::Notice(format!("{} saved", key.label())))?;
                 self.status = "config saved".into();
                 Ok(true)
@@ -1136,13 +1132,9 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
-                self.status = "config".into();
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                self.status = "web search config".into();
                 Ok(true)
             }
             _ => Ok(true),
@@ -2266,6 +2258,20 @@ impl App {
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output(terminal)?;
             }
+            config_picker::WEB_SEARCH_VALUE => {
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                self.status = "web search config".into();
+            }
+            config_picker::WEB_SEARCH_BACK_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::Picker(config_picker::config_picker(
+                    &self.info,
+                    config.max_output_bytes,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "config".into();
+            }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal)?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
@@ -2920,6 +2926,22 @@ impl App {
                 self.status = "edit max tool output lines".into();
                 Ok(())
             }
+            config_picker::WEB_SEARCH_VALUE => {
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                self.status = "web search config".into();
+                Ok(())
+            }
+            config_picker::WEB_SEARCH_BACK_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::Picker(config_picker::config_picker(
+                    &self.info,
+                    config.max_output_bytes,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "config".into();
+                Ok(())
+            }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
@@ -3055,11 +3077,7 @@ impl App {
         .into();
         let provider = config.web_search_provider.clone();
         config.save(self.info.config_path.clone())?;
-        self.composer = ComposerMode::Picker(config_picker::config_picker(
-            &self.info,
-            config.max_output_bytes,
-            config.max_tool_output_lines,
-        ));
+        self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
         self.insert_entry(
             terminal,
             &Entry::Notice(format!(

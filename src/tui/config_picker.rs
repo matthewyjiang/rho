@@ -4,6 +4,8 @@ pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
+pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
+pub(super) const WEB_SEARCH_BACK_VALUE: &str = "web_search_back";
 pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
@@ -73,7 +75,35 @@ pub(super) fn config_picker(
                 value: MAX_TOOL_OUTPUT_LINES_VALUE.into(),
             },
             PickerItem {
-                label: "Web search provider".into(),
+                label: "Web search".into(),
+                detail: Some("Configure web_search backend and API keys.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: config.web_search_provider.clone(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: WEB_SEARCH_VALUE.into(),
+            },
+        ],
+        PickerAction::Config,
+    )
+}
+
+pub(super) fn web_search_config_picker(info: &TuiInfo) -> UiPicker {
+    let config = Config::load(info.config_path.clone()).unwrap_or_default();
+    UiPicker::new(
+        "Web search config",
+        "type regex filter, enter change, esc back",
+        vec![
+            PickerItem {
+                label: "Back to config".into(),
+                detail: Some("Return to the main config menu.".into()),
+                preview: None,
+                badge: None,
+                value: WEB_SEARCH_BACK_VALUE.into(),
+            },
+            PickerItem {
+                label: "Provider".into(),
                 detail: Some(format!(
                     "Backend for web_search. Current: {}; Enter cycles to {}.",
                     config.web_search_provider,
@@ -87,7 +117,7 @@ pub(super) fn config_picker(
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
             },
             PickerItem {
-                label: "OpenAI web search API key".into(),
+                label: "OpenAI API key".into(),
                 detail: Some("Optional key for OpenAI web search. Codex login is used automatically when available.".into()),
                 preview: None,
                 badge: Some(secret_badge(config.web_search_openai_api_key.as_deref())),
@@ -101,7 +131,7 @@ pub(super) fn config_picker(
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
             },
             PickerItem {
-                label: "Brave Search API key".into(),
+                label: "Brave API key".into(),
                 detail: Some("Optional Brave Search API key used by the brave backend.".into()),
                 preview: None,
                 badge: Some(secret_badge(config.web_search_brave_api_key.as_deref())),
