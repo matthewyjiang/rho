@@ -73,6 +73,13 @@ pub(super) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
 }
 
 pub(super) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
+    if tool.name == "web_search" {
+        return json!({
+            "type": "web_search",
+            "external_web_access": true,
+        });
+    }
+
     json!({
         "type": "function",
         "name": tool.name,

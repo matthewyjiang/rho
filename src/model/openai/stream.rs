@@ -235,6 +235,63 @@ impl CodexSseState {
     }
 }
 
+fn extract_codex_web_search_detail(item: &serde_json::Value) -> Option<String> {
+    if item.get("type").and_then(|v| v.as_str()) != Some("web_search_call") {
+        return None;
+    }
+    let action = item.get("action")?;
+    if let Some(query) = action
+        .get("query")
+        .and_then(|query| query.as_str())
+        .filter(|query| !query.is_empty())
+    {
+        return Some(format!("for \"{}\"", truncate_detail(query, 80)));
+    }
+    if let Some(queries) = action.get("queries").and_then(|queries| queries.as_array()) {
+        let mut rendered = queries
+            .iter()
+            .filter_map(|query| query.as_str())
+            .filter(|query| !query.is_empty())
+            .take(3)
+            .map(|query| format!("\"{}\"", truncate_detail(query, 48)))
+            .collect::<Vec<_>>();
+        if queries.len() > rendered.len() {
+            rendered.push(format!("{} more", queries.len() - rendered.len()));
+        }
+        if !rendered.is_empty() {
+            return Some(format!("for {}", rendered.join(", ")));
+        }
+    }
+    if let Some(url) = action
+        .get("url")
+        .and_then(|url| url.as_str())
+        .filter(|url| !url.is_empty())
+    {
+        return Some(format!("opened {}", truncate_detail(url, 80)));
+    }
+    if let Some(pattern) = action
+        .get("pattern")
+        .and_then(|pattern| pattern.as_str())
+        .filter(|pattern| !pattern.is_empty())
+    {
+        return Some(format!("found \"{}\"", truncate_detail(pattern, 80)));
+    }
+    Some("finished".into())
+}
+
+fn truncate_detail(value: &str, max_chars: usize) -> String {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().count() <= max_chars {
+        return value;
+    }
+    let mut truncated = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
 fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCall>, ModelError> {
     if item.get("type").and_then(|v| v.as_str()) != Some("function_call") {
         return Ok(None);
@@ -298,7 +355,13 @@ pub(super) fn handle_codex_sse_line(
             }
         }
     } else if event_type == "response.output_item.done" {
-        if let Some(call) = extract_codex_function_call(value.get("item").unwrap_or(&value))? {
+        let item = value.get("item").unwrap_or(&value);
+        if let Some(detail) = extract_codex_web_search_detail(item) {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::WebSearch(detail))?;
+            }
+        }
+        if let Some(call) = extract_codex_function_call(item)? {
             state.tool_calls.push(call);
         }
     } else if event_type == "response.completed" {
@@ -328,6 +391,11 @@ pub(super) fn handle_codex_sse_line(
             .and_then(|output| output.as_array())
         {
             for item in output {
+                if let Some(detail) = extract_codex_web_search_detail(item) {
+                    if let Some(on_event) = on_event.as_mut() {
+                        on_event(ModelEvent::WebSearch(detail))?;
+                    }
+                }
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
                 }

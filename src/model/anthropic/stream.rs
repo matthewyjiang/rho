@@ -269,7 +269,9 @@ mod tests {
                 .iter()
                 .filter_map(|event| match event {
                     ModelEvent::OutputDelta(delta) => Some(delta.as_str()),
-                    ModelEvent::ReasoningDelta(_) | ModelEvent::Usage(_) => None,
+                    ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::Usage(_) => None,
                 })
                 .collect::<String>(),
             "hello"
@@ -305,7 +307,9 @@ mod tests {
             .iter()
             .filter_map(|event| match event {
                 ModelEvent::Usage(usage) => Some(usage),
-                ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => None,
+                ModelEvent::OutputDelta(_)
+                | ModelEvent::ReasoningDelta(_)
+                | ModelEvent::WebSearch(_) => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(usages.len(), 2);

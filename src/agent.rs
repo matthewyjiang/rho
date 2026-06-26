@@ -190,6 +190,14 @@ impl Agent {
                         ModelEvent::ReasoningDelta(text) => {
                             on_event(AgentEvent::ReasoningDelta(text))
                         }
+                        ModelEvent::WebSearch(detail) => on_event(AgentEvent::ToolFinished {
+                            name: "web_search".into(),
+                            command: None,
+                            ok: true,
+                            content: detail.clone(),
+                            display_style: ToolDisplayStyle::default_tool(),
+                            display_lines: vec![format!("web search: {detail}")],
+                        }),
                         ModelEvent::Usage(usage) => {
                             if let Some(context_usage) =
                                 self.context_tracker.record_provider_usage(&usage)
@@ -347,7 +355,9 @@ impl Agent {
                     prompt_cache_key: self.prompt_cache_key.clone(),
                 },
                 &mut |event| match event {
-                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => Ok(()),
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::WebSearch(_) => Ok(()),
                     ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
                 },
             )

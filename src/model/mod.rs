@@ -87,6 +87,7 @@ impl ModelUsage {
 pub enum ModelEvent {
     OutputDelta(String),
     ReasoningDelta(String),
+    WebSearch(String),
     Usage(ModelUsage),
 }
 
