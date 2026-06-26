@@ -39,10 +39,30 @@ struct TerminalPalette {
 }
 
 impl TerminalPalette {
-    fn blended_background(&self, color: AnsiColor, alpha: f32) -> Option<Color> {
-        self.ansi
-            .get(&color)
-            .map(|ansi| self.background.blend_toward(*ansi, alpha).color())
+    fn blended_background(&self, color: AnsiColor, alpha: f32) -> Option<BlockColor> {
+        self.ansi.get(&color).map(|ansi| {
+            let rgb = self.background.blend_toward(*ansi, alpha);
+            BlockColor::from_rgb(rgb)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BlockColor {
+    color: Color,
+    rgb: Option<Rgb>,
+}
+
+impl BlockColor {
+    fn from_rgb(rgb: Rgb) -> Self {
+        Self {
+            color: rgb.color(),
+            rgb: Some(rgb),
+        }
+    }
+
+    const fn from_color(color: Color) -> Self {
+        Self { color, rgb: None }
     }
 }
 
@@ -93,11 +113,11 @@ struct Palette {
     warning: Color,
     error: Color,
     skill: Color,
-    user_background: Color,
-    neutral_tool_background: Color,
-    success_tool_background: Color,
-    failure_tool_background: Color,
-    skill_tool_background: Color,
+    user_background: BlockColor,
+    neutral_tool_background: BlockColor,
+    success_tool_background: BlockColor,
+    failure_tool_background: BlockColor,
+    skill_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -110,26 +130,35 @@ impl Palette {
             warning: AnsiColor::Yellow.color(),
             error: AnsiColor::Red.color(),
             skill: AnsiColor::Magenta.color(),
-            user_background: blended_or_ansi(terminal, AnsiColor::Gray, USER_BACKGROUND_ALPHA),
-            neutral_tool_background: blended_or_ansi(
+            user_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
+                Color::DarkGray,
             ),
-            success_tool_background: blended_or_ansi(
+            neutral_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Gray,
+                USER_BACKGROUND_ALPHA,
+                Color::DarkGray,
+            ),
+            success_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Green,
                 TOOL_BACKGROUND_ALPHA,
+                AnsiColor::Green.color(),
             ),
-            failure_tool_background: blended_or_ansi(
+            failure_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Red,
                 TOOL_BACKGROUND_ALPHA,
+                AnsiColor::Red.color(),
             ),
-            skill_tool_background: blended_or_ansi(
+            skill_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Magenta,
                 TOOL_BACKGROUND_ALPHA,
+                AnsiColor::Magenta.color(),
             ),
         }
     }
@@ -250,17 +279,17 @@ impl Theme {
         )
     }
 
-    fn dim_block(background: Color) -> Style {
+    fn dim_block(background: BlockColor) -> Style {
         Style::default()
-            .fg(block_foreground(background))
-            .bg(background)
+            .fg(block_foreground(background.rgb))
+            .bg(background.color)
     }
 }
 
-fn block_foreground(background: Color) -> Color {
+fn block_foreground(background: Option<Rgb>) -> Color {
     match background {
-        Color::Rgb(red, green, blue) if relative_luminance(red, green, blue) > 0.55 => Color::Black,
-        _ => Color::White,
+        Some(rgb) if relative_luminance(rgb.red, rgb.green, rgb.blue) > 0.55 => Color::Black,
+        Some(_) | None => Color::White,
     }
 }
 
@@ -288,10 +317,15 @@ impl ToolStyle {
     }
 }
 
-fn blended_or_ansi(terminal: Option<&TerminalPalette>, color: AnsiColor, alpha: f32) -> Color {
+fn blended_or_fallback(
+    terminal: Option<&TerminalPalette>,
+    color: AnsiColor,
+    alpha: f32,
+    fallback: Color,
+) -> BlockColor {
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or_else(|| color.color())
+        .unwrap_or_else(|| BlockColor::from_color(fallback))
 }
 
 fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {
@@ -470,9 +504,13 @@ mod tests {
     }
 
     #[test]
-    fn chooses_dark_block_foreground_for_light_rgb_backgrounds() {
-        assert_eq!(block_foreground(Color::Rgb(240, 240, 240)), Color::Black);
-        assert_eq!(block_foreground(Color::Rgb(20, 20, 20)), Color::White);
+    fn chooses_dark_block_foreground_for_light_resolved_backgrounds() {
+        assert_eq!(
+            block_foreground(Some(Rgb::new(240, 240, 240))),
+            Color::Black
+        );
+        assert_eq!(block_foreground(Some(Rgb::new(20, 20, 20))), Color::White);
+        assert_eq!(block_foreground(None), Color::White);
     }
 
     #[test]
@@ -481,5 +519,20 @@ mod tests {
         let green = Rgb::new(10, 110, 10);
 
         assert_eq!(base.blend_toward(green, 0.16), Rgb::new(10, 26, 10));
+    }
+
+    #[test]
+    fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
+        let palette = TerminalPalette {
+            background: Rgb::new(255, 255, 255),
+            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(240, 240, 240))]),
+        };
+
+        let background = palette
+            .blended_background(AnsiColor::Gray, USER_BACKGROUND_ALPHA)
+            .expect("resolved background");
+
+        assert_eq!(background.color, Color::Rgb(254, 254, 254));
+        assert_eq!(block_foreground(background.rgb), Color::Black);
     }
 }
