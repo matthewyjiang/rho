@@ -1222,6 +1222,12 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                self.submit_picker_selection(terminal, agent).await?;
+                Ok(true)
+            }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.push_filter_char(ch);
@@ -2171,6 +2177,10 @@ impl App {
                 }
                 Ok(true)
             }
+            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
+                self.submit_picker_selection_during_turn(terminal)?;
+                Ok(true)
+            }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.push_filter_char(ch);
@@ -3049,6 +3059,13 @@ impl App {
                     .items
                     .iter()
                     .any(|item| item.value == config_picker::WEB_SEARCH_BACK_VALUE)
+        )
+    }
+
+    fn picker_space_confirms_selection(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action.space_confirms_selection()
         )
     }
 
