@@ -21,9 +21,9 @@ Use `/login` in the interactive TUI:
 | `/login openai` | masked OpenAI API-key entry |
 | `/login openai-codex` | browser-based Codex OAuth owned by Rho |
 | `/login anthropic` | masked Anthropic API-key entry |
-| `/login github-copilot` | GitHub device-flow OAuth owned by Rho |
+| `/login github-copilot` | browser-based GitHub OAuth owned by Rho |
 
-GitHub Copilot login requires an app-owned GitHub OAuth client id. Set `RHO_GITHUB_COPILOT_CLIENT_ID` before running `/login github-copilot`; if it is missing, Rho returns a setup error instead of reusing GitHub CLI, VS Code, GitHub Models, `GITHUB_TOKEN`, or `GH_TOKEN` credentials.
+GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client id. Set `RHO_GITHUB_COPILOT_CLIENT_ID` before running `/login github-copilot`; if it is missing, Rho returns a setup error instead of reusing GitHub CLI, VS Code, GitHub Models, `GITHUB_TOKEN`, or `GH_TOKEN` credentials. The GitHub OAuth app should allow the localhost callback `http://localhost:1456/auth/github-copilot/callback`.
 
 Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
 

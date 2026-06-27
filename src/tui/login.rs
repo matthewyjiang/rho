@@ -141,8 +141,8 @@ impl App {
             return Ok(());
         }
 
-        let flow = match github_copilot_oauth::start_github_copilot_device_flow().await {
-            Ok(flow) => flow,
+        let client_id = match github_copilot_oauth::github_copilot_client_id_from_env() {
+            Ok(client_id) => client_id,
             Err(err) => {
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
                 self.status = "login failed".into();
@@ -151,22 +151,19 @@ impl App {
         };
         self.status = "waiting for GitHub Copilot login; press esc to cancel".into();
         self.composer = ComposerMode::OAuthPending(target.clone());
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "GitHub Copilot login: open {} and enter code {}. Press esc to cancel.",
-                flow.verification_uri, flow.user_code
-            )),
-        )?;
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
             handle: tokio::spawn(async move {
-                github_copilot_oauth::poll_github_copilot_device_flow(flow)
+                github_copilot_oauth::run_github_copilot_oauth_flow(client_id)
                     .await
                     .map(PendingOAuthResult::GithubCopilot)
                     .map_err(|err| err.to_string())
             }),
         });
+        self.insert_entry(
+            terminal,
+            &Entry::Notice("opening browser for GitHub Copilot login. Press esc to cancel.".into()),
+        )?;
         Ok(())
     }
 
