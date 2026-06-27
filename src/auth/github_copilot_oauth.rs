@@ -14,6 +14,7 @@ use url::Url;
 use crate::credentials::GitHubCopilotTokens;
 
 pub const GITHUB_COPILOT_CLIENT_ID_ENV: &str = "RHO_GITHUB_COPILOT_CLIENT_ID";
+pub const GITHUB_COPILOT_CLIENT_SECRET_ENV: &str = "RHO_GITHUB_COPILOT_CLIENT_SECRET";
 const AUTHORIZE_URL: &str = "https://github.com/login/oauth/authorize";
 const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const DEFAULT_SCOPE: &str = "read:user";
@@ -24,6 +25,12 @@ const CALLBACK_PORT: u16 = 1456;
 const CALLBACK_PATH: &str = "/auth/github-copilot/callback";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
+
+#[derive(Clone, Debug)]
+pub struct GitHubCopilotOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct GitHubCopilotOAuthRequest {
@@ -41,8 +48,10 @@ pub enum CallbackOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitHubCopilotOAuthError {
-    #[error("GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client id; set {GITHUB_COPILOT_CLIENT_ID_ENV} and retry /login github-copilot")]
+    #[error("GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client id and secret; set {GITHUB_COPILOT_CLIENT_ID_ENV} and retry /login github-copilot")]
     MissingClientId,
+    #[error("GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client secret; set {GITHUB_COPILOT_CLIENT_SECRET_ENV} and retry /login github-copilot")]
+    MissingClientSecret,
     #[error("could not bind local GitHub Copilot OAuth callback listener: {0}")]
     Bind(std::io::Error),
     #[error("could not open browser for GitHub Copilot OAuth: {0}")]
@@ -68,16 +77,37 @@ struct TokenResponse {
     error_description: Option<String>,
 }
 
-pub fn github_copilot_client_id_from_env() -> Result<String, GitHubCopilotOAuthError> {
-    std::env::var(GITHUB_COPILOT_CLIENT_ID_ENV)
-        .map_err(|_| GitHubCopilotOAuthError::MissingClientId)
+pub fn github_copilot_oauth_config_from_env(
+) -> Result<GitHubCopilotOAuthConfig, GitHubCopilotOAuthError> {
+    let client_id = required_env(
+        GITHUB_COPILOT_CLIENT_ID_ENV,
+        GitHubCopilotOAuthError::MissingClientId,
+    )?;
+    let client_secret = required_env(
+        GITHUB_COPILOT_CLIENT_SECRET_ENV,
+        GitHubCopilotOAuthError::MissingClientSecret,
+    )?;
+    Ok(GitHubCopilotOAuthConfig {
+        client_id,
+        client_secret,
+    })
+}
+
+fn required_env(
+    key: &str,
+    missing: GitHubCopilotOAuthError,
+) -> Result<String, GitHubCopilotOAuthError> {
+    match std::env::var(key) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        Ok(_) | Err(_) => Err(missing),
+    }
 }
 
 pub async fn run_github_copilot_oauth_flow(
-    client_id: String,
+    config: GitHubCopilotOAuthConfig,
 ) -> Result<GitHubCopilotTokens, GitHubCopilotOAuthError> {
     let listeners = bind_callback_listeners().await?;
-    let request = build_oauth_request(client_id.clone());
+    let request = build_oauth_request(config.client_id.clone());
 
     webbrowser::open(&request.authorize_url)
         .map_err(|err| GitHubCopilotOAuthError::Browser(err.to_string()))?;
@@ -101,7 +131,7 @@ pub async fn run_github_copilot_oauth_flow(
         &code,
         &request.redirect_uri,
         &request.verifier,
-        &client_id,
+        &config,
     )
     .await
 }
@@ -269,9 +299,9 @@ async fn exchange_code(
     code: &str,
     redirect_uri: &str,
     verifier: &str,
-    client_id: &str,
+    config: &GitHubCopilotOAuthConfig,
 ) -> Result<GitHubCopilotTokens, GitHubCopilotOAuthError> {
-    exchange_code_with_endpoint(client, code, redirect_uri, verifier, client_id, TOKEN_URL).await
+    exchange_code_with_endpoint(client, code, redirect_uri, verifier, config, TOKEN_URL).await
 }
 
 async fn exchange_code_with_endpoint(
@@ -279,14 +309,14 @@ async fn exchange_code_with_endpoint(
     code: &str,
     redirect_uri: &str,
     verifier: &str,
-    client_id: &str,
+    config: &GitHubCopilotOAuthConfig,
     endpoint: &str,
 ) -> Result<GitHubCopilotTokens, GitHubCopilotOAuthError> {
     let response: TokenResponse = client
         .post(endpoint)
         .header("Accept", "application/json")
         .header("User-Agent", USER_AGENT)
-        .form(&access_token_form(code, redirect_uri, verifier, client_id))
+        .form(&access_token_form(code, redirect_uri, verifier, config))
         .send()
         .await?
         .error_for_status()?
@@ -318,10 +348,11 @@ fn access_token_form<'a>(
     code: &'a str,
     redirect_uri: &'a str,
     verifier: &'a str,
-    client_id: &'a str,
+    config: &'a GitHubCopilotOAuthConfig,
 ) -> Vec<(&'static str, &'a str)> {
     vec![
-        ("client_id", client_id),
+        ("client_id", config.client_id.as_str()),
+        ("client_secret", config.client_secret.as_str()),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
@@ -402,6 +433,7 @@ mod tests {
             let request = String::from_utf8_lossy(&buffer[..len]);
             assert!(request.contains("POST / HTTP/1.1"));
             assert!(request.contains("client_id=client-id"));
+            assert!(request.contains("client_secret=client-secret"));
             assert!(request.contains("code=code"));
             assert!(request.contains(
                 "redirect_uri=http%3A%2F%2Flocalhost%3A1456%2Fauth%2Fgithub-copilot%2Fcallback"
@@ -421,7 +453,10 @@ mod tests {
             "code",
             "http://localhost:1456/auth/github-copilot/callback",
             "verifier",
-            "client-id",
+            &GitHubCopilotOAuthConfig {
+                client_id: "client-id".into(),
+                client_secret: "client-secret".into(),
+            },
             &endpoint,
         )
         .await
@@ -453,7 +488,10 @@ mod tests {
             "code",
             "http://localhost:1456/auth/github-copilot/callback",
             "verifier",
-            "client-id",
+            &GitHubCopilotOAuthConfig {
+                client_id: "client-id".into(),
+                client_secret: "client-secret".into(),
+            },
             &endpoint,
         )
         .await

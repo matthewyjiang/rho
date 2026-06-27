@@ -141,8 +141,8 @@ impl App {
             return Ok(());
         }
 
-        let client_id = match github_copilot_oauth::github_copilot_client_id_from_env() {
-            Ok(client_id) => client_id,
+        let config = match github_copilot_oauth::github_copilot_oauth_config_from_env() {
+            Ok(config) => config,
             Err(err) => {
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
                 self.status = "login failed".into();
@@ -154,7 +154,7 @@ impl App {
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
             handle: tokio::spawn(async move {
-                github_copilot_oauth::run_github_copilot_oauth_flow(client_id)
+                github_copilot_oauth::run_github_copilot_oauth_flow(config)
                     .await
                     .map(PendingOAuthResult::GithubCopilot)
                     .map_err(|err| err.to_string())
