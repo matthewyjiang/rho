@@ -7,7 +7,7 @@ use crate::{
     model::{registry, ModelError},
 };
 
-pub(super) enum Auth {
+pub(crate) enum Auth {
     ApiKey(String),
     Codex {
         tokens: CodexTokens,
@@ -16,7 +16,7 @@ pub(super) enum Auth {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CodexAuthSource {
+pub(crate) enum CodexAuthSource {
     Env,
     Store,
 }
@@ -29,7 +29,7 @@ struct RefreshResponse {
     account_id: Option<String>,
 }
 
-pub(super) fn load_api_key_auth() -> Result<Auth, ModelError> {
+pub(crate) fn load_api_key_auth() -> Result<Auth, ModelError> {
     let descriptor = registry::provider_descriptor("openai")
         .ok_or_else(|| ModelError::UnsupportedProvider("openai".into()))?;
     let registry::ProviderAuthKind::ApiKey {
@@ -47,7 +47,7 @@ pub(super) fn load_api_key_auth() -> Result<Auth, ModelError> {
     Ok(Auth::ApiKey(key))
 }
 
-pub(super) fn load_codex_auth() -> Result<Auth, ModelError> {
+pub(crate) fn load_codex_auth() -> Result<Auth, ModelError> {
     if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
         return Ok(Auth::Codex {
             tokens: CodexTokens {
@@ -67,7 +67,7 @@ pub(super) fn load_codex_auth() -> Result<Auth, ModelError> {
     })
 }
 
-pub(super) fn load_codex_tokens_for_request(
+pub(crate) fn load_codex_tokens_for_request(
     tokens: &CodexTokens,
     source: CodexAuthSource,
 ) -> Result<CodexTokens, ModelError> {
@@ -80,7 +80,7 @@ pub(super) fn load_codex_tokens_for_request(
     }
 }
 
-pub(super) async fn refresh_codex_token(
+pub(crate) async fn refresh_codex_token(
     client: &reqwest::Client,
     refresh_token: &str,
     source: CodexAuthSource,

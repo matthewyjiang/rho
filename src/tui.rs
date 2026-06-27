@@ -179,6 +179,7 @@ enum ComposerMode {
     Picker(UiPicker),
     SecretInput(SecretInput),
     ConfigNumberInput(ConfigNumberInput),
+    ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
 }
 
@@ -195,11 +196,43 @@ enum ConfigNumberKey {
     MaxToolOutputLines,
 }
 
+#[derive(Clone, Debug)]
+struct ConfigTextInput {
+    key: ConfigTextKey,
+    value: String,
+    cursor: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigTextKey {
+    OpenAiSearch,
+    Exa,
+    Brave,
+}
+
 impl ConfigNumberKey {
     fn label(self) -> &'static str {
         match self {
             ConfigNumberKey::MaxOutputBytes => "max output bytes",
             ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
+        }
+    }
+}
+
+impl ConfigTextKey {
+    fn label(self) -> &'static str {
+        match self {
+            ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
+            ConfigTextKey::Exa => "Exa API key",
+            ConfigTextKey::Brave => "Brave Search API key",
+        }
+    }
+
+    fn picker_value(self) -> &'static str {
+        match self {
+            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
+            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
+            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
         }
     }
 }
@@ -379,6 +412,61 @@ impl ConfigNumberInput {
         let end = self.byte_index(self.cursor);
         self.value.replace_range(start..end, "");
         self.cursor -= 1;
+    }
+}
+
+impl ConfigTextInput {
+    fn new(key: ConfigTextKey, value: Option<String>) -> Self {
+        let value = value.unwrap_or_default();
+        let cursor = value.chars().count();
+        Self { key, value, cursor }
+    }
+
+    fn char_len(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        if ch == '\n' || ch == '\r' {
+            return;
+        }
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        let sanitized = text.replace(['\n', '\r'], "");
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert_str(byte_index, &sanitized);
+        self.cursor += sanitized.chars().count();
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete(&mut self) {
+        if self.cursor >= self.char_len() {
+            return;
+        }
+        let start = self.byte_index(self.cursor);
+        let end = self.byte_index(self.cursor + 1);
+        self.value.replace_range(start..end, "");
     }
 }
 
@@ -562,6 +650,7 @@ impl App {
                             ComposerMode::Input => self.insert_input_text(&text),
                             ComposerMode::SecretInput(secret) => secret.insert_text(&text),
                             ComposerMode::ConfigNumberInput(input) => input.insert_text(&text),
+                            ComposerMode::ConfigTextInput(input) => input.insert_text(&text),
                             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
                         }
                         self.paste_burst.clear();
@@ -596,6 +685,10 @@ impl App {
         }
 
         if self.handle_config_number_key(key, terminal)? {
+            return Ok(());
+        }
+
+        if self.handle_config_text_key(key, terminal)? {
             return Ok(());
         }
 
@@ -997,6 +1090,77 @@ impl App {
         }
     }
 
+    fn handle_config_text_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                let ComposerMode::ConfigTextInput(input) = &self.composer else {
+                    return Ok(true);
+                };
+                let key = input.key;
+                let value = input.value.trim().to_string();
+                let save_result =
+                    Config::load(self.info.config_path.clone()).and_then(|mut config| {
+                        let value = (!value.is_empty()).then_some(value);
+                        match key {
+                            ConfigTextKey::OpenAiSearch => config.web_search_openai_api_key = value,
+                            ConfigTextKey::Exa => config.web_search_exa_api_key = value,
+                            ConfigTextKey::Brave => config.web_search_brave_api_key = value,
+                        }
+                        config.save(self.info.config_path.clone())
+                    });
+                match save_result {
+                    Ok(()) => {
+                        self.refresh_web_search_config_picker(key.picker_value());
+                        self.status = format!("{} saved", key.label());
+                    }
+                    Err(err) => {
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Error(format!("could not save {}: {err}", key.label())),
+                        )?;
+                        self.status = "config save failed".into();
+                    }
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.backspace();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Delete) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.delete();
+                }
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.insert_char(ch);
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                let ComposerMode::ConfigTextInput(input) = &self.composer else {
+                    return Ok(true);
+                };
+                self.refresh_web_search_config_picker(input.key.picker_value());
+                self.status = "web search config".into();
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
@@ -1058,6 +1222,12 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                self.submit_picker_selection(terminal, agent).await?;
+                Ok(true)
+            }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.push_filter_char(ch);
@@ -1073,8 +1243,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = "ready".into();
+                self.handle_picker_escape(/*running*/ false)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -1662,6 +1831,7 @@ impl App {
             ComposerMode::Input => self.insert_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
+            ComposerMode::ConfigTextInput(input) => input.insert_text(text),
             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
         }
     }
@@ -1672,6 +1842,9 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         if self.handle_running_config_number_key(key, terminal)? {
+            return Ok(());
+        }
+        if self.handle_running_config_text_key(key, terminal)? {
             return Ok(());
         }
         if self.handle_running_picker_key(key, terminal)? {
@@ -2004,6 +2177,10 @@ impl App {
                 }
                 Ok(true)
             }
+            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
+                self.submit_picker_selection_during_turn(terminal)?;
+                Ok(true)
+            }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.push_filter_char(ch);
@@ -2015,8 +2192,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = "running".into();
+                self.handle_picker_escape(/*running*/ true)?;
                 Ok(true)
             }
             _ => Ok(true),
@@ -2110,6 +2286,45 @@ impl App {
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output(terminal)?;
             }
+            config_picker::WEB_SEARCH_VALUE => {
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                self.status = "web search config".into();
+            }
+            config_picker::WEB_SEARCH_BACK_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::Picker(config_picker::config_picker(
+                    &self.info,
+                    config.max_output_bytes,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "config".into();
+            }
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal)?,
+            config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::OpenAiSearch,
+                    config.web_search_openai_api_key,
+                ));
+                self.status = "edit OpenAI web search API key".into();
+            }
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::Exa,
+                    config.web_search_exa_api_key,
+                ));
+                self.status = "edit Exa API key".into();
+            }
+            config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::Brave,
+                    config.web_search_brave_api_key,
+                ));
+                self.status = "edit Brave Search API key".into();
+            }
             _ => {}
         }
         Ok(())
@@ -2124,6 +2339,17 @@ impl App {
             return Ok(false);
         }
         self.handle_config_number_key(key, terminal)
+    }
+
+    fn handle_running_config_text_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
+            return Ok(false);
+        }
+        self.handle_config_text_key(key, terminal)
     }
 
     fn reset_streams(&mut self) {
@@ -2728,7 +2954,142 @@ impl App {
                 self.status = "edit max tool output lines".into();
                 Ok(())
             }
+            config_picker::WEB_SEARCH_VALUE => {
+                self.composer =
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                self.status = "web search config".into();
+                Ok(())
+            }
+            config_picker::WEB_SEARCH_BACK_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::Picker(config_picker::config_picker(
+                    &self.info,
+                    config.max_output_bytes,
+                    config.max_tool_output_lines,
+                ));
+                self.status = "config".into();
+                Ok(())
+            }
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal),
+            config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::OpenAiSearch,
+                    config.web_search_openai_api_key,
+                ));
+                self.status = "edit OpenAI web search API key".into();
+                Ok(())
+            }
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::Exa,
+                    config.web_search_exa_api_key,
+                ));
+                self.status = "edit Exa API key".into();
+                Ok(())
+            }
+            config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
+                    ConfigTextKey::Brave,
+                    config.web_search_brave_api_key,
+                ));
+                self.status = "edit Brave Search API key".into();
+                Ok(())
+            }
             _ => Ok(()),
+        }
+    }
+
+    fn refresh_main_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
+        let filter = match &self.composer {
+            ComposerMode::Picker(picker) => picker.filter.clone(),
+            _ => String::new(),
+        };
+        self.open_main_config_picker(selected_value, filter)
+    }
+
+    fn open_main_config_picker_selected(&mut self, selected_value: &str) -> anyhow::Result<()> {
+        self.open_main_config_picker(selected_value, String::new())
+    }
+
+    fn open_main_config_picker(
+        &mut self,
+        selected_value: &str,
+        filter: String,
+    ) -> anyhow::Result<()> {
+        let config = Config::load(self.info.config_path.clone())?;
+        let mut picker = config_picker::config_picker(
+            &self.info,
+            config.max_output_bytes,
+            config.max_tool_output_lines,
+        );
+        Self::restore_picker_position(&mut picker, selected_value, filter);
+        self.composer = ComposerMode::Picker(picker);
+        self.status = "config".into();
+        Ok(())
+    }
+
+    fn refresh_web_search_config_picker(&mut self, selected_value: &str) {
+        let filter = match &self.composer {
+            ComposerMode::Picker(picker) => picker.filter.clone(),
+            _ => String::new(),
+        };
+        let mut picker = config_picker::web_search_config_picker(&self.info);
+        Self::restore_picker_position(&mut picker, selected_value, filter);
+        self.composer = ComposerMode::Picker(picker);
+    }
+
+    fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
+        if self.web_search_config_picker_is_open() {
+            self.open_main_config_picker_selected(config_picker::WEB_SEARCH_VALUE)
+        } else {
+            self.composer = ComposerMode::Input;
+            self.status = if running { "running" } else { "ready" }.into();
+            Ok(())
+        }
+    }
+
+    fn web_search_config_picker_is_open(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker)
+                if picker
+                    .items
+                    .iter()
+                    .any(|item| item.value == config_picker::WEB_SEARCH_BACK_VALUE)
+        )
+    }
+
+    fn picker_space_confirms_selection(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action.space_confirms_selection()
+        )
+    }
+
+    fn restore_picker_position(picker: &mut UiPicker, selected_value: &str, filter: String) {
+        picker.filter = filter;
+        if let Some(index) = picker
+            .items
+            .iter()
+            .position(|item| item.value == selected_value)
+        {
+            picker.selected = index;
+            if picker.selected_item().is_some() {
+                return;
+            }
+        }
+        picker.filter.clear();
+        if let Some(index) = picker
+            .items
+            .iter()
+            .position(|item| item.value == selected_value)
+        {
+            picker.selected = index;
+        } else {
+            picker.select_first_match();
         }
     }
 
@@ -2761,11 +3122,7 @@ impl App {
         ) {
             let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
-            self.composer = ComposerMode::Picker(config_picker::config_picker(
-                &self.info,
-                config.max_output_bytes,
-                config.max_tool_output_lines,
-            ));
+            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {
             Ok(()) => {
@@ -2813,12 +3170,26 @@ impl App {
         ) {
             let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
-            self.composer = ComposerMode::Picker(config_picker::config_picker(
-                &self.info,
-                config.max_output_bytes,
-                config.max_tool_output_lines,
-            ));
+            self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
         }
+        Ok(())
+    }
+
+    fn cycle_web_search_provider(&mut self, _terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let mut config = Config::load(self.info.config_path.clone())?;
+        config.web_search_provider = match config.web_search_provider.as_str() {
+            "auto" => "openai",
+            "openai" => "exa",
+            "exa" => "brave",
+            "brave" => "disabled",
+            "disabled" => "auto",
+            _ => "auto",
+        }
+        .into();
+        let provider = config.web_search_provider.clone();
+        config.save(self.info.config_path.clone())?;
+        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
+        self.status = format!("web search: {provider}");
         Ok(())
     }
 
@@ -3262,6 +3633,7 @@ impl App {
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
+            ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
         }
     }
@@ -3315,6 +3687,10 @@ impl App {
                 y: 1,
             },
             ComposerMode::ConfigNumberInput(input) => Position {
+                x: input.cursor.min(width.max(1)) as u16,
+                y: 1,
+            },
+            ComposerMode::ConfigTextInput(input) => Position {
                 x: input.cursor.min(width.max(1)) as u16,
                 y: 1,
             },
@@ -3754,6 +4130,27 @@ fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Lin
         ),
         styled_line(
             truncate_one_line(&input.value, width),
+            width,
+            Theme::text(),
+            LineFill::Natural,
+        ),
+    ]
+}
+
+fn config_text_input_lines(input: &ConfigTextInput, width: usize) -> Vec<Line<'static>> {
+    let masked = "•".repeat(input.value.chars().count());
+    vec![
+        styled_line(
+            truncate_one_line(
+                &format!("edit {}  enter save, esc cancel", input.key.label()),
+                width,
+            ),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ),
+        styled_line(
+            truncate_one_line(&masked, width),
             width,
             Theme::text(),
             LineFill::Natural,
@@ -4955,6 +5352,58 @@ mod tests {
         assert_eq!(picker.selected_item().unwrap().value, "model-b");
         picker.select_next();
         assert_eq!(picker.selected_item().unwrap().value, "model-a");
+    }
+
+    #[test]
+    fn web_search_config_restore_keeps_api_key_row_selected() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        let mut picker = config_picker::web_search_config_picker(&app.info);
+
+        App::restore_picker_position(
+            &mut picker,
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE,
+            String::new(),
+        );
+
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE
+        );
+    }
+
+    #[test]
+    fn esc_from_nested_web_search_config_returns_to_main_config() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&app.info));
+
+        app.handle_picker_escape(/*running*/ false).unwrap();
+
+        let ComposerMode::Picker(picker) = &app.composer else {
+            panic!("expected picker after nested config escape");
+        };
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            config_picker::WEB_SEARCH_VALUE
+        );
+        assert!(!app.web_search_config_picker_is_open());
+        assert_eq!(app.status, "config");
+    }
+
+    #[test]
+    fn esc_from_main_config_still_closes_picker() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, 12000, 10));
+
+        app.handle_picker_escape(/*running*/ false).unwrap();
+
+        assert!(matches!(app.composer, ComposerMode::Input));
+        assert_eq!(app.status, "ready");
     }
 
     #[test]

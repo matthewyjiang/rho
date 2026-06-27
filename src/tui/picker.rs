@@ -41,6 +41,20 @@ pub(super) enum PickerAction {
     Config,
 }
 
+impl PickerAction {
+    pub(super) fn space_confirms_selection(self) -> bool {
+        match self {
+            PickerAction::Config => true,
+            PickerAction::SelectModel
+            | PickerAction::SelectTitleModel
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession => false,
+        }
+    }
+}
+
 impl UiPicker {
     pub(super) fn new(
         title: impl Into<String>,

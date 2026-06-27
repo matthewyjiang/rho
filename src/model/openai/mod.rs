@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
-mod auth;
+pub(crate) mod auth;
 pub mod cache;
 mod codex_ws;
 mod convert;
@@ -370,7 +370,7 @@ mod tests {
     };
     use super::*;
     use crate::model::{ContentBlock, Message};
-    use crate::tool::{ToolCall, ToolResult};
+    use crate::tool::{ToolCall, ToolResult, ToolSpec};
     use serde_json::json;
 
     #[test]
@@ -445,6 +445,31 @@ mod tests {
     }
 
     #[test]
+    fn codex_responses_body_uses_hosted_web_search_tool() {
+        let body = build_codex_responses_body(
+            "gpt-5-codex",
+            ModelRequest {
+                messages: vec![Message::user_text("find current docs")],
+                tools: vec![ToolSpec {
+                    name: "web_search".into(),
+                    description: "search the web".into(),
+                    input_schema: json!({"type": "object"}),
+                }],
+                prompt_cache_key: None,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            body["tools"],
+            json!([{"type": "web_search", "external_web_access": true}])
+        );
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
     fn chat_completions_request_does_not_serialize_prompt_cache_key() {
         let body = serde_json::to_value(ChatRequest {
             model: "gpt-4.1".into(),
@@ -488,7 +513,9 @@ mod tests {
             &mut |event| {
                 match event {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::WebSearch(_) => {}
                 }
                 Ok(())
             },
@@ -512,7 +539,9 @@ mod tests {
             &mut Some(&mut |event| {
                 match event {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                    ModelEvent::OutputDelta(_) | ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::WebSearch(_) => {}
                 }
                 Ok(())
             }),
@@ -537,6 +566,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::WebSearch(_) => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -560,6 +590,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::WebSearch(_) => {}
                     ModelEvent::Usage(_) => {},
                 }
                 Ok(())
@@ -582,6 +613,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::WebSearch(_) => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -598,6 +630,17 @@ mod tests {
         let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
 "#;
         assert_eq!(extract_sse_text(body).unwrap(), "done");
+    }
+
+    #[test]
+    fn completed_response_text_preserves_url_annotations() {
+        let body = r#"data: {"type":"response.completed","response":{"output_text":"Rust shipped today.","output":[{"content":[{"text":"Rust shipped today.","annotations":[{"type":"url_citation","title":"Rust Blog","url":"https://blog.rust-lang.org/release"}]}]}]}}
+"#;
+        let text = extract_sse_text(body).unwrap();
+
+        assert!(text.contains("Rust shipped today."));
+        assert!(text.contains("Sources:"));
+        assert!(text.contains("Rust Blog: https://blog.rust-lang.org/release"));
     }
 
     #[test]
@@ -634,6 +677,28 @@ mod tests {
     }
 
     #[test]
+    fn codex_sse_line_emits_web_search_detail() {
+        let mut state = CodexSseState::default();
+        let mut searches = Vec::new();
+        handle_codex_sse_line(
+            r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}}}"#,
+            &mut state,
+            &mut Some(&mut |event| {
+                match event {
+                    ModelEvent::WebSearch(detail) => searches.push(detail),
+                    ModelEvent::OutputDelta(_) => {}
+                    ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::Usage(_) => {}
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(searches, vec!["for \"latest Rust release\""]);
+    }
+
+    #[test]
     fn parses_chat_completion_stream_line_as_output_delta() {
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -646,6 +711,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::WebSearch(_) => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -699,6 +765,7 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::WebSearch(_) => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
