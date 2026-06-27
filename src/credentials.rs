@@ -12,6 +12,7 @@ const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 #[cfg(test)]
 const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
+const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
 const CHUNK_MANIFEST_SUFFIX: &str = ":chunks";
 const CHUNK_ACCOUNT_INFIX: &str = ":chunk:";
 
@@ -28,9 +29,20 @@ pub struct CodexTokens {
     pub account_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GitHubCopilotTokens {
+    pub github_access_token: String,
+    pub copilot_token: Option<String>,
+    pub copilot_expires_at_unix: Option<i64>,
+    pub copilot_refresh_after_unix: Option<i64>,
+    pub copilot_token_endpoint: Option<String>,
+    pub copilot_chat_endpoint: Option<String>,
+    pub copilot_models_endpoint: Option<String>,
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, or CODEX_ACCESS_TOKEN.")]
+    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_ACCESS_TOKEN, or GITHUB_COPILOT_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -420,6 +432,7 @@ pub fn delete_provider_credentials(
     match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { account, .. }) => store.delete_secret(account),
         Some(ProviderAuthKind::CodexOAuth { account, .. }) => store.delete_secret(account),
+        Some(ProviderAuthKind::GithubCopilotOAuth { account, .. }) => store.delete_secret(account),
         None => Ok(false),
     }
 }
@@ -477,16 +490,48 @@ pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool
     store.delete_secret(CODEX_TOKENS_ACCOUNT)
 }
 
+pub fn load_github_copilot_tokens(
+    store: &dyn CredentialStore,
+) -> CredentialResult<Option<GitHubCopilotTokens>> {
+    let Some(secret) = store.get_secret(GITHUB_COPILOT_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored GitHub Copilot token JSON: {err}"))
+    })
+}
+
+pub fn save_github_copilot_tokens(
+    store: &dyn CredentialStore,
+    tokens: &GitHubCopilotTokens,
+) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, &secret)
+}
+
+#[allow(dead_code)]
+pub fn delete_github_copilot_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    store.delete_secret(GITHUB_COPILOT_TOKENS_ACCOUNT)
+}
+
 pub fn provider_has_env_override(provider: &str) -> bool {
+    provider_has_env_override_from(provider, |env_var| std::env::var(env_var).ok())
+}
+
+fn provider_has_env_override_from(
+    provider: &str,
+    env_value: impl FnOnce(&str) -> Option<String>,
+) -> bool {
     let Some(descriptor) = registry::provider_descriptor(provider) else {
         return false;
     };
     let env_var = match descriptor.auth_kind {
-        ProviderAuthKind::ApiKey { env_var, .. } | ProviderAuthKind::CodexOAuth { env_var, .. } => {
-            env_var
-        }
+        ProviderAuthKind::ApiKey { env_var, .. }
+        | ProviderAuthKind::CodexOAuth { env_var, .. }
+        | ProviderAuthKind::GithubCopilotOAuth { env_var, .. } => env_var,
     };
-    std::env::var_os(env_var).is_some()
+    env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
 
 pub fn provider_has_credentials(
@@ -499,6 +544,9 @@ pub fn provider_has_credentials(
     match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { account, .. }) => Ok(store.get_secret(account)?.is_some()),
         Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
+        Some(ProviderAuthKind::GithubCopilotOAuth { .. }) => {
+            Ok(load_github_copilot_tokens(store)?.is_some())
+        }
         None => Ok(false),
     }
 }
@@ -582,11 +630,55 @@ mod tests {
     }
 
     #[test]
+    fn github_copilot_tokens_round_trip_with_cached_token_fields() {
+        let store = MemoryCredentialStore::default();
+        let tokens = GitHubCopilotTokens {
+            github_access_token: "github-access".into(),
+            copilot_token: Some("copilot".into()),
+            copilot_expires_at_unix: Some(2_000),
+            copilot_refresh_after_unix: Some(1_500),
+            copilot_token_endpoint: Some("https://api.github.com/copilot_internal/v2/token".into()),
+            copilot_chat_endpoint: Some("https://api.githubcopilot.com/chat/completions".into()),
+            copilot_models_endpoint: Some("https://api.githubcopilot.com/models".into()),
+        };
+
+        save_github_copilot_tokens(&store, &tokens).unwrap();
+
+        assert_eq!(load_github_copilot_tokens(&store).unwrap(), Some(tokens));
+        assert!(provider_has_credentials(&store, "github-copilot").unwrap());
+        assert!(available_auth_modes(&store).contains(&"github-copilot".into()));
+        assert!(delete_provider_credentials(&store, "github-copilot").unwrap());
+        assert_eq!(load_github_copilot_tokens(&store).unwrap(), None);
+    }
+
+    #[test]
+    fn empty_github_copilot_env_override_is_not_active() {
+        assert!(!provider_has_env_override_from(
+            "github-copilot",
+            |env_var| {
+                assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
+                Some(" \t\n ".into())
+            }
+        ));
+        assert!(provider_has_env_override_from(
+            "github-copilot",
+            |env_var| {
+                assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
+                Some("copilot-token".into())
+            }
+        ));
+    }
+
+    #[test]
     fn credential_account_names_are_stable() {
         assert_eq!(SERVICE, "rho");
         assert_eq!(OPENAI_API_KEY_ACCOUNT, "provider:openai:api-key");
         assert_eq!(ANTHROPIC_API_KEY_ACCOUNT, "provider:anthropic:api-key");
         assert_eq!(CODEX_TOKENS_ACCOUNT, "provider:openai-codex:tokens");
+        assert_eq!(
+            GITHUB_COPILOT_TOKENS_ACCOUNT,
+            "provider:github-copilot:tokens"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Authentication and models
 
-Rho supports OpenAI API-key auth and Rho-owned Codex OAuth auth. Provider, model, and auth mode are stored in [configuration](/configuration). Secrets are not stored in config.
+Rho supports OpenAI API-key auth, Rho-owned Codex OAuth auth, Anthropic API-key auth, and GitHub Copilot auth. Provider, model, and auth mode are stored in [configuration](/configuration). Secrets are not stored in config.
 
 ## Interactive login
 
@@ -10,6 +10,8 @@ Use `/login` in the interactive TUI:
 /login
 /login openai
 /login openai-codex
+/login anthropic
+/login github-copilot
 ```
 
 `/login` opens a provider picker. Direct args support provider names only:
@@ -18,6 +20,10 @@ Use `/login` in the interactive TUI:
 | --- | --- |
 | `/login openai` | masked OpenAI API-key entry |
 | `/login openai-codex` | browser-based Codex OAuth owned by Rho |
+| `/login anthropic` | masked Anthropic API-key entry |
+| `/login github-copilot` | browser-based GitHub OAuth owned by Rho |
+
+GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client id and client secret. Set `RHO_GITHUB_COPILOT_CLIENT_ID` and `RHO_GITHUB_COPILOT_CLIENT_SECRET` before running `/login github-copilot`; if either value is missing, Rho returns a setup error instead of reusing GitHub CLI, VS Code, GitHub Models, `GITHUB_TOKEN`, or `GH_TOKEN` credentials. The GitHub OAuth app should allow the localhost callback `http://localhost:1456/auth/github-copilot/callback`.
 
 Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
 
@@ -31,6 +37,8 @@ Use `/logout` to delete stored credentials from the device:
 /logout
 /logout openai
 /logout openai-codex
+/logout anthropic
+/logout github-copilot
 ```
 
 `/logout` opens the same provider picker style as `/login`. Direct args support provider names only. If an environment override is still present, the provider remains available after deleting the stored credential.
@@ -41,9 +49,15 @@ Environment variables are CI/development escape hatches and override stored cred
 
 ```bash
 OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
 CODEX_ACCESS_TOKEN=...
 CODEX_ACCOUNT_ID=... # optional for Codex
+GITHUB_COPILOT_TOKEN=...
+RHO_GITHUB_COPILOT_CLIENT_ID=... # required only for /login github-copilot browser OAuth
+RHO_GITHUB_COPILOT_CLIENT_SECRET=... # required only for /login github-copilot browser OAuth
 ```
+
+`GITHUB_COPILOT_TOKEN` is treated as a GitHub Copilot API bearer token. It is not refreshed or stored by Rho. Stored `/login github-copilot` credentials can be exchanged for short-lived Copilot API tokens and refreshed once after an unauthorized response. The `RHO_GITHUB_COPILOT_CLIENT_*` values configure the app-owned browser OAuth flow only; they are not provider bearer-token overrides.
 
 For normal interactive setup, prefer `/login`.
 
@@ -55,14 +69,20 @@ Rho's implemented providers are:
 | --- | --- | --- |
 | `openai` | `api-key` | OpenAI API-key models |
 | `openai-codex` | `codex` | Codex OAuth models |
+| `anthropic` | `anthropic-api-key` | Anthropic API-key models |
+| `github-copilot` | `github-copilot` | GitHub Copilot models |
 
-Rho uses a built-in static model catalog instead of querying providers for model listings. The `/model` picker shows models for providers that currently have credentials available through `/login` or env overrides. After logging into another provider, that provider's models appear in the picker. After logout, they disappear unless an env override still supplies auth.
+OpenAI, Anthropic, and GitHub Copilot can refresh provider model lists with `/refresh-model-list [provider]`. GitHub Copilot falls back to a conservative static allowlist when a dynamic model cache is unavailable or refresh fails, so `/model github-copilot/<model>` and the picker can work before the first refresh.
+
+GitHub Copilot support uses GitHub Copilot endpoints, not GitHub Models endpoints.
 
 Use `/model provider/model` to switch explicitly, including to another provider:
 
 ```text
 /model openai/gpt-5.5
 /model openai-codex/gpt-5.5
+/model anthropic/claude-sonnet-4-5
+/model github-copilot/gpt-4.1
 ```
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.

@@ -55,13 +55,14 @@ use theme::Theme;
 
 use crate::{
     agent::{Agent, AgentEvent, SessionHistorySink},
-    auth::codex_oauth::{self, CodexOAuthError},
+    auth::{codex_oauth, github_copilot_oauth},
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
     credentials::{
         available_auth_modes, delete_provider_credentials, provider_has_credentials,
-        provider_has_env_override, save_codex_tokens, save_provider_api_key, CodexTokens,
-        CredentialStore, OsCredentialStore,
+        provider_has_env_override, save_codex_tokens, save_github_copilot_tokens,
+        save_provider_api_key, CodexTokens, CredentialStore, GitHubCopilotTokens,
+        OsCredentialStore,
     },
     model::{
         build_provider,
@@ -248,7 +249,13 @@ struct SecretInput {
 #[derive(Debug)]
 struct PendingOAuthLogin {
     target: LoginTarget,
-    handle: tokio::task::JoinHandle<Result<CodexTokens, CodexOAuthError>>,
+    handle: tokio::task::JoinHandle<Result<PendingOAuthResult, String>>,
+}
+
+#[derive(Debug)]
+enum PendingOAuthResult {
+    Codex(CodexTokens),
+    GithubCopilot(GitHubCopilotTokens),
 }
 
 #[derive(Debug)]
@@ -928,12 +935,19 @@ impl App {
 
         match key.code {
             KeyCode::Esc => {
-                if let Some(pending) = self.pending_oauth_login.take() {
+                let provider = if let Some(pending) = self.pending_oauth_login.take() {
+                    let provider = pending.target.provider;
                     pending.handle.abort();
-                }
+                    provider
+                } else {
+                    "OAuth".into()
+                };
                 self.composer = ComposerMode::Input;
                 self.status = "login cancelled".into();
-                self.insert_entry(terminal, &Entry::Notice("Codex login cancelled".into()))?;
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(format!("{provider} login cancelled")),
+                )?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -4230,7 +4244,7 @@ fn config_text_input_lines(input: &ConfigTextInput, width: usize) -> Vec<Line<'s
 fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>> {
     vec![styled_line(
         truncate_one_line(
-            &format!("waiting for {} browser login  esc cancel", target.provider),
+            &format!("waiting for {} OAuth login  esc cancel", target.provider),
             width,
         ),
         width,

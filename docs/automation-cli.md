@@ -23,7 +23,7 @@ Options:
       --provider <PROVIDER>
       --model <MODEL>
       --config <CONFIG>
-      --auth <AUTH>              [possible values: api-key, codex]
+      --auth <AUTH>              [possible values: api-key, codex, anthropic-api-key, github-copilot]
       --no-system-prompt         Do not send rho's system prompt, including AGENTS.md and skill context
       --no-tools                 Do not expose any tools to the model
       --reasoning <REASONING>    Override reasoning level [possible values: off, minimal, low, medium, high, xhigh]
@@ -31,7 +31,7 @@ Options:
   -h, --help                     Print help
 ```
 
-Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration).
+Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration). For GitHub Copilot automation, use `/login github-copilot` in the TUI first or provide `GITHUB_COPILOT_TOKEN` as a bearer-token override, then select models as `github-copilot/<model>`.
 
 `--no-system-prompt` and `--no-tools` only affect the current run and are not written to config.
 

@@ -144,6 +144,7 @@ fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
         ModelError::MissingApiKey
             | ModelError::MissingCodexAuth
             | ModelError::MissingAnthropicApiKey
+            | ModelError::MissingGithubCopilotAuth
             | ModelError::Credentials(_)
             | ModelError::UnsupportedProvider(_)
     )
@@ -415,6 +416,50 @@ mod tests {
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude-sonnet-4-5");
         assert_eq!(cfg.auth, "anthropic-api-key");
+    }
+
+    #[test]
+    fn cli_github_copilot_provider_override_uses_static_fallback_default() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("github-copilot".into()),
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "github-copilot");
+        assert_eq!(cfg.model, "gpt-4.1");
+        assert_eq!(cfg.auth, "github-copilot");
+    }
+
+    #[test]
+    fn cli_github_copilot_model_override_selects_matching_auth() {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: Some("github-copilot/gpt-4.1".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "github-copilot");
+        assert_eq!(cfg.model, "gpt-4.1");
+        assert_eq!(cfg.auth, "github-copilot");
     }
 
     #[test]

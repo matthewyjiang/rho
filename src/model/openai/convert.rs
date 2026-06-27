@@ -8,7 +8,7 @@ use super::types::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
-pub(super) fn convert_openai_response(response: ChatResponse) -> Result<ModelResponse, ModelError> {
+pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelResponse, ModelError> {
     let message = response
         .choices
         .into_iter()
@@ -41,7 +41,7 @@ pub(super) fn convert_openai_response(response: ChatResponse) -> Result<ModelRes
     }
 }
 
-pub(super) fn codex_reasoning_param(
+pub(crate) fn codex_reasoning_param(
     effort: Option<&str>,
     summary: Option<&str>,
 ) -> Option<serde_json::Value> {
@@ -60,7 +60,7 @@ pub(super) fn codex_reasoning_param(
     Some(serde_json::Value::Object(reasoning))
 }
 
-pub(super) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
+pub(crate) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
     OpenAiTool {
         kind: "function",
         function: OpenAiToolFunction {
@@ -72,7 +72,7 @@ pub(super) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
     }
 }
 
-pub(super) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
+pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
     if tool.name == "web_search" {
         return json!({
             "type": "web_search",
@@ -89,7 +89,7 @@ pub(super) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
     })
 }
 
-pub(super) fn codex_input_items(
+pub(crate) fn codex_input_items(
     messages: Vec<Message>,
     instructions: &mut Vec<String>,
 ) -> Result<Vec<serde_json::Value>, ModelError> {
@@ -134,7 +134,7 @@ pub(super) fn codex_input_items(
     Ok(input)
 }
 
-pub(super) fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
+pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
     match message {
         Message::System(content) => Ok(openai_text_message("system", content)),
         Message::User(blocks) => Ok(openai_text_message("user", render_blocks(&blocks))),
@@ -218,7 +218,7 @@ fn render_tool_call(call: &ToolCall) -> String {
 }
 
 #[derive(Deserialize)]
-pub(super) struct ResponsesResponse {
+pub(crate) struct ResponsesResponse {
     output_text: Option<String>,
     output: Option<Vec<ResponseOutput>>,
 }
@@ -242,7 +242,7 @@ struct ResponseAnnotation {
     url: Option<String>,
 }
 
-pub(super) fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelError> {
+pub(crate) fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelError> {
     let mut content_texts = Vec::new();
     let mut citations = Vec::new();
     for content in response

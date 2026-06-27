@@ -6,7 +6,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 provider = "openai"
 model = "gpt-5.5"
 max_output_bytes = 12000
-auth = "api-key" # or "codex"
+auth = "api-key" # or "codex", "anthropic-api-key", or "github-copilot"
 reasoning = "medium" # off, minimal, low, medium, high, or xhigh
 show_reasoning_output = true
 auto_compact = false
@@ -21,6 +21,8 @@ Passing `--provider`, `--model`, `--auth`, or `--reasoning` updates the config f
 ```bash
 rho --provider openai --auth api-key --model gpt-5.5
 rho --provider openai-codex --auth codex --model gpt-5.5
+rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5
+rho --provider github-copilot --auth github-copilot --model gpt-4.1
 rho --reasoning high
 ```
 
@@ -38,7 +40,7 @@ rho --config ~/.rho/config.toml
 
 In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
-[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) for providers with available auth, and `/model provider/model` can switch explicitly.
+[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. GitHub Copilot uses `github-copilot/<model>` names and falls back to static entries when no dynamic cache exists.
 
 ## Reasoning options
 
