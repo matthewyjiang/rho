@@ -33,11 +33,19 @@ pub enum AgentError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
     StepStarted(usize),
-    ToolStarted,
+    ToolStarted {
+        name: String,
+        command: Option<String>,
+        display_style: ToolDisplayStyle,
+        display_lines: Vec<String>,
+    },
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
+    ToolUpdated {
+        display_lines: Vec<String>,
+    },
     ToolFinished {
         name: String,
         command: Option<String>,
@@ -245,82 +253,128 @@ impl Agent {
                         };
                         self.push_message(Message::user_text(steer))?;
                     } else {
-                        on_event(AgentEvent::ToolStarted)?;
-                        self.push_message(Message::Assistant(blocks))?;
-                        let mut tool_events = Vec::new();
+                        let mut pending_assistant_message = Some(Message::Assistant(blocks));
+                        let mut deferred_interrupt = None;
                         for call in tool_calls.iter().cloned() {
                             let name = call.name.clone();
-                            let (result, display_style, command, event_content, display_lines) =
-                                match self.tools.get(&call.name) {
-                                    Some(tool) => {
-                                        let display_style = tool.display_style();
-                                        let command = tool.display_command(&call.arguments);
-                                        let event_content =
-                                            tool.display_content(&call.arguments, &self.ctx);
-                                        let result = match tool
-                                            .call(
-                                                call.arguments.clone(),
-                                                self.ctx.clone(),
-                                                call.id.clone(),
-                                            )
+                            let tool = self.tools.get(&call.name);
+                            let (display_style, command, start_display_lines) = match &tool {
+                                Some(tool) => {
+                                    let display_style = tool.display_style();
+                                    let command = tool.display_command(&call.arguments);
+                                    let start_display_lines =
+                                        tool.display_start_lines(&call.arguments, &self.ctx);
+                                    (display_style, command, start_display_lines)
+                                }
+                                None => (
+                                    ToolDisplayStyle::default_tool(),
+                                    None,
+                                    vec![call.name.clone()],
+                                ),
+                            };
+                            if deferred_interrupt.is_none() {
+                                on_event(AgentEvent::ToolStarted {
+                                    name: name.clone(),
+                                    command: command.clone(),
+                                    display_style,
+                                    display_lines: start_display_lines,
+                                })?;
+                            }
+                            if let Some(message) = pending_assistant_message.take() {
+                                self.push_message(message)?;
+                            }
+
+                            let (result, event_content, display_lines) = match tool {
+                                Some(tool) => {
+                                    let event_content =
+                                        tool.display_content(&call.arguments, &self.ctx);
+                                    let execution_tool = tool.clone();
+                                    let args = call.arguments.clone();
+                                    let ctx = self.ctx.clone();
+                                    let id = call.id.clone();
+                                    let (progress_tx, mut progress_rx) =
+                                        tokio::sync::mpsc::unbounded_channel();
+                                    let mut task = tokio::spawn(async move {
+                                        let mut on_update = move |display_lines| {
+                                            let _ = progress_tx.send(display_lines);
+                                        };
+                                        execution_tool
+                                            .call_with_updates(args, ctx, id, &mut on_update)
                                             .await
-                                        {
-                                            Ok(result) => result,
-                                            Err(err) => ToolResult {
-                                                id: call.id.clone(),
-                                                ok: false,
-                                                content: err.to_string(),
-                                            },
-                                        };
-                                        let mut display_lines =
-                                            tool.display_lines(&call.arguments, &self.ctx, &result);
-                                        if !result.ok
-                                            && !display_lines
-                                                .iter()
-                                                .any(|line| line == &result.content)
-                                        {
-                                            display_lines.push(result.content.clone());
+                                    });
+                                    let result = loop {
+                                        tokio::select! {
+                                            Some(display_lines) = progress_rx.recv() => {
+                                                if deferred_interrupt.is_none() {
+                                                    match on_event(AgentEvent::ToolUpdated { display_lines }) {
+                                                        Ok(()) => {}
+                                                        Err(ModelError::Interrupted) => {
+                                                            deferred_interrupt = Some(ModelError::Interrupted);
+                                                        }
+                                                        Err(err) => return Err(err.into()),
+                                                    }
+                                                }
+                                            }
+                                            joined = &mut task => {
+                                                break match joined {
+                                                    Ok(Ok(result)) => result,
+                                                    Ok(Err(err)) => ToolResult {
+                                                        id: call.id.clone(),
+                                                        ok: false,
+                                                        content: err.to_string(),
+                                                    },
+                                                    Err(err) => ToolResult {
+                                                        id: call.id.clone(),
+                                                        ok: false,
+                                                        content: format!("tool task failed: {err}"),
+                                                    },
+                                                };
+                                            }
                                         }
-                                        (
-                                            result,
-                                            display_style,
-                                            command,
-                                            event_content,
-                                            display_lines,
-                                        )
+                                    };
+                                    let mut display_lines =
+                                        tool.display_lines(&call.arguments, &self.ctx, &result);
+                                    if !result.ok
+                                        && !display_lines.iter().any(|line| line == &result.content)
+                                    {
+                                        display_lines.push(result.content.clone());
                                     }
-                                    None => {
-                                        let result = ToolResult {
-                                            id: call.id.clone(),
-                                            ok: false,
-                                            content: format!("Unknown tool: {}", call.name),
-                                        };
-                                        let display_lines =
-                                            vec![call.name.clone(), result.content.clone()];
-                                        (
-                                            result,
-                                            ToolDisplayStyle::default_tool(),
-                                            None,
-                                            None,
-                                            display_lines,
-                                        )
-                                    }
-                                };
+                                    (result, event_content, display_lines)
+                                }
+                                None => {
+                                    let result = ToolResult {
+                                        id: call.id.clone(),
+                                        ok: false,
+                                        content: format!("Unknown tool: {}", call.name),
+                                    };
+                                    let display_lines =
+                                        vec![call.name.clone(), result.content.clone()];
+                                    (result, None, display_lines)
+                                }
+                            };
                             let display_content =
                                 event_content.unwrap_or_else(|| result.content.clone());
                             let ok = result.ok;
                             self.push_message(Message::ToolResult(result))?;
-                            tool_events.push(AgentEvent::ToolFinished {
-                                name,
-                                command,
-                                ok,
-                                content: display_content,
-                                display_style,
-                                display_lines,
-                            });
+                            if deferred_interrupt.is_none() {
+                                match on_event(AgentEvent::ToolFinished {
+                                    name,
+                                    command,
+                                    ok,
+                                    content: display_content,
+                                    display_style,
+                                    display_lines,
+                                }) {
+                                    Ok(()) => {}
+                                    Err(ModelError::Interrupted) => {
+                                        deferred_interrupt = Some(ModelError::Interrupted);
+                                    }
+                                    Err(err) => return Err(err.into()),
+                                }
+                            }
                         }
-                        for event in tool_events {
-                            on_event(event)?;
+                        if let Some(err) = deferred_interrupt {
+                            return Err(err.into());
                         }
                     }
                 }
