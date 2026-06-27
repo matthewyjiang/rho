@@ -227,6 +227,14 @@ impl ConfigTextKey {
             ConfigTextKey::Brave => "Brave Search API key",
         }
     }
+
+    fn picker_value(self) -> &'static str {
+        match self {
+            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
+            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
+            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1098,19 +1106,29 @@ impl App {
                 };
                 let key = input.key;
                 let value = input.value.trim().to_string();
-                Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                    let value = (!value.is_empty()).then_some(value);
-                    match key {
-                        ConfigTextKey::OpenAiSearch => config.web_search_openai_api_key = value,
-                        ConfigTextKey::Exa => config.web_search_exa_api_key = value,
-                        ConfigTextKey::Brave => config.web_search_brave_api_key = value,
+                let save_result =
+                    Config::load(self.info.config_path.clone()).and_then(|mut config| {
+                        let value = (!value.is_empty()).then_some(value);
+                        match key {
+                            ConfigTextKey::OpenAiSearch => config.web_search_openai_api_key = value,
+                            ConfigTextKey::Exa => config.web_search_exa_api_key = value,
+                            ConfigTextKey::Brave => config.web_search_brave_api_key = value,
+                        }
+                        config.save(self.info.config_path.clone())
+                    });
+                match save_result {
+                    Ok(()) => {
+                        self.refresh_web_search_config_picker(key.picker_value());
+                        self.status = format!("{} saved", key.label());
                     }
-                    config.save(self.info.config_path.clone())
-                })?;
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
-                self.insert_entry(terminal, &Entry::Notice(format!("{} saved", key.label())))?;
-                self.status = "config saved".into();
+                    Err(err) => {
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Error(format!("could not save {}: {err}", key.label())),
+                        )?;
+                        self.status = "config save failed".into();
+                    }
+                }
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -1132,8 +1150,10 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                let ComposerMode::ConfigTextInput(input) = &self.composer else {
+                    return Ok(true);
+                };
+                self.refresh_web_search_config_picker(input.key.picker_value());
                 self.status = "web search config".into();
                 Ok(true)
             }
@@ -1217,8 +1237,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = "ready".into();
+                self.handle_picker_escape(/*running*/ false)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -2163,8 +2182,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = "running".into();
+                self.handle_picker_escape(/*running*/ true)?;
                 Ok(true)
             }
             _ => Ok(true),
@@ -2979,6 +2997,18 @@ impl App {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
+        self.open_main_config_picker(selected_value, filter)
+    }
+
+    fn open_main_config_picker_selected(&mut self, selected_value: &str) -> anyhow::Result<()> {
+        self.open_main_config_picker(selected_value, String::new())
+    }
+
+    fn open_main_config_picker(
+        &mut self,
+        selected_value: &str,
+        filter: String,
+    ) -> anyhow::Result<()> {
         let config = Config::load(self.info.config_path.clone())?;
         let mut picker = config_picker::config_picker(
             &self.info,
@@ -2987,6 +3017,7 @@ impl App {
         );
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
+        self.status = "config".into();
         Ok(())
     }
 
@@ -2998,6 +3029,27 @@ impl App {
         let mut picker = config_picker::web_search_config_picker(&self.info);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
+    }
+
+    fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
+        if self.web_search_config_picker_is_open() {
+            self.open_main_config_picker_selected(config_picker::WEB_SEARCH_VALUE)
+        } else {
+            self.composer = ComposerMode::Input;
+            self.status = if running { "running" } else { "ready" }.into();
+            Ok(())
+        }
+    }
+
+    fn web_search_config_picker_is_open(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker)
+                if picker
+                    .items
+                    .iter()
+                    .any(|item| item.value == config_picker::WEB_SEARCH_BACK_VALUE)
+        )
     }
 
     fn restore_picker_position(picker: &mut UiPicker, selected_value: &str, filter: String) {
@@ -5283,6 +5335,58 @@ mod tests {
         assert_eq!(picker.selected_item().unwrap().value, "model-b");
         picker.select_next();
         assert_eq!(picker.selected_item().unwrap().value, "model-a");
+    }
+
+    #[test]
+    fn web_search_config_restore_keeps_api_key_row_selected() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        let mut picker = config_picker::web_search_config_picker(&app.info);
+
+        App::restore_picker_position(
+            &mut picker,
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE,
+            String::new(),
+        );
+
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            config_picker::WEB_SEARCH_EXA_KEY_VALUE
+        );
+    }
+
+    #[test]
+    fn esc_from_nested_web_search_config_returns_to_main_config() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&app.info));
+
+        app.handle_picker_escape(/*running*/ false).unwrap();
+
+        let ComposerMode::Picker(picker) = &app.composer else {
+            panic!("expected picker after nested config escape");
+        };
+        assert_eq!(
+            picker.selected_item().unwrap().value,
+            config_picker::WEB_SEARCH_VALUE
+        );
+        assert!(!app.web_search_config_picker_is_open());
+        assert_eq!(app.status, "config");
+    }
+
+    #[test]
+    fn esc_from_main_config_still_closes_picker() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().join("config.toml"));
+        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, 12000, 10));
+
+        app.handle_picker_escape(/*running*/ false).unwrap();
+
+        assert!(matches!(app.composer, ComposerMode::Input));
+        assert_eq!(app.status, "ready");
     }
 
     #[test]
