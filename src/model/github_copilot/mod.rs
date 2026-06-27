@@ -239,7 +239,10 @@ mod tests {
     fn provider_construction_requires_available_auth() {
         let result = GitHubCopilotProvider::new(
             "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new(Arc::new(MemoryCredentialStore::default())),
+            GitHubCopilotAuthManager::new_with_env_token(
+                Arc::new(MemoryCredentialStore::default()),
+                None,
+            ),
         );
 
         assert!(matches!(result, Err(ModelError::MissingGithubCopilotAuth)));

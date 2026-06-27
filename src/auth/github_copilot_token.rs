@@ -25,6 +25,7 @@ const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 60;
 #[derive(Clone)]
 pub(crate) struct GitHubCopilotAuthManager {
     store: Arc<dyn CredentialStore>,
+    env_token: Arc<dyn Fn() -> Option<String> + Send + Sync>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,32 +60,48 @@ struct CopilotTokenEndpoints {
 
 impl GitHubCopilotAuthManager {
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            env_token: Arc::new(nonempty_env_copilot_token),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_env_token(
+        store: Arc<dyn CredentialStore>,
+        env_token: Option<String>,
+    ) -> Self {
+        Self {
+            store,
+            env_token: Arc::new(move || env_token.clone()),
+        }
     }
 
     pub(crate) fn ensure_auth_available(&self) -> Result<(), ModelError> {
-        ensure_auth_available_with_store(self.store.as_ref())
+        ensure_auth_available_with_env_token(self.store.as_ref(), (self.env_token)())
     }
 
     pub(crate) async fn auth_material(
         &self,
         client: &reqwest::Client,
     ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
-        auth_material_with_store(client, self.store.as_ref()).await
+        auth_material_with_env_token(client, self.store.as_ref(), (self.env_token)()).await
     }
 
     pub(crate) async fn force_refresh(
         &self,
         client: &reqwest::Client,
     ) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
-        force_refresh_auth_material_with_store(client, self.store.as_ref()).await
+        force_refresh_auth_material_with_env_token(client, self.store.as_ref(), (self.env_token)())
+            .await
     }
 }
 
-pub(crate) fn ensure_auth_available_with_store(
+fn ensure_auth_available_with_env_token(
     store: &dyn CredentialStore,
+    env_token: Option<String>,
 ) -> Result<(), ModelError> {
-    if nonempty_env_copilot_token().is_some() || load_github_copilot_tokens(store)?.is_some() {
+    if nonempty_token(env_token).is_some() || load_github_copilot_tokens(store)?.is_some() {
         Ok(())
     } else {
         Err(ModelError::MissingGithubCopilotAuth)
@@ -95,7 +112,15 @@ pub(crate) async fn auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
-    if let Some(token) = nonempty_env_copilot_token() {
+    auth_material_with_env_token(client, store, nonempty_env_copilot_token()).await
+}
+
+async fn auth_material_with_env_token(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    env_token: Option<String>,
+) -> Result<GitHubCopilotAuthMaterial, ModelError> {
+    if let Some(token) = nonempty_token(env_token) {
         return Ok(GitHubCopilotAuthMaterial {
             token,
             source: GitHubCopilotAuthSource::Env,
@@ -117,7 +142,15 @@ pub(crate) async fn force_refresh_auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
-    if nonempty_env_copilot_token().is_some() {
+    force_refresh_auth_material_with_env_token(client, store, nonempty_env_copilot_token()).await
+}
+
+async fn force_refresh_auth_material_with_env_token(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    env_token: Option<String>,
+) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
+    if nonempty_token(env_token).is_some() {
         return Ok(None);
     }
     let Some(mut tokens) = load_github_copilot_tokens(store)? else {
@@ -237,22 +270,21 @@ fn now_unix_seconds() -> i64 {
 }
 
 fn nonempty_env_copilot_token() -> Option<String> {
-    std::env::var(GITHUB_COPILOT_TOKEN_ENV)
-        .ok()
-        .filter(|token| !token.trim().is_empty())
+    nonempty_token(std::env::var(GITHUB_COPILOT_TOKEN_ENV).ok())
+}
+
+fn nonempty_token(token: Option<String>) -> Option<String> {
+    token.filter(|token| !token.trim().is_empty())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::credentials::MemoryCredentialStore;
-    use std::sync::Mutex;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn tokens(
         copilot_token: Option<&str>,
@@ -364,12 +396,8 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test]
     async fn empty_env_token_does_not_disable_stored_refresh() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let previous = std::env::var_os(GITHUB_COPILOT_TOKEN_ENV);
-        std::env::set_var(GITHUB_COPILOT_TOKEN_ENV, "");
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move {
@@ -384,21 +412,19 @@ mod tests {
             );
             stream.write_all(reply.as_bytes()).await.unwrap();
         });
-        let store = MemoryCredentialStore::default();
+        let store = Arc::new(MemoryCredentialStore::default());
         let mut tokens = tokens(Some("stale"), Some(2_000), None);
         tokens.copilot_token_endpoint = Some(url);
-        save_github_copilot_tokens(&store, &tokens).unwrap();
+        save_github_copilot_tokens(store.as_ref(), &tokens).unwrap();
 
-        let material = force_refresh_auth_material_with_store(&reqwest::Client::new(), &store)
+        let auth = GitHubCopilotAuthManager::new_with_env_token(store, Some(String::new()));
+        let material = auth
+            .force_refresh(&reqwest::Client::new())
             .await
             .unwrap()
             .unwrap();
 
         assert_eq!(material.token, "refreshed");
-        match previous {
-            Some(value) => std::env::set_var(GITHUB_COPILOT_TOKEN_ENV, value),
-            None => std::env::remove_var(GITHUB_COPILOT_TOKEN_ENV),
-        }
     }
 
     #[tokio::test]
