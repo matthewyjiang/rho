@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.12.0...rho-coding-agent-v0.12.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **tui:** improve block foreground contrast ([#78](https://github.com/matthewyjiang/rho/issues/78)) ([12ae234](https://github.com/matthewyjiang/rho/commit/12ae2348111d161300be89973cf9d519b1970483))
+* **web:** use hosted codex search ([#79](https://github.com/matthewyjiang/rho/issues/79)) ([41a4227](https://github.com/matthewyjiang/rho/commit/41a422736b89b21b8c3df00dded3448683d89c9f))
+
 ## [0.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.11.0...rho-coding-agent-v0.12.0) (2026-06-26)
 
 
