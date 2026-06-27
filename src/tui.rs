@@ -148,6 +148,7 @@ struct App {
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
+    pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<String>,
     input_history: Vec<String>,
@@ -315,17 +316,28 @@ enum CommandChoiceKind {
 }
 
 #[derive(Clone, Debug)]
+struct ToolEntry {
+    state: ToolEntryState,
+    display_lines: Vec<String>,
+    expanded: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ToolEntryState {
+    Running,
+    Finished {
+        ok: bool,
+        display_style: ToolDisplayStyle,
+    },
+}
+
+#[derive(Clone, Debug)]
 enum Entry {
     User(String),
     #[allow(dead_code)]
     Assistant(String),
     Reasoning(String),
-    Tool {
-        ok: bool,
-        display_style: ToolDisplayStyle,
-        display_lines: Vec<String>,
-        expanded: bool,
-    },
+    Tool(ToolEntry),
     Notice(String),
     Error(String),
 }
@@ -334,6 +346,14 @@ enum Entry {
 enum StreamKind {
     Assistant,
     Reasoning,
+}
+
+fn is_tool_entry(entry: &Entry) -> bool {
+    matches!(entry, Entry::Tool(_))
+}
+
+fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
+    matches!(entry, Entry::Tool(tool) if tool_display_line_count(&tool.display_lines) > max_tool_output_lines)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -590,6 +610,7 @@ impl App {
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
+            pending_tool_call: None,
             steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
             input_history: Vec::new(),
@@ -1690,6 +1711,7 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
 
         self.active_tool_call = false;
+        self.pending_tool_call = None;
         let interrupt_requested = Arc::new(AtomicBool::new(false));
         let tool_call_active = Arc::new(AtomicBool::new(false));
         let steering_prompts = Arc::new(Mutex::new(VecDeque::new()));
@@ -1702,7 +1724,7 @@ impl App {
                 prompt,
                 move |event| {
                     match &event {
-                        AgentEvent::ToolStarted => {
+                        AgentEvent::ToolStarted { .. } => {
                             callback_tool_call_active.store(true, Ordering::SeqCst)
                         }
                         AgentEvent::ToolFinished { .. } => {
@@ -1712,7 +1734,8 @@ impl App {
                         | AgentEvent::OutputDelta(_)
                         | AgentEvent::ReasoningDelta(_)
                         | AgentEvent::ContextUsage(_)
-                        | AgentEvent::Usage(_) => {}
+                        | AgentEvent::Usage(_)
+                        | AgentEvent::ToolUpdated { .. } => {}
                     }
                     let _ = event_tx.send(event);
                     if callback_interrupt_requested.load(Ordering::SeqCst) {
@@ -1778,6 +1801,7 @@ impl App {
             self.handle_agent_event(event, terminal)?;
         }
         self.active_tool_call = false;
+        self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
         match result {
             Ok(answer) => {
@@ -2455,7 +2479,7 @@ impl App {
                 if matches!(
                     other,
                     AgentEvent::StepStarted(_)
-                        | AgentEvent::ToolStarted
+                        | AgentEvent::ToolStarted { .. }
                         | AgentEvent::ToolFinished { .. }
                 ) {
                     self.finish_streams(terminal)?;
@@ -3413,10 +3437,7 @@ impl App {
             self.info.max_tool_output_lines,
         );
         self.transcript = visible_entries;
-        self.last_inserted_was_tool = self
-            .transcript
-            .last()
-            .is_some_and(|entry| matches!(entry, Entry::Tool { .. }));
+        self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.reflow_history(terminal)?;
         self.insert_entry(
             terminal,
@@ -3484,24 +3505,38 @@ impl App {
     }
 
     fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        let Some(index) = self.transcript.iter().rposition(|entry| {
-            matches!(entry, Entry::Tool { display_lines, .. } if tool_display_line_count(display_lines) > self.info.max_tool_output_lines)
-        }) else {
+        if let Some(pending) = self.pending_tool_call.as_mut() {
+            if tool_display_line_count(&pending.display_lines) <= self.info.max_tool_output_lines {
+                self.status = "no truncated tool output".into();
+                return Ok(());
+            }
+            pending.expanded = !pending.expanded;
+            self.status = if pending.expanded {
+                "tool output expanded".into()
+            } else {
+                "tool output collapsed".into()
+            };
+            return Ok(());
+        }
+
+        let Some(index) = self
+            .transcript
+            .iter()
+            .rposition(|entry| expandable_tool_entry(entry, self.info.max_tool_output_lines))
+        else {
             self.status = "no truncated tool output".into();
             return Ok(());
         };
 
-        let expand = !matches!(
-            self.transcript.get(index),
-            Some(Entry::Tool { expanded: true, .. })
-        );
+        let expand =
+            !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
         for entry in &mut self.transcript {
-            if let Entry::Tool { expanded, .. } = entry {
-                *expanded = false;
+            if let Entry::Tool(tool) = entry {
+                tool.expanded = false;
             }
         }
-        if let Some(Entry::Tool { expanded, .. }) = self.transcript.get_mut(index) {
-            *expanded = expand;
+        if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
+            tool.expanded = expand;
         }
         self.status = if expand {
             "tool output expanded".into()
@@ -3517,12 +3552,30 @@ impl App {
                 self.reset_streams();
                 self.running = true;
                 self.active_tool_call = false;
+                self.pending_tool_call = None;
                 self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
                 None
             }
-            AgentEvent::ToolStarted => {
+            AgentEvent::ToolStarted { display_lines, .. } => {
                 self.active_tool_call = true;
+                self.pending_tool_call = Some(ToolEntry {
+                    state: ToolEntryState::Running,
+                    display_lines,
+                    expanded: false,
+                });
+                None
+            }
+            AgentEvent::ToolUpdated { display_lines } => {
+                let expanded = self
+                    .pending_tool_call
+                    .as_ref()
+                    .is_some_and(|pending| pending.expanded);
+                self.pending_tool_call = Some(ToolEntry {
+                    state: ToolEntryState::Running,
+                    display_lines,
+                    expanded,
+                });
                 None
             }
             AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
@@ -3543,12 +3596,16 @@ impl App {
                 ..
             } => {
                 self.active_tool_call = false;
-                Some(Entry::Tool {
-                    ok,
-                    display_style,
+                let expanded = self
+                    .pending_tool_call
+                    .as_ref()
+                    .is_some_and(|pending| pending.expanded);
+                self.pending_tool_call = None;
+                Some(Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
-                    expanded: false,
-                })
+                    expanded,
+                }))
             }
         }
     }
@@ -3596,11 +3653,6 @@ impl App {
         viewport_height: usize,
         now: Instant,
     ) -> Vec<Line<'static>> {
-        let mut content = Vec::new();
-        if self.loading_active() {
-            content.push(self.loading_spinner.line(now));
-        }
-
         let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
             Theme::input_prompt()
         } else {
@@ -3610,10 +3662,28 @@ impl App {
         let composer_lines = self.composer_lines(width);
         let statusline_lines = self.statusline_lines(width);
         let command_lines = self.command_suggestion_lines(width);
-        let mut lines = Vec::new();
         let composer_height =
             composer_lines.len() + statusline_lines.len() + command_lines.len() + 2;
         let available_content = viewport_height.saturating_sub(composer_height);
+
+        let mut content = Vec::new();
+        if let Some(pending) = &self.pending_tool_call {
+            let spinner_lines = usize::from(self.loading_active());
+            let pending_tool_output_lines = self
+                .info
+                .max_tool_output_lines
+                .min(available_content.saturating_sub(spinner_lines + 3).max(1));
+            content.extend(entry_lines(
+                &Entry::Tool(pending.clone()),
+                width,
+                pending_tool_output_lines,
+            ));
+        }
+        if self.loading_active() {
+            content.push(self.loading_spinner.line(now));
+        }
+
+        let mut lines = Vec::new();
         let skip = content.len().saturating_sub(available_content);
         lines.extend(content.into_iter().skip(skip));
         lines.push(divider.clone());
@@ -3783,10 +3853,7 @@ impl App {
 
         insert_history_lines(terminal, lines)?;
         self.transcript = visible_entries;
-        self.last_inserted_was_tool = self
-            .transcript
-            .last()
-            .is_some_and(|entry| matches!(entry, Entry::Tool { .. }));
+        self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         Ok(())
     }
 
@@ -3794,11 +3861,11 @@ impl App {
         let mut lines = session_header_lines(&self.info, width);
         let mut previous_was_tool = false;
         for entry in &self.transcript {
-            if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+            if previous_was_tool && is_tool_entry(entry) {
                 lines.push(Line::raw(""));
             }
             lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
-            previous_was_tool = matches!(entry, Entry::Tool { .. });
+            previous_was_tool = is_tool_entry(entry);
         }
 
         let divider = Line::styled("─".repeat(width.max(1)), Theme::dim());
@@ -3824,7 +3891,7 @@ impl App {
         entry: &Entry,
     ) -> std::io::Result<()> {
         let width = terminal.size()?.width as usize;
-        if self.last_inserted_was_tool && matches!(entry, Entry::Tool { .. }) {
+        if self.last_inserted_was_tool && is_tool_entry(entry) {
             insert_history_lines(terminal, vec![Line::raw("")])?;
         }
 
@@ -3833,7 +3900,7 @@ impl App {
             entry_lines(entry, width, self.info.max_tool_output_lines),
         )?;
         self.push_transcript_entry(entry.clone());
-        self.last_inserted_was_tool = matches!(entry, Entry::Tool { .. });
+        self.last_inserted_was_tool = is_tool_entry(entry);
         Ok(())
     }
 
@@ -3847,11 +3914,11 @@ impl App {
         let mut lines = session_header_lines(&self.info, width);
         let mut previous_was_tool = false;
         for entry in &self.transcript {
-            if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+            if previous_was_tool && is_tool_entry(entry) {
                 lines.push(Line::raw(""));
             }
             lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
-            previous_was_tool = matches!(entry, Entry::Tool { .. });
+            previous_was_tool = is_tool_entry(entry);
         }
         insert_history_lines(terminal, lines)?;
         self.last_inserted_was_tool = previous_was_tool;
@@ -3884,7 +3951,7 @@ fn recovered_history_tail(
     let mut next_is_tool = false;
 
     for (index, entry) in entries.iter().enumerate().rev() {
-        let spacing = matches!(entry, Entry::Tool { .. }) && next_is_tool;
+        let spacing = is_tool_entry(entry) && next_is_tool;
         let entry_line_count =
             entry_lines(entry, width, max_tool_output_lines).len() + usize::from(spacing);
         if selected_start < entries.len() && line_count + entry_line_count > line_limit {
@@ -3892,7 +3959,7 @@ fn recovered_history_tail(
         }
         selected_start = index;
         line_count += entry_line_count;
-        next_is_tool = matches!(entry, Entry::Tool { .. });
+        next_is_tool = is_tool_entry(entry);
     }
 
     (selected_start, entries[selected_start..].to_vec())
@@ -3906,11 +3973,11 @@ fn transcript_lines(
     let mut lines = Vec::new();
     let mut previous_was_tool = false;
     for entry in entries {
-        if previous_was_tool && matches!(entry, Entry::Tool { .. }) {
+        if previous_was_tool && is_tool_entry(entry) {
             lines.push(Line::raw(""));
         }
         lines.extend(entry_lines(entry, width, max_tool_output_lines));
-        previous_was_tool = matches!(entry, Entry::Tool { .. });
+        previous_was_tool = is_tool_entry(entry);
     }
     lines
 }
@@ -3946,12 +4013,14 @@ fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
                 if !result.content.trim().is_empty() {
                     display_lines.push(result.content.clone());
                 }
-                entries.push(Entry::Tool {
-                    ok: result.ok,
-                    display_style,
+                entries.push(Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished {
+                        ok: result.ok,
+                        display_style,
+                    },
                     display_lines,
                     expanded: false,
-                });
+                }));
             }
         }
     }
@@ -4452,12 +4521,14 @@ mod tests {
     }
 
     fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
-        Entry::Tool {
-            ok,
-            display_style: ToolDisplayStyle::file_or_command(),
+        Entry::Tool(ToolEntry {
+            state: ToolEntryState::Finished {
+                ok,
+                display_style: ToolDisplayStyle::file_or_command(),
+            },
             display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
             expanded: false,
-        }
+        })
     }
 
     fn test_app() -> App {
@@ -4658,8 +4729,14 @@ mod tests {
         assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
         assert!(matches!(
             entries[2],
-            Entry::Tool { ok: false, display_style: ToolDisplayStyle::FileOrCommand, ref display_lines, .. }
-                if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
+            Entry::Tool(ToolEntry {
+                state: ToolEntryState::Finished {
+                    ok: false,
+                    display_style: ToolDisplayStyle::FileOrCommand,
+                },
+                ref display_lines,
+                ..
+            }) if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
         ));
         let lines = entry_lines(&entries[2], 40, 10);
         assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
@@ -4697,12 +4774,14 @@ mod tests {
     #[test]
     fn skill_tool_block_shows_single_magenta_status_line() {
         let lines = entry_lines(
-            &Entry::Tool {
-                ok: true,
-                display_style: ToolDisplayStyle::skill(),
+            &Entry::Tool(ToolEntry {
+                state: ToolEntryState::Finished {
+                    ok: true,
+                    display_style: ToolDisplayStyle::skill(),
+                },
                 display_lines: vec!["skill caveman".into()],
                 expanded: false,
-            },
+            }),
             40,
             10,
         );
@@ -4718,12 +4797,14 @@ mod tests {
     #[test]
     fn skill_tool_block_uses_subtle_red_failure_background() {
         let lines = entry_lines(
-            &Entry::Tool {
-                ok: false,
-                display_style: ToolDisplayStyle::skill(),
+            &Entry::Tool(ToolEntry {
+                state: ToolEntryState::Finished {
+                    ok: false,
+                    display_style: ToolDisplayStyle::skill(),
+                },
                 display_lines: vec!["unknown skill".into()],
                 expanded: false,
-            },
+            }),
             40,
             10,
         );
@@ -4763,10 +4844,10 @@ mod tests {
     #[test]
     fn expanded_tool_block_shows_full_multiline_output() {
         let mut entry = test_tool_entry(true, &["bash", "line 1\nline 2\nline 3"]);
-        let Entry::Tool { expanded, .. } = &mut entry else {
+        let Entry::Tool(tool) = &mut entry else {
             panic!("expected tool entry");
         };
-        *expanded = true;
+        tool.expanded = true;
 
         let lines = entry_lines(&entry, 40, 2);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -4793,36 +4874,34 @@ mod tests {
             test_tool_entry(true, &["first", "a\nb"]),
             test_tool_entry(true, &["second", "c\nd"]),
         ];
-        if let Entry::Tool { expanded, .. } = &mut app.transcript[0] {
-            *expanded = true;
+        if let Entry::Tool(tool) = &mut app.transcript[0] {
+            tool.expanded = true;
         }
 
         let index = app
             .transcript
             .iter()
-            .rposition(|entry| {
-                matches!(entry, Entry::Tool { display_lines, .. } if tool_display_line_count(display_lines) > app.info.max_tool_output_lines)
-            })
+            .rposition(|entry| expandable_tool_entry(entry, app.info.max_tool_output_lines))
             .unwrap();
         for entry in &mut app.transcript {
-            if let Entry::Tool { expanded, .. } = entry {
-                *expanded = false;
+            if let Entry::Tool(tool) = entry {
+                tool.expanded = false;
             }
         }
-        if let Entry::Tool { expanded, .. } = &mut app.transcript[index] {
-            *expanded = true;
+        if let Entry::Tool(tool) = &mut app.transcript[index] {
+            tool.expanded = true;
         }
 
         assert!(matches!(
             app.transcript[0],
-            Entry::Tool {
+            Entry::Tool(ToolEntry {
                 expanded: false,
                 ..
-            }
+            })
         ));
         assert!(matches!(
             app.transcript[1],
-            Entry::Tool { expanded: true, .. }
+            Entry::Tool(ToolEntry { expanded: true, .. })
         ));
     }
 

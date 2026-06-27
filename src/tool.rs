@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,22 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    fn display_start_lines(&self, args: &Value, ctx: &ToolContext) -> Vec<String> {
+        let mut lines = vec![self.spec().name];
+        if let Some(command) = self
+            .display_command(args)
+            .filter(|command| !command.trim().is_empty())
+        {
+            lines.push(command);
+        } else if let Some(content) = self
+            .display_content(args, ctx)
+            .filter(|content| !content.trim().is_empty())
+        {
+            lines.push(content);
+        }
+        lines
+    }
+
     fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
         let mut lines = vec![self.spec().name];
         if let Some(command) = self
@@ -121,10 +138,20 @@ pub trait Tool: Send + Sync {
         ctx: ToolContext,
         id: String,
     ) -> Result<ToolResult, ToolError>;
+
+    async fn call_with_updates(
+        &self,
+        args: Value,
+        ctx: ToolContext,
+        id: String,
+        _on_update: &mut (dyn FnMut(Vec<String>) + Send),
+    ) -> Result<ToolResult, ToolError> {
+        self.call(args, ctx, id).await
+    }
 }
 
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool>>,
+    tools: HashMap<String, Arc<dyn Tool>>,
 }
 
 impl ToolRegistry {
@@ -135,11 +162,11 @@ impl ToolRegistry {
     }
 
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
-        self.tools.insert(tool.spec().name, Box::new(tool));
+        self.tools.insert(tool.spec().name, Arc::new(tool));
     }
 
-    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.get(name).map(|t| t.as_ref())
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.get(name).cloned()
     }
 
     pub fn specs(&self) -> Vec<ToolSpec> {

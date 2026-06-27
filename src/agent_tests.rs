@@ -628,7 +628,7 @@ async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
 
     let err = agent
         .run_with_events("run tools".into(), |event| match event {
-            AgentEvent::ToolStarted => Err(ModelError::Interrupted),
+            AgentEvent::ToolStarted { .. } => Err(ModelError::Interrupted),
             _ => Ok(()),
         })
         .await
@@ -642,7 +642,7 @@ async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
 }
 
 #[tokio::test]
-async fn persists_all_tool_results_before_interrupting_tool_events() {
+async fn persists_all_tool_results_before_interrupting_tool_finished_events() {
     let persisted = Arc::new(Mutex::new(Vec::new()));
     let response = ModelResponse::Assistant(vec![
         ContentBlock::ToolCall(ToolCall {

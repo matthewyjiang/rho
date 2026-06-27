@@ -1,7 +1,7 @@
 use super::{
     markdown::push_wrapped_markdown,
     theme::{Theme, ToolStyle},
-    Entry, PickerBadgeTone, PickerItem, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT,
+    Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT,
 };
 use crate::tool::ToolDisplayStyle;
 use ratatui::{
@@ -346,20 +346,13 @@ pub(super) fn entry_lines(
             Theme::dim().add_modifier(Modifier::DIM),
             LineFill::Natural,
         ),
-        Entry::Tool {
-            ok,
-            display_style,
-            display_lines,
-            expanded,
-            ..
-        } => push_tool_block(
+        Entry::Tool(tool) => push_tool_block(
             &mut lines,
-            *ok,
-            display_lines,
-            *display_style,
+            &tool.display_lines,
+            tool.state,
             inner_width,
             max_tool_output_lines,
-            *expanded,
+            tool.expanded,
         ),
         Entry::Notice(text) => push_wrapped_text(
             &mut lines,
@@ -391,15 +384,34 @@ pub(super) fn entry_lines(
 
 fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    ok: bool,
     display_lines: &[String],
-    display_style: ToolDisplayStyle,
+    state: ToolEntryState,
     width: usize,
     max_tool_output_lines: usize,
     expanded: bool,
 ) {
-    let style = tool_style(display_style).for_result(ok);
+    let style = match state {
+        ToolEntryState::Running => Theme::user_message(),
+        ToolEntryState::Finished { ok, display_style } => tool_style(display_style).for_result(ok),
+    };
+    push_tool_block_with_style(
+        lines,
+        display_lines,
+        width,
+        max_tool_output_lines,
+        expanded,
+        style,
+    );
+}
 
+fn push_tool_block_with_style(
+    lines: &mut Vec<Line<'static>>,
+    display_lines: &[String],
+    width: usize,
+    max_tool_output_lines: usize,
+    expanded: bool,
+    style: Style,
+) {
     let logical_lines = tool_logical_lines(display_lines);
     let max_tool_output_lines = max_tool_output_lines.max(1);
     let truncated = logical_lines.len() > max_tool_output_lines;
