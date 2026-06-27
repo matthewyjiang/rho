@@ -47,8 +47,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 | Command | Action |
 | --- | --- |
-| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai` and `openai-codex`. |
-| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai` and `openai-codex`. |
+| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
+| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
 | `/resume [id]` | Show [session resume](/sessions) help. Interactive session switching/listing is not implemented yet. |
 | `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility applies on the next model call; max output bytes changes save for the next session. |
@@ -60,21 +60,25 @@ Some commands can replace the message box with a picker. Use `up` and `down` to 
 
 ## Login and logout
 
-`/login` opens a provider picker. `/login openai` opens a masked API-key entry box. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device-flow OAuth and shows a verification URL plus user code. Credentials are stored in the native OS credential store, not in config or transcripts.
 
-`/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
+`/login github-copilot` requires `RHO_GITHUB_COPILOT_CLIENT_ID` to identify Rho's GitHub OAuth app. `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
+
+`/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
 
 ## Model picker
 
-The model picker is populated from Rho's built-in static catalog entries for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, while `openai-codex` uses Codex auth models.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available; a static fallback is shown if no cached Copilot list exists.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 
 ```text
 /model openai/gpt-5.5
 /model openai-codex/gpt-5.5
+/model anthropic/claude-sonnet-4-5
+/model github-copilot/gpt-4.1
 ```
 
 A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.

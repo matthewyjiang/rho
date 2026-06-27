@@ -6,6 +6,7 @@ use crate::tool::{ToolCall, ToolResult, ToolSpec};
 pub mod anthropic;
 pub mod catalog;
 pub mod context;
+pub mod github_copilot;
 pub mod models_dev;
 pub mod openai;
 pub mod provider;
@@ -99,6 +100,8 @@ pub enum ModelError {
     MissingCodexAuth,
     #[error("missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override")]
     MissingAnthropicApiKey,
+    #[error("missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override")]
+    MissingGithubCopilotAuth,
     #[error("credential store error: {0}")]
     Credentials(#[from] crate::credentials::CredentialError),
     #[error("request failed: {0}")]
@@ -154,6 +157,7 @@ pub enum AuthMode {
 
 pub use anthropic::AnthropicProvider;
 pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
+pub use github_copilot::GitHubCopilotProvider;
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;
 pub use provider::{build_provider, UnavailableProvider};

@@ -1,75 +1,75 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
-pub(super) struct ChatRequest {
-    pub(super) model: String,
-    pub(super) messages: Vec<OpenAiMessage>,
+pub(crate) struct ChatRequest {
+    pub(crate) model: String,
+    pub(crate) messages: Vec<OpenAiMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tools: Option<Vec<OpenAiTool>>,
+    pub(crate) tools: Option<Vec<OpenAiTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tool_choice: Option<&'static str>,
-    pub(super) stream: bool,
+    pub(crate) tool_choice: Option<&'static str>,
+    pub(crate) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) stream_options: Option<ChatStreamOptions>,
+    pub(crate) stream_options: Option<ChatStreamOptions>,
 }
 
 #[derive(Serialize)]
-pub(super) struct ChatStreamOptions {
-    pub(super) include_usage: bool,
+pub(crate) struct ChatStreamOptions {
+    pub(crate) include_usage: bool,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct OpenAiMessage {
-    pub(super) role: String,
+pub(crate) struct OpenAiMessage {
+    pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) content: Option<String>,
+    pub(crate) content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tool_calls: Option<Vec<OpenAiToolCall>>,
+    pub(crate) tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tool_call_id: Option<String>,
+    pub(crate) tool_call_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct OpenAiToolCall {
-    pub(super) id: String,
+pub(crate) struct OpenAiToolCall {
+    pub(crate) id: String,
     #[serde(rename = "type")]
-    pub(super) kind: String,
-    pub(super) function: OpenAiFunctionCall,
+    pub(crate) kind: String,
+    pub(crate) function: OpenAiFunctionCall,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct OpenAiFunctionCall {
-    pub(super) name: String,
-    pub(super) arguments: String,
+pub(crate) struct OpenAiFunctionCall {
+    pub(crate) name: String,
+    pub(crate) arguments: String,
 }
 
 #[derive(Serialize)]
-pub(super) struct OpenAiTool {
+pub(crate) struct OpenAiTool {
     #[serde(rename = "type")]
-    pub(super) kind: &'static str,
-    pub(super) function: OpenAiToolFunction,
+    pub(crate) kind: &'static str,
+    pub(crate) function: OpenAiToolFunction,
 }
 
 #[derive(Serialize)]
-pub(super) struct OpenAiToolFunction {
-    pub(super) name: String,
-    pub(super) description: String,
-    pub(super) parameters: serde_json::Value,
-    pub(super) strict: bool,
+pub(crate) struct OpenAiToolFunction {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) parameters: serde_json::Value,
+    pub(crate) strict: bool,
 }
 
 #[derive(Deserialize)]
-pub(super) struct ChatResponse {
-    pub(super) choices: Vec<Choice>,
+pub(crate) struct ChatResponse {
+    pub(crate) choices: Vec<Choice>,
 }
 
 #[derive(Deserialize)]
-pub(super) struct Choice {
-    pub(super) message: ChatResponseMessage,
+pub(crate) struct Choice {
+    pub(crate) message: ChatResponseMessage,
 }
 
 #[derive(Deserialize)]
-pub(super) struct ChatResponseMessage {
-    pub(super) content: Option<String>,
-    pub(super) tool_calls: Option<Vec<OpenAiToolCall>>,
+pub(crate) struct ChatResponseMessage {
+    pub(crate) content: Option<String>,
+    pub(crate) tool_calls: Option<Vec<OpenAiToolCall>>,
 }

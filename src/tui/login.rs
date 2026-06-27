@@ -65,6 +65,10 @@ impl App {
             ProviderAuthKind::CodexOAuth { .. } => {
                 self.start_codex_login(target, terminal, agent).await
             }
+            ProviderAuthKind::GithubCopilotOAuth { .. } => {
+                self.start_github_copilot_login(target, terminal, agent)
+                    .await
+            }
         }
     }
 
@@ -100,7 +104,7 @@ impl App {
         if self.pending_oauth_login.is_some() {
             self.insert_entry(
                 terminal,
-                &Entry::Notice("Codex login is already in progress. Press esc to cancel.".into()),
+                &Entry::Notice("OAuth login is already in progress. Press esc to cancel.".into()),
             )?;
             return Ok(());
         }
@@ -109,12 +113,60 @@ impl App {
         self.composer = ComposerMode::OAuthPending(target.clone());
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
-            handle: tokio::spawn(codex_oauth::run_codex_oauth_flow()),
+            handle: tokio::spawn(async {
+                codex_oauth::run_codex_oauth_flow()
+                    .await
+                    .map(PendingOAuthResult::Codex)
+                    .map_err(|err| err.to_string())
+            }),
         });
         self.insert_entry(
             terminal,
             &Entry::Notice("opening browser for Codex login. Press esc to cancel.".into()),
         )?;
+        Ok(())
+    }
+
+    async fn start_github_copilot_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        _agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        if self.pending_oauth_login.is_some() {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice("OAuth login is already in progress. Press esc to cancel.".into()),
+            )?;
+            return Ok(());
+        }
+
+        let flow = match github_copilot_oauth::start_github_copilot_device_flow().await {
+            Ok(flow) => flow,
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "login failed".into();
+                return Ok(());
+            }
+        };
+        self.status = "waiting for GitHub Copilot login; press esc to cancel".into();
+        self.composer = ComposerMode::OAuthPending(target.clone());
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "GitHub Copilot login: open {} and enter code {}. Press esc to cancel.",
+                flow.verification_uri, flow.user_code
+            )),
+        )?;
+        self.pending_oauth_login = Some(PendingOAuthLogin {
+            target,
+            handle: tokio::spawn(async move {
+                github_copilot_oauth::poll_github_copilot_device_flow(flow)
+                    .await
+                    .map(PendingOAuthResult::GithubCopilot)
+                    .map_err(|err| err.to_string())
+            }),
+        });
         Ok(())
     }
 
@@ -133,21 +185,31 @@ impl App {
         let pending = self.pending_oauth_login.take().unwrap();
         let target = pending.target;
         match pending.handle.await {
-            Ok(Ok(tokens)) => match save_codex_tokens(self.credential_store.as_ref(), &tokens) {
-                Ok(()) => {
-                    self.composer = ComposerMode::Input;
-                    self.finish_login(target, terminal, agent).await
+            Ok(Ok(result)) => {
+                let saved = match result {
+                    PendingOAuthResult::Codex(tokens) => {
+                        save_codex_tokens(self.credential_store.as_ref(), &tokens)
+                    }
+                    PendingOAuthResult::GithubCopilot(tokens) => {
+                        save_github_copilot_tokens(self.credential_store.as_ref(), &tokens)
+                    }
+                };
+                match saved {
+                    Ok(()) => {
+                        self.composer = ComposerMode::Input;
+                        self.finish_login(target, terminal, agent).await
+                    }
+                    Err(err) => {
+                        self.composer = ComposerMode::Input;
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "login failed".into();
+                        Ok(())
+                    }
                 }
-                Err(err) => {
-                    self.composer = ComposerMode::Input;
-                    self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
-                    self.status = "login failed".into();
-                    Ok(())
-                }
-            },
+            }
             Ok(Err(err)) => {
                 self.composer = ComposerMode::Input;
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(terminal, &Entry::Error(err))?;
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -160,7 +222,7 @@ impl App {
                 self.composer = ComposerMode::Input;
                 self.insert_entry(
                     terminal,
-                    &Entry::Error(format!("Codex login task failed: {err}")),
+                    &Entry::Error(format!("OAuth login task failed: {err}")),
                 )?;
                 self.status = "login failed".into();
                 Ok(())

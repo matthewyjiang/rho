@@ -1,11 +1,15 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
-use crate::model::{
-    registry::{provider_descriptor, ProviderRuntime},
-    AnthropicProvider, DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
-    OpenAiProvider,
-};
 use crate::reasoning::ReasoningLevel;
+use crate::{
+    auth::github_copilot_token::GitHubCopilotAuthManager,
+    credentials::OsCredentialStore,
+    model::{
+        registry::{provider_descriptor, ProviderRuntime},
+        AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
+        ModelRequest, ModelResponse, OpenAiProvider,
+    },
+};
 
 pub fn build_provider(
     provider: &str,
@@ -26,6 +30,10 @@ pub fn build_provider(
         ProviderRuntime::Anthropic => {
             Ok(Box::new(AnthropicProvider::new(model.to_string())?) as DynModelProvider)
         }
+        ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
+            model.to_string(),
+            GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
+        )?) as DynModelProvider),
     }
 }
 
@@ -52,6 +60,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingApiKey => ModelError::MissingApiKey,
         ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
         ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
+        ModelError::MissingGithubCopilotAuth => ModelError::MissingGithubCopilotAuth,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
         ModelError::UnsupportedProvider(provider) => {
             ModelError::UnsupportedProvider(provider.clone())

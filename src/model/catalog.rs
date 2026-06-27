@@ -49,6 +49,7 @@ pub enum ModelSelectionError {
 #[derive(Deserialize)]
 struct ModelCatalogFile {
     openai_codex_models: Vec<String>,
+    github_copilot_models: Vec<String>,
 }
 
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
@@ -92,11 +93,31 @@ pub fn default_model_for_provider(provider: &str) -> Option<String> {
                 .map(|entry| entry.model)
                 .or_else(|| builtin_default_model(provider))
         }
-        ProviderModelSource::StaticCatalog => model_catalog()
-            .iter()
-            .find(|entry| entry.provider == provider)
-            .map(|entry| entry.model.clone()),
+        ProviderModelSource::CachedProviderModelsWithStaticFallback => {
+            provider_models::cached_provider_models(provider)
+                .into_iter()
+                .next()
+                .map(|entry| entry.model)
+                .or_else(|| static_catalog_default_model(provider))
+                .or_else(|| builtin_default_model(provider))
+        }
+        ProviderModelSource::StaticCatalog => static_catalog_default_model(provider),
     }
+}
+
+fn static_catalog_default_model(provider: &str) -> Option<String> {
+    model_catalog()
+        .iter()
+        .find(|entry| entry.provider == provider)
+        .map(|entry| entry.model.clone())
+}
+
+fn static_catalog_entries(provider: &str) -> Vec<ModelCatalogEntry> {
+    model_catalog()
+        .iter()
+        .filter(|entry| entry.provider == provider)
+        .cloned()
+        .collect()
 }
 
 fn builtin_default_model(provider: &str) -> Option<String> {
@@ -129,6 +150,11 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
         "openai-codex",
         "codex",
         file.openai_codex_models,
+    ));
+    entries.extend(model_entries(
+        "github-copilot",
+        "github-copilot",
+        file.github_copilot_models,
     ));
     entries
 }
@@ -163,10 +189,17 @@ fn available_models_for_auths_from(
         .collect::<Vec<_>>();
     for provider in registry::providers()
         .iter()
-        .filter(|provider| provider.model_source == ProviderModelSource::CachedProviderModels)
+        .filter(|provider| provider_uses_cached_models(provider.name))
         .filter(|provider| auths.iter().any(|auth| auth == provider.auth))
     {
-        models.extend(cached_provider_entries(provider.name, provider.auth));
+        let cached = cached_provider_entries(provider.name, provider.auth);
+        if cached.is_empty()
+            && provider.model_source == ProviderModelSource::CachedProviderModelsWithStaticFallback
+        {
+            models.extend(static_catalog_entries(provider.name));
+        } else {
+            models.extend(cached);
+        }
     }
     models.sort_by(|left, right| {
         left.provider
@@ -194,13 +227,27 @@ fn provider_default_auth(provider: &str) -> Option<&'static str> {
 
 fn provider_uses_cached_models(provider: &str) -> bool {
     registry::provider_descriptor(provider)
-        .map(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
+        .map(|descriptor| {
+            matches!(
+                descriptor.model_source,
+                ProviderModelSource::CachedProviderModels
+                    | ProviderModelSource::CachedProviderModelsWithStaticFallback
+            )
+        })
         .unwrap_or(false)
 }
 
 fn provider_uses_static_catalog(provider: &str) -> bool {
     registry::provider_descriptor(provider)
         .map(|descriptor| descriptor.model_source == ProviderModelSource::StaticCatalog)
+        .unwrap_or(false)
+}
+
+fn provider_uses_static_fallback(provider: &str) -> bool {
+    registry::provider_descriptor(provider)
+        .map(|descriptor| {
+            descriptor.model_source == ProviderModelSource::CachedProviderModelsWithStaticFallback
+        })
         .unwrap_or(false)
 }
 
@@ -269,9 +316,18 @@ fn resolve_model_selection_from(
             });
         }
         if provider_uses_cached_models(provider) {
-            return provider_models::cached_provider_model(provider, model)
-                .map(|entry| selection_from_provider_model(provider, &entry))
-                .ok_or_else(|| unavailable_model_error(provider, model));
+            if let Some(entry) = provider_models::cached_provider_model(provider, model) {
+                return Ok(selection_from_provider_model(provider, &entry));
+            }
+            if provider_uses_static_fallback(provider) {
+                if let Some(entry) = catalog
+                    .iter()
+                    .find(|entry| entry.provider == provider && entry.model == model)
+                {
+                    return Ok(selection_from_entry(entry));
+                }
+            }
+            return Err(unavailable_model_error(provider, model));
         }
         if let Some(entry) = catalog
             .iter()
@@ -389,7 +445,9 @@ mod tests {
         assert!(catalog
             .iter()
             .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.3-codex-spark"));
-        assert!(catalog.iter().all(|entry| entry.provider == "openai-codex"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "github-copilot" && entry.model == "gpt-4.1"));
     }
 
     #[test]
@@ -426,9 +484,48 @@ mod tests {
         assert_eq!(targets[1].provider, "openai-codex");
         assert_eq!(targets[2].provider, "anthropic");
         assert_eq!(targets[2].auth, "anthropic-api-key");
+        assert_eq!(targets[3].provider, "github-copilot");
+        assert_eq!(targets[3].auth, "github-copilot");
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());
+    }
+
+    #[test]
+    fn github_copilot_uses_static_fallback_when_cache_is_empty() {
+        let cache_dir = unique_cache_dir("github-copilot-empty");
+        with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            assert_eq!(
+                default_model_for_provider("github-copilot"),
+                Some("gpt-4.1".into())
+            );
+            let selection = resolve_model_selection_for_auths(
+                "github-copilot/gpt-4.1",
+                "openai",
+                "api-key",
+                &["github-copilot".into()],
+            )
+            .unwrap();
+            assert_eq!(selection.provider, "github-copilot");
+            assert_eq!(selection.model, "gpt-4.1");
+            assert_eq!(selection.auth, "github-copilot");
+        });
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn github_copilot_cached_models_override_static_fallback_in_picker() {
+        with_cached_provider_models(
+            "github-copilot",
+            vec![provider_model("github-copilot", "cached-copilot-model")],
+            || {
+                let models = available_models_for_auths(&["github-copilot".into()]);
+                assert!(models
+                    .iter()
+                    .any(|entry| entry.model == "cached-copilot-model"));
+                assert!(!models.iter().any(|entry| entry.model == "gpt-4.1"));
+            },
+        );
     }
 
     #[test]

@@ -5,24 +5,28 @@ pub enum ProviderId {
     OpenAi,
     OpenAiCodex,
     Anthropic,
+    GithubCopilot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderRuntime {
     OpenAi { auth_mode: AuthMode },
     Anthropic,
+    GithubCopilot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderModelSource {
     StaticCatalog,
     CachedProviderModels,
+    CachedProviderModelsWithStaticFallback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
+    GithubCopilot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +38,10 @@ pub enum ProviderAuthKind {
         missing: MissingCredential,
     },
     CodexOAuth {
+        env_var: &'static str,
+        account: &'static str,
+    },
+    GithubCopilotOAuth {
         env_var: &'static str,
         account: &'static str,
     },
@@ -59,7 +67,7 @@ pub struct ProviderDescriptor {
     pub runtime: ProviderRuntime,
 }
 
-const PROVIDER_IDS: &[&str] = &["openai", "openai-codex", "anthropic"];
+const PROVIDER_IDS: &[&str] = &["openai", "openai-codex", "anthropic", "github-copilot"];
 
 pub const PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
@@ -115,6 +123,21 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         metadata_upstream: "anthropic",
         runtime: ProviderRuntime::Anthropic,
     },
+    ProviderDescriptor {
+        id: ProviderId::GithubCopilot,
+        name: "github-copilot",
+        display_name: "GitHub Copilot",
+        auth: "github-copilot",
+        login_label: "GitHub Copilot OAuth",
+        auth_kind: ProviderAuthKind::GithubCopilotOAuth {
+            env_var: "GITHUB_COPILOT_TOKEN",
+            account: "provider:github-copilot:tokens",
+        },
+        model_source: ProviderModelSource::CachedProviderModelsWithStaticFallback,
+        model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
+        metadata_upstream: "github-copilot",
+        runtime: ProviderRuntime::GithubCopilot,
+    },
 ];
 
 pub fn provider_ids() -> &'static [&'static str] {
@@ -142,6 +165,7 @@ pub fn missing_credentials_error(provider: &str) -> ModelError {
     match provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { missing, .. }) => missing_credential_error(missing),
         Some(ProviderAuthKind::CodexOAuth { .. }) => ModelError::MissingCodexAuth,
+        Some(ProviderAuthKind::GithubCopilotOAuth { .. }) => ModelError::MissingGithubCopilotAuth,
         None => ModelError::UnsupportedProvider(provider.to_string()),
     }
 }

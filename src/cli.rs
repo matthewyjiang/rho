@@ -13,7 +13,7 @@ pub struct Cli {
     pub model: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key"])]
+    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "github-copilot"])]
     pub auth: Option<String>,
     /// Do not send rho's system prompt, including AGENTS.md and skill context.
     #[arg(long)]

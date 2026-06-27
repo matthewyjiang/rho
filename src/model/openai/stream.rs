@@ -5,7 +5,7 @@ use crate::tool::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
 
-pub(super) fn trim_sse_line_end(line: &mut Vec<u8>) {
+pub(crate) fn trim_sse_line_end(line: &mut Vec<u8>) {
     if line.ends_with(b"\n") {
         line.pop();
     }
@@ -15,13 +15,13 @@ pub(super) fn trim_sse_line_end(line: &mut Vec<u8>) {
 }
 
 #[derive(Default)]
-pub(super) struct StreamedToolCall {
+pub(crate) struct StreamedToolCall {
     id: Option<String>,
     name: Option<String>,
     arguments: String,
 }
 
-pub(super) fn handle_openai_stream_line(
+pub(crate) fn handle_openai_stream_line(
     line: &str,
     text: &mut String,
     tool_calls: &mut Vec<StreamedToolCall>,
@@ -103,7 +103,7 @@ pub(super) fn handle_openai_stream_line(
     Ok(())
 }
 
-pub(super) fn convert_streamed_response(
+pub(crate) fn convert_streamed_response(
     text: String,
     tool_calls: Vec<StreamedToolCall>,
 ) -> Result<ModelResponse, ModelError> {
@@ -136,12 +136,12 @@ pub(super) fn convert_streamed_response(
     }
 }
 
-pub(super) struct CodexSseResponse {
-    pub(super) response: ModelResponse,
-    pub(super) response_id: Option<String>,
+pub(crate) struct CodexSseResponse {
+    pub(crate) response: ModelResponse,
+    pub(crate) response_id: Option<String>,
 }
 
-pub(super) async fn collect_codex_sse_response(
+pub(crate) async fn collect_codex_sse_response(
     response: reqwest::Response,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
 ) -> Result<CodexSseResponse, ModelError> {
@@ -202,15 +202,15 @@ fn extract_reasoning_delta(value: &serde_json::Value) -> Option<String> {
 }
 
 #[derive(Default)]
-pub(super) struct CodexSseState {
-    pub(super) text: String,
-    pub(super) completed_text: Option<String>,
-    pub(super) tool_calls: Vec<ToolCall>,
-    pub(super) response_id: Option<String>,
+pub(crate) struct CodexSseState {
+    pub(crate) text: String,
+    pub(crate) completed_text: Option<String>,
+    pub(crate) tool_calls: Vec<ToolCall>,
+    pub(crate) response_id: Option<String>,
 }
 
 impl CodexSseState {
-    pub(super) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
+    pub(crate) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
         let response_id = self.response_id;
         let mut blocks = Vec::new();
         let text = if self.text.is_empty() {
@@ -323,7 +323,7 @@ fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCa
     }))
 }
 
-pub(super) fn handle_codex_sse_line(
+pub(crate) fn handle_codex_sse_line(
     line: &str,
     state: &mut CodexSseState,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
@@ -483,7 +483,7 @@ fn parse_usd_micros(value: &serde_json::Value) -> Option<u64> {
 }
 
 #[cfg(test)]
-pub(super) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
+pub(crate) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
     let mut text = String::new();
     for line in body.lines() {
         let Some(data) = sse_data(line) else {

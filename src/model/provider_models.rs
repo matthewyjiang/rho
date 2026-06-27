@@ -6,12 +6,16 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
+    auth::github_copilot_token::{
+        auth_material_with_store, force_refresh_auth_material_with_store,
+        GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
+    },
     credentials::{load_provider_api_key, CredentialStore},
     model::{
         registry::{self, missing_credential_error, ProviderAuthKind, ProviderModelRefreshKind},
@@ -77,6 +81,9 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {
             fetch_anthropic_models(provider, store).await?
+        }
+        Some(ProviderModelRefreshKind::GithubCopilot) => {
+            fetch_github_copilot_models(provider, store).await?
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
@@ -197,6 +204,92 @@ async fn fetch_anthropic_models(
         };
         after_id = Some(next_after_id);
     }
+    models.sort_by(|left, right| left.model.cmp(&right.model));
+    models.dedup_by(|left, right| left.model == right.model);
+    Ok(models)
+}
+
+async fn fetch_github_copilot_models(
+    provider: &str,
+    store: &dyn CredentialStore,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let client = reqwest::Client::new();
+    let auth = auth_material_with_store(&client, store).await?;
+    let response = send_github_copilot_models_request(&client, &auth).await?;
+    let response = if response.status() == StatusCode::UNAUTHORIZED
+        && auth.source == GitHubCopilotAuthSource::Store
+    {
+        if let Some(refreshed) = force_refresh_auth_material_with_store(&client, store).await? {
+            send_github_copilot_models_request(&client, &refreshed).await?
+        } else {
+            response
+        }
+    } else {
+        response
+    };
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return if status == StatusCode::UNAUTHORIZED {
+            Err(ModelError::MissingGithubCopilotAuth)
+        } else {
+            Err(ModelError::HttpStatus { status, body })
+        };
+    }
+    let value = response.json::<Value>().await?;
+    parse_github_copilot_models(provider, &value)
+}
+
+async fn send_github_copilot_models_request(
+    client: &reqwest::Client,
+    auth: &GitHubCopilotAuthMaterial,
+) -> Result<reqwest::Response, ModelError> {
+    Ok(client
+        .get(&auth.models_endpoint)
+        .bearer_auth(&auth.token)
+        .header("Accept", "application/json")
+        .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
+        .header("Editor-Version", concat!("rho/", env!("CARGO_PKG_VERSION")))
+        .header(
+            "Editor-Plugin-Version",
+            concat!("rho/", env!("CARGO_PKG_VERSION")),
+        )
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .send()
+        .await?)
+}
+
+fn parse_github_copilot_models(
+    provider: &str,
+    value: &Value,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let raw_models = value
+        .get("data")
+        .or_else(|| value.get("models"))
+        .unwrap_or(value)
+        .as_array()
+        .ok_or_else(|| {
+            ModelError::InvalidResponse("GitHub Copilot models response was not an array".into())
+        })?;
+    let mut models = raw_models
+        .iter()
+        .filter_map(|value| {
+            value.as_str().map(ToOwned::to_owned).or_else(|| {
+                value
+                    .get("id")
+                    .or_else(|| value.get("name"))
+                    .and_then(|id| id.as_str())
+                    .map(ToOwned::to_owned)
+            })
+        })
+        .filter(|model| !model.trim().is_empty())
+        .map(|model| ProviderModel {
+            provider: provider.to_string(),
+            display_name: model.clone(),
+            model,
+            max_output_tokens: None,
+        })
+        .collect::<Vec<_>>();
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
@@ -373,7 +466,14 @@ fn unique_test_cache_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{save_provider_api_key, MemoryCredentialStore};
+    use crate::credentials::{
+        save_github_copilot_tokens, save_provider_api_key, GitHubCopilotTokens,
+        MemoryCredentialStore,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     #[test]
     fn openai_model_filter_keeps_chat_families() {
@@ -391,6 +491,96 @@ mod tests {
         assert_eq!(
             load_api_key_auth("anthropic", &store).unwrap(),
             "sk-ant-test"
+        );
+    }
+
+    #[test]
+    fn parses_github_copilot_models_from_data_objects_and_deduplicates() {
+        let value = serde_json::json!({
+            "data": [
+                {"id": "gpt-4.1"},
+                {"name": "claude-sonnet-4"},
+                {"id": "gpt-4.1"}
+            ]
+        });
+
+        assert_eq!(
+            parse_github_copilot_models("github-copilot", &value).unwrap(),
+            vec![
+                ProviderModel {
+                    provider: "github-copilot".into(),
+                    model: "claude-sonnet-4".into(),
+                    display_name: "claude-sonnet-4".into(),
+                    max_output_tokens: None,
+                },
+                ProviderModel {
+                    provider: "github-copilot".into(),
+                    model: "gpt-4.1".into(),
+                    display_name: "gpt-4.1".into(),
+                    max_output_tokens: None,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn github_copilot_models_retry_once_after_unauthorized() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let base_url_for_server = base_url.clone();
+        tokio::spawn(async move {
+            for index in 0..3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 1024];
+                let bytes = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..bytes]);
+                let is_model_request = request.contains("GET /models");
+                let (status, body) = match (index, is_model_request) {
+                    (0, true) => ("401 Unauthorized", String::new()),
+                    (1, false) => (
+                        "200 OK",
+                        format!(
+                            "{{\"token\":\"second\",\"endpoints\":{{\"models\":\"{base_url_for_server}/models\"}}}}"
+                        ),
+                    ),
+                    (2, true) => (
+                        "200 OK",
+                        r#"{"data":[{"id":"gpt-4.1"}]}"#.to_string(),
+                    ),
+                    _ => ("500 Internal Server Error", String::new()),
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                    body.len(), body
+                );
+                stream.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let store = MemoryCredentialStore::default();
+        save_github_copilot_tokens(
+            &store,
+            &GitHubCopilotTokens {
+                github_access_token: "github".into(),
+                copilot_token: Some("first".into()),
+                copilot_expires_at_unix: Some(i64::MAX),
+                copilot_refresh_after_unix: None,
+                copilot_token_endpoint: Some(base_url.clone()),
+                copilot_chat_endpoint: None,
+                copilot_models_endpoint: Some(format!("{base_url}/models")),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            fetch_github_copilot_models("github-copilot", &store)
+                .await
+                .unwrap(),
+            vec![ProviderModel {
+                provider: "github-copilot".into(),
+                model: "gpt-4.1".into(),
+                display_name: "gpt-4.1".into(),
+                max_output_tokens: None,
+            }]
         );
     }
 

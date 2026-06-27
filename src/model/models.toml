@@ -4,3 +4,10 @@ openai_codex_models = [
   "gpt-5.4-mini",
   "gpt-5.3-codex-spark",
 ]
+
+github_copilot_models = [
+  "gpt-4.1",
+  "gpt-4o",
+  "o4-mini",
+  "claude-sonnet-4",
+]

@@ -4,9 +4,9 @@ use serde_json::{json, Value};
 pub(crate) mod auth;
 pub mod cache;
 mod codex_ws;
-mod convert;
-mod stream;
-mod types;
+pub(crate) mod convert;
+pub(crate) mod stream;
+pub(crate) mod types;
 
 pub use cache::prompt_cache_key_from_session_id;
 
