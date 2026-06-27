@@ -42,7 +42,7 @@ pub struct GitHubCopilotTokens {
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, or CODEX_ACCESS_TOKEN.")]
+    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_ACCESS_TOKEN, or GITHUB_COPILOT_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -516,6 +516,13 @@ pub fn delete_github_copilot_tokens(store: &dyn CredentialStore) -> CredentialRe
 }
 
 pub fn provider_has_env_override(provider: &str) -> bool {
+    provider_has_env_override_from(provider, |env_var| std::env::var(env_var).ok())
+}
+
+fn provider_has_env_override_from(
+    provider: &str,
+    env_value: impl FnOnce(&str) -> Option<String>,
+) -> bool {
     let Some(descriptor) = registry::provider_descriptor(provider) else {
         return false;
     };
@@ -524,7 +531,7 @@ pub fn provider_has_env_override(provider: &str) -> bool {
         | ProviderAuthKind::CodexOAuth { env_var, .. }
         | ProviderAuthKind::GithubCopilotOAuth { env_var, .. } => env_var,
     };
-    std::env::var_os(env_var).is_some()
+    env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
 
 pub fn provider_has_credentials(
@@ -642,6 +649,24 @@ mod tests {
         assert!(available_auth_modes(&store).contains(&"github-copilot".into()));
         assert!(delete_provider_credentials(&store, "github-copilot").unwrap());
         assert_eq!(load_github_copilot_tokens(&store).unwrap(), None);
+    }
+
+    #[test]
+    fn empty_github_copilot_env_override_is_not_active() {
+        assert!(!provider_has_env_override_from(
+            "github-copilot",
+            |env_var| {
+                assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
+                Some(" \t\n ".into())
+            }
+        ));
+        assert!(provider_has_env_override_from(
+            "github-copilot",
+            |env_var| {
+                assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
+                Some("copilot-token".into())
+            }
+        ));
     }
 
     #[test]
