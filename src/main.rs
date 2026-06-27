@@ -14,6 +14,7 @@ mod tool;
 mod tools;
 mod transcript;
 mod tui;
+mod update;
 mod workspace;
 
 use std::io::{self, IsTerminal, Read};
@@ -34,6 +35,10 @@ use tui::TuiInfo;
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
+    if matches!(cli.command, Some(Command::Update)) {
+        return update::run_update(env!("CARGO_PKG_VERSION")).await;
+    }
+
     let config_path = cli.config.clone();
     let mut cfg = Config::load(config_path.clone())?;
     let save_config = apply_cli_overrides(&mut cfg, &cli)?;
@@ -48,7 +53,12 @@ async fn main() -> anyhow::Result<()> {
     }
     let run_prompt = match &cli.command {
         Some(Command::Run { prompt, stdin }) => Some(automation_prompt(prompt.clone(), *stdin)?),
-        None => None,
+        Some(Command::Update) | None => None,
+    };
+    let update_notice = if cli.command.is_none() && cfg.check_for_updates {
+        update::update_notice(env!("CARGO_PKG_VERSION")).await
+    } else {
+        None
     };
 
     if cfg.provider == "anthropic" && cached_model_metadata(&cfg.provider, &cfg.model).is_none() {
@@ -127,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
                     open_resume_picker,
                     config_path,
                     auth_unavailable: missing_auth_error,
+                    update_notice,
                 },
             )
             .await?;
@@ -155,7 +166,7 @@ fn model_error_message(error: &ModelError) -> String {
 }
 
 fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
-    if cli.resume.is_some() && matches!(&cli.command, Some(Command::Run { .. })) {
+    if cli.resume.is_some() && cli.command.is_some() {
         anyhow::bail!("--resume is only supported for interactive sessions");
     }
     Ok(())
@@ -316,6 +327,25 @@ mod tests {
                 stdin: true,
                 prompt: Vec::new(),
             }),
+        };
+
+        let err = validate_cli(&cli).unwrap_err();
+
+        assert!(err.to_string().contains("--resume is only supported"));
+    }
+
+    #[test]
+    fn validate_cli_rejects_resume_with_update() {
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: None,
+            resume: Some(Some("session-id".into())),
+            command: Some(Command::Update),
         };
 
         let err = validate_cli(&cli).unwrap_err();

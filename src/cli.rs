@@ -42,4 +42,6 @@ pub enum Command {
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
     },
+    /// Update rho using the detected installation method.
+    Update,
 }

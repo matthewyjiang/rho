@@ -20,6 +20,7 @@ pub struct Config {
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
     pub web_search_provider: String,
+    pub check_for_updates: bool,
     pub web_search_openai_api_key: Option<String>,
     pub web_search_exa_api_key: Option<String>,
     pub web_search_brave_api_key: Option<String>,
@@ -42,6 +43,7 @@ impl Default for Config {
             title_model: None,
             title_auth: None,
             web_search_provider: "auto".into(),
+            check_for_updates: true,
             web_search_openai_api_key: None,
             web_search_exa_api_key: None,
             web_search_brave_api_key: None,
@@ -107,6 +109,9 @@ impl Config {
         if let Some(v) = file.web_search_provider {
             cfg.web_search_provider = normalize_web_search_provider(v);
         }
+        if let Some(v) = file.check_for_updates {
+            cfg.check_for_updates = v;
+        }
         if let Some(v) = file.web_search_openai_api_key {
             cfg.web_search_openai_api_key = non_empty_secret(v);
         }
@@ -156,6 +161,7 @@ struct PartialConfig {
     title_model: Option<String>,
     title_auth: Option<String>,
     web_search_provider: Option<String>,
+    check_for_updates: Option<bool>,
     web_search_openai_api_key: Option<String>,
     web_search_exa_api_key: Option<String>,
     web_search_brave_api_key: Option<String>,
@@ -191,6 +197,17 @@ mod tests {
         let config = Config::load(Some(path)).unwrap();
 
         assert!(!config.show_reasoning_output);
+    }
+
+    #[test]
+    fn loads_check_for_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "check_for_updates = false\n").unwrap();
+
+        let config = Config::load(Some(path)).unwrap();
+
+        assert!(!config.check_for_updates);
     }
 
     #[test]
