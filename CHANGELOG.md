@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.12.1...rho-coding-agent-v0.13.0) (2026-06-27)
+
+
+### Features
+
+* **provider:** add github copilot provider ([#81](https://github.com/matthewyjiang/rho/issues/81)) ([fc52828](https://github.com/matthewyjiang/rho/commit/fc528286ea685b3f88b206131eea49c6e9091683))
+
+
+### Bug Fixes
+
+* **tui:** show tool calls before results ([#83](https://github.com/matthewyjiang/rho/issues/83)) ([b95727d](https://github.com/matthewyjiang/rho/commit/b95727df7d0b25567194e73de675d2874a0c5f24))
+
 ## [0.12.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.12.0...rho-coding-agent-v0.12.1) (2026-06-27)
 
 
