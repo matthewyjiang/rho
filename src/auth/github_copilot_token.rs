@@ -62,6 +62,10 @@ impl GitHubCopilotAuthManager {
         Self { store }
     }
 
+    pub(crate) fn ensure_auth_available(&self) -> Result<(), ModelError> {
+        ensure_auth_available_with_store(self.store.as_ref())
+    }
+
     pub(crate) async fn auth_material(
         &self,
         client: &reqwest::Client,
@@ -77,19 +81,27 @@ impl GitHubCopilotAuthManager {
     }
 }
 
+pub(crate) fn ensure_auth_available_with_store(
+    store: &dyn CredentialStore,
+) -> Result<(), ModelError> {
+    if nonempty_env_copilot_token().is_some() || load_github_copilot_tokens(store)?.is_some() {
+        Ok(())
+    } else {
+        Err(ModelError::MissingGithubCopilotAuth)
+    }
+}
+
 pub(crate) async fn auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
-    if let Ok(token) = std::env::var(GITHUB_COPILOT_TOKEN_ENV) {
-        if !token.trim().is_empty() {
-            return Ok(GitHubCopilotAuthMaterial {
-                token,
-                source: GitHubCopilotAuthSource::Env,
-                chat_endpoint: COPILOT_CHAT_COMPLETIONS_URL.to_string(),
-                models_endpoint: COPILOT_MODELS_URL.to_string(),
-            });
-        }
+    if let Some(token) = nonempty_env_copilot_token() {
+        return Ok(GitHubCopilotAuthMaterial {
+            token,
+            source: GitHubCopilotAuthSource::Env,
+            chat_endpoint: COPILOT_CHAT_COMPLETIONS_URL.to_string(),
+            models_endpoint: COPILOT_MODELS_URL.to_string(),
+        });
     }
 
     let mut tokens =
@@ -105,7 +117,7 @@ pub(crate) async fn force_refresh_auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
-    if std::env::var_os(GITHUB_COPILOT_TOKEN_ENV).is_some() {
+    if nonempty_env_copilot_token().is_some() {
         return Ok(None);
     }
     let Some(mut tokens) = load_github_copilot_tokens(store)? else {
@@ -153,11 +165,27 @@ async fn refresh_copilot_token_with_store(
     tokens.copilot_expires_at_unix = response.expires_at;
     tokens.copilot_refresh_after_unix = response.refresh_in.map(|seconds| now + seconds);
     if let Some(endpoints) = response.endpoints {
-        tokens.copilot_chat_endpoint = endpoints.chat.or(endpoints.api);
-        tokens.copilot_models_endpoint = endpoints.models;
+        apply_token_endpoints(tokens, endpoints);
     }
     save_github_copilot_tokens(store, tokens)?;
     Ok(material_from_stored_token(response.token, tokens))
+}
+
+fn apply_token_endpoints(tokens: &mut GitHubCopilotTokens, endpoints: CopilotTokenEndpoints) {
+    let api_chat_endpoint = endpoints
+        .api
+        .as_deref()
+        .map(|api| append_endpoint_path(api, "chat/completions"));
+    let api_models_endpoint = endpoints
+        .api
+        .as_deref()
+        .map(|api| append_endpoint_path(api, "models"));
+    tokens.copilot_chat_endpoint = endpoints.chat.or(api_chat_endpoint);
+    tokens.copilot_models_endpoint = endpoints.models.or(api_models_endpoint);
+}
+
+fn append_endpoint_path(base: &str, path: &str) -> String {
+    format!("{}/{}", base.trim_end_matches('/'), path)
 }
 
 fn material_from_stored_token(
@@ -208,14 +236,23 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or_default()
 }
 
+fn nonempty_env_copilot_token() -> Option<String> {
+    std::env::var(GITHUB_COPILOT_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.trim().is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::credentials::MemoryCredentialStore;
+    use std::sync::Mutex;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn tokens(
         copilot_token: Option<&str>,
@@ -270,7 +307,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let response = format!(
-            "{{\"token\":\"copilot\",\"expires_at\":2000,\"refresh_in\":120,\"endpoints\":{{\"chat\":\"{url}/chat\",\"models\":\"{url}/models\"}}}}"
+            "{{\"token\":\"copilot\",\"expires_at\":2000,\"refresh_in\":120,\"endpoints\":{{\"api\":\"{url}\"}}}}"
         );
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -285,7 +322,7 @@ mod tests {
         });
         let store = MemoryCredentialStore::default();
         let mut tokens = tokens(None, None, None);
-        tokens.copilot_token_endpoint = Some(url);
+        tokens.copilot_token_endpoint = Some(url.clone());
 
         let material =
             refresh_copilot_token_with_store(&reqwest::Client::new(), &store, &mut tokens)
@@ -293,11 +330,75 @@ mod tests {
                 .unwrap();
 
         assert_eq!(material.token, "copilot");
-        assert!(material.chat_endpoint.ends_with("/chat"));
-        assert!(material.models_endpoint.ends_with("/models"));
+        assert_eq!(material.chat_endpoint, format!("{url}/chat/completions"));
+        assert_eq!(material.models_endpoint, format!("{url}/models"));
         let stored = load_github_copilot_tokens(&store).unwrap().unwrap();
         assert_eq!(stored.copilot_token.as_deref(), Some("copilot"));
-        assert!(stored.copilot_chat_endpoint.unwrap().ends_with("/chat"));
+        let expected_chat_endpoint = format!("{url}/chat/completions");
+        assert_eq!(
+            stored.copilot_chat_endpoint.as_deref(),
+            Some(expected_chat_endpoint.as_str())
+        );
+    }
+
+    #[test]
+    fn token_endpoints_build_full_paths_from_api_base() {
+        let mut tokens = tokens(None, None, None);
+
+        apply_token_endpoints(
+            &mut tokens,
+            CopilotTokenEndpoints {
+                api: Some("https://copilot.example/api/".into()),
+                chat: None,
+                models: None,
+            },
+        );
+
+        assert_eq!(
+            tokens.copilot_chat_endpoint.as_deref(),
+            Some("https://copilot.example/api/chat/completions")
+        );
+        assert_eq!(
+            tokens.copilot_models_endpoint.as_deref(),
+            Some("https://copilot.example/api/models")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_env_token_does_not_disable_stored_refresh() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = std::env::var_os(GITHUB_COPILOT_TOKEN_ENV);
+        std::env::set_var(GITHUB_COPILOT_TOKEN_ENV, "");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer).await.unwrap();
+            let body = r#"{"token":"refreshed"}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+        let store = MemoryCredentialStore::default();
+        let mut tokens = tokens(Some("stale"), Some(2_000), None);
+        tokens.copilot_token_endpoint = Some(url);
+        save_github_copilot_tokens(&store, &tokens).unwrap();
+
+        let material = force_refresh_auth_material_with_store(&reqwest::Client::new(), &store)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(material.token, "refreshed");
+        match previous {
+            Some(value) => std::env::set_var(GITHUB_COPILOT_TOKEN_ENV, value),
+            None => std::env::remove_var(GITHUB_COPILOT_TOKEN_ENV),
+        }
     }
 
     #[tokio::test]

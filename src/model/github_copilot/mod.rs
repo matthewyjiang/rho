@@ -27,6 +27,7 @@ pub struct GitHubCopilotProvider {
 
 impl GitHubCopilotProvider {
     pub fn new(model: String, auth: GitHubCopilotAuthManager) -> Result<Self, ModelError> {
+        auth.ensure_auth_available()?;
         Ok(Self {
             client: reqwest::Client::new(),
             auth,
@@ -200,13 +201,23 @@ mod tests {
 
     #[test]
     fn chat_request_preserves_model_and_streaming_flag() {
-        let provider = GitHubCopilotProvider::new(
-            "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new(Arc::new(
-                crate::credentials::MemoryCredentialStore::default(),
-            )),
+        let store = Arc::new(crate::credentials::MemoryCredentialStore::default());
+        save_github_copilot_tokens(
+            store.as_ref(),
+            &GitHubCopilotTokens {
+                github_access_token: "github".into(),
+                copilot_token: Some("copilot".into()),
+                copilot_expires_at_unix: Some(4_102_444_800),
+                copilot_refresh_after_unix: None,
+                copilot_token_endpoint: None,
+                copilot_chat_endpoint: None,
+                copilot_models_endpoint: None,
+            },
         )
         .unwrap();
+        let provider =
+            GitHubCopilotProvider::new("gpt-4.1".into(), GitHubCopilotAuthManager::new(store))
+                .unwrap();
 
         let body = provider
             .chat_request(
@@ -222,6 +233,16 @@ mod tests {
         assert_eq!(body.model, "gpt-4.1");
         assert!(body.stream);
         assert!(body.stream_options.is_some());
+    }
+
+    #[test]
+    fn provider_construction_requires_available_auth() {
+        let result = GitHubCopilotProvider::new(
+            "gpt-4.1".into(),
+            GitHubCopilotAuthManager::new(Arc::new(MemoryCredentialStore::default())),
+        );
+
+        assert!(matches!(result, Err(ModelError::MissingGithubCopilotAuth)));
     }
 
     #[tokio::test]

@@ -540,7 +540,7 @@ mod tests {
                     (1, false) => (
                         "200 OK",
                         format!(
-                            "{{\"token\":\"second\",\"endpoints\":{{\"models\":\"{base_url_for_server}/models\"}}}}"
+                            "{{\"token\":\"second\",\"endpoints\":{{\"api\":\"{base_url_for_server}\"}}}}"
                         ),
                     ),
                     (2, true) => (
