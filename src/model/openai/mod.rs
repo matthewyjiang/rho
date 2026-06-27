@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
-mod auth;
+pub(crate) mod auth;
 pub mod cache;
 mod codex_ws;
 mod convert;
@@ -630,6 +630,17 @@ mod tests {
         let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
 "#;
         assert_eq!(extract_sse_text(body).unwrap(), "done");
+    }
+
+    #[test]
+    fn completed_response_text_preserves_url_annotations() {
+        let body = r#"data: {"type":"response.completed","response":{"output_text":"Rust shipped today.","output":[{"content":[{"text":"Rust shipped today.","annotations":[{"type":"url_citation","title":"Rust Blog","url":"https://blog.rust-lang.org/release"}]}]}]}}
+"#;
+        let text = extract_sse_text(body).unwrap();
+
+        assert!(text.contains("Rust shipped today."));
+        assert!(text.contains("Sources:"));
+        assert!(text.contains("Rust Blog: https://blog.rust-lang.org/release"));
     }
 
     #[test]

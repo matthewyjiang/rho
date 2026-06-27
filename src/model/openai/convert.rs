@@ -231,23 +231,63 @@ struct ResponseOutput {
 #[derive(Deserialize)]
 struct ResponseContent {
     text: Option<String>,
+    annotations: Option<Vec<ResponseAnnotation>>,
+}
+
+#[derive(Deserialize)]
+struct ResponseAnnotation {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    title: Option<String>,
+    url: Option<String>,
 }
 
 pub(super) fn extract_response_text(response: ResponsesResponse) -> Result<String, ModelError> {
-    if let Some(text) = response.output_text {
-        return Ok(text);
-    }
-    let text = response
+    let mut content_texts = Vec::new();
+    let mut citations = Vec::new();
+    for content in response
         .output
         .unwrap_or_default()
         .into_iter()
         .flat_map(|o| o.content.unwrap_or_default())
-        .filter_map(|c| c.text)
-        .collect::<Vec<_>>()
-        .join("\n");
+    {
+        if let Some(text) = content.text.filter(|text| !text.is_empty()) {
+            content_texts.push(text);
+        }
+        for annotation in content.annotations.unwrap_or_default() {
+            if annotation.kind.as_deref() == Some("url_citation") {
+                if let Some(url) = annotation.url.filter(|url| !url.trim().is_empty()) {
+                    citations.push((annotation.title, url));
+                }
+            }
+        }
+    }
+
+    let mut text = response
+        .output_text
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| content_texts.join("\n"));
     if text.is_empty() {
-        Err(ModelError::InvalidResponse("missing response text".into()))
-    } else {
-        Ok(text)
+        return Err(ModelError::InvalidResponse("missing response text".into()));
+    }
+    append_response_citations(&mut text, citations);
+    Ok(text)
+}
+
+fn append_response_citations(text: &mut String, citations: Vec<(Option<String>, String)>) {
+    let mut seen = std::collections::HashSet::new();
+    let citations = citations
+        .into_iter()
+        .filter(|(_, url)| seen.insert(url.clone()))
+        .collect::<Vec<_>>();
+    if citations.is_empty() {
+        return;
+    }
+    text.push_str("\n\nSources:");
+    for (title, url) in citations {
+        let title = title
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| url.clone());
+        text.push_str(&format!("\n- {title}: {url}"));
     }
 }
