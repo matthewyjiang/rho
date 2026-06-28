@@ -136,6 +136,7 @@ fn render_blocks(blocks: &[ContentBlock]) -> String {
         .iter()
         .map(|block| match block {
             ContentBlock::Text(text) => text.clone(),
+            ContentBlock::Image(image) => format!("[image: {}]", image.mime_type),
             ContentBlock::ToolCall(call) => serde_json::to_string(call).unwrap_or_default(),
         })
         .collect::<Vec<_>>()

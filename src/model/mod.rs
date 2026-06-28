@@ -7,6 +7,7 @@ pub mod anthropic;
 pub mod catalog;
 pub mod context;
 pub mod github_copilot;
+pub mod image;
 pub mod models_dev;
 pub mod openai;
 pub mod provider;
@@ -34,6 +35,7 @@ impl Message {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text(String),
+    Image(ImageContent),
     ToolCall(ToolCall),
 }
 
@@ -158,6 +160,7 @@ pub enum AuthMode {
 pub use anthropic::AnthropicProvider;
 pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
 pub use github_copilot::GitHubCopilotProvider;
+pub use image::{image_summary, ImageContent};
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;
 pub use provider::{build_provider, UnavailableProvider};

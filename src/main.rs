@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod cli;
+mod clipboard_image;
 mod commands;
 mod config;
 mod credentials;

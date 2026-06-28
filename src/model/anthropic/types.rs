@@ -73,6 +73,8 @@ pub(super) enum AnthropicContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
     },
+    #[serde(rename = "image")]
+    Image { source: AnthropicImageSource },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -88,6 +90,14 @@ pub(super) enum AnthropicContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct AnthropicImageSource {
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+    pub(super) media_type: String,
+    pub(super) data: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

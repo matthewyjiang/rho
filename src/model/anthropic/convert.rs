@@ -2,8 +2,8 @@ use crate::model::{ContentBlock, Message, ModelError, ModelResponse, ModelUsage}
 use crate::tool::{ToolCall, ToolSpec};
 
 use super::types::{
-    AnthropicContentBlock, AnthropicMessage, AnthropicResponse, AnthropicRole, AnthropicTool,
-    AnthropicUsage,
+    AnthropicContentBlock, AnthropicImageSource, AnthropicMessage, AnthropicResponse,
+    AnthropicRole, AnthropicTool, AnthropicUsage,
 };
 
 fn resolved_cache_read_tokens(usage: &AnthropicUsage) -> Option<u64> {
@@ -72,6 +72,13 @@ fn user_block(block: ContentBlock) -> AnthropicContentBlock {
             text,
             cache_control: None,
         },
+        ContentBlock::Image(image) => AnthropicContentBlock::Image {
+            source: AnthropicImageSource {
+                kind: "base64".into(),
+                media_type: image.mime_type,
+                data: image.data,
+            },
+        },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::Text {
             text: render_tool_call(&call),
             cache_control: None,
@@ -83,6 +90,10 @@ fn assistant_block(block: ContentBlock) -> AnthropicContentBlock {
     match block {
         ContentBlock::Text(text) => AnthropicContentBlock::Text {
             text,
+            cache_control: None,
+        },
+        ContentBlock::Image(image) => AnthropicContentBlock::Text {
+            text: format!("[image: {}]", image.mime_type),
             cache_control: None,
         },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::ToolUse {
@@ -125,6 +136,7 @@ pub(super) fn convert_content_blocks(
                 blocks.push(ContentBlock::Text(text));
             }
             AnthropicContentBlock::Text { text: _, .. } => {}
+            AnthropicContentBlock::Image { .. } => {}
             AnthropicContentBlock::ToolUse { id, name, input } => {
                 blocks.push(ContentBlock::ToolCall(ToolCall {
                     id,
@@ -177,7 +189,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::model::anthropic::types::AnthropicCacheCreation;
+    use crate::model::{anthropic::types::AnthropicCacheCreation, ImageContent};
     use crate::tool::ToolResult;
 
     #[test]
@@ -222,6 +234,30 @@ mod tests {
                 content: "/repo".into(),
                 is_error: false,
                 cache_control: None,
+            }
+        );
+    }
+
+    #[test]
+    fn converts_user_images_to_anthropic_shape() {
+        let (_system, messages) = split_system_and_messages(vec![Message::User(vec![
+            ContentBlock::Text("look".into()),
+            ContentBlock::Image(ImageContent {
+                data: "aW1n".into(),
+                mime_type: "image/png".into(),
+            }),
+        ])])
+        .unwrap();
+
+        assert_eq!(messages[0].role, AnthropicRole::User);
+        assert_eq!(
+            messages[0].content[1],
+            AnthropicContentBlock::Image {
+                source: AnthropicImageSource {
+                    kind: "base64".into(),
+                    media_type: "image/png".into(),
+                    data: "aW1n".into(),
+                },
             }
         );
     }

@@ -22,7 +22,7 @@ pub(crate) struct ChatStreamOptions {
 pub(crate) struct OpenAiMessage {
     pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) content: Option<String>,
+    pub(crate) content: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
