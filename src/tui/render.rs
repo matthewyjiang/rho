@@ -24,18 +24,29 @@ impl LineFill {
     }
 }
 
-pub(super) fn session_header_lines(_info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
+pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
     let divider = "─".repeat(width.max(1));
-    vec![
+    let mut lines = vec![
         Line::styled(divider.clone(), Theme::dim()),
         Line::from(vec![
             Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
             Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
         ]),
-        Line::styled(divider, Theme::dim()),
-        Line::raw(""),
-    ]
+    ];
+    if let Some(notice) = &info.update_notice {
+        lines.push(Line::from(vec![
+            Span::styled("update", Theme::warning()),
+            Span::raw("  "),
+            Span::styled(
+                truncate_one_line(notice, width.saturating_sub(8)),
+                Theme::warning(),
+            ),
+        ]));
+    }
+    lines.push(Line::styled(divider, Theme::dim()));
+    lines.push(Line::raw(""));
+    lines
 }
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {

@@ -2,6 +2,7 @@ use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiP
 use crate::config::Config;
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
+pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
@@ -51,6 +52,20 @@ pub(super) fn config_picker(
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: SHOW_REASONING_OUTPUT_VALUE.into(),
+            },
+            PickerItem {
+                label: "Check for updates".into(),
+                detail: Some("Checks GitHub releases at startup and shows an update notice in the header when available.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: if config.check_for_updates {
+                        "on".into()
+                    } else {
+                        "off".into()
+                    },
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: CHECK_FOR_UPDATES_VALUE.into(),
             },
             PickerItem {
                 label: "Max output bytes".into(),

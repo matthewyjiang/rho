@@ -100,6 +100,7 @@ pub struct TuiInfo {
     pub open_resume_picker: bool,
     pub config_path: Option<PathBuf>,
     pub auth_unavailable: Option<String>,
+    pub update_notice: Option<String>,
 }
 
 pub struct TuiResult {
@@ -2324,6 +2325,9 @@ impl App {
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output(terminal)?;
             }
+            config_picker::CHECK_FOR_UPDATES_VALUE => {
+                self.toggle_check_for_updates(terminal)?;
+            }
             config_picker::WEB_SEARCH_VALUE => {
                 self.composer =
                     ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
@@ -2974,6 +2978,7 @@ impl App {
         match value {
             config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(terminal),
+            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(terminal),
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -3175,6 +3180,40 @@ impl App {
                 )?;
                 self.status = "config save failed".into();
             }
+        }
+        Ok(())
+    }
+
+    fn toggle_check_for_updates(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.check_for_updates = !config.check_for_updates;
+            config.save(self.info.config_path.clone())?;
+            Ok(config.check_for_updates)
+        });
+        match save_result {
+            Ok(check_for_updates) => {
+                if !check_for_updates {
+                    self.info.update_notice = None;
+                }
+                self.status = if check_for_updates {
+                    "check for updates: on".into()
+                } else {
+                    "check for updates: off".into()
+                };
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not save update check setting: {err}")),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
         }
         Ok(())
     }
@@ -4563,6 +4602,7 @@ mod tests {
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
+                update_notice: None,
                 max_tool_output_lines: 10,
             },
             store,
@@ -5306,6 +5346,7 @@ mod tests {
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
+                update_notice: None,
                 max_tool_output_lines: 10,
             },
             store,
