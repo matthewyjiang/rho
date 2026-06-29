@@ -1,5 +1,4 @@
-use crate::model::{ContentBlock, Message, ModelError, ModelResponse, ModelUsage};
-use crate::tool::{ToolCall, ToolSpec};
+use crate::{ContentBlock, Message, ModelError, ModelResponse, ModelUsage, ToolCall, ToolSpec};
 
 use super::types::{
     AnthropicContentBlock, AnthropicImageSource, AnthropicMessage, AnthropicResponse,
@@ -189,8 +188,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::model::{anthropic::types::AnthropicCacheCreation, ImageContent};
-    use crate::tool::ToolResult;
+    use crate::{anthropic::types::AnthropicCacheCreation, ImageContent, ToolResult};
 
     #[test]
     fn converts_messages_and_tools_to_anthropic_shape() {

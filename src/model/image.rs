@@ -1,8 +1,4 @@
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ImageContent {
-    pub data: String,
-    pub mime_type: String,
-}
+pub use rho_provider::ImageContent;
 
 pub fn image_summary(image: &ImageContent) -> String {
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &image.data)

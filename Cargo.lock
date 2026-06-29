@@ -2073,6 +2073,7 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "rho-provider",
  "rusqlite",
  "rustls",
  "serde",
@@ -2086,6 +2087,18 @@ dependencies = [
  "url",
  "uuid",
  "webbrowser",
+]
+
+[[package]]
+name = "rho-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

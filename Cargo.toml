@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/rho-provider"]
+
 [package]
 name = "rho-coding-agent"
 version = "0.13.1"
@@ -12,6 +15,7 @@ name = "rho"
 path = "src/main.rs"
 
 [dependencies]
+rho-provider = { path = "crates/rho-provider" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }

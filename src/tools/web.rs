@@ -658,14 +658,18 @@ async fn openai_search(
         {
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
                 let client = http_client();
-                let refreshed =
-                    refresh_codex_token(&client, refresh_token, CodexAuthSource::Store, tokens)
-                        .await
-                        .map_err(|err| {
-                            ToolError::Message(format!(
-                                "OpenAI web search token refresh failed: {err}"
-                            ))
-                        })?;
+                let store = OsCredentialStore;
+                let refreshed = refresh_codex_token(
+                    &client,
+                    &store,
+                    refresh_token,
+                    CodexAuthSource::Store,
+                    tokens,
+                )
+                .await
+                .map_err(|err| {
+                    ToolError::Message(format!("OpenAI web search token refresh failed: {err}"))
+                })?;
                 auth = OpenAiSearchAuth::Codex {
                     tokens: refreshed,
                     source: CodexAuthSource::Store,

@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::{
     credentials::{
-        load_codex_tokens, load_provider_api_key, save_codex_tokens, CodexTokens, OsCredentialStore,
+        load_codex_tokens, load_provider_api_key, save_codex_tokens, CodexTokens, CredentialStore,
     },
     model::{registry, ModelError},
 };
@@ -29,7 +29,7 @@ struct RefreshResponse {
     account_id: Option<String>,
 }
 
-pub(crate) fn load_api_key_auth() -> Result<Auth, ModelError> {
+pub(crate) fn load_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
     let descriptor = registry::provider_descriptor("openai")
         .ok_or_else(|| ModelError::UnsupportedProvider("openai".into()))?;
     let registry::ProviderAuthKind::ApiKey {
@@ -41,13 +41,12 @@ pub(crate) fn load_api_key_auth() -> Result<Auth, ModelError> {
     if let Ok(key) = std::env::var(env_var) {
         return Ok(Auth::ApiKey(key));
     }
-    let store = OsCredentialStore;
-    let key = load_provider_api_key(&store, descriptor.name)?
+    let key = load_provider_api_key(store, descriptor.name)?
         .ok_or_else(|| registry::missing_credential_error(missing))?;
     Ok(Auth::ApiKey(key))
 }
 
-pub(crate) fn load_codex_auth() -> Result<Auth, ModelError> {
+pub(crate) fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
     if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
         return Ok(Auth::Codex {
             tokens: CodexTokens {
@@ -59,8 +58,7 @@ pub(crate) fn load_codex_auth() -> Result<Auth, ModelError> {
             source: CodexAuthSource::Env,
         });
     }
-    let store = OsCredentialStore;
-    let tokens = load_codex_tokens(&store)?.ok_or(ModelError::MissingCodexAuth)?;
+    let tokens = load_codex_tokens(store)?.ok_or(ModelError::MissingCodexAuth)?;
     Ok(Auth::Codex {
         tokens,
         source: CodexAuthSource::Store,
@@ -68,20 +66,19 @@ pub(crate) fn load_codex_auth() -> Result<Auth, ModelError> {
 }
 
 pub(crate) fn load_codex_tokens_for_request(
+    store: &dyn CredentialStore,
     tokens: &CodexTokens,
     source: CodexAuthSource,
 ) -> Result<CodexTokens, ModelError> {
     match source {
         CodexAuthSource::Env => Ok(tokens.clone()),
-        CodexAuthSource::Store => {
-            let store = OsCredentialStore;
-            load_codex_tokens(&store)?.ok_or(ModelError::MissingCodexAuth)
-        }
+        CodexAuthSource::Store => load_codex_tokens(store)?.ok_or(ModelError::MissingCodexAuth),
     }
 }
 
 pub(crate) async fn refresh_codex_token(
     client: &reqwest::Client,
+    store: &dyn CredentialStore,
     refresh_token: &str,
     source: CodexAuthSource,
     previous: &CodexTokens,
@@ -114,8 +111,7 @@ pub(crate) async fn refresh_codex_token(
     };
 
     if source == CodexAuthSource::Store {
-        let store = OsCredentialStore;
-        save_codex_tokens(&store, &refreshed)?;
+        save_codex_tokens(store, &refreshed)?;
     }
 
     Ok(refreshed)
