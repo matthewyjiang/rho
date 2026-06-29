@@ -133,8 +133,7 @@ impl Tool for WebSearch {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Single search query."},
-                    "queries": {"type": "array", "items": {"type": "string"}, "description": "Batch of search queries."},
+                    "queries": {"type": "array", "items": {"type": "string"}, "description": "Search queries. Use one item for a single search, or multiple items for broader research."},
                     "numResults": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Results per query."},
                     "recencyFilter": {"type": "string", "enum": ["day", "week", "month", "year"]},
                     "domainFilter": {"type": "array", "items": {"type": "string"}},
@@ -142,7 +141,7 @@ impl Tool for WebSearch {
                     "includeContent": {"type": "boolean", "description": "Try to fetch and store result pages when the selected provider returns URLs."},
                     "workflow": {"type": "string", "enum": ["none", "summary-review", "auto-summary"]}
                 },
-                "anyOf": [{"required": ["query"]}, {"required": ["queries"]}]
+                "required": ["queries"]
             }),
         }
     }
@@ -262,14 +261,13 @@ impl Tool for FetchContent {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "URL or local path."},
-                    "urls": {"type": "array", "items": {"type": "string"}},
+                    "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs or local paths. Use one item for a single fetch, or multiple items to fetch several targets."},
                     "prompt": {"type": "string", "description": "Question for video or page analysis."},
                     "timestamp": {"type": "string", "description": "Video frame timestamp or range, e.g. 23:41 or 23:41-25:00."},
                     "frames": {"type": "integer", "minimum": 1, "maximum": 12},
                     "forceClone": {"type": "boolean", "description": "Clone GitHub repos even over the 350MB threshold."}
                 },
-                "anyOf": [{"required": ["url"]}, {"required": ["urls"]}]
+                "required": ["urls"]
             }),
         }
     }
@@ -2607,5 +2605,20 @@ mod tests {
         );
         assert_eq!(FetchContent.spec().name, "fetch_content");
         assert_eq!(GetSearchContent.spec().name, "get_search_content");
+    }
+
+    #[test]
+    fn web_tool_specs_require_canonical_array_arguments() {
+        let web_search_schema = WebSearch::from_config(&Config::default())
+            .spec()
+            .input_schema;
+        assert_eq!(web_search_schema["required"], json!(["queries"]));
+        assert!(web_search_schema.get("anyOf").is_none());
+        assert!(web_search_schema["properties"].get("query").is_none());
+
+        let fetch_content_schema = FetchContent.spec().input_schema;
+        assert_eq!(fetch_content_schema["required"], json!(["urls"]));
+        assert!(fetch_content_schema.get("anyOf").is_none());
+        assert!(fetch_content_schema["properties"].get("url").is_none());
     }
 }
