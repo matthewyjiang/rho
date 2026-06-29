@@ -199,6 +199,7 @@ fn script_update_command() -> Command {
     if let Some(install_dir) = current_exe_parent() {
         command.env("RHO_INSTALL_DIR", install_dir);
     }
+    command.env("RHO_UPDATE_PARENT_PID", std::process::id().to_string());
     command
 }
 
