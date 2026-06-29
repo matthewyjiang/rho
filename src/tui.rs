@@ -84,6 +84,8 @@ const INLINE_VIEWPORT_HEIGHT: u16 = 18;
 const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
 const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
 const PASTE_BURST_MIN_CHARS: usize = 2;
+const PASTE_COLLAPSE_MIN_LINES: usize = 2;
+const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 
@@ -154,12 +156,13 @@ struct App {
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
-    queued_prompts: VecDeque<String>,
+    queued_prompts: VecDeque<QueuedPrompt>,
     pending_images: Vec<ImageContent>,
     input_history: Vec<String>,
     input_history_cursor: Option<usize>,
-    input_history_draft: Option<String>,
+    input_history_draft: Option<InputDraft>,
     paste_burst: PasteBurst,
+    paste_segments: Vec<PasteSegment>,
     transcript: Vec<Entry>,
     last_inserted_was_tool: bool,
     command_selection: usize,
@@ -254,6 +257,42 @@ struct SecretInput {
 struct PendingOAuthLogin {
     target: LoginTarget,
     handle: tokio::task::JoinHandle<Result<PendingOAuthResult, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PasteSegment {
+    start: usize,
+    marker_len: usize,
+    content: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QueuedPrompt {
+    prompt: String,
+    display_prompt: String,
+    paste_segments: Vec<PasteSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InputDraft {
+    input: String,
+    paste_segments: Vec<PasteSegment>,
+}
+
+impl From<&str> for QueuedPrompt {
+    fn from(prompt: &str) -> Self {
+        Self {
+            prompt: prompt.to_string(),
+            display_prompt: prompt.to_string(),
+            paste_segments: Vec::new(),
+        }
+    }
+}
+
+impl PasteSegment {
+    fn end(&self) -> usize {
+        self.start + self.marker_len
+    }
 }
 
 #[derive(Debug)]
@@ -629,6 +668,7 @@ impl App {
             input_history_cursor: None,
             input_history_draft: None,
             paste_burst: PasteBurst::default(),
+            paste_segments: Vec::new(),
             transcript: Vec::new(),
             last_inserted_was_tool: false,
             command_selection: 0,
@@ -680,7 +720,7 @@ impl App {
                     Event::Paste(text) => {
                         let text = normalize_paste(&text);
                         match &mut self.composer {
-                            ComposerMode::Input => self.insert_input_text(&text),
+                            ComposerMode::Input => self.insert_pasted_input_text(&text),
                             ComposerMode::SecretInput(secret) => secret.insert_text(&text),
                             ComposerMode::ConfigNumberInput(input) => input.insert_text(&text),
                             ComposerMode::ConfigTextInput(input) => input.insert_text(&text),
@@ -744,6 +784,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
+                    self.paste_segments.clear();
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
@@ -1398,7 +1439,10 @@ impl App {
 
         let next_cursor = match (direction, self.input_history_cursor) {
             (HistoryDirection::Previous, None) => {
-                self.input_history_draft = Some(self.input.clone());
+                self.input_history_draft = Some(InputDraft {
+                    input: self.input.clone(),
+                    paste_segments: self.paste_segments.clone(),
+                });
                 self.input_history.len() - 1
             }
             (HistoryDirection::Previous, Some(0)) => 0,
@@ -1408,7 +1452,12 @@ impl App {
                 cursor + 1
             }
             (HistoryDirection::Next, Some(_)) => {
-                self.input = self.input_history_draft.take().unwrap_or_default();
+                let draft = self.input_history_draft.take().unwrap_or(InputDraft {
+                    input: String::new(),
+                    paste_segments: Vec::new(),
+                });
+                self.input = draft.input;
+                self.paste_segments = draft.paste_segments;
                 self.input_cursor = self.input_char_len();
                 self.input_history_cursor = None;
                 self.input_changed();
@@ -1417,6 +1466,7 @@ impl App {
         };
 
         self.input = self.input_history[next_cursor].clone();
+        self.paste_segments.clear();
         self.input_cursor = self.input_char_len();
         self.input_history_cursor = Some(next_cursor);
         self.input_changed();
@@ -1454,7 +1504,8 @@ impl App {
         let Some(prompt) = self.queued_prompts.pop_back() else {
             return false;
         };
-        self.input = prompt;
+        self.input = prompt.display_prompt;
+        self.paste_segments = prompt.paste_segments;
         self.input_cursor = self.input_char_len();
         self.reset_input_history_navigation();
         self.input_changed();
@@ -1463,6 +1514,7 @@ impl App {
 
     fn insert_input_char(&mut self, ch: char) {
         self.reset_input_history_navigation();
+        self.adjust_paste_segments_for_edit(self.input_cursor, 0, 1);
         let byte_index = self.input_byte_index(self.input_cursor);
         self.input.insert(byte_index, ch);
         self.input_cursor += 1;
@@ -1470,11 +1522,57 @@ impl App {
     }
 
     fn insert_input_text(&mut self, text: &str) {
+        self.insert_input_text_with_paste_content(text, None);
+    }
+
+    fn insert_pasted_input_text(&mut self, text: &str) {
+        let Some(marker) = paste_marker_for(text) else {
+            self.insert_input_text(text);
+            return;
+        };
+        self.insert_input_text_with_paste_content(&marker, Some(text.to_string()));
+    }
+
+    fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
         self.reset_input_history_navigation();
-        let byte_index = self.input_byte_index(self.input_cursor);
+        let start = self.input_cursor;
+        let inserted_len = text.chars().count();
+        self.adjust_paste_segments_for_edit(start, 0, inserted_len);
+        let byte_index = self.input_byte_index(start);
         self.input.insert_str(byte_index, text);
-        self.input_cursor += text.chars().count();
+        self.input_cursor += inserted_len;
+        if let Some(content) = paste_content {
+            self.paste_segments.push(PasteSegment {
+                start,
+                marker_len: inserted_len,
+                content,
+            });
+            self.paste_segments.sort_by_key(|segment| segment.start);
+        }
         self.input_changed();
+    }
+
+    fn expanded_input(&self) -> String {
+        expand_paste_segments(&self.input, &self.paste_segments)
+    }
+
+    fn adjust_paste_segments_for_edit(
+        &mut self,
+        start: usize,
+        deleted_len: usize,
+        inserted_len: usize,
+    ) {
+        let end = start + deleted_len;
+        let shift = inserted_len as isize - deleted_len as isize;
+        self.paste_segments.retain_mut(|segment| {
+            if start < segment.end() && end > segment.start {
+                return false;
+            }
+            if start <= segment.start {
+                segment.start = segment.start.saturating_add_signed(shift);
+            }
+            true
+        });
     }
 
     fn backspace_input(&mut self) {
@@ -1485,7 +1583,9 @@ impl App {
             return;
         }
         self.reset_input_history_navigation();
-        let start = self.input_byte_index(self.input_cursor - 1);
+        let edit_start = self.input_cursor - 1;
+        self.adjust_paste_segments_for_edit(edit_start, 1, 0);
+        let start = self.input_byte_index(edit_start);
         let end = self.input_byte_index(self.input_cursor);
         self.input.replace_range(start..end, "");
         self.input_cursor -= 1;
@@ -1497,6 +1597,7 @@ impl App {
             return;
         }
         self.reset_input_history_navigation();
+        self.adjust_paste_segments_for_edit(self.input_cursor, 1, 0);
         let start = self.input_byte_index(self.input_cursor);
         let end = self.input_byte_index(self.input_cursor + 1);
         self.input.replace_range(start..end, "");
@@ -1506,6 +1607,7 @@ impl App {
     fn delete_word_before_cursor(&mut self) {
         self.reset_input_history_navigation();
         let start_cursor = previous_word_boundary(&self.input, self.input_cursor);
+        self.adjust_paste_segments_for_edit(start_cursor, self.input_cursor - start_cursor, 0);
         let start = self.input_byte_index(start_cursor);
         let end = self.input_byte_index(self.input_cursor);
         self.input.replace_range(start..end, "");
@@ -1655,9 +1757,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let mut prompt = self.input.trim().to_string();
+        let mut prompt = self.expanded_input().trim().to_string();
+        let mut display_prompt = self.input.trim().to_string();
         if prompt.is_empty() && self.pending_images.is_empty() {
             self.input.clear();
+            self.paste_segments.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
             return Ok(());
@@ -1666,6 +1770,7 @@ impl App {
         match commands::parse_command(&self.input) {
             Ok(Some(invocation)) => {
                 self.input.clear();
+                self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
                 self.execute_command(invocation, terminal, agent).await?;
@@ -1673,8 +1778,11 @@ impl App {
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
-                let trailing_prompt = slash_command_args(&self.input).trim().to_string();
+                let expanded_input = self.expanded_input();
+                let trailing_prompt = slash_command_args(&expanded_input).trim().to_string();
+                let trailing_display_prompt = slash_command_args(&self.input).trim().to_string();
                 self.input.clear();
+                self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
                 if self.execute_skill_command(&name, terminal, agent)? {
@@ -1682,6 +1790,7 @@ impl App {
                         return Ok(());
                     }
                     prompt = trailing_prompt;
+                    display_prompt = trailing_display_prompt;
                 } else {
                     self.insert_entry(
                         terminal,
@@ -1702,16 +1811,23 @@ impl App {
 
         let images = std::mem::take(&mut self.pending_images);
         self.input.clear();
+        self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        self.run_prompt_turn(prompt, images, terminal, agent)
+        self.run_prompt_turn(prompt, display_prompt, images, terminal, agent)
             .await?;
         while !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break;
             };
-            self.run_prompt_turn(prompt, Vec::new(), terminal, agent)
-                .await?;
+            self.run_prompt_turn(
+                prompt.prompt,
+                prompt.display_prompt,
+                Vec::new(),
+                terminal,
+                agent,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -1719,6 +1835,7 @@ impl App {
     async fn run_prompt_turn(
         &mut self,
         prompt: String,
+        display_prompt: String,
         images: Vec<ImageContent>,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
@@ -1735,7 +1852,10 @@ impl App {
         {
             self.start_session_title_generation(prompt.clone());
         }
-        self.insert_entry(terminal, &Entry::User(render_user_entry(&prompt, &images)))?;
+        self.insert_entry(
+            terminal,
+            &Entry::User(render_user_entry(&display_prompt, &images)),
+        )?;
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
@@ -1913,7 +2033,7 @@ impl App {
 
     fn insert_running_paste(&mut self, text: &str) {
         match &mut self.composer {
-            ComposerMode::Input => self.insert_input_text(text),
+            ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
             ComposerMode::ConfigTextInput(input) => input.insert_text(text),
@@ -1943,6 +2063,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
+                    self.paste_segments.clear();
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
@@ -2062,9 +2183,10 @@ impl App {
     }
 
     fn submit_during_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let prompt = self.input.trim().to_string();
+        let prompt = self.expanded_input().trim().to_string();
         if prompt.is_empty() {
             self.input.clear();
+            self.paste_segments.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
             return Ok(());
@@ -2073,6 +2195,7 @@ impl App {
         match commands::parse_command(&self.input) {
             Ok(Some(invocation)) => {
                 self.input.clear();
+                self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
                 self.execute_command_during_turn(invocation, terminal)?;
@@ -2082,6 +2205,7 @@ impl App {
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
+                self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
                 self.insert_entry(
@@ -2103,6 +2227,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
+        self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
         self.steering_prompts.push_back(prompt);
@@ -2118,26 +2243,36 @@ impl App {
     }
 
     fn queue_prompt_after_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let prompt = self.input.trim().to_string();
+        let prompt = self.expanded_input().trim().to_string();
+        let display_prompt = self.input.clone();
+        let paste_segments = self.paste_segments.clone();
         if prompt.is_empty() {
             self.input.clear();
+            self.paste_segments.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
             return Ok(());
         }
-        self.queue_prompt(prompt, terminal)
+        self.queue_prompt(prompt, display_prompt, paste_segments, terminal)
     }
 
     fn queue_prompt(
         &mut self,
         prompt: String,
+        display_prompt: String,
+        paste_segments: Vec<PasteSegment>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
+        self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        self.queued_prompts.push_back(prompt);
+        self.queued_prompts.push_back(QueuedPrompt {
+            prompt,
+            display_prompt,
+            paste_segments,
+        });
         self.insert_entry(
             terminal,
             &Entry::Notice(format!(
@@ -2773,6 +2908,7 @@ impl App {
         self.info.session_id = None;
         self.composer = ComposerMode::Input;
         self.input.clear();
+        self.paste_segments.clear();
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
@@ -3526,6 +3662,7 @@ impl App {
         self.info.session_id = Some(full_id);
         self.composer = ComposerMode::Input;
         self.input.clear();
+        self.paste_segments.clear();
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
@@ -4573,6 +4710,37 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn paste_marker_for(text: &str) -> Option<String> {
+    let line_count = text.split('\n').count();
+    let char_count = text.chars().count();
+    if line_count >= PASTE_COLLAPSE_MIN_LINES {
+        Some(format!("[ pasted: {line_count} lines ]"))
+    } else if char_count > PASTE_COLLAPSE_MIN_CHARS {
+        Some(format!("[ pasted: {char_count} chars ]"))
+    } else {
+        None
+    }
+}
+
+fn expand_paste_segments(input: &str, segments: &[PasteSegment]) -> String {
+    if segments.is_empty() {
+        return input.to_string();
+    }
+
+    let mut result = String::new();
+    let mut cursor = 0;
+    for segment in segments {
+        if cursor > segment.start || segment.end() > input.chars().count() {
+            continue;
+        }
+        result.extend(input.chars().skip(cursor).take(segment.start - cursor));
+        result.push_str(&segment.content);
+        cursor = segment.end();
+    }
+    result.extend(input.chars().skip(cursor));
+    result
+}
+
 fn input_lines_with_images(
     input: &str,
     images: &[ImageContent],
@@ -4862,6 +5030,104 @@ mod tests {
             Entry::User(b),
             Entry::User(c),
         ] if a == "message 7" && b == "message 8" && c == "message 9"));
+    }
+
+    #[test]
+    fn pasted_multiline_input_collapses_to_marker_and_expands() {
+        let mut app = test_app();
+
+        app.insert_pasted_input_text("alpha\nbeta\ngamma");
+
+        assert_eq!(app.input, "[ pasted: 3 lines ]");
+        assert_eq!(app.input_cursor, app.input.chars().count());
+        assert_eq!(app.expanded_input(), "alpha\nbeta\ngamma");
+    }
+
+    #[test]
+    fn pasted_single_line_input_stays_literal_until_large() {
+        let mut app = test_app();
+
+        app.insert_pasted_input_text("hello world");
+
+        assert_eq!(app.input, "hello world");
+        assert!(app.paste_segments.is_empty());
+        assert_eq!(app.expanded_input(), "hello world");
+    }
+
+    #[test]
+    fn paste_segments_shift_after_edits_before_marker() {
+        let mut app = test_app();
+        app.insert_pasted_input_text("alpha\nbeta");
+        app.input_cursor = 0;
+        app.insert_input_text("prefix ");
+
+        assert_eq!(app.input, "prefix [ pasted: 2 lines ]");
+        assert_eq!(app.expanded_input(), "prefix alpha\nbeta");
+    }
+
+    #[test]
+    fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
+        let mut app = test_app();
+        app.insert_pasted_input_text("alpha\nbeta");
+        let queued = QueuedPrompt {
+            prompt: app.expanded_input(),
+            display_prompt: app.input.clone(),
+            paste_segments: app.paste_segments.clone(),
+        };
+        app.input.clear();
+        app.paste_segments.clear();
+        app.queued_prompts.push_back(queued);
+
+        assert!(app.recall_last_queued_prompt());
+        assert_eq!(app.input, "[ pasted: 2 lines ]");
+        assert_eq!(app.expanded_input(), "alpha\nbeta");
+    }
+
+    #[test]
+    fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
+        let mut app = test_app();
+        app.insert_input_text(" ");
+        app.insert_pasted_input_text("alpha\nbeta");
+        let queued = QueuedPrompt {
+            prompt: app.expanded_input().trim().to_string(),
+            display_prompt: app.input.clone(),
+            paste_segments: app.paste_segments.clone(),
+        };
+        app.input.clear();
+        app.paste_segments.clear();
+        app.queued_prompts.push_back(queued);
+
+        assert!(app.recall_last_queued_prompt());
+        assert_eq!(app.input, " [ pasted: 2 lines ]");
+        assert_eq!(app.expanded_input().trim(), "alpha\nbeta");
+    }
+
+    #[test]
+    fn slash_command_args_can_keep_collapsed_display_separate_from_expanded_prompt() {
+        let mut app = test_app();
+        app.insert_input_text("/skill:test ");
+        app.insert_pasted_input_text("alpha\nbeta");
+
+        let expanded_input = app.expanded_input();
+        assert_eq!(slash_command_args(&expanded_input).trim(), "alpha\nbeta");
+        assert_eq!(slash_command_args(&app.input).trim(), "[ pasted: 2 lines ]");
+    }
+
+    #[test]
+    fn paste_segment_is_removed_when_marker_is_edited() {
+        let mut app = test_app();
+        app.insert_pasted_input_text("alpha\nbeta");
+        app.input_cursor = 1;
+        app.delete_input();
+
+        assert_eq!(app.input, "[pasted: 2 lines ]");
+        assert!(app.paste_segments.is_empty());
+        assert_eq!(app.expanded_input(), "[pasted: 2 lines ]");
+    }
+
+    #[test]
+    fn normalize_paste_converts_carriage_returns() {
+        assert_eq!(normalize_paste("a\r\nb\rc"), "a\nb\nc");
     }
 
     #[test]
@@ -5672,6 +5938,25 @@ mod tests {
         app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
         assert_eq!(app.input, "draft");
         assert_eq!(app.input_history_cursor, None);
+    }
+
+    #[test]
+    fn input_history_clears_paste_segments_and_restores_draft_segments() {
+        let mut app = test_app();
+        app.push_input_history("previous message long enough for marker");
+        app.insert_pasted_input_text("alpha\nbeta");
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+        assert_eq!(app.input, "previous message long enough for marker");
+        assert!(app.paste_segments.is_empty());
+        assert_eq!(
+            app.expanded_input(),
+            "previous message long enough for marker"
+        );
+
+        app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+        assert_eq!(app.input, "[ pasted: 2 lines ]");
+        assert_eq!(app.expanded_input(), "alpha\nbeta");
     }
 
     #[test]
