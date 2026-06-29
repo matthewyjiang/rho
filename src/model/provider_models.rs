@@ -561,6 +561,8 @@ mod tests {
             &store,
             &GitHubCopilotTokens {
                 github_access_token: "github".into(),
+                github_refresh_token: None,
+                github_expires_at_unix: None,
                 copilot_token: Some("first".into()),
                 copilot_expires_at_unix: Some(i64::MAX),
                 copilot_refresh_after_unix: None,

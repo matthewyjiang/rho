@@ -32,6 +32,8 @@ pub struct CodexTokens {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GitHubCopilotTokens {
     pub github_access_token: String,
+    pub github_refresh_token: Option<String>,
+    pub github_expires_at_unix: Option<i64>,
     pub copilot_token: Option<String>,
     pub copilot_expires_at_unix: Option<i64>,
     pub copilot_refresh_after_unix: Option<i64>,
@@ -432,7 +434,7 @@ pub fn delete_provider_credentials(
     match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { account, .. }) => store.delete_secret(account),
         Some(ProviderAuthKind::CodexOAuth { account, .. }) => store.delete_secret(account),
-        Some(ProviderAuthKind::GithubCopilotOAuth { account, .. }) => store.delete_secret(account),
+        Some(ProviderAuthKind::GithubCopilotDevice { account, .. }) => store.delete_secret(account),
         None => Ok(false),
     }
 }
@@ -529,7 +531,7 @@ fn provider_has_env_override_from(
     let env_var = match descriptor.auth_kind {
         ProviderAuthKind::ApiKey { env_var, .. }
         | ProviderAuthKind::CodexOAuth { env_var, .. }
-        | ProviderAuthKind::GithubCopilotOAuth { env_var, .. } => env_var,
+        | ProviderAuthKind::GithubCopilotDevice { env_var, .. } => env_var,
     };
     env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
@@ -544,7 +546,7 @@ pub fn provider_has_credentials(
     match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { account, .. }) => Ok(store.get_secret(account)?.is_some()),
         Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
-        Some(ProviderAuthKind::GithubCopilotOAuth { .. }) => {
+        Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
             Ok(load_github_copilot_tokens(store)?.is_some())
         }
         None => Ok(false),
@@ -634,6 +636,8 @@ mod tests {
         let store = MemoryCredentialStore::default();
         let tokens = GitHubCopilotTokens {
             github_access_token: "github-access".into(),
+            github_refresh_token: Some("github-refresh".into()),
+            github_expires_at_unix: Some(2_500),
             copilot_token: Some("copilot".into()),
             copilot_expires_at_unix: Some(2_000),
             copilot_refresh_after_unix: Some(1_500),

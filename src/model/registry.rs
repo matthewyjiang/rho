@@ -41,7 +41,7 @@ pub enum ProviderAuthKind {
         env_var: &'static str,
         account: &'static str,
     },
-    GithubCopilotOAuth {
+    GithubCopilotDevice {
         env_var: &'static str,
         account: &'static str,
     },
@@ -128,8 +128,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         name: "github-copilot",
         display_name: "GitHub Copilot",
         auth: "github-copilot",
-        login_label: "GitHub Copilot OAuth",
-        auth_kind: ProviderAuthKind::GithubCopilotOAuth {
+        login_label: "GitHub Copilot device login",
+        auth_kind: ProviderAuthKind::GithubCopilotDevice {
             env_var: "GITHUB_COPILOT_TOKEN",
             account: "provider:github-copilot:tokens",
         },
@@ -165,7 +165,7 @@ pub fn missing_credentials_error(provider: &str) -> ModelError {
     match provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
         Some(ProviderAuthKind::ApiKey { missing, .. }) => missing_credential_error(missing),
         Some(ProviderAuthKind::CodexOAuth { .. }) => ModelError::MissingCodexAuth,
-        Some(ProviderAuthKind::GithubCopilotOAuth { .. }) => ModelError::MissingGithubCopilotAuth,
+        Some(ProviderAuthKind::GithubCopilotDevice { .. }) => ModelError::MissingGithubCopilotAuth,
         None => ModelError::UnsupportedProvider(provider.to_string()),
     }
 }

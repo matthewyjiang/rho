@@ -21,9 +21,7 @@ Use `/login` in the interactive TUI:
 | `/login openai` | masked OpenAI API-key entry |
 | `/login openai-codex` | browser-based Codex OAuth owned by Rho |
 | `/login anthropic` | masked Anthropic API-key entry |
-| `/login github-copilot` | browser-based GitHub OAuth owned by Rho |
-
-GitHub Copilot browser OAuth requires an app-owned GitHub OAuth client id and client secret. Set `RHO_GITHUB_COPILOT_CLIENT_ID` and `RHO_GITHUB_COPILOT_CLIENT_SECRET` before running `/login github-copilot`; if either value is missing, Rho returns a setup error instead of reusing GitHub CLI, VS Code, GitHub Models, `GITHUB_TOKEN`, or `GH_TOKEN` credentials. The GitHub OAuth app should allow the localhost callback `http://localhost:1456/auth/github-copilot/callback`.
+| `/login github-copilot` | GitHub device code login for GitHub Copilot |
 
 Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
 
@@ -53,11 +51,9 @@ ANTHROPIC_API_KEY=...
 CODEX_ACCESS_TOKEN=...
 CODEX_ACCOUNT_ID=... # optional for Codex
 GITHUB_COPILOT_TOKEN=...
-RHO_GITHUB_COPILOT_CLIENT_ID=... # required only for /login github-copilot browser OAuth
-RHO_GITHUB_COPILOT_CLIENT_SECRET=... # required only for /login github-copilot browser OAuth
 ```
 
-`GITHUB_COPILOT_TOKEN` is treated as a GitHub Copilot API bearer token. It is not refreshed or stored by Rho. Stored `/login github-copilot` credentials can be exchanged for short-lived Copilot API tokens and refreshed once after an unauthorized response. The `RHO_GITHUB_COPILOT_CLIENT_*` values configure the app-owned browser OAuth flow only; they are not provider bearer-token overrides.
+`GITHUB_COPILOT_TOKEN` is treated as a GitHub Copilot API bearer token. It is not refreshed or stored by Rho. Stored `/login github-copilot` credentials can be exchanged for short-lived Copilot API tokens and refreshed once after an unauthorized response.
 
 For normal interactive setup, prefer `/login`.
 

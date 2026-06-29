@@ -65,7 +65,7 @@ impl App {
             ProviderAuthKind::CodexOAuth { .. } => {
                 self.start_codex_login(target, terminal, agent).await
             }
-            ProviderAuthKind::GithubCopilotOAuth { .. } => {
+            ProviderAuthKind::GithubCopilotDevice { .. } => {
                 self.start_github_copilot_login(target, terminal, agent)
                     .await
             }
@@ -141,29 +141,42 @@ impl App {
             return Ok(());
         }
 
-        let config = match github_copilot_oauth::github_copilot_oauth_config_from_env() {
-            Ok(config) => config,
+        self.status = "starting GitHub Copilot device login".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        let login = match github_copilot_device::start_github_copilot_device_login().await {
+            Ok(login) => login,
             Err(err) => {
                 self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
                 self.status = "login failed".into();
                 return Ok(());
             }
         };
-        self.status = "waiting for GitHub Copilot login; press esc to cancel".into();
+
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "GitHub Copilot login: visit {} and enter code {}",
+                login.verification_uri, login.user_code
+            )),
+        )?;
+        if let Some(uri) = &login.verification_uri_complete {
+            self.insert_entry(
+                terminal,
+                &Entry::Notice(format!("Or open this URL to continue: {uri}")),
+            )?;
+        }
+
+        self.status = "waiting for GitHub Copilot device login; press esc to cancel".into();
         self.composer = ComposerMode::OAuthPending(target.clone());
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
             handle: tokio::spawn(async move {
-                github_copilot_oauth::run_github_copilot_oauth_flow(config)
+                github_copilot_device::complete_github_copilot_device_login(login)
                     .await
                     .map(PendingOAuthResult::GithubCopilot)
                     .map_err(|err| err.to_string())
             }),
         });
-        self.insert_entry(
-            terminal,
-            &Entry::Notice("opening browser for GitHub Copilot login. Press esc to cancel.".into()),
-        )?;
         Ok(())
     }
 
