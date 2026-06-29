@@ -173,10 +173,4 @@ pub trait ModelProvider: Send + Sync {
 
 pub type DynModelProvider = Box<dyn ModelProvider>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AuthMode {
-    ApiKey,
-    Codex,
-}
-
 pub use anthropic::AnthropicProvider;

@@ -5,9 +5,9 @@ use crate::{
     credentials::{load_provider_api_key, OsCredentialStore},
     model::{
         openai::auth::{load_api_key_auth, load_codex_auth},
-        registry::{self, provider_descriptor, ProviderAuthKind, ProviderRuntime},
-        AnthropicProvider, AuthMode, DynModelProvider, GitHubCopilotProvider, ModelError,
-        ModelProvider, ModelRequest, ModelResponse, OpenAiProvider,
+        registry::{self, provider_descriptor, AuthMode, ProviderAuthKind, ProviderRuntime},
+        AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
+        ModelRequest, ModelResponse, OpenAiProvider,
     },
     reasoning::ReasoningLevel,
 };

@@ -9,7 +9,7 @@ pub mod provider_models;
 pub mod registry;
 
 pub use crate::provider_backend::{
-    AnthropicProvider, AuthMode, ContentBlock, DynModelProvider, ImageContent, Message, ModelError,
+    AnthropicProvider, ContentBlock, DynModelProvider, ImageContent, Message, ModelError,
     ModelEvent, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
 };
 pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};

@@ -1,4 +1,10 @@
-use crate::model::{AuthMode, ModelError};
+use crate::model::ModelError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthMode {
+    ApiKey,
+    Codex,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
