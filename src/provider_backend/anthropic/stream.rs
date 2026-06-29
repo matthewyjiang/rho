@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 
-use crate::{ModelError, ModelEvent, ModelResponse};
+use crate::provider_backend::{ModelError, ModelEvent, ModelResponse};
 
 use super::convert::{convert_content_blocks, usage_to_model_usage};
 use super::types::{AnthropicContentBlock, AnthropicUsage};
@@ -221,7 +221,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::ContentBlock;
+    use crate::provider_backend::ContentBlock;
 
     #[test]
     fn streams_text_deltas_and_usage() {

@@ -56,7 +56,7 @@ fn anthropic_max_tokens(model: &str) -> u32 {
                 .and_then(|metadata| metadata.max_output_tokens)
         })
         .and_then(|tokens| u32::try_from(tokens).ok())
-        .unwrap_or(rho_provider::anthropic::DEFAULT_MAX_TOKENS)
+        .unwrap_or(crate::provider_backend::anthropic::DEFAULT_MAX_TOKENS)
 }
 
 fn load_anthropic_api_key_auth() -> Result<String, ModelError> {

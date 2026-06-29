@@ -2,7 +2,7 @@ mod convert;
 mod stream;
 mod types;
 
-use crate::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse};
+use crate::provider_backend::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse};
 
 use convert::{convert_anthropic_response, split_system_and_messages, to_anthropic_tool};
 use stream::collect_anthropic_sse_response;
@@ -166,7 +166,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{ContentBlock, Message, ToolCall, ToolSpec};
+    use crate::provider_backend::{ContentBlock, Message, ToolCall, ToolSpec};
 
     fn test_provider() -> AnthropicProvider {
         AnthropicProvider {

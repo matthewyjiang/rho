@@ -7,7 +7,7 @@ use std::{
 use serde_json::Value;
 use thiserror::Error;
 
-pub use rho_provider::{ToolCall, ToolResult, ToolSpec};
+pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolDisplayStyle {

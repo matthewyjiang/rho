@@ -1,4 +1,4 @@
-pub use rho_provider::ImageContent;
+pub use crate::provider_backend::ImageContent;
 
 pub fn image_summary(image: &ImageContent) -> String {
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &image.data)
