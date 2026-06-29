@@ -70,6 +70,42 @@ function Add-ToUserPath($Dir) {
     return $true
 }
 
+function ConvertTo-SingleQuotedLiteral($Value) {
+    $Escaped = [string]$Value -replace "'", "''"
+    return "'$Escaped'"
+}
+
+function Start-DeferredCopy($Source, $Destination, $TempDir, $ParentPid) {
+    $Helper = Join-Path $TempDir "rho-complete-update.ps1"
+    $HelperContent = @"
+`$ErrorActionPreference = "Stop"
+`$Source = $(ConvertTo-SingleQuotedLiteral $Source)
+`$Destination = $(ConvertTo-SingleQuotedLiteral $Destination)
+`$TempDir = $(ConvertTo-SingleQuotedLiteral $TempDir)
+`$ParentPid = $ParentPid
+try {
+    try {
+        `$Process = Get-Process -Id `$ParentPid -ErrorAction SilentlyContinue
+        if (`$Process) {
+            Wait-Process -Id `$ParentPid -ErrorAction SilentlyContinue
+        }
+    } catch {}
+
+    `$DestinationDir = Split-Path -Parent `$Destination
+    New-Item -ItemType Directory -Force -Path `$DestinationDir | Out-Null
+    Copy-Item -Path `$Source -Destination `$Destination -Force
+} finally {
+    Remove-Item -Recurse -Force `$TempDir -ErrorAction SilentlyContinue
+}
+"@
+    Set-Content -Path $Helper -Value $HelperContent -Encoding UTF8
+    Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "`"$Helper`""
+    ) | Out-Null
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw "rho prebuilt binaries currently require 64-bit Windows. Install with Cargo instead: cargo install rho-coding-agent"
 }
@@ -78,6 +114,7 @@ $Url = Get-AssetUrl
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "rho-install-$([System.Guid]::NewGuid())"
 $Archive = Join-Path $TempDir $Asset
 $Checksum = "$Archive.sha256"
+$DeferredCopyStarted = $false
 
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 try {
@@ -102,13 +139,32 @@ try {
 
     Expand-Archive -Path $Archive -DestinationPath $TempDir -Force
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    Copy-Item -Path (Join-Path $TempDir $BinName) -Destination (Join-Path $InstallDir $BinName) -Force
+    $Source = Join-Path $TempDir $BinName
+    $Destination = Join-Path $InstallDir $BinName
+
+    if ($env:RHO_UPDATE_PARENT_PID) {
+        $ParentPid = 0
+        if ([int]::TryParse($env:RHO_UPDATE_PARENT_PID, [ref]$ParentPid) -and $ParentPid -gt 0) {
+            Start-DeferredCopy $Source $Destination $TempDir $ParentPid
+            $DeferredCopyStarted = $true
+        } else {
+            throw "RHO_UPDATE_PARENT_PID is not a valid process id: $env:RHO_UPDATE_PARENT_PID"
+        }
+    } else {
+        Copy-Item -Path $Source -Destination $Destination -Force
+    }
 
     $PathChanged = Add-ToUserPath $InstallDir
-    Write-Host "rho installed to $(Join-Path $InstallDir $BinName)"
+    if ($DeferredCopyStarted) {
+        Write-Host "rho update staged for $Destination. It will finish after the current rho process exits."
+    } else {
+        Write-Host "rho installed to $Destination"
+    }
     if ($PathChanged) {
         Write-Host "added $InstallDir to your user PATH. restart your terminal if rho is not found."
     }
 } finally {
-    Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+    if (-not $DeferredCopyStarted) {
+        Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+    }
 }
