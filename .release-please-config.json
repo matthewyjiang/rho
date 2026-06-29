@@ -9,6 +9,16 @@
         {
           "type": "generic",
           "path": "PKGBUILD"
+        },
+        {
+          "type": "toml",
+          "path": "crates/rho-provider/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.dependencies['rho-provider'].version"
         }
       ]
     }

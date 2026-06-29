@@ -21,8 +21,8 @@ jobs:
         run: cargo test --all
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Check crate package
-        run: cargo publish --dry-run --locked
+      - name: Check provider crate package
+        run: cargo publish -p rho-coding-agent-provider --dry-run --locked
 
   platform-check:
     runs-on: ${{ matrix.os }}

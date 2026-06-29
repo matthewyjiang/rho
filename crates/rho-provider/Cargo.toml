@@ -1,9 +1,13 @@
 [package]
-name = "rho-provider"
-# Internal workspace crate. Keep this at 0.0.0, only the binary crate is versioned.
-version = "0.0.0"
+name = "rho-coding-agent-provider"
+version = "0.13.1"
 edition = "2021"
-publish = false
+description = "Internal provider backend crate for rho-coding-agent"
+license = "MIT"
+repository = "https://github.com/matthewyjiang/rho"
+
+[lib]
+name = "rho_provider"
 
 [dependencies]
 async-trait = "0.1"

@@ -34,9 +34,17 @@ jobs:
       - name: Cache Cargo registry
         if: ${{ steps.release.outputs.release_created == 'true' }}
         uses: swatinem/rust-cache@v2
-      - name: Publish crate
+      - name: Publish provider crate
         if: ${{ steps.release.outputs.release_created == 'true' }}
-        run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+        run: cargo publish -p rho-coding-agent-provider --locked --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Wait for provider crate index
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: sleep 60
+      - name: Publish binary crate
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: cargo publish -p rho-coding-agent --locked --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - name: Dispatch Arch package workflow
