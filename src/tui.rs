@@ -55,7 +55,7 @@ use theme::Theme;
 
 use crate::{
     agent::{Agent, AgentEvent, SessionHistorySink},
-    auth::{codex_oauth, github_copilot_oauth},
+    auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,

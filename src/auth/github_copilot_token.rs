@@ -7,6 +7,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::{
+    auth::github_copilot_device,
     credentials::{
         load_github_copilot_tokens, save_github_copilot_tokens, CredentialStore,
         GitHubCopilotTokens,
@@ -21,6 +22,7 @@ pub(crate) const COPILOT_CHAT_COMPLETIONS_URL: &str =
 pub(crate) const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 60;
+const GITHUB_TOKEN_EXPIRY_SKEW_SECONDS: i64 = 300;
 
 #[derive(Clone)]
 pub(crate) struct GitHubCopilotAuthManager {
@@ -166,20 +168,20 @@ async fn refresh_copilot_token_with_store(
     store: &dyn CredentialStore,
     tokens: &mut GitHubCopilotTokens,
 ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
+    refresh_github_token_if_needed(client, store, tokens).await?;
     let endpoint = tokens
         .copilot_token_endpoint
-        .as_deref()
-        .unwrap_or(COPILOT_TOKEN_URL);
-    let response = client
-        .get(endpoint)
-        .header(
-            "Authorization",
-            format!("token {}", tokens.github_access_token),
-        )
-        .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
-        .send()
-        .await?;
+        .clone()
+        .unwrap_or_else(|| COPILOT_TOKEN_URL.to_string());
+    let mut response =
+        request_copilot_token(client, &endpoint, &tokens.github_access_token).await?;
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) && refresh_github_token(client, store, tokens).await?
+    {
+        response = request_copilot_token(client, &endpoint, &tokens.github_access_token).await?;
+    }
     if matches!(
         response.status(),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
@@ -202,6 +204,54 @@ async fn refresh_copilot_token_with_store(
     }
     save_github_copilot_tokens(store, tokens)?;
     Ok(material_from_stored_token(response.token, tokens))
+}
+
+async fn request_copilot_token(
+    client: &reqwest::Client,
+    endpoint: &str,
+    github_access_token: &str,
+) -> Result<reqwest::Response, ModelError> {
+    Ok(client
+        .get(endpoint)
+        .header("Authorization", format!("token {github_access_token}"))
+        .header("Accept", "application/json")
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?)
+}
+
+async fn refresh_github_token_if_needed(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    tokens: &mut GitHubCopilotTokens,
+) -> Result<(), ModelError> {
+    if tokens.github_expires_at_unix.is_some_and(|expires_at| {
+        expires_at <= now_unix_seconds() + GITHUB_TOKEN_EXPIRY_SKEW_SECONDS
+    }) {
+        let _ = refresh_github_token(client, store, tokens).await?;
+    }
+    Ok(())
+}
+
+async fn refresh_github_token(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    tokens: &mut GitHubCopilotTokens,
+) -> Result<bool, ModelError> {
+    let Some(refresh_token) = tokens.github_refresh_token.as_deref() else {
+        return Ok(false);
+    };
+    let refreshed =
+        github_copilot_device::refresh_github_copilot_github_token(client, refresh_token)
+            .await
+            .map_err(|_| ModelError::MissingGithubCopilotAuth)?;
+    tokens.github_access_token = refreshed.access_token;
+    if refreshed.refresh_token.is_some() {
+        tokens.github_refresh_token = refreshed.refresh_token;
+    }
+    tokens.github_expires_at_unix = refreshed.expires_at_unix;
+    save_github_copilot_tokens(store, tokens)?;
+    Ok(true)
 }
 
 fn apply_token_endpoints(tokens: &mut GitHubCopilotTokens, endpoints: CopilotTokenEndpoints) {
@@ -293,6 +343,8 @@ mod tests {
     ) -> GitHubCopilotTokens {
         GitHubCopilotTokens {
             github_access_token: "github".into(),
+            github_refresh_token: None,
+            github_expires_at_unix: None,
             copilot_token: copilot_token.map(str::to_string),
             copilot_expires_at_unix: expires_at,
             copilot_refresh_after_unix: refresh_after,

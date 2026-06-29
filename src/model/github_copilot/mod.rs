@@ -206,6 +206,8 @@ mod tests {
             store.as_ref(),
             &GitHubCopilotTokens {
                 github_access_token: "github".into(),
+                github_refresh_token: None,
+                github_expires_at_unix: None,
                 copilot_token: Some("copilot".into()),
                 copilot_expires_at_unix: Some(4_102_444_800),
                 copilot_refresh_after_unix: None,
@@ -290,6 +292,8 @@ mod tests {
             store.as_ref(),
             &GitHubCopilotTokens {
                 github_access_token: "github".into(),
+                github_refresh_token: None,
+                github_expires_at_unix: None,
                 copilot_token: None,
                 copilot_expires_at_unix: None,
                 copilot_refresh_after_unix: None,

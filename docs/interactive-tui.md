@@ -60,9 +60,9 @@ Some commands can replace the message box with a picker. Use `up` and `down` to 
 
 ## Login and logout
 
-`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts browser-based GitHub OAuth for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
 
-`/login github-copilot` requires `RHO_GITHUB_COPILOT_CLIENT_ID` and `RHO_GITHUB_COPILOT_CLIENT_SECRET` for Rho's app-owned GitHub OAuth app and uses the localhost callback `http://localhost:1456/auth/github-copilot/callback`. `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
+`GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
 
 `/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
 
