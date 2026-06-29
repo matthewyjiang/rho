@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.13.0...rho-coding-agent-v0.13.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **anthropic:** sanitize tool schemas ([#89](https://github.com/matthewyjiang/rho/issues/89)) ([7016a93](https://github.com/matthewyjiang/rho/commit/7016a93e38321c1eb8e63ab4a0a95157b103a64a))
+
 ## [0.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.12.1...rho-coding-agent-v0.13.0) (2026-06-29)
 
 
