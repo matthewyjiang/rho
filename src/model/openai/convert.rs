@@ -99,14 +99,14 @@ pub(crate) fn codex_input_items(
             Message::System(content) => instructions.push(content),
             Message::User(blocks) => input.push(json!({
                 "role": "user",
-                "content": render_blocks(&blocks),
+                "content": codex_content_blocks(&blocks),
             })),
             Message::Assistant(blocks) => {
                 let text = blocks
                     .iter()
                     .filter_map(|block| match block {
                         ContentBlock::Text(text) => Some(text.as_str()),
-                        ContentBlock::ToolCall(_) => None,
+                        ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -137,13 +137,18 @@ pub(crate) fn codex_input_items(
 pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
     match message {
         Message::System(content) => Ok(openai_text_message("system", content)),
-        Message::User(blocks) => Ok(openai_text_message("user", render_blocks(&blocks))),
+        Message::User(blocks) => Ok(OpenAiMessage {
+            role: "user".into(),
+            content: Some(chat_content_blocks(&blocks)),
+            tool_calls: None,
+            tool_call_id: None,
+        }),
         Message::Assistant(blocks) => {
             let content = blocks
                 .iter()
                 .filter_map(|b| match b {
                     ContentBlock::Text(text) => Some(text.as_str()),
-                    ContentBlock::ToolCall(_) => None,
+                    ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -151,7 +156,7 @@ pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, Model
                 .into_iter()
                 .filter_map(|b| match b {
                     ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
-                    ContentBlock::Text(_) => None,
+                    ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(OpenAiMessage {
@@ -159,7 +164,7 @@ pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, Model
                 content: if content.is_empty() {
                     None
                 } else {
-                    Some(content)
+                    Some(json!(content))
                 },
                 tool_calls: if tool_calls.is_empty() {
                     None
@@ -171,7 +176,7 @@ pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, Model
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),
-            content: Some(result.content),
+            content: Some(json!(result.content)),
             tool_calls: None,
             tool_call_id: Some(result.id),
         }),
@@ -181,7 +186,7 @@ pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, Model
 fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     OpenAiMessage {
         role: role.into(),
-        content: Some(content),
+        content: Some(json!(content)),
         tool_calls: None,
         tool_call_id: None,
     }
@@ -200,15 +205,38 @@ fn tool_call_to_openai(call: ToolCall) -> Result<OpenAiToolCall, ModelError> {
     })
 }
 
-fn render_blocks(blocks: &[ContentBlock]) -> String {
-    blocks
+fn chat_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
+    let content = blocks
         .iter()
         .map(|block| match block {
-            ContentBlock::Text(text) => text.clone(),
-            ContentBlock::ToolCall(call) => render_tool_call(call),
+            ContentBlock::Text(text) => json!({ "type": "text", "text": text }),
+            ContentBlock::Image(image) => json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{};base64,{}", image.mime_type, image.data) },
+            }),
+            ContentBlock::ToolCall(call) => {
+                json!({ "type": "text", "text": render_tool_call(call) })
+            }
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+    json!(content)
+}
+
+fn codex_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
+    let content = blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Text(text) => json!({ "type": "input_text", "text": text }),
+            ContentBlock::Image(image) => json!({
+                "type": "input_image",
+                "image_url": format!("data:{};base64,{}", image.mime_type, image.data),
+            }),
+            ContentBlock::ToolCall(call) => {
+                json!({ "type": "input_text", "text": render_tool_call(call) })
+            }
+        })
+        .collect::<Vec<_>>();
+    json!(content)
 }
 
 fn render_tool_call(call: &ToolCall) -> String {

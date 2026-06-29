@@ -56,6 +56,7 @@ use theme::Theme;
 use crate::{
     agent::{Agent, AgentEvent, SessionHistorySink},
     auth::{codex_oauth, github_copilot_oauth},
+    clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
     credentials::{
@@ -67,11 +68,12 @@ use crate::{
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
+        image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
         registry::{self, ProviderAuthKind},
-        ContentBlock, ContextUsage, Message, ModelMetadata, ModelRequest, ModelResponse,
-        ModelUsage, UnavailableProvider,
+        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
+        ModelResponse, ModelUsage, UnavailableProvider,
     },
     reasoning::ReasoningLevel,
     session::Session,
@@ -153,6 +155,7 @@ struct App {
     pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<String>,
+    pending_images: Vec<ImageContent>,
     input_history: Vec<String>,
     input_history_cursor: Option<usize>,
     input_history_draft: Option<String>,
@@ -621,6 +624,7 @@ impl App {
             pending_tool_call: None,
             steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
+            pending_images: Vec::new(),
             input_history: Vec::new(),
             input_history_cursor: None,
             input_history_draft: None,
@@ -740,6 +744,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
+                    self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
                     self.status = "input cleared; press ctrl-c again to quit".into();
@@ -749,6 +754,12 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
+                self.ctrl_c_streak = 0;
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('v'))
+            | (KeyModifiers::ALT, KeyCode::Char('v')) => {
+                self.paste_clipboard_image();
+                self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
@@ -1468,6 +1479,9 @@ impl App {
 
     fn backspace_input(&mut self) {
         if self.input_cursor == 0 {
+            if self.input.is_empty() && self.pending_images.pop().is_some() {
+                self.status = format!("attached images: {}", self.pending_images.len());
+            }
             return;
         }
         self.reset_input_history_navigation();
@@ -1642,7 +1656,7 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let mut prompt = self.input.trim().to_string();
-        if prompt.is_empty() {
+        if prompt.is_empty() && self.pending_images.is_empty() {
             self.input.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
@@ -1686,15 +1700,18 @@ impl App {
             }
         }
 
+        let images = std::mem::take(&mut self.pending_images);
         self.input.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        self.run_prompt_turn(prompt, terminal, agent).await?;
+        self.run_prompt_turn(prompt, images, terminal, agent)
+            .await?;
         while !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break;
             };
-            self.run_prompt_turn(prompt, terminal, agent).await?;
+            self.run_prompt_turn(prompt, Vec::new(), terminal, agent)
+                .await?;
         }
         Ok(())
     }
@@ -1702,10 +1719,13 @@ impl App {
     async fn run_prompt_turn(
         &mut self,
         prompt: String,
+        images: Vec<ImageContent>,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        self.push_input_history(&prompt);
+        if !prompt.is_empty() {
+            self.push_input_history(&prompt);
+        }
         self.reset_input_history_navigation();
         self.ensure_session(agent)?;
         if !agent
@@ -1715,7 +1735,7 @@ impl App {
         {
             self.start_session_title_generation(prompt.clone());
         }
-        self.insert_entry(terminal, &Entry::User(prompt.clone()))?;
+        self.insert_entry(terminal, &Entry::User(render_user_entry(&prompt, &images)))?;
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
@@ -1735,8 +1755,13 @@ impl App {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
             let callback_tool_call_active = Arc::clone(&tool_call_active);
             let run_steering_prompts = Arc::clone(&steering_prompts);
-            let mut run_future = Box::pin(agent.run_with_events_and_steering(
-                prompt,
+            let mut content = Vec::with_capacity(1 + images.len());
+            if !prompt.is_empty() {
+                content.push(ContentBlock::Text(prompt));
+            }
+            content.extend(images.into_iter().map(ContentBlock::Image));
+            let mut run_future = Box::pin(agent.run_with_content_and_events_and_steering(
+                content,
                 move |event| {
                     match &event {
                         AgentEvent::ToolStarted { .. } => {
@@ -1865,6 +1890,27 @@ impl App {
         target.extend(self.steering_prompts.drain(..));
     }
 
+    fn paste_clipboard_image(&mut self) {
+        if self.running {
+            self.status = "image paste is unavailable while a model turn is running".into();
+            return;
+        }
+        if !matches!(self.composer, ComposerMode::Input) {
+            self.status = "image paste is only available in the message box".into();
+            return;
+        }
+        match read_clipboard_image() {
+            Ok(image) => {
+                let summary = image_summary(&image);
+                self.pending_images.push(image);
+                self.status = format!("attached image {} ({summary})", self.pending_images.len());
+            }
+            Err(err) => {
+                self.status = format!("image paste failed: {err}");
+            }
+        }
+    }
+
     fn insert_running_paste(&mut self, text: &str) {
         match &mut self.composer {
             ComposerMode::Input => self.insert_input_text(text),
@@ -1897,6 +1943,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
+                    self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
                     self.status = "input cleared; press esc to interrupt model".into();
@@ -1904,6 +1951,12 @@ impl App {
                 } else {
                     self.should_quit = true;
                 }
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('v'))
+            | (KeyModifiers::ALT, KeyCode::Char('v')) => {
+                self.paste_clipboard_image();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
                 self.toggle_latest_tool_output(terminal)?;
@@ -3749,10 +3802,9 @@ impl App {
 
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
         match &self.composer {
-            ComposerMode::Input => input_visual_lines(&self.input, width)
-                .into_iter()
-                .map(Line::raw)
-                .collect(),
+            ComposerMode::Input => {
+                input_lines_with_images(&self.input, &self.pending_images, width)
+            }
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
@@ -3804,7 +3856,11 @@ impl App {
 
     fn composer_cursor_position(&self, width: usize) -> Position {
         match &self.composer {
-            ComposerMode::Input => input_cursor_position(&self.input, self.input_cursor, width),
+            ComposerMode::Input => {
+                let mut position = input_cursor_position(&self.input, self.input_cursor, width);
+                position.y = position.y.saturating_add(self.pending_images.len() as u16);
+                position
+            }
             ComposerMode::SecretInput(secret) => Position {
                 x: secret.cursor.min(width.max(1)) as u16,
                 y: 1,
@@ -3928,11 +3984,11 @@ impl App {
         } else if matches!(self.composer, ComposerMode::OAuthPending(_)) {
             lines.push(Line::raw("[oauth login pending]"));
         } else {
-            lines.extend(
-                input_visual_lines(&self.input, width)
-                    .into_iter()
-                    .map(Line::raw),
-            );
+            lines.extend(input_lines_with_images(
+                &self.input,
+                &self.pending_images,
+                width,
+            ));
         }
         lines.push(divider);
         lines
@@ -4042,7 +4098,7 @@ fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
         match message {
             Message::System(_) => {}
             Message::User(blocks) => {
-                let text = text_blocks(blocks);
+                let text = render_message_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::User(text));
                 }
@@ -4054,7 +4110,7 @@ fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
                 }
                 pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.name.clone()),
-                    ContentBlock::Text(_) => None,
+                    ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
             Message::ToolResult(result) => {
@@ -4092,6 +4148,18 @@ fn text_blocks(blocks: &[ContentBlock]) -> String {
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_message_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.clone()),
+            ContentBlock::Image(image) => Some(format!("[image: {}]", image_summary(image))),
             ContentBlock::ToolCall(_) => None,
         })
         .collect::<Vec<_>>()
@@ -4125,7 +4193,7 @@ async fn generate_session_title(
         .into_iter()
         .filter_map(|block| match block {
             ContentBlock::Text(text) => Some(text),
-            ContentBlock::ToolCall(_) => None,
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -4505,6 +4573,41 @@ fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn input_lines_with_images(
+    input: &str,
+    images: &[ImageContent],
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| {
+            styled_line(
+                format!("[image {}: {}]", index + 1, image_summary(image)),
+                width.max(1),
+                Theme::dim(),
+                LineFill::Natural,
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.extend(input_visual_lines(input, width).into_iter().map(Line::raw));
+    lines
+}
+
+fn render_user_entry(prompt: &str, images: &[ImageContent]) -> String {
+    let mut parts = Vec::new();
+    if !prompt.is_empty() {
+        parts.push(prompt.to_string());
+    }
+    parts.extend(
+        images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| format!("[image {}: {}]", index + 1, image_summary(image))),
+    );
+    parts.join("\n")
+}
+
 fn short_session_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
@@ -4765,7 +4868,13 @@ mod tests {
     fn recovered_session_messages_become_transcript_entries() {
         let entries = transcript_entries_from_messages(&[
             Message::System("system".into()),
-            Message::User(vec![ContentBlock::Text("hello".into())]),
+            Message::User(vec![
+                ContentBlock::Text("hello".into()),
+                ContentBlock::Image(ImageContent {
+                    data: "aW1n".into(),
+                    mime_type: "image/png".into(),
+                }),
+            ]),
             Message::Assistant(vec![ContentBlock::Text("hi".into())]),
             Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
                 id: "call_1".into(),
@@ -4779,7 +4888,9 @@ mod tests {
             }),
         ]);
 
-        assert!(matches!(entries[0], Entry::User(ref text) if text == "hello"));
+        assert!(
+            matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]")
+        );
         assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
         assert!(matches!(
             entries[2],
@@ -5681,6 +5792,20 @@ mod tests {
         assert!(!burst.should_insert_newline_for_enter(
             start + PASTE_ENTER_SUPPRESSION + Duration::from_millis(2)
         ));
+    }
+
+    #[test]
+    fn image_paste_is_unavailable_while_running() {
+        let mut app = test_app();
+        app.running = true;
+
+        app.paste_clipboard_image();
+
+        assert!(app.pending_images.is_empty());
+        assert_eq!(
+            app.status,
+            "image paste is unavailable while a model turn is running"
+        );
     }
 
     #[test]

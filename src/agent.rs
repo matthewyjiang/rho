@@ -169,11 +169,25 @@ impl Agent {
     pub async fn run_with_events_and_steering(
         &mut self,
         user_prompt: String,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
+    ) -> Result<String, AgentError> {
+        self.run_with_content_and_events_and_steering(
+            vec![ContentBlock::Text(user_prompt)],
+            on_event,
+            next_steer,
+        )
+        .await
+    }
+
+    pub async fn run_with_content_and_events_and_steering(
+        &mut self,
+        user_content: Vec<ContentBlock>,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
         mut next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
     ) -> Result<String, AgentError> {
         let specs = self.tools.specs();
-        self.push_message(Message::user_text(user_prompt))?;
+        self.push_message(Message::User(user_content))?;
 
         let mut step = 1usize;
         loop {
@@ -235,7 +249,7 @@ impl Agent {
                         .iter()
                         .filter_map(|block| match block {
                             ContentBlock::ToolCall(call) => Some(call.clone()),
-                            ContentBlock::Text(_) => None,
+                            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                         })
                         .collect();
                     if tool_calls.is_empty() {
@@ -243,7 +257,7 @@ impl Agent {
                             .into_iter()
                             .filter_map(|block| match block {
                                 ContentBlock::Text(text) => Some(text),
-                                ContentBlock::ToolCall(_) => None,
+                                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
@@ -421,7 +435,7 @@ impl Agent {
             .into_iter()
             .filter_map(|block| match block {
                 ContentBlock::Text(text) => Some(text),
-                ContentBlock::ToolCall(_) => None,
+                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
             })
             .collect::<Vec<_>>()
             .join("\n")

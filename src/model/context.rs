@@ -86,6 +86,9 @@ fn message_tokens(message: &Message) -> u64 {
 fn content_block_tokens(block: &ContentBlock) -> u64 {
     CONTENT_BLOCK_OVERHEAD_TOKENS.saturating_add(match block {
         ContentBlock::Text(text) => text_tokens(text),
+        ContentBlock::Image(image) => {
+            85_u64.saturating_add((image.data.len() as u64).div_ceil(4096))
+        }
         ContentBlock::ToolCall(call) => TOOL_CALL_OVERHEAD_TOKENS.saturating_add(json_tokens(call)),
     })
 }

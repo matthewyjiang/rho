@@ -319,7 +319,7 @@ fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
             .iter()
             .filter_map(|block| match block {
                 crate::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                crate::model::ContentBlock::Text(_) => None,
+                crate::model::ContentBlock::Text(_) | crate::model::ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
         if tool_call_ids.is_empty() {
@@ -393,7 +393,7 @@ pub(super) fn user_message_text(message: &Message) -> Option<String> {
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text(text) => Some(text.trim()),
-            ContentBlock::ToolCall(_) => None,
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
         })
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
@@ -518,7 +518,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        model::ContentBlock,
+        model::{ContentBlock, ImageContent},
         tool::{ToolCall, ToolResult},
     };
 
@@ -547,7 +547,13 @@ mod tests {
         let cwd = temp_cwd();
         let session = Session::create_in_root(&root, &cwd).unwrap();
         session
-            .append_message(&Message::user_text("hello"))
+            .append_message(&Message::User(vec![
+                ContentBlock::Text("hello".into()),
+                ContentBlock::Image(ImageContent {
+                    data: "aW1n".into(),
+                    mime_type: "image/png".into(),
+                }),
+            ]))
             .unwrap();
         session
             .append_message(&Message::assistant_text("hi"))
@@ -555,7 +561,11 @@ mod tests {
 
         let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
         assert_eq!(messages.len(), 2);
-        assert!(matches!(&messages[0], Message::User(_)));
+        assert!(matches!(&messages[0], Message::User(blocks) if matches!(
+            blocks.as_slice(),
+            [ContentBlock::Text(text), ContentBlock::Image(image)]
+                if text == "hello" && image.mime_type == "image/png" && image.data == "aW1n"
+        )));
         assert!(matches!(&messages[1], Message::Assistant(_)));
     }
 

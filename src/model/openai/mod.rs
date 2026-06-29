@@ -363,13 +363,13 @@ fn build_codex_responses_body(
 
 #[cfg(test)]
 mod tests {
-    use super::convert::{codex_reasoning_param, to_openai_message};
+    use super::convert::{codex_input_items, codex_reasoning_param, to_openai_message};
     use super::stream::{
         convert_streamed_response, extract_sse_text, handle_codex_sse_line,
         handle_openai_stream_line, trim_sse_line_end, CodexSseState,
     };
     use super::*;
-    use crate::model::{ContentBlock, Message};
+    use crate::model::{ContentBlock, ImageContent, Message};
     use crate::tool::{ToolCall, ToolResult, ToolSpec};
     use serde_json::json;
 
@@ -787,6 +787,47 @@ mod tests {
     }
 
     #[test]
+    fn serializes_openai_chat_image_content() {
+        let message = to_openai_message(Message::User(vec![
+            ContentBlock::Text("what is this?".into()),
+            ContentBlock::Image(ImageContent {
+                data: "aW1n".into(),
+                mime_type: "image/png".into(),
+            }),
+        ]))
+        .unwrap();
+
+        assert_eq!(message.role, "user");
+        assert_eq!(
+            message.content,
+            Some(json!([
+                {"type":"text","text":"what is this?"},
+                {"type":"image_url","image_url":{"url":"data:image/png;base64,aW1n"}}
+            ]))
+        );
+    }
+
+    #[test]
+    fn serializes_codex_image_content() {
+        let input = codex_input_items(
+            vec![Message::User(vec![ContentBlock::Image(ImageContent {
+                data: "aW1n".into(),
+                mime_type: "image/png".into(),
+            })])],
+            &mut Vec::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            input,
+            vec![json!({
+                "role":"user",
+                "content":[{"type":"input_image","image_url":"data:image/png;base64,aW1n"}]
+            })]
+        );
+    }
+
+    #[test]
     fn serializes_openai_native_tool_result() {
         let message = to_openai_message(Message::ToolResult(ToolResult {
             id: "call-1".into(),
@@ -796,6 +837,6 @@ mod tests {
         .unwrap();
         assert_eq!(message.role, "tool");
         assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));
-        assert_eq!(message.content.as_deref(), Some("done"));
+        assert_eq!(message.content, Some(serde_json::json!("done")));
     }
 }
