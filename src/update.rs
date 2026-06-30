@@ -15,7 +15,10 @@ const PACMAN_PACKAGE: &str = "rho-coding-agent";
 #[cfg(not(windows))]
 const SCRIPT_INSTALL_SH_COMMAND: &str = "tmp=$(mktemp) || exit; curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh -o \"$tmp\"; status=$?; if [ $status -eq 0 ]; then sh \"$tmp\"; status=$?; fi; rm -f \"$tmp\"; exit $status";
 #[cfg(windows)]
-const SCRIPT_INSTALL_PS1_COMMAND: &str = "$Installer = Join-Path ([IO.Path]::GetTempPath()) ('rho-install-' + [guid]::NewGuid() + '.ps1'); try { Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1' -OutFile $Installer; Unblock-File -Path $Installer -ErrorAction SilentlyContinue; & $Installer } finally { Remove-Item $Installer -ErrorAction SilentlyContinue }";
+const SCRIPT_INSTALL_PS1_COMMAND: &str =
+    "irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex";
+#[cfg(windows)]
+const SCRIPT_INSTALL_PS1_DISPLAY_COMMAND: &str = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex\"";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateInfo {
@@ -162,13 +165,10 @@ fn pacman_update_command_display() -> String {
 #[cfg(windows)]
 fn script_update_command_display() -> String {
     let Some(install_dir) = current_exe_parent() else {
-        return format!(
-            "powershell -NoProfile -Command {command}",
-            command = shell_quote(SCRIPT_INSTALL_PS1_COMMAND)
-        );
+        return SCRIPT_INSTALL_PS1_DISPLAY_COMMAND.to_string();
     };
     format!(
-        "powershell -NoProfile -Command \"$env:RHO_INSTALL_DIR={}; {}\"",
+        "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$env:RHO_INSTALL_DIR={}; {}\"",
         powershell_quote_path(&install_dir),
         SCRIPT_INSTALL_PS1_COMMAND
     )
@@ -189,7 +189,13 @@ fn script_update_command_display() -> String {
 #[cfg(windows)]
 fn script_update_command() -> Command {
     let mut command = Command::new("powershell");
-    command.args(["-NoProfile", "-Command", SCRIPT_INSTALL_PS1_COMMAND]);
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        SCRIPT_INSTALL_PS1_COMMAND,
+    ]);
     if let Some(install_dir) = current_exe_parent() {
         command.env("RHO_INSTALL_DIR", install_dir);
     }

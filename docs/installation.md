@@ -9,10 +9,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 On Windows PowerShell:
 
 ```powershell
-$installer = Join-Path ([IO.Path]::GetTempPath()) "rho-install.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1" -OutFile $installer
-& $installer
-Remove-Item $installer
+irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
 The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windows installer writes to `%LOCALAPPDATA%\Programs\rho\bin` and adds that directory to your user `PATH`.
@@ -24,11 +21,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 ```
 
 ```powershell
-$env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"
-$installer = Join-Path ([IO.Path]::GetTempPath()) "rho-install.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1" -OutFile $installer
-& $installer
-Remove-Item $installer
+$env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
 To install a specific release, set `RHO_VERSION`. Accepted forms include `v0.9.0`, `0.9.0`, and the full release tag `rho-coding-agent-v0.9.0`:
@@ -38,11 +31,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 ```
 
 ```powershell
-$env:RHO_VERSION = "v0.9.0"
-$installer = Join-Path ([IO.Path]::GetTempPath()) "rho-install.ps1"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1" -OutFile $installer
-& $installer
-Remove-Item $installer
+$env:RHO_VERSION = "v0.9.0"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
 If a prebuilt binary is not available for your platform, install from crates.io with Cargo:
