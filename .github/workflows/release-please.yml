@@ -141,6 +141,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,6 +153,8 @@ jobs:
         shell: pwsh
         run: gh release download "$env:TAG" --pattern "rho-x86_64-pc-windows-msvc.zip.sha256"
       - name: Update Scoop manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $Tag = "${{ needs.release.outputs.tag_name }}"
@@ -167,6 +170,8 @@ jobs:
           $Manifest.architecture.'64bit'.hash = $Hash
           $Manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $ManifestPath -Encoding UTF8
 
+          $Branch = "ci/update-scoop-manifest-$Version"
+          git switch -c $Branch
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add $ManifestPath
@@ -175,4 +180,23 @@ jobs:
             exit 0
           }
           git commit -m "build(windows): update scoop manifest for $Tag"
-          git push
+          git push --force-with-lease --set-upstream origin $Branch
+
+          $ExistingPr = gh pr list --head $Branch --state open --json number --jq '.[0].number'
+          if ($ExistingPr) {
+            Write-Host "Scoop manifest PR already exists: #$ExistingPr"
+            exit 0
+          }
+
+          $BodyPath = Join-Path $env:RUNNER_TEMP "scoop-manifest-pr.md"
+          @"
+          ## Summary
+
+          - update the Scoop manifest for $Tag
+          - set the Windows release URL and SHA-256 hash
+
+          ## Tests
+
+          - not run (release automation update)
+          "@ | Set-Content -Path $BodyPath -Encoding UTF8
+          gh pr create --title "build(windows): update scoop manifest for $Tag" --body-file $BodyPath --base main --head $Branch
