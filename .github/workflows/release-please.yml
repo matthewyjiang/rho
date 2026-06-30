@@ -132,31 +132,25 @@ jobs:
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
         run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
-
-  update-scoop-manifest:
-    needs:
-      - release
-      - release-binaries
-    if: ${{ needs.release.outputs.release_created == 'true' }}
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout main for Scoop manifest update
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v4
         with:
           ref: main
       - name: Download Windows checksum
+        if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
-        run: gh release download "$env:TAG" --pattern "rho-x86_64-pc-windows-msvc.zip.sha256"
+        run: gh release download "$env:TAG" --pattern "rho-${{ matrix.target }}.zip.sha256"
       - name: Update Scoop manifest
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $Tag = "${{ needs.release.outputs.tag_name }}"
           $Version = $Tag -replace '^rho-coding-agent-v', ''
-          $Asset = "rho-x86_64-pc-windows-msvc.zip"
+          $Asset = "rho-${{ matrix.target }}.zip"
           $Hash = ((Get-Content "$Asset.sha256" -Raw) -split '\s+')[0]
           $Url = "https://github.com/${{ github.repository }}/releases/download/$Tag/$Asset"
 
@@ -175,4 +169,4 @@ jobs:
             exit 0
           }
           git commit -m "build(windows): update scoop manifest for $Tag"
-          git push
+          git push origin HEAD:main
