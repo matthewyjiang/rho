@@ -132,3 +132,47 @@ jobs:
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
         run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
+
+  update-scoop-manifest:
+    needs:
+      - release
+      - release-binaries
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Download Windows checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        shell: pwsh
+        run: gh release download "$env:TAG" --pattern "rho-x86_64-pc-windows-msvc.zip.sha256"
+      - name: Update Scoop manifest
+        shell: pwsh
+        run: |
+          $Tag = "${{ needs.release.outputs.tag_name }}"
+          $Version = $Tag -replace '^rho-coding-agent-v', ''
+          $Asset = "rho-x86_64-pc-windows-msvc.zip"
+          $Hash = ((Get-Content "$Asset.sha256" -Raw) -split '\s+')[0]
+          $Url = "https://github.com/${{ github.repository }}/releases/download/$Tag/$Asset"
+
+          $ManifestPath = "bucket/rho.json"
+          $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
+          $Manifest.version = $Version
+          $Manifest.architecture.'64bit'.url = $Url
+          $Manifest.architecture.'64bit'.hash = $Hash
+          $Manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $ManifestPath -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $ManifestPath
+          if (git diff --cached --quiet) {
+            Write-Host "Scoop manifest is already up to date."
+            exit 0
+          }
+          git commit -m "build(windows): update scoop manifest for $Tag"
+          git push
