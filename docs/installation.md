@@ -14,6 +14,19 @@ irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1
 
 The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windows installer writes to `%LOCALAPPDATA%\Programs\rho\bin` and adds that directory to your user `PATH`.
 
+You can also install Rho with [Scoop](https://scoop.sh/) on Windows:
+
+```powershell
+scoop bucket add rho https://github.com/matthewyjiang/rho
+scoop install rho
+```
+
+Or install the manifest directly:
+
+```powershell
+scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rho.json
+```
+
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
