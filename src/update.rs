@@ -200,9 +200,11 @@ fn script_update_command_display() -> String {
         return SCRIPT_INSTALL_PS1_DISPLAY_COMMAND.to_string();
     };
     format!(
-        "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$env:RHO_INSTALL_DIR={}; {}\"",
-        powershell_quote_path(&install_dir),
-        SCRIPT_INSTALL_PS1_COMMAND
+        "powershell -NoProfile -ExecutionPolicy Bypass -Command {command}",
+        command = powershell_quote(&format!(
+            "$env:RHO_INSTALL_DIR={}; {SCRIPT_INSTALL_PS1_COMMAND}",
+            powershell_quote_path(&install_dir)
+        ))
     )
 }
 
@@ -322,8 +324,13 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[cfg(windows)]
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
 fn powershell_quote_path(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+    powershell_quote(&path.to_string_lossy())
 }
 
 #[cfg(target_os = "linux")]
