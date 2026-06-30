@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.14.0...rho-coding-agent-v0.14.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **windows:** avoid suspicious powershell install patterns ([#96](https://github.com/matthewyjiang/rho/issues/96)) ([6dd8009](https://github.com/matthewyjiang/rho/commit/6dd80098dac360c0532d13e255ae5fa28a316049))
+
 ## [0.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.13.1...rho-coding-agent-v0.14.0) (2026-06-30)
 
 
