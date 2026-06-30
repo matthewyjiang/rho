@@ -36,23 +36,15 @@ pub fn build_provider(
                 reasoning_summary,
             )) as DynModelProvider)
         }
-        ProviderRuntime::Anthropic => Ok(Box::new(AnthropicProvider::new_with_model_config(
+        ProviderRuntime::Anthropic => Ok(Box::new(AnthropicProvider::new(
             model.to_string(),
             load_anthropic_api_key_auth()?,
-            Arc::new(CachedAnthropicModelConfig),
+            anthropic_max_tokens,
         )) as DynModelProvider),
         ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
             model.to_string(),
             GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
         )?) as DynModelProvider),
-    }
-}
-
-struct CachedAnthropicModelConfig;
-
-impl crate::provider_backend::anthropic::AnthropicModelConfig for CachedAnthropicModelConfig {
-    fn max_tokens(&self, model: &str) -> u32 {
-        anthropic_max_tokens(model)
     }
 }
 

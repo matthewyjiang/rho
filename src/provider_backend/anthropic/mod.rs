@@ -15,30 +15,22 @@ const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 
-pub trait AnthropicModelConfig: Send + Sync {
-    fn max_tokens(&self, model: &str) -> u32;
-}
-
 pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     api_base: String,
     model: String,
-    model_config: std::sync::Arc<dyn AnthropicModelConfig>,
+    max_tokens: fn(&str) -> u32,
 }
 
 impl AnthropicProvider {
-    pub fn new_with_model_config(
-        model: String,
-        api_key: String,
-        model_config: std::sync::Arc<dyn AnthropicModelConfig>,
-    ) -> Self {
+    pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
             model,
-            model_config,
+            max_tokens,
         }
     }
 
@@ -59,7 +51,7 @@ impl AnthropicProvider {
         }
         Ok(AnthropicRequest {
             model: self.model.clone(),
-            max_tokens: self.model_config.max_tokens(&self.model),
+            max_tokens: (self.max_tokens)(&self.model),
             system: system.map(|text| {
                 vec![AnthropicSystemBlock::text(
                     text,
@@ -171,30 +163,10 @@ impl ModelProvider for AnthropicProvider {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
-
     use serde_json::json;
 
     use super::*;
     use crate::provider_backend::{ContentBlock, Message, ToolCall, ToolSpec};
-
-    struct StaticModelConfig(u32);
-
-    impl AnthropicModelConfig for StaticModelConfig {
-        fn max_tokens(&self, _model: &str) -> u32 {
-            self.0
-        }
-    }
-
-    struct CountingModelConfig {
-        next: AtomicU32,
-    }
-
-    impl AnthropicModelConfig for CountingModelConfig {
-        fn max_tokens(&self, _model: &str) -> u32 {
-            self.next.fetch_add(1, Ordering::SeqCst)
-        }
-    }
 
     fn test_provider() -> AnthropicProvider {
         AnthropicProvider {
@@ -202,30 +174,8 @@ mod tests {
             api_key: "test-key".into(),
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),
-            model_config: std::sync::Arc::new(StaticModelConfig(DEFAULT_MAX_TOKENS)),
+            max_tokens: |_| DEFAULT_MAX_TOKENS,
         }
-    }
-
-    #[test]
-    fn request_body_reloads_model_config_each_time() {
-        let provider = AnthropicProvider::new_with_model_config(
-            "claude-sonnet-4-5".into(),
-            "test-key".into(),
-            std::sync::Arc::new(CountingModelConfig {
-                next: AtomicU32::new(100),
-            }),
-        );
-        let request = || ModelRequest {
-            messages: vec![Message::user_text("hello")],
-            tools: Vec::new(),
-            prompt_cache_key: None,
-        };
-
-        let first = provider.request_body(request(), false).unwrap();
-        let second = provider.request_body(request(), false).unwrap();
-
-        assert_eq!(first.max_tokens, 100);
-        assert_eq!(second.max_tokens, 101);
     }
 
     #[test]

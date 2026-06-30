@@ -73,8 +73,6 @@ pub struct ProviderDescriptor {
     pub runtime: ProviderRuntime,
 }
 
-const PROVIDER_IDS: &[&str] = &["openai", "openai-codex", "anthropic", "github-copilot"];
-
 pub const PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
         id: ProviderId::OpenAi,
@@ -145,10 +143,6 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::GithubCopilot,
     },
 ];
-
-pub fn provider_ids() -> &'static [&'static str] {
-    PROVIDER_IDS
-}
 
 pub fn providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
