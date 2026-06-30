@@ -13,6 +13,7 @@ check_for_updates = true
 auto_compact = false
 compact_threshold_percent = 85
 compact_recent_messages = 8
+rtk = true
 ```
 
 ## CLI overrides
@@ -56,6 +57,10 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 ## Tool output limit
 
 `max_output_bytes` controls how much output Rho keeps from [tool](/tools-workspace) calls such as command output and file reads.
+
+## RTK
+
+`rtk` enables built-in RTK command rewriting when the `rtk` binary is available. It defaults to `true`; set `rtk = false` to leave shell commands unchanged.
 
 ## Auto compaction
 

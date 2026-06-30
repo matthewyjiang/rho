@@ -5,6 +5,7 @@ pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
 pub mod read_file;
+pub mod rtk;
 pub mod skill;
 pub mod web;
 pub mod write_file;
@@ -17,10 +18,11 @@ pub fn registry(config: &Config) -> ToolRegistry {
     r.register(read_file::ReadFile);
     r.register(write_file::WriteFile);
     r.register(edit_file::EditFile);
+    let rtk_enabled = config.rtk && rtk::is_available();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    r.register(bash::Bash);
+    r.register(bash::Bash::new(rtk_enabled));
     #[cfg(windows)]
-    r.register(powershell::PowerShell);
+    r.register(powershell::PowerShell::new(rtk_enabled));
     r.register(skill::Skill);
     let web_search = web::WebSearch::from_config(config);
     if web_search.is_available() {

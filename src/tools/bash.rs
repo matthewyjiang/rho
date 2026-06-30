@@ -4,7 +4,15 @@ use serde_json::json;
 use std::{process::Stdio, time::Instant};
 use tokio::{io::AsyncReadExt, process::Command};
 
-pub struct Bash;
+pub struct Bash {
+    rtk_enabled: bool,
+}
+
+impl Bash {
+    pub const fn new(rtk_enabled: bool) -> Self {
+        Self { rtk_enabled }
+    }
+}
 #[derive(Deserialize)]
 struct Args {
     command: String,
@@ -66,8 +74,14 @@ impl Tool for Bash {
         id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        let raw_args = args.clone();
-        let args: Args = serde_json::from_value(args)?;
+        let mut raw_args = args.clone();
+        let mut args: Args = serde_json::from_value(args)?;
+        if self.rtk_enabled {
+            if let Some(command) = super::rtk::rewrite(&args.command).await {
+                args.command = command;
+                raw_args["command"] = serde_json::Value::String(args.command.clone());
+            }
+        }
         let start = Instant::now();
         let mut child = Command::new("bash")
             .arg("-lc")
