@@ -16,6 +16,13 @@ On Windows PowerShell:
 irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
+Or with Scoop:
+
+```powershell
+scoop bucket add rho https://github.com/matthewyjiang/rho
+scoop install rho
+```
+
 Or install from crates.io with Cargo:
 
 ```bash
