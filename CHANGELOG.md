@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.13.1...rho-coding-agent-v0.14.0) (2026-06-30)
+
+
+### Features
+
+* **auth:** use device code login for GitHub Copilot ([#91](https://github.com/matthewyjiang/rho/issues/91)) ([7abae3c](https://github.com/matthewyjiang/rho/commit/7abae3cacdd87a22d95b6bba64a0b98670fbd2f4))
+
+
+### Bug Fixes
+
+* **tui:** collapse pasted input markers ([#94](https://github.com/matthewyjiang/rho/issues/94)) ([3cd0758](https://github.com/matthewyjiang/rho/commit/3cd07588ca1112ff6e30229bdb6921e35116d11f))
+* **update:** defer windows executable replacement ([#92](https://github.com/matthewyjiang/rho/issues/92)) ([ffd839d](https://github.com/matthewyjiang/rho/commit/ffd839d3480fd5a94951065a0cc34444c2087e2f))
+
 ## [0.13.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.13.0...rho-coding-agent-v0.13.1) (2026-06-29)
 
 
