@@ -4,30 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolSpec {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub id: String,
-    pub ok: bool,
-    pub content: String,
-}
+pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolDisplayStyle {

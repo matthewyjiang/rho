@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
@@ -10,10 +12,7 @@ pub(crate) mod types;
 
 pub use cache::prompt_cache_key_from_session_id;
 
-use auth::{
-    load_api_key_auth, load_codex_auth, load_codex_tokens_for_request, refresh_codex_token, Auth,
-    CodexAuthSource,
-};
+use auth::{load_codex_tokens_for_request, refresh_codex_token, Auth, CodexAuthSource};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 use convert::{
     codex_input_items, codex_reasoning_param, convert_openai_response, to_openai_message,
@@ -26,8 +25,8 @@ use stream::{
 use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 
 use crate::{
-    credentials::CodexTokens,
-    model::{AuthMode, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    credentials::{CodexTokens, CredentialStore},
+    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
 };
 
 pub struct OpenAiProvider {
@@ -38,25 +37,23 @@ pub struct OpenAiProvider {
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
     codex_ws: CodexWsTransport,
+    credential_store: Arc<dyn CredentialStore>,
 }
 
 impl OpenAiProvider {
-    pub fn new_with_reasoning(
+    pub(crate) fn new_with_auth(
         model: String,
-        mode: AuthMode,
+        auth: Auth,
+        credential_store: Arc<dyn CredentialStore>,
         reasoning_effort: Option<String>,
         reasoning_summary: Option<String>,
-    ) -> Result<Self, ModelError> {
-        let auth = match mode {
-            AuthMode::ApiKey => load_api_key_auth()?,
-            AuthMode::Codex => load_codex_auth()?,
-        };
+    ) -> Self {
         let api_base: String = match &auth {
             Auth::Codex { .. } => "https://chatgpt.com/backend-api/codex".into(),
             Auth::ApiKey(_) => "https://api.openai.com/v1".into(),
         };
         let codex_ws = CodexWsTransport::new(&api_base);
-        Ok(Self {
+        Self {
             client: reqwest::Client::new(),
             auth,
             api_base,
@@ -64,7 +61,8 @@ impl OpenAiProvider {
             reasoning_effort,
             reasoning_summary,
             codex_ws,
-        })
+            credential_store,
+        }
     }
 }
 
@@ -74,7 +72,8 @@ impl ModelProvider for OpenAiProvider {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
             Auth::Codex { tokens, source } => {
-                let request_tokens = load_codex_tokens_for_request(tokens, *source)?;
+                let request_tokens =
+                    load_codex_tokens_for_request(self.credential_store.as_ref(), tokens, *source)?;
                 self.send_codex_responses(request, request_tokens, *source)
                     .await
             }
@@ -92,7 +91,8 @@ impl ModelProvider for OpenAiProvider {
                     .await
             }
             Auth::Codex { tokens, source } => {
-                let request_tokens = load_codex_tokens_for_request(tokens, *source)?;
+                let request_tokens =
+                    load_codex_tokens_for_request(self.credential_store.as_ref(), tokens, *source)?;
                 self.send_codex_responses_stream(request, request_tokens, *source, on_event)
                     .await
             }
@@ -274,8 +274,14 @@ impl OpenAiProvider {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.codex_ws.reset().await;
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                let refreshed =
-                    refresh_codex_token(&self.client, refresh_token, source, &tokens).await?;
+                let refreshed = refresh_codex_token(
+                    &self.client,
+                    self.credential_store.as_ref(),
+                    refresh_token,
+                    source,
+                    &tokens,
+                )
+                .await?;
                 let mut req = make_request(&refreshed.access_token);
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);

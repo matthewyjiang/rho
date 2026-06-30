@@ -1,14 +1,15 @@
 use std::{fmt, sync::Arc};
 
-use crate::reasoning::ReasoningLevel;
 use crate::{
     auth::github_copilot_token::GitHubCopilotAuthManager,
-    credentials::OsCredentialStore,
+    credentials::{load_provider_api_key, OsCredentialStore},
     model::{
-        registry::{provider_descriptor, ProviderRuntime},
+        openai::auth::{load_api_key_auth, load_codex_auth},
+        registry::{self, provider_descriptor, AuthMode, ProviderAuthKind, ProviderRuntime},
         AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
         ModelRequest, ModelResponse, OpenAiProvider,
     },
+    reasoning::ReasoningLevel,
 };
 
 pub fn build_provider(
@@ -21,20 +22,66 @@ pub fn build_provider(
     let descriptor = provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     match descriptor.runtime {
-        ProviderRuntime::OpenAi { auth_mode } => Ok(Box::new(OpenAiProvider::new_with_reasoning(
-            model.to_string(),
-            auth_mode,
-            reasoning_effort,
-            reasoning_summary,
-        )?) as DynModelProvider),
-        ProviderRuntime::Anthropic => {
-            Ok(Box::new(AnthropicProvider::new(model.to_string())?) as DynModelProvider)
+        ProviderRuntime::OpenAi { auth_mode } => {
+            let credential_store = Arc::new(OsCredentialStore);
+            let auth = match auth_mode {
+                AuthMode::ApiKey => load_api_key_auth(credential_store.as_ref())?,
+                AuthMode::Codex => load_codex_auth(credential_store.as_ref())?,
+            };
+            Ok(Box::new(OpenAiProvider::new_with_auth(
+                model.to_string(),
+                auth,
+                credential_store,
+                reasoning_effort,
+                reasoning_summary,
+            )) as DynModelProvider)
         }
+        ProviderRuntime::Anthropic => Ok(Box::new(AnthropicProvider::new_with_model_config(
+            model.to_string(),
+            load_anthropic_api_key_auth()?,
+            Arc::new(CachedAnthropicModelConfig),
+        )) as DynModelProvider),
         ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
             model.to_string(),
             GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
         )?) as DynModelProvider),
     }
+}
+
+struct CachedAnthropicModelConfig;
+
+impl crate::provider_backend::anthropic::AnthropicModelConfig for CachedAnthropicModelConfig {
+    fn max_tokens(&self, model: &str) -> u32 {
+        anthropic_max_tokens(model)
+    }
+}
+
+fn anthropic_max_tokens(model: &str) -> u32 {
+    crate::model::provider_models::cached_provider_model("anthropic", model)
+        .and_then(|metadata| metadata.max_output_tokens)
+        .or_else(|| {
+            crate::model::models_dev::cached_model_metadata("anthropic", model)
+                .and_then(|metadata| metadata.max_output_tokens)
+        })
+        .and_then(|tokens| u32::try_from(tokens).ok())
+        .unwrap_or(crate::provider_backend::anthropic::DEFAULT_MAX_TOKENS)
+}
+
+fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
+    let descriptor = registry::provider_descriptor("anthropic")
+        .ok_or_else(|| ModelError::UnsupportedProvider("anthropic".into()))?;
+    let ProviderAuthKind::ApiKey {
+        env_var, missing, ..
+    } = descriptor.auth_kind
+    else {
+        return Err(ModelError::UnsupportedProvider("anthropic".into()));
+    };
+    if let Ok(key) = std::env::var(env_var) {
+        return Ok(key);
+    }
+    let store = OsCredentialStore;
+    load_provider_api_key(&store, descriptor.name)?
+        .ok_or_else(|| registry::missing_credential_error(missing))
 }
 
 #[derive(Debug)]
