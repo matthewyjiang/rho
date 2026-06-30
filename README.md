@@ -13,7 +13,10 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+$installer = Join-Path ([IO.Path]::GetTempPath()) "rho-install.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1" -OutFile $installer
+& $installer
+Remove-Item $installer
 ```
 
 Or install from crates.io with Cargo:

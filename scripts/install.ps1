@@ -99,9 +99,8 @@ try {
 }
 "@
     Set-Content -Path $Helper -Value $HelperContent -Encoding UTF8
-    Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList @(
+    Start-Process -FilePath "powershell" -ArgumentList @(
         "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
         "-File", "`"$Helper`""
     ) | Out-Null
 }

@@ -74,8 +74,6 @@ impl Tool for PowerShell {
             .kill_on_drop(true)
             .arg("-NoProfile")
             .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
             .arg("-Command")
             .arg(wrapped_command(&args.command))
             .current_dir(&ctx.cwd)
