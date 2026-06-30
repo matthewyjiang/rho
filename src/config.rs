@@ -24,6 +24,7 @@ pub struct Config {
     pub web_search_openai_api_key: Option<String>,
     pub web_search_exa_api_key: Option<String>,
     pub web_search_brave_api_key: Option<String>,
+    pub rtk: bool,
 }
 
 impl Default for Config {
@@ -47,6 +48,7 @@ impl Default for Config {
             web_search_openai_api_key: None,
             web_search_exa_api_key: None,
             web_search_brave_api_key: None,
+            rtk: true,
         }
     }
 }
@@ -121,6 +123,9 @@ impl Config {
         if let Some(v) = file.web_search_brave_api_key {
             cfg.web_search_brave_api_key = non_empty_secret(v);
         }
+        if let Some(v) = file.rtk {
+            cfg.rtk = v;
+        }
         Ok(cfg)
     }
 
@@ -165,6 +170,7 @@ struct PartialConfig {
     web_search_openai_api_key: Option<String>,
     web_search_exa_api_key: Option<String>,
     web_search_brave_api_key: Option<String>,
+    rtk: Option<bool>,
 }
 
 fn normalize_web_search_provider(provider: String) -> String {
@@ -208,6 +214,17 @@ mod tests {
         let config = Config::load(Some(path)).unwrap();
 
         assert!(!config.check_for_updates);
+    }
+
+    #[test]
+    fn loads_rtk_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "rtk = false\n").unwrap();
+
+        let config = Config::load(Some(path)).unwrap();
+
+        assert!(!config.rtk);
     }
 
     #[test]
