@@ -52,6 +52,7 @@ jobs:
     name: release binary ${{ matrix.target }}
     permissions:
       contents: write
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -146,6 +147,8 @@ jobs:
         run: gh release download "$env:TAG" --pattern "rho-${{ matrix.target }}.zip.sha256"
       - name: Update Scoop manifest
         if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $Tag = "${{ needs.release.outputs.tag_name }}"
@@ -168,5 +171,13 @@ jobs:
             Write-Host "Scoop manifest is already up to date."
             exit 0
           }
+          $Branch = "build/update-scoop-manifest-$Tag"
+          git checkout -B $Branch
           git commit -m "build(windows): update scoop manifest for $Tag"
-          git push origin HEAD:main
+          git push --force-with-lease origin "HEAD:$Branch"
+
+          gh pr create `
+            --base main `
+            --head $Branch `
+            --title "build(windows): update scoop manifest for $Tag" `
+            --body "Updates the Scoop manifest for $Tag."
