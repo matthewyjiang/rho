@@ -1,12 +1,15 @@
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     time::Duration,
 };
 
+#[cfg(not(windows))]
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use serde::Deserialize;
+#[cfg(not(windows))]
 use tokio::process::Command;
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases/latest";
@@ -81,9 +84,10 @@ pub async fn update_notice(current_version: &str) -> Option<String> {
     .await
     {
         Ok(Ok(Some(update))) => Some(format!(
-            "update available: v{} (current v{}). run `rho update` to update via {}.",
+            "update available: v{} (current v{}). run `rho update` to {} via {}.",
             update.latest_version,
             update.current_version,
+            update_action_label(),
             detect_install_method().label()
         )),
         Ok(Ok(None)) | Ok(Err(_)) | Err(_) => None,
@@ -111,25 +115,53 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         }
     }
 
-    println!("running: {}", method.update_command());
+    println!("update command: {}", method.update_command());
     if method == InstallMethod::Pacman {
         println!("pacman may prompt for your sudo password.");
     }
 
-    let status = update_command(method)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .with_context(|| format!("failed to run {} update command", method.label()))?;
-
-    if !status.success() {
-        anyhow::bail!("{} update command exited with {status}", method.label());
-    }
-    Ok(())
+    run_update_command(method).await
 }
 
+async fn run_update_command(method: InstallMethod) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        println!(
+            "automatic updates are disabled on Windows to avoid launching background shells that can trigger security software."
+        );
+        println!("copy and run this command yourself to update:");
+        println!("{}", method.update_command());
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let status = update_command(method)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .await
+            .with_context(|| format!("failed to run {} update command", method.label()))?;
+
+        if !status.success() {
+            anyhow::bail!("{} update command exited with {status}", method.label());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn update_action_label() -> &'static str {
+    "show the update command"
+}
+
+#[cfg(not(windows))]
+fn update_action_label() -> &'static str {
+    "update"
+}
+
+#[cfg(not(windows))]
 fn update_command(method: InstallMethod) -> Command {
     match method {
         InstallMethod::Cargo => {
@@ -184,23 +216,6 @@ fn script_update_command_display() -> String {
         "RHO_INSTALL_DIR={} {command}",
         shell_quote_path(&install_dir)
     )
-}
-
-#[cfg(windows)]
-fn script_update_command() -> Command {
-    let mut command = Command::new("powershell");
-    command.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        SCRIPT_INSTALL_PS1_COMMAND,
-    ]);
-    if let Some(install_dir) = current_exe_parent() {
-        command.env("RHO_INSTALL_DIR", install_dir);
-    }
-    command.env("RHO_UPDATE_PARENT_PID", std::process::id().to_string());
-    command
 }
 
 #[cfg(not(windows))]
