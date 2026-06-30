@@ -554,6 +554,7 @@ mod tests {
                     body.len(), body
                 );
                 stream.write_all(reply.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
             }
         });
         let store = MemoryCredentialStore::default();
