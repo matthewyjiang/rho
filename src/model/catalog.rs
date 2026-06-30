@@ -55,8 +55,11 @@ struct ModelCatalogFile {
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
 static MODEL_CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
-pub fn implemented_providers() -> &'static [&'static str] {
-    registry::provider_ids()
+pub fn implemented_providers() -> Vec<&'static str> {
+    registry::providers()
+        .iter()
+        .map(|provider| provider.name)
+        .collect()
 }
 
 pub fn model_catalog() -> &'static [ModelCatalogEntry] {
