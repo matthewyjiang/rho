@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.14.1...rho-coding-agent-v0.15.0) (2026-06-30)
+
+
+### Features
+
+* **tools:** add built-in rtk command rewriting ([#103](https://github.com/matthewyjiang/rho/issues/103)) ([57e890b](https://github.com/matthewyjiang/rho/commit/57e890b05b43d7f0ade80c8050d4c1751fdbcdea))
+
 ## [0.14.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.14.0...rho-coding-agent-v0.14.1) (2026-06-30)
 
 
