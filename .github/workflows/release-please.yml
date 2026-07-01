@@ -172,12 +172,19 @@ jobs:
             exit 0
           }
           $Branch = "build/update-scoop-manifest-$Tag"
+          if (git ls-remote --heads origin $Branch) {
+            git fetch origin "${Branch}:refs/remotes/origin/${Branch}"
+          }
           git checkout -B $Branch
           git commit -m "build(windows): update scoop manifest for $Tag"
           git push --force-with-lease origin "HEAD:$Branch"
 
-          gh pr create `
-            --base main `
-            --head $Branch `
-            --title "build(windows): update scoop manifest for $Tag" `
-            --body "Updates the Scoop manifest for $Tag."
+          $Title = "build(windows): update scoop manifest for $Tag"
+          $BodyFile = New-TemporaryFile
+          Set-Content -Path $BodyFile -Value "Updates the Scoop manifest for $Tag."
+          $ExistingPr = gh pr list --head $Branch --base main --json number --jq '.[0].number'
+          if ($ExistingPr) {
+            gh pr edit $ExistingPr --title $Title --body-file $BodyFile
+          } else {
+            gh pr create --base main --head $Branch --title $Title --body-file $BodyFile
+          }
