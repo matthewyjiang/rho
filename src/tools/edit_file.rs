@@ -110,7 +110,12 @@ fn replace_spans(
 }
 
 fn match_file_eol(content: &str, new_string: &str) -> String {
-    let eol = if crlf_count(content) > bare_lf_count(content) {
+    let crlf = crlf_count(content);
+    let lf = bare_lf_count(content);
+    let cr = bare_cr_count(content);
+    let eol = if cr > crlf && cr > lf {
+        "\r"
+    } else if crlf > lf {
         "\r\n"
     } else {
         "\n"
@@ -147,6 +152,15 @@ fn crlf_count(value: &str) -> usize {
 
 fn bare_lf_count(value: &str) -> usize {
     value.bytes().filter(|byte| *byte == b'\n').count() - crlf_count(value)
+}
+
+fn bare_cr_count(value: &str) -> usize {
+    let bytes = value.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| **byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+        .count()
 }
 
 #[cfg(test)]
@@ -202,6 +216,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(std::fs::read_to_string(path).unwrap(), "1\n2\nthree\n");
+    }
+
+    #[tokio::test]
+    async fn edits_bare_cr_file_with_lf_tool_strings() {
+        let (root, ctx) = test_context();
+        let path = root.path().join("hello.txt");
+        std::fs::write(&path, "one\rtwo\rthree\r").unwrap();
+
+        EditFile
+            .call(
+                json!({"path":"hello.txt","old_string":"one\ntwo\n","new_string":"1\n2\n"}),
+                ctx,
+                "test".into(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "1\r2\rthree\r");
     }
 
     #[tokio::test]
