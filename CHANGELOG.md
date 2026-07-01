@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.0...rho-coding-agent-v0.15.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **update:** avoid automatic Windows updates ([#106](https://github.com/matthewyjiang/rho/issues/106)) ([738b4ed](https://github.com/matthewyjiang/rho/commit/738b4ed61241401bb08b9a6efec289f06b30e005))
+
 ## [0.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.14.1...rho-coding-agent-v0.15.0) (2026-06-30)
 
 
