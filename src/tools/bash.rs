@@ -126,9 +126,16 @@ impl Tool for Bash {
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                 let _ = child.kill().await;
+                while let Ok((kind, bytes)) = chunk_rx.try_recv() {
+                    match kind {
+                        StreamKind::Stdout => stdout.extend(bytes),
+                        StreamKind::Stderr => stderr.extend(bytes),
+                    }
+                }
                 let secs = args.timeout_seconds.unwrap_or_default();
-                return Err(ToolError::Message(format!(
-                    "command timed out after {secs}s"
+                return Err(ToolError::Message(truncate(
+                    timeout_content(&stdout, &stderr, secs),
+                    ctx.max_output_bytes,
                 )));
             }
 
@@ -148,8 +155,8 @@ impl Tool for Bash {
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".into());
         let mut content = finished_content(
-            String::from_utf8(stdout)?,
-            String::from_utf8(stderr)?,
+            String::from_utf8_lossy(&stdout).into_owned(),
+            String::from_utf8_lossy(&stderr).into_owned(),
             elapsed_secs,
             &exit_code,
         );
@@ -215,9 +222,62 @@ fn finished_content(stdout: String, stderr: String, elapsed_secs: f64, exit_code
     )
 }
 
+fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
+    format!(
+        "command timed out after {secs}s\n\nstdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    )
+}
+
 fn format_timeout(args: &serde_json::Value) -> String {
     match args.get("timeout_seconds").and_then(|value| value.as_u64()) {
         Some(seconds) => format!("timeout: {seconds}s"),
         None => "timeout: none".into(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn test_context() -> ToolContext {
+        ToolContext {
+            cwd: std::env::temp_dir(),
+            max_output_bytes: 12000,
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_lossy_output_for_non_utf8_bytes() {
+        let result = Bash::new(false)
+            .call(
+                json!({"command": "printf 'ok\\xff'"}),
+                test_context(),
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert!(result.content.contains("ok\u{FFFD}"));
+    }
+
+    #[tokio::test]
+    async fn timeout_error_includes_partial_output() {
+        let err = Bash::new(false)
+            .call(
+                json!({"command": "echo started; sleep 5", "timeout_seconds": 1}),
+                test_context(),
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("timed out after 1s"));
+        assert!(message.contains("started"));
     }
 }

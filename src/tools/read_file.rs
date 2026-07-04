@@ -94,15 +94,6 @@ fn read_file_display_content(
     format!("{path}:{start}-{end}")
 }
 
-fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
-    let path = resolve_path(cwd, path);
-    path.strip_prefix(cwd)
-        .ok()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
 fn select_line_range(
     content: &str,
     offset: Option<usize>,
@@ -119,6 +110,13 @@ fn select_line_range(
     }
 
     let start = offset.unwrap_or(1) - 1;
+    let total_lines = content.split_inclusive('\n').count();
+    if start > 0 && start >= total_lines {
+        return Err(ToolError::Message(format!(
+            "offset {} is past the end of the file ({total_lines} line(s))",
+            start + 1
+        )));
+    }
     let lines = content.split_inclusive('\n').skip(start);
     let selected = match limit {
         Some(limit) => lines.take(limit).collect(),
@@ -160,6 +158,26 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.content, "two\nthree\n");
+    }
+
+    #[tokio::test]
+    async fn rejects_offset_past_end_of_file() {
+        let (_dir, ctx) = test_context();
+        fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();
+
+        let err = ReadFile
+            .call(
+                json!({"path": "sample.txt", "offset": 5}),
+                ctx,
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "offset 5 is past the end of the file (2 line(s))"
+        );
     }
 
     #[tokio::test]
