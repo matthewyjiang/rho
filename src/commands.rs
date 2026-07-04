@@ -124,6 +124,10 @@ pub fn matching_commands(prefix: &str) -> Vec<&'static CommandSpec> {
 }
 
 pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandParseError> {
+    if input.contains(['\n', '\r']) {
+        return Ok(None);
+    }
+
     let input = input.trim_end();
     let Some(rest) = input.strip_prefix('/') else {
         return Ok(None);
@@ -272,6 +276,12 @@ mod tests {
     #[test]
     fn parses_non_command_as_none() {
         assert_eq!(parse_command("hello /model").unwrap(), None);
+    }
+
+    #[test]
+    fn multiline_slash_text_is_not_a_command() {
+        assert_eq!(parse_command("/model\ngpt-5.5").unwrap(), None);
+        assert_eq!(parse_command("/model\r\ngpt-5.5").unwrap(), None);
     }
 
     #[test]
