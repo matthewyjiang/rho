@@ -129,9 +129,16 @@ impl Tool for PowerShell {
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                 let _ = child.kill().await;
+                while let Ok((kind, bytes)) = chunk_rx.try_recv() {
+                    match kind {
+                        StreamKind::Stdout => stdout.extend(bytes),
+                        StreamKind::Stderr => stderr.extend(bytes),
+                    }
+                }
                 let secs = args.timeout_seconds.unwrap_or_default();
-                return Err(ToolError::Message(format!(
-                    "command timed out after {secs}s"
+                return Err(ToolError::Message(truncate(
+                    timeout_content(&stdout, &stderr, secs),
+                    ctx.max_output_bytes,
                 )));
             }
 
@@ -151,8 +158,8 @@ impl Tool for PowerShell {
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".into());
         let mut content = finished_content(
-            String::from_utf8(stdout)?,
-            String::from_utf8(stderr)?,
+            String::from_utf8_lossy(&stdout).into_owned(),
+            String::from_utf8_lossy(&stderr).into_owned(),
             elapsed_secs,
             &exit_code,
         );
@@ -215,6 +222,14 @@ fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
 fn finished_content(stdout: String, stderr: String, elapsed_secs: f64, exit_code: &str) -> String {
     format!(
         "stdout:\n{stdout}\n\nstderr:\n{stderr}\n\ntime: {elapsed_secs:.1}s  exit code: {exit_code}"
+    )
+}
+
+fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
+    format!(
+        "command timed out after {secs}s\n\nstdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
     )
 }
 

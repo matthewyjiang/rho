@@ -53,20 +53,25 @@ impl Tool for EditFile {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
-        let path = resolve_path(&ctx.cwd, &args.path);
-        let content = std::fs::read_to_string(&path)?;
         if args.old_string.is_empty() {
             return Err(ToolError::Message("old_string must not be empty".into()));
         }
+        if args.old_string == args.new_string {
+            return Err(ToolError::Message(
+                "old_string and new_string are identical; nothing to change".into(),
+            ));
+        }
+        let path = resolve_path(&ctx.cwd, &args.path);
+        let content = std::fs::read_to_string(&path)?;
         let spans = replacement_spans(&content, &args.old_string);
         let count = spans.len();
+        if count == 0 {
+            return Err(ToolError::Message("old_string not found in file".into()));
+        }
         if !args.replace_all && count != 1 {
             return Err(ToolError::Message(format!(
                 "old_string appeared {count} times, expected exactly once"
             )));
-        }
-        if args.replace_all && count == 0 {
-            return Err(ToolError::Message("old_string appeared 0 times".into()));
         }
         let new_string = match_file_eol(&content, &args.new_string);
         let new_content = replace_spans(&content, &spans, &new_string, args.replace_all);
@@ -176,6 +181,64 @@ mod tests {
             max_output_bytes: 12000,
         };
         (dir, ctx)
+    }
+
+    #[tokio::test]
+    async fn replaces_unique_occurrence() {
+        let (_dir, ctx) = test_context();
+        std::fs::write(ctx.cwd.join("sample.txt"), "alpha beta gamma").unwrap();
+
+        let result = EditFile
+            .call(
+                json!({"path": "sample.txt", "old_string": "beta", "new_string": "delta"}),
+                ctx.clone(),
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert_eq!(
+            std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
+            "alpha delta gamma"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_identical_old_and_new_string() {
+        let (_dir, ctx) = test_context();
+        std::fs::write(ctx.cwd.join("sample.txt"), "alpha").unwrap();
+
+        let err = EditFile
+            .call(
+                json!({"path": "sample.txt", "old_string": "alpha", "new_string": "alpha"}),
+                ctx,
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "old_string and new_string are identical; nothing to change"
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_missing_old_string() {
+        let (_dir, ctx) = test_context();
+        std::fs::write(ctx.cwd.join("sample.txt"), "alpha").unwrap();
+
+        let err = EditFile
+            .call(
+                json!({"path": "sample.txt", "old_string": "missing", "new_string": "x"}),
+                ctx,
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "old_string not found in file");
     }
 
     #[tokio::test]
