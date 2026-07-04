@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.1...rho-coding-agent-v0.15.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* **edit-file:** normalize line endings for replacements ([#109](https://github.com/matthewyjiang/rho/issues/109)) ([c1b7b44](https://github.com/matthewyjiang/rho/commit/c1b7b4484fc2ff146c32593a470e1ac4acf69dfc))
+
 ## [0.15.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.0...rho-coding-agent-v0.15.1) (2026-07-01)
 
 
