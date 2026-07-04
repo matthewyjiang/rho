@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.2...rho-coding-agent-v0.15.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **commands:** treat multiline slash input as prompt ([#115](https://github.com/matthewyjiang/rho/issues/115)) ([1f0a0f5](https://github.com/matthewyjiang/rho/commit/1f0a0f59e0a927545c389db9606cfd371dc52906))
+* **tools:** improve shell output robustness and edit/read validation ([#112](https://github.com/matthewyjiang/rho/issues/112)) ([6a0f1b1](https://github.com/matthewyjiang/rho/commit/6a0f1b16d4279eb268f93460a2b032ab5bb95c7b))
+* **tui:** avoid rerendering history on viewport height changes ([#114](https://github.com/matthewyjiang/rho/issues/114)) ([2436480](https://github.com/matthewyjiang/rho/commit/2436480536f6ec8a0ef1b60e78e4a5614a2ab632))
+
 ## [0.15.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.1...rho-coding-agent-v0.15.2) (2026-07-01)
 
 
