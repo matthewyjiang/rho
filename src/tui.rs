@@ -3965,7 +3965,19 @@ impl App {
             return Ok(());
         }
 
-        clear_terminal_for_history_reflow(terminal)?;
+        // Only the viewport height changed; the width (and therefore the line
+        // wrapping of history already emitted into terminal scrollback) is
+        // unchanged. Re-anchor a fresh inline viewport at the top row of the
+        // current one and clear just the old viewport rows, instead of
+        // clearing the screen and replaying the entire transcript.
+        let viewport_top = terminal.get_frame().area().y;
+        let mut stdout = std::io::stdout();
+        write!(
+            stdout,
+            "\x1b[0m\x1b[{};1H\x1b[0J",
+            viewport_top.saturating_add(1)
+        )?;
+        stdout.flush()?;
         *terminal = Terminal::with_options(
             CrosstermBackend::new(std::io::stdout()),
             TerminalOptions {
@@ -3973,7 +3985,7 @@ impl App {
             },
         )?;
         self.inline_viewport_height = desired_height;
-        self.replay_history(terminal)
+        Ok(())
     }
 
     fn statusline_lines(&self, width: usize) -> Vec<Line<'static>> {
