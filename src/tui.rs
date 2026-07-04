@@ -180,6 +180,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     inline_viewport_height: u16,
+    inline_viewport_width: Option<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -686,6 +687,7 @@ impl App {
             pending_model_metadata: None,
             pending_session_title: None,
             inline_viewport_height: INLINE_VIEWPORT_HEIGHT,
+            inline_viewport_width: None,
         }
     }
 
@@ -3961,30 +3963,41 @@ impl App {
     ) -> std::io::Result<()> {
         let size = terminal.size()?;
         let desired_height = self.desired_inline_viewport_height(size.width as usize, size.height);
+        if self
+            .inline_viewport_width
+            .is_some_and(|width| width != size.width)
+        {
+            self.inline_viewport_height = desired_height;
+            return self.reflow_history(terminal);
+        }
         if desired_height == self.inline_viewport_height {
+            self.inline_viewport_width = Some(size.width);
             return Ok(());
         }
 
         // Only the viewport height changed; the width (and therefore the line
         // wrapping of history already emitted into terminal scrollback) is
-        // unchanged. Re-anchor a fresh inline viewport at the top row of the
-        // current one and clear just the old viewport rows, instead of
-        // clearing the screen and replaying the entire transcript.
-        let viewport_top = terminal.get_frame().area().y;
-        let mut stdout = std::io::stdout();
-        write!(
-            stdout,
-            "\x1b[0m\x1b[{};1H\x1b[0J",
-            viewport_top.saturating_add(1)
-        )?;
-        stdout.flush()?;
+        // unchanged. Re-anchor a fresh inline viewport near the top row of the
+        // current one, and clear every row that can become part of the new live
+        // viewport instead of clearing the screen and replaying the transcript.
+        let old_viewport_top = terminal.get_frame().area().y;
         *terminal = Terminal::with_options(
             CrosstermBackend::new(std::io::stdout()),
             TerminalOptions {
                 viewport: Viewport::Inline(desired_height),
             },
         )?;
+        let new_viewport_top = terminal.get_frame().area().y;
+        let clear_top = old_viewport_top.min(new_viewport_top);
+        let mut stdout = std::io::stdout();
+        write!(
+            stdout,
+            "\x1b[0m\x1b[{};1H\x1b[0J",
+            clear_top.saturating_add(1)
+        )?;
+        stdout.flush()?;
         self.inline_viewport_height = desired_height;
+        self.inline_viewport_width = Some(size.width);
         Ok(())
     }
 
@@ -4164,7 +4177,14 @@ impl App {
 
     fn reflow_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         clear_terminal_for_history_reflow(terminal)?;
-        self.replay_history(terminal)
+        let result = self.replay_history(terminal);
+        if result.is_ok() {
+            let size = terminal.size()?;
+            self.inline_viewport_width = Some(size.width);
+            self.inline_viewport_height =
+                self.desired_inline_viewport_height(size.width as usize, size.height);
+        }
+        result
     }
 
     fn replay_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
