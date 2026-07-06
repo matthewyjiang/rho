@@ -56,6 +56,7 @@ impl HerdrReporter {
         Self { config }
     }
 
+    #[cfg(test)]
     pub fn is_enabled(&self) -> bool {
         self.config.is_some()
     }
