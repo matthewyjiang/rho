@@ -5,6 +5,7 @@ mod clipboard_image;
 mod commands;
 mod config;
 mod credentials;
+mod herdr;
 mod model;
 mod paths;
 mod prompt;
@@ -26,6 +27,7 @@ use clap::Parser;
 use agent::{Agent, SessionHistorySink};
 use cli::{Cli, Command};
 use config::Config;
+use herdr::{HerdrReporter, HerdrState};
 use model::{
     build_provider, catalog, models_dev::cached_model_metadata, ModelError, UnavailableProvider,
 };
@@ -90,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
         cwd: cwd.clone(),
         max_output_bytes: cfg.max_output_bytes,
     };
+    let herdr = HerdrReporter::from_env();
     let mut agent = Agent::new(provider, registry, ctx);
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
@@ -102,7 +105,11 @@ async fn main() -> anyhow::Result<()> {
 
     match run_prompt {
         Some(prompt) => {
-            let answer = agent.run(prompt).await?;
+            herdr.report_state(HerdrState::Working, None, None).await;
+            let result = agent.run(prompt).await;
+            herdr.report_state(HerdrState::Idle, None, None).await;
+            herdr.release().await;
+            let answer = result?;
             println!("{answer}");
         }
         None => {
@@ -140,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
                     config_path,
                     auth_unavailable: missing_auth_error,
                     update_notice,
+                    herdr,
                 },
             )
             .await?;

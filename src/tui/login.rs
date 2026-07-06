@@ -278,6 +278,7 @@ impl App {
             )?;
             self.status = "login saved".into();
         }
+        self.report_resting_herdr_state().await;
         Ok(())
     }
 
@@ -451,6 +452,7 @@ impl App {
                         ),
                     )?;
                 }
+                self.report_resting_herdr_state().await;
                 Ok(())
             }
             Err(err) => {

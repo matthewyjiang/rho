@@ -65,6 +65,7 @@ use crate::{
         save_provider_api_key, CodexTokens, CredentialStore, GitHubCopilotTokens,
         OsCredentialStore,
     },
+    herdr::{HerdrReporter, HerdrState},
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
@@ -105,6 +106,7 @@ pub struct TuiInfo {
     pub config_path: Option<PathBuf>,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
+    pub herdr: HerdrReporter,
 }
 
 pub struct TuiResult {
@@ -121,7 +123,21 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
     let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
     let modified_keys_enabled = enable_modified_keys().is_ok();
     let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
+    let herdr = info.herdr.clone();
+    let initial_state = if info.auth_unavailable.is_some() {
+        HerdrState::Blocked
+    } else {
+        HerdrState::Idle
+    };
+    herdr
+        .report_state(
+            initial_state,
+            info.auth_unavailable.as_deref(),
+            info.session_id.as_deref(),
+        )
+        .await;
     let result = App::new(info).run(&mut terminal, agent).await;
+    herdr.release().await;
     if keyboard_enhancements_enabled {
         let _ = disable_keyboard_enhancements();
     }
@@ -1847,6 +1863,10 @@ impl App {
         }
         self.reset_input_history_navigation();
         self.ensure_session(agent)?;
+        self.info
+            .herdr
+            .report_session(self.info.session_id.as_deref())
+            .await;
         if !agent
             .messages()
             .iter()
@@ -1863,6 +1883,10 @@ impl App {
         self.reset_streams();
         self.status = "running".into();
         self.running = true;
+        self.info
+            .herdr
+            .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
+            .await;
         self.loading_spinner.start();
         self.resize_inline_viewport_if_needed(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
@@ -2000,8 +2024,25 @@ impl App {
                 self.status = "error".into();
             }
         }
+        self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    async fn report_resting_herdr_state(&self) {
+        let state = if self.info.auth_unavailable.is_some() {
+            HerdrState::Blocked
+        } else {
+            HerdrState::Idle
+        };
+        self.info
+            .herdr
+            .report_state(
+                state,
+                self.info.auth_unavailable.as_deref(),
+                self.info.session_id.as_deref(),
+            )
+            .await;
     }
 
     fn drain_steering_prompts_to(&mut self, target: &Arc<Mutex<VecDeque<String>>>) {
@@ -2886,7 +2927,10 @@ impl App {
                 self.execute_logout_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::Resume => self.execute_resume_command(invocation, terminal, agent),
+            CommandId::Resume => {
+                self.execute_resume_command(invocation, terminal, agent)
+                    .await
+            }
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
         }
@@ -3155,7 +3199,9 @@ impl App {
                 self.status = "skill command inserted".into();
                 Ok(())
             }
-            PickerAction::ResumeSession => self.submit_resume_selection(&value, terminal, agent),
+            PickerAction::ResumeSession => {
+                self.submit_resume_selection(&value, terminal, agent).await
+            }
             PickerAction::Config => self.submit_config_selection(&value, terminal, agent),
         }
     }
@@ -3580,7 +3626,7 @@ impl App {
         })
     }
 
-    fn execute_resume_command(
+    async fn execute_resume_command(
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
@@ -3588,7 +3634,9 @@ impl App {
     ) -> anyhow::Result<()> {
         let session_id = invocation.args.trim();
         if !session_id.is_empty() {
-            return self.submit_resume_selection(session_id, terminal, agent);
+            return self
+                .submit_resume_selection(session_id, terminal, agent)
+                .await;
         }
 
         self.open_resume_picker(terminal)
@@ -3628,14 +3676,20 @@ impl App {
         Ok(())
     }
 
-    fn submit_resume_selection(
+    async fn submit_resume_selection(
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         match self.resume_session_by_id(session_id, terminal, agent) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.info
+                    .herdr
+                    .report_session(self.info.session_id.as_deref())
+                    .await;
+                Ok(())
+            }
             Err(err) => {
                 self.composer = ComposerMode::Input;
                 self.insert_entry(
@@ -4906,6 +4960,7 @@ mod tests {
                 config_path: None,
                 auth_unavailable: None,
                 update_notice: None,
+                herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
             },
             store,
@@ -5756,6 +5811,7 @@ mod tests {
                 config_path: None,
                 auth_unavailable: None,
                 update_notice: None,
+                herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
             },
             store,
