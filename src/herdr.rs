@@ -1,5 +1,9 @@
 use serde_json::json;
-use std::{env, path::PathBuf, time::Duration};
+use std::{
+    env,
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 const SOURCE: &str = "herdr:rho";
@@ -39,7 +43,7 @@ impl HerdrReporter {
     }
 
     fn from_env_vars(mut get_var: impl FnMut(&str) -> Option<String>) -> Self {
-        let enabled = get_var("HERDR_ENV").as_deref() == Some("1");
+        let enabled = platform_supported() && get_var("HERDR_ENV").as_deref() == Some("1");
         let socket_path = get_var("HERDR_SOCKET_PATH").filter(|value| !value.is_empty());
         let pane_id = get_var("HERDR_PANE_ID").filter(|value| !value.is_empty());
         let config = enabled
@@ -71,7 +75,6 @@ impl HerdrReporter {
             "source": SOURCE,
             "agent": AGENT,
             "state": state.as_str(),
-            "seq": report_seq(),
         });
         if let Some(message) = message {
             params["message"] = json!(message);
@@ -95,7 +98,6 @@ impl HerdrReporter {
                 "pane_id": config.pane_id,
                 "source": SOURCE,
                 "agent": AGENT,
-                "seq": report_seq(),
                 "agent_session_id": session_id,
             }),
         ))
@@ -113,7 +115,6 @@ impl HerdrReporter {
                 "pane_id": config.pane_id,
                 "source": SOURCE,
                 "agent": AGENT,
-                "seq": report_seq(),
             }),
         ))
         .await;
@@ -138,16 +139,21 @@ impl HerdrReporter {
 
 fn json_rpc_request(method: &str, params: serde_json::Value) -> serde_json::Value {
     json!({
-        "id": format!("{SOURCE}:{}", report_seq()),
+        "id": format!("{SOURCE}:{}", request_id_suffix()),
         "method": method,
         "params": params,
     })
 }
 
-fn report_seq() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
-    NEXT_SEQ.fetch_add(1, Ordering::Relaxed)
+fn request_id_suffix() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros())
+        .unwrap_or_default()
+}
+
+fn platform_supported() -> bool {
+    cfg!(unix)
 }
 
 #[cfg(unix)]

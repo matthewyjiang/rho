@@ -50,7 +50,7 @@ async fn report_state_sends_herdr_json_rpc_request() {
     assert_eq!(request["params"]["state"], "working");
     assert_eq!(request["params"]["message"], "running tools");
     assert_eq!(request["params"]["agent_session_id"], "session-1");
-    assert!(request["params"]["seq"].as_u64().is_some());
+    assert!(request["params"].get("seq").is_none());
 }
 
 #[cfg(unix)]
@@ -66,6 +66,7 @@ async fn report_session_sends_session_reference() {
     let request = server.next_request().await;
     assert_eq!(request["method"], "pane.report_agent_session");
     assert_eq!(request["params"]["agent_session_id"], "session-2");
+    assert!(request["params"].get("seq").is_none());
 }
 
 #[cfg(unix)]
@@ -82,6 +83,7 @@ async fn release_sends_release_request() {
     assert_eq!(request["method"], "pane.release_agent");
     assert_eq!(request["params"]["pane_id"], "w1:p1");
     assert_eq!(request["params"]["agent"], "rho");
+    assert!(request["params"].get("seq").is_none());
 }
 
 #[cfg(unix)]

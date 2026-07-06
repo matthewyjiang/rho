@@ -108,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
             herdr.report_state(HerdrState::Working, None, None).await;
             let result = agent.run(prompt).await;
             herdr.report_state(HerdrState::Idle, None, None).await;
+            herdr.release().await;
             let answer = result?;
             println!("{answer}");
         }
