@@ -22,7 +22,7 @@ pub struct QuestionnaireResponse {
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         name: TOOL_NAME.into(),
-        description: "Ask the user one concise clarifying question and wait for their answer. Use this only when missing user input materially blocks correctness, safety, or a requested preference. Before asking, inspect available context and make reasonable assumptions when safe. Ask the fewest questions possible, include a reason when helpful, and provide a default when one answer is likely.".into(),
+        description: "Ask one concise clarifying question only when missing input blocks correctness, safety, or a requested preference. Prefer reasonable assumptions; include a reason or default only when helpful.".into(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
