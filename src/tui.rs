@@ -215,25 +215,72 @@ enum ComposerMode {
     Questionnaire(QuestionnaireComposer),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuestionnaireCancelReason {
+    UserCancelled,
+    UiUnavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum QuestionnaireReply {
+    Answer(QuestionnaireResponse),
+    Cancelled(QuestionnaireCancelReason),
+}
+
+struct QuestionnaireResponseChannel {
+    reply_tx: Option<oneshot::Sender<QuestionnaireReply>>,
+}
+
+impl std::fmt::Debug for QuestionnaireResponseChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuestionnaireResponseChannel")
+            .field("reply_pending", &self.reply_tx.is_some())
+            .finish()
+    }
+}
+
+impl QuestionnaireResponseChannel {
+    fn new(reply_tx: oneshot::Sender<QuestionnaireReply>) -> Self {
+        Self {
+            reply_tx: Some(reply_tx),
+        }
+    }
+
+    fn send_response(&mut self, response: QuestionnaireResponse) {
+        if let Some(reply_tx) = self.reply_tx.take() {
+            let _ = reply_tx.send(QuestionnaireReply::Answer(response));
+        }
+    }
+
+    fn cancel(&mut self, reason: QuestionnaireCancelReason) {
+        if let Some(reply_tx) = self.reply_tx.take() {
+            let _ = reply_tx.send(QuestionnaireReply::Cancelled(reason));
+        }
+    }
+}
+
+impl Drop for QuestionnaireResponseChannel {
+    fn drop(&mut self) {
+        self.cancel(QuestionnaireCancelReason::UiUnavailable);
+    }
+}
+
 #[derive(Debug)]
 struct QuestionAnswerRequest {
     request: QuestionnaireRequest,
-    response_tx: oneshot::Sender<QuestionnaireResponse>,
+    response: QuestionnaireResponseChannel,
 }
 
 #[derive(Debug)]
 struct QuestionnaireComposer {
     request: QuestionnaireRequest,
-    response_tx: Option<oneshot::Sender<QuestionnaireResponse>>,
+    response: QuestionnaireResponseChannel,
     value: String,
     cursor: usize,
 }
 
 impl QuestionnaireComposer {
-    fn new(
-        request: QuestionnaireRequest,
-        response_tx: oneshot::Sender<QuestionnaireResponse>,
-    ) -> Self {
+    fn new(request: QuestionnaireRequest, response: QuestionnaireResponseChannel) -> Self {
         Self {
             value: request.default.clone().unwrap_or_default(),
             cursor: request
@@ -242,7 +289,7 @@ impl QuestionnaireComposer {
                 .map(|value| value.chars().count())
                 .unwrap_or(0),
             request,
-            response_tx: Some(response_tx),
+            response,
         }
     }
 
@@ -1160,7 +1207,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                self.status = "answer required; press enter to submit or ctrl-c to quit".into();
+                self.cancel_questionnaire_answer();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -1267,11 +1314,9 @@ impl App {
             self.status = "answer cannot be empty".into();
             return Ok(());
         }
-        if let Some(response_tx) = questionnaire.response_tx.take() {
-            let _ = response_tx.send(QuestionnaireResponse {
-                answer: answer.clone(),
-            });
-        }
+        questionnaire.response.send_response(QuestionnaireResponse {
+            answer: answer.clone(),
+        });
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
@@ -1280,6 +1325,23 @@ impl App {
         self.insert_entry(terminal, &Entry::User(answer))?;
         self.status = "answer submitted".into();
         Ok(())
+    }
+
+    fn cancel_questionnaire_answer(&mut self) {
+        let ComposerMode::Questionnaire(mut questionnaire) =
+            std::mem::replace(&mut self.composer, ComposerMode::Input)
+        else {
+            return;
+        };
+        questionnaire
+            .response
+            .cancel(QuestionnaireCancelReason::UserCancelled);
+        self.input.clear();
+        self.paste_segments.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.status = "answer cancelled".into();
     }
 
     fn open_questionnaire(
@@ -1299,7 +1361,7 @@ impl App {
         )?;
         self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             request.request,
-            request.response_tx,
+            request.response,
         ));
         self.status = "waiting for your answer".into();
         Ok(())
@@ -2190,23 +2252,32 @@ impl App {
             let mut ask_questionnaire =
                 move |request: QuestionnaireRequest| -> crate::agent::QuestionnaireFuture {
                     let question_request_tx = question_request_tx.clone();
-                    let (response_tx, response_rx) = oneshot::channel();
+                    let (reply_tx, reply_rx) = oneshot::channel();
                     Box::pin(async move {
                         question_request_tx
                             .send(QuestionAnswerRequest {
                                 request,
-                                response_tx,
+                                response: QuestionnaireResponseChannel::new(reply_tx),
                             })
                             .map_err(|_| {
                                 crate::agent::AgentError::Questionnaire(
                                     "questionnaire UI is unavailable".into(),
                                 )
                             })?;
-                        response_rx.await.map_err(|_| {
-                            crate::agent::AgentError::Questionnaire(
+                        match reply_rx.await {
+                            Ok(QuestionnaireReply::Answer(response)) => Ok(response),
+                            Ok(QuestionnaireReply::Cancelled(
+                                QuestionnaireCancelReason::UserCancelled,
+                            )) => Err(crate::agent::AgentError::Questionnaire(
                                 "questionnaire answer was cancelled".into(),
-                            )
-                        })
+                            )),
+                            Ok(QuestionnaireReply::Cancelled(
+                                QuestionnaireCancelReason::UiUnavailable,
+                            ))
+                            | Err(_) => Err(crate::agent::AgentError::Questionnaire(
+                                "questionnaire UI is unavailable".into(),
+                            )),
+                        }
                     })
                 };
             let mut run_future = Box::pin(
@@ -5005,7 +5076,7 @@ fn questionnaire_prompt_lines(
         );
     }
     lines.push(styled_line(
-        truncate_one_line("enter submit · shift-enter newline", width),
+        truncate_one_line("enter submit · shift-enter newline · esc cancel", width),
         width,
         Theme::dim(),
         LineFill::Natural,
@@ -5549,6 +5620,35 @@ mod tests {
             Entry::User(b),
             Entry::User(c),
         ] if a == "message 7" && b == "message 8" && c == "message 9"));
+    }
+
+    #[test]
+    fn questionnaire_cancel_sends_user_cancelled_reply() {
+        let mut app = test_app();
+        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+            QuestionnaireRequest {
+                question: "Which file?".into(),
+                reason: None,
+                default: None,
+            },
+            QuestionnaireResponseChannel::new(reply_tx),
+        ));
+        app.input = "draft".into();
+        app.input_cursor = app.input_char_len();
+
+        app.cancel_questionnaire_answer();
+
+        assert!(matches!(app.composer, ComposerMode::Input));
+        assert_eq!(app.input, "");
+        assert_eq!(app.input_cursor, 0);
+        assert_eq!(app.status, "answer cancelled");
+        assert!(matches!(
+            reply_rx.try_recv(),
+            Ok(QuestionnaireReply::Cancelled(
+                QuestionnaireCancelReason::UserCancelled
+            ))
+        ));
     }
 
     #[test]
