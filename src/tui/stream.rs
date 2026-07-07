@@ -1,5 +1,5 @@
 use super::{
-    markdown::{markdown_rendered_width, markdown_stream_prefix},
+    markdown::{markdown_preview_width, markdown_stream_prefix},
     render::{complete_visual_prefix, display_width},
 };
 
@@ -13,6 +13,13 @@ pub(super) struct AppendOnlyStream {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct StreamFragment {
+    text: String,
+    include_leading_blank: bool,
+    skip_leading_newline: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StreamPreview {
     text: String,
     include_leading_blank: bool,
     skip_leading_newline: bool,
@@ -58,21 +65,17 @@ impl AppendOnlyStream {
         ))
     }
 
-    pub(super) fn drain_preview(&mut self) -> Option<StreamFragment> {
-        self.drain_preview_with_width(display_width)
+    pub(super) fn drain_preview(&mut self) -> Option<StreamPreview> {
+        self.preview_with_width(display_width)
     }
 
     pub(super) fn drain_preview_markdown(
-        &mut self,
+        &self,
         inner_width: usize,
         in_code_block: bool,
-    ) -> Option<StreamFragment> {
+    ) -> Option<StreamPreview> {
         let split = self.markdown_renderable_split(inner_width, in_code_block, true)?;
-        Some(self.take_pending_prefix(
-            split.byte_index,
-            split.skip_leading_newline,
-            split.ends_with_wrap,
-        ))
+        Some(self.pending_preview(split.byte_index, split.skip_leading_newline))
     }
 
     pub(super) fn finish(&mut self) -> Option<StreamFragment> {
@@ -109,7 +112,7 @@ impl AppendOnlyStream {
         let mut ends_with_wrap = prefix.ends_with_wrap;
         if allow_partial_line && renderable_byte_index == 0 {
             if let Some(byte_index) = self.preview_byte_index(pending, |text| {
-                markdown_rendered_width(text, inner_width, in_code_block)
+                markdown_preview_width(text, inner_width, in_code_block)
             }) {
                 renderable_byte_index = byte_index;
                 ends_with_wrap = false;
@@ -126,15 +129,12 @@ impl AppendOnlyStream {
         })
     }
 
-    fn drain_preview_with_width(
-        &mut self,
-        rendered_width: impl Fn(&str) -> usize,
-    ) -> Option<StreamFragment> {
+    fn preview_with_width(&self, rendered_width: impl Fn(&str) -> usize) -> Option<StreamPreview> {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
         let split_at = scan_start + self.preview_byte_index(pending, rendered_width)?;
-        Some(self.take_pending_prefix(split_at, skip_leading_newline, false))
+        Some(self.pending_preview(split_at, skip_leading_newline))
     }
 
     fn preview_byte_index(
@@ -172,6 +172,14 @@ impl AppendOnlyStream {
         ))
     }
 
+    fn pending_preview(&self, byte_index: usize, skip_leading_newline: bool) -> StreamPreview {
+        StreamPreview {
+            text: self.pending[..byte_index].to_string(),
+            include_leading_blank: !self.leading_blank_emitted,
+            skip_leading_newline,
+        }
+    }
+
     fn take_pending_prefix(
         &mut self,
         byte_index: usize,
@@ -202,6 +210,20 @@ impl StreamFragment {
 
     pub(super) fn into_text(self) -> String {
         self.text
+    }
+
+    pub(super) fn include_leading_blank(&self) -> bool {
+        self.include_leading_blank
+    }
+}
+
+impl StreamPreview {
+    pub(super) fn render_text(&self) -> &str {
+        if self.skip_leading_newline {
+            &self.text['\n'.len_utf8()..]
+        } else {
+            &self.text
+        }
     }
 
     pub(super) fn include_leading_blank(&self) -> bool {

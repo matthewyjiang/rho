@@ -18,6 +18,34 @@ fn rendered_markdown_text(text: &str, width: usize, in_code_block: bool) -> Vec<
 }
 
 #[test]
+fn preview_does_not_drain_pending_or_commit_emitted_text() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("hel");
+    let preview = stream.drain_preview().unwrap();
+    assert_eq!(preview.render_text(), "hel");
+    assert_eq!(stream.pending_text(), "hel");
+    assert_eq!(stream.emitted_text(), "");
+
+    stream.push_delta("lo\n");
+    let fragment = stream.drain_renderable(10).unwrap();
+    assert_eq!(fragment.text.as_str(), "hello\n");
+    assert_eq!(stream.emitted_text(), "hello\n");
+}
+
+#[test]
+fn markdown_preview_does_not_emit_unsafe_code_fence_fragment() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("```");
+    assert_eq!(stream.drain_preview_markdown(10, false), None);
+
+    stream.push_delta("rust\n");
+    let fragment = stream.drain_renderable_markdown(10, false).unwrap();
+    assert_eq!(fragment.text.as_str(), "```rust\n");
+}
+
+#[test]
 fn drains_only_complete_newline_terminated_lines() {
     let mut stream = AppendOnlyStream::default();
 

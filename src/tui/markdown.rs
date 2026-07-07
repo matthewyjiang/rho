@@ -59,7 +59,18 @@ pub(super) fn markdown_lines(
     lines
 }
 
-pub(super) fn markdown_rendered_width(text: &str, width: usize, in_code_block: bool) -> usize {
+pub(super) fn markdown_preview_width(text: &str, width: usize, in_code_block: bool) -> usize {
+    let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
+    let current_line_in_code_block =
+        line_starts_in_code_block(text, current_line_start, in_code_block);
+    let current_line = &text[current_line_start..];
+    if current_line.is_empty() || starts_with_code_fence_fragment(current_line) {
+        return 0;
+    }
+    if !current_line_in_code_block && has_unresolved_inline_markdown(current_line) {
+        return 0;
+    }
+
     let mut in_code_block = in_code_block;
     markdown_lines(text, width, &mut in_code_block)
         .last()
