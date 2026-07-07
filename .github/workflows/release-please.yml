@@ -22,7 +22,6 @@ jobs:
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          command: manifest
           config-file: .release-please-config.json
       - uses: actions/checkout@v4
         if: ${{ steps.release.outputs.release_created == 'true' }}
