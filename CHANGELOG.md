@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.3...rho-coding-agent-v0.16.0) (2026-07-07)
+
+
+### Features
+
+* **herdr:** report rho agent state ([#117](https://github.com/matthewyjiang/rho/issues/117)) ([fa4c18b](https://github.com/matthewyjiang/rho/commit/fa4c18bfa27fc19aa8b6094d19d8e0f47974c790))
+* **tui:** style input by reasoning level ([#119](https://github.com/matthewyjiang/rho/issues/119)) ([8b9a71c](https://github.com/matthewyjiang/rho/commit/8b9a71c26efaf5a45a171be8204731b4149ef6ce))
+
+
+### Bug Fixes
+
+* **tui:** stabilize live rendering ([#120](https://github.com/matthewyjiang/rho/issues/120)) ([9ad7a9c](https://github.com/matthewyjiang/rho/commit/9ad7a9c42d3abb3cccc0ce881c212b2f1d0ab018))
+
 ## [0.15.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.2...rho-coding-agent-v0.15.3) (2026-07-04)
 
 
