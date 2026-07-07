@@ -82,7 +82,6 @@ impl Tool for Bash {
                 raw_args["command"] = serde_json::Value::String(args.command.clone());
             }
         }
-        let start = Instant::now();
         let mut child = Command::new("bash")
             .arg("-lc")
             .arg(&args.command)
@@ -92,6 +91,7 @@ impl Tool for Bash {
             .kill_on_drop(true)
             .spawn()?;
 
+        let start = Instant::now();
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
         if let Some(stdout) = child.stdout.take() {
             tokio::spawn(read_stream(StreamKind::Stdout, stdout, chunk_tx.clone()));
