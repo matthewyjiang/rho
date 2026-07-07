@@ -292,7 +292,7 @@ mod tests {
     async fn timeout_error_includes_partial_output() {
         let err = Bash::new(false)
             .call(
-                json!({"command": "echo started; sleep 5", "timeout_seconds": 1}),
+                json!({"command": "while true; do echo started; sleep 0.01; done", "timeout_seconds": 1}),
                 test_context(),
                 "call_1".into(),
             )
