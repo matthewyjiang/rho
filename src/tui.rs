@@ -27,7 +27,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget},
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
 };
 mod config_picker;
@@ -46,8 +46,8 @@ mod theme;
 use markdown::push_wrapped_markdown;
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
-    entry_lines, input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
-    session_header_lines, styled_line, truncate_one_line, LineFill,
+    display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
+    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
@@ -152,6 +152,11 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
         print_exit_lines(&result.exit_lines)?;
     }
     result
+}
+
+struct ActiveFrame {
+    lines: Vec<Line<'static>>,
+    cursor: Position,
 }
 
 struct App {
@@ -3914,31 +3919,16 @@ impl App {
     fn draw(&self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let width = area.width as usize;
-        let lines = self.active_lines_at_for_height(width, area.height as usize, Instant::now());
-        let composer_line_count = self.composer_lines(width).len() as u16;
-        let statusline_count = self.statusline_lines(width).len() as u16;
-        let command_line_count = self.command_suggestion_lines(width).len() as u16;
-        let lines_below_composer = composer_line_count
-            .saturating_add(1)
-            .saturating_add(statusline_count)
-            .saturating_add(command_line_count);
-        let composer_y = (lines.len() as u16)
-            .saturating_sub(lines_below_composer)
-            .min(area.height.saturating_sub(lines_below_composer));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .style(Style::default())
-                .wrap(Wrap { trim: false }),
-            area,
-        );
+        let active = self.active_frame_at_for_height(width, area.height as usize, Instant::now());
+        frame.render_widget(Paragraph::new(active.lines).style(Style::default()), area);
 
-        let cursor = self.composer_cursor_position(width);
         frame.set_cursor_position(Position {
-            x: area.x.saturating_add(cursor.x),
-            y: area.y.saturating_add(composer_y).saturating_add(cursor.y),
+            x: area.x.saturating_add(active.cursor.x),
+            y: area.y.saturating_add(active.cursor.y),
         });
     }
 
+    #[cfg(test)]
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
         self.active_lines_at_for_height(width, INLINE_VIEWPORT_HEIGHT as usize, Instant::now())
     }
@@ -3948,12 +3938,23 @@ impl App {
         self.active_lines_at_for_height(width, viewport_height, Instant::now())
     }
 
+    #[cfg(test)]
     fn active_lines_at_for_height(
         &self,
         width: usize,
         viewport_height: usize,
         now: Instant,
     ) -> Vec<Line<'static>> {
+        self.active_frame_at_for_height(width, viewport_height, now)
+            .lines
+    }
+
+    fn active_frame_at_for_height(
+        &self,
+        width: usize,
+        viewport_height: usize,
+        now: Instant,
+    ) -> ActiveFrame {
         let divider_style = match &self.composer {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
             ComposerMode::Picker(_) => Theme::input_prompt(),
@@ -3966,36 +3967,79 @@ impl App {
         let composer_lines = self.composer_lines(width);
         let statusline_lines = self.statusline_lines(width);
         let command_lines = self.command_suggestion_lines(width);
-        let composer_height =
-            composer_lines.len() + statusline_lines.len() + command_lines.len() + 2;
-        let available_content = viewport_height.saturating_sub(composer_height);
+        let bottom_height = 1 + statusline_lines.len() + command_lines.len();
+        let available_above_bottom = viewport_height.saturating_sub(bottom_height);
+        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
+        let composer_budget = available_above_bottom.saturating_sub(usize::from(show_top_divider));
+        let visible_composer_len = composer_lines.len().min(composer_budget);
+        let full_cursor = self.composer_cursor_position(width);
+        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
+        let composer_start =
+            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
+        let composer_end = composer_start.saturating_add(visible_composer_len);
+        let available_content = available_above_bottom
+            .saturating_sub(usize::from(show_top_divider) + visible_composer_len);
 
         let mut content = Vec::new();
         if let Some(pending) = &self.pending_tool_call {
-            let spinner_lines = usize::from(self.loading_active());
             let pending_tool_output_lines = self
                 .info
                 .max_tool_output_lines
-                .min(available_content.saturating_sub(spinner_lines + 3).max(1));
+                .min(available_content.saturating_sub(3).max(1));
             content.extend(entry_lines(
                 &Entry::Tool(pending.clone()),
                 width,
                 pending_tool_output_lines,
             ));
         }
-        if self.loading_active() {
-            content.push(self.loading_spinner.line(now));
-        }
 
+        let content_skip = content.len().saturating_sub(available_content);
+        let visible_content_len = content.len().saturating_sub(content_skip);
         let mut lines = Vec::new();
-        let skip = content.len().saturating_sub(available_content);
-        lines.extend(content.into_iter().skip(skip));
-        lines.push(divider.clone());
-        lines.extend(composer_lines);
+        if self.loading_active() {
+            lines.push(self.loading_spinner.line(now));
+            if visible_content_len > 0 || show_top_divider || visible_composer_len > 0 {
+                lines.push(Line::raw(""));
+            }
+        }
+        lines.extend(content.into_iter().skip(content_skip));
+        if show_top_divider {
+            lines.push(divider.clone());
+        }
+        lines.extend(composer_lines[composer_start..composer_end].iter().cloned());
         lines.push(divider);
         lines.extend(statusline_lines);
         lines.extend(command_lines);
-        lines
+
+        let composer_y = visible_content_len
+            + usize::from(self.loading_active())
+            + usize::from(
+                self.loading_active()
+                    && (visible_content_len > 0 || show_top_divider || visible_composer_len > 0),
+            )
+            + usize::from(show_top_divider);
+        let cursor_y = if visible_composer_len == 0 {
+            0
+        } else {
+            composer_y + cursor_line.saturating_sub(composer_start)
+        };
+        let trimmed_from_top = lines.len().saturating_sub(viewport_height);
+        let lines = if trimmed_from_top == 0 {
+            lines
+        } else {
+            lines.into_iter().skip(trimmed_from_top).collect()
+        };
+        let max_cursor_x = width.max(1).saturating_sub(1) as u16;
+        let max_cursor_y = viewport_height.max(1).saturating_sub(1) as u16;
+        ActiveFrame {
+            lines,
+            cursor: Position {
+                x: full_cursor.x.min(max_cursor_x),
+                y: cursor_y
+                    .saturating_sub(trimmed_from_top)
+                    .min(max_cursor_y as usize) as u16,
+            },
+        }
     }
 
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -4012,8 +4056,18 @@ impl App {
     }
 
     fn desired_inline_viewport_height(&self, width: usize, terminal_height: u16) -> u16 {
-        let height = self.active_lines(width).len() as u16;
-        height.max(1).min(terminal_height.max(1))
+        let terminal_height = terminal_height.max(1);
+        let base_height = INLINE_VIEWPORT_HEIGHT as usize;
+        let base_live_height = self
+            .active_frame_at_for_height(width, base_height, Instant::now())
+            .lines
+            .len();
+        let overlay_height = self.composer_lines(width).len()
+            + self.statusline_lines(width).len()
+            + self.command_suggestion_lines(width).len()
+            + 2;
+        let height = base_live_height.max(overlay_height) as u16;
+        height.max(1).min(terminal_height)
     }
 
     fn resize_inline_viewport_if_needed(
@@ -4034,30 +4088,15 @@ impl App {
             return Ok(());
         }
 
-        // Only the viewport height changed; the width (and therefore the line
-        // wrapping of history already emitted into terminal scrollback) is
-        // unchanged. Re-anchor a fresh inline viewport near the top row of the
-        // current one, and clear every row that can become part of the new live
-        // viewport instead of clearing the screen and replaying the transcript.
-        let old_viewport_top = terminal.get_frame().area().y;
         *terminal = Terminal::with_options(
             CrosstermBackend::new(std::io::stdout()),
             TerminalOptions {
                 viewport: Viewport::Inline(desired_height),
             },
         )?;
-        let new_viewport_top = terminal.get_frame().area().y;
-        let clear_top = old_viewport_top.min(new_viewport_top);
-        let mut stdout = std::io::stdout();
-        write!(
-            stdout,
-            "\x1b[0m\x1b[{};1H\x1b[0J",
-            clear_top.saturating_add(1)
-        )?;
-        stdout.flush()?;
         self.inline_viewport_height = desired_height;
         self.inline_viewport_width = Some(size.width);
-        Ok(())
+        self.reflow_history(terminal)
     }
 
     fn statusline_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -4096,10 +4135,7 @@ impl App {
             },
             ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
-                x: picker
-                    .filter
-                    .chars()
-                    .count()
+                x: display_width(&picker.filter)
                     .saturating_add(2)
                     .min(width.saturating_sub(1)) as u16,
                 y: 0,
@@ -4130,7 +4166,8 @@ impl App {
                 let description_width = width.saturating_sub(usage_width + 3).max(1);
                 let usage = truncate_one_line(&command.usage, usage_width);
                 let description = truncate_one_line(&command.description, description_width);
-                let text = format!("{marker} {usage:<usage_width$} {description}");
+                let usage_padding = " ".repeat(usage_width.saturating_sub(display_width(&usage)));
+                let text = format!("{marker} {usage}{usage_padding} {description}");
                 let style = if selected {
                     Theme::brand()
                 } else {
@@ -4278,6 +4315,16 @@ impl App {
             other => self.transcript.push(other),
         }
     }
+}
+
+fn visible_composer_start(cursor_line: usize, line_count: usize, visible_count: usize) -> usize {
+    if visible_count == 0 || visible_count >= line_count {
+        return 0;
+    }
+    cursor_line
+        .saturating_add(1)
+        .saturating_sub(visible_count)
+        .min(line_count.saturating_sub(visible_count))
 }
 
 fn recovered_history_tail(
@@ -4736,9 +4783,7 @@ fn insert_history_lines(
     // composer without guessing the viewport position.
     let height = lines.len().max(1) as u16;
     terminal.insert_before(height, |buf| {
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .render(buf.area, buf);
+        Paragraph::new(lines).render(buf.area, buf);
     })?;
     Ok(())
 }
@@ -5515,6 +5560,7 @@ mod tests {
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(line_text(&lines[0]).contains("working"), "{rendered}");
+        assert_eq!(line_text(&lines[1]), "", "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -5574,6 +5620,36 @@ mod tests {
     }
 
     #[test]
+    fn loading_spinner_line_separates_frame_from_text() {
+        let started_at = Instant::now();
+        let spinner = LoadingSpinner {
+            started_at: Some(started_at),
+        };
+
+        assert_eq!(line_text(&spinner.line(started_at)), "⠋ working");
+    }
+
+    #[test]
+    fn active_lines_separate_spinner_from_content_with_blank_line() {
+        let mut app = test_app();
+        app.running = true;
+        app.pending_tool_call = Some(ToolEntry {
+            state: ToolEntryState::Running,
+            display_lines: vec!["bash".into(), "cargo test".into()],
+            expanded: false,
+        });
+
+        let lines =
+            app.active_lines_at_for_height(40, INLINE_VIEWPORT_HEIGHT as usize, Instant::now());
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(line_text(&lines[0]).contains("working"), "{rendered}");
+        assert_eq!(line_text(&lines[1]), "", "{rendered}");
+        assert!(rendered.contains("bash"), "{rendered}");
+    }
+
+    #[test]
     fn active_lines_hide_spinner_when_idle() {
         let app = test_app();
         let rendered = app
@@ -5610,6 +5686,40 @@ mod tests {
 
         let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
         assert!(bottom.contains("ready"), "{bottom:?}");
+    }
+
+    #[test]
+    fn long_input_keeps_statusline_and_cursor_visible() {
+        let mut app = test_app();
+        app.input = (0..30)
+            .map(|index| format!("line {index:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.input_cursor = app.input_char_len();
+        let height = 8;
+        let backend = TestBackend::new(40, height);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )
+        .unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let rows = (0..height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), row))
+            .collect::<Vec<_>>();
+        let bottom = rows.last().unwrap();
+        let cursor = terminal.backend().cursor_position();
+        assert!(rows.iter().any(|row| row.contains("line 29")), "{rows:#?}");
+        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(cursor.y < height, "{cursor:?}");
+        assert!(
+            rows[cursor.y as usize].contains("line 29"),
+            "{rows:#?} {cursor:?}"
+        );
     }
 
     #[test]

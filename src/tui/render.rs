@@ -59,7 +59,7 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
 
     if matching_indices.is_empty() {
         lines.push(styled_line(
-            "  no matches".to_string(),
+            truncate_one_line("  no matches", width),
             width,
             Theme::dim(),
             LineFill::Natural,
@@ -92,7 +92,10 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         .position(|index| *index == picker.selected)
         .unwrap_or(0);
     lines.push(styled_line(
-        format!("  ({}/{})", selected_position + 1, matching_indices.len()),
+        truncate_one_line(
+            &format!("  ({}/{})", selected_position + 1, matching_indices.len()),
+            width,
+        ),
         width,
         Theme::dim(),
         LineFill::Natural,
@@ -102,15 +105,13 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
         .selected_item()
         .and_then(|item| item.detail.as_deref())
     {
-        lines.push(styled_line(
-            format!(
-                "  {}",
-                truncate_one_line(detail, width.saturating_sub(2).max(1))
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ));
+        let detail = truncate_one_line(detail, width.saturating_sub(2));
+        let detail = if width > 2 {
+            format!("  {detail}")
+        } else {
+            truncate_one_line(&detail, width)
+        };
+        lines.push(styled_line(detail, width, Theme::dim(), LineFill::Natural));
         lines.push(Line::raw(""));
     }
     lines.push(styled_line(
@@ -146,14 +147,21 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand => 30,
     };
+    let reserved_preview_width = width.saturating_sub(18);
+    let available_width = if reserved_preview_width >= 12 {
+        reserved_preview_width
+    } else {
+        width.saturating_sub(2).max(1)
+    };
+    let max_label_width = max_label_width.min(available_width);
+    let min_label_width = 12.min(max_label_width).max(1);
     picker
         .items
         .iter()
         .map(|item| display_width(&item.label))
         .max()
-        .unwrap_or(12)
-        .clamp(12, max_label_width)
-        .min(width.saturating_sub(18).max(12))
+        .unwrap_or(min_label_width)
+        .clamp(min_label_width, max_label_width)
 }
 
 fn picker_item_line(
@@ -168,6 +176,11 @@ fn picker_item_line(
     } else {
         Theme::text()
     };
+    if width <= 1 {
+        return Line::from(Span::styled(marker.to_string(), row_style));
+    }
+
+    let label_width = label_width.min(width.saturating_sub(2));
     let label = truncate_one_line(&item.label, label_width);
     let mut used_width = 2 + label_width;
     let mut spans = vec![Span::styled(
@@ -178,10 +191,13 @@ fn picker_item_line(
         row_style,
     )];
     if let Some(badge) = &item.badge {
-        let badge_text = truncate_one_line(&badge.text, 24);
-        used_width += 2 + display_width(&badge_text);
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));
+        let remaining = width.saturating_sub(used_width.saturating_add(2));
+        if remaining > 1 {
+            let badge_text = truncate_one_line(&badge.text, remaining.min(24));
+            used_width += 2 + display_width(&badge_text);
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));
+        }
     }
     if let Some(preview) = &item.preview {
         let remaining = width.saturating_sub(used_width.saturating_add(2));
@@ -248,7 +264,7 @@ pub(super) fn display_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-fn char_display_width(ch: char) -> usize {
+pub(super) fn char_display_width(ch: char) -> usize {
     UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
@@ -621,7 +637,7 @@ pub(super) fn wrap_line_at_whitespace_ranges(
             } else {
                 saw_non_whitespace = true;
             }
-            if count == width {
+            if count >= width {
                 split_at_width = Some(next);
             }
         }
@@ -686,6 +702,35 @@ mod tests {
 
     fn line_styles(line: &Line<'_>) -> Vec<Style> {
         line.spans.iter().map(|span| span.style).collect()
+    }
+
+    #[test]
+    fn narrow_picker_rows_do_not_exceed_width() {
+        let picker = UiPicker::new(
+            "models",
+            "enter confirm",
+            vec![PickerItem {
+                label: "very-wide-model-name".into(),
+                detail: Some("very wide detail".into()),
+                preview: Some("wide preview".into()),
+                badge: Some(crate::tui::PickerBadge {
+                    text: "selected".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: "very-wide-model-name".into(),
+            }],
+            crate::tui::PickerAction::SelectModel,
+        );
+
+        let lines = picker_lines(&picker, 4);
+
+        assert!(
+            lines
+                .iter()
+                .all(|line| display_width(&line_text(line)) <= 4),
+            "{:#?}",
+            lines.iter().map(line_text).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -854,6 +899,15 @@ mod tests {
             lines.iter().map(line_text).collect::<Vec<_>>(),
             vec!["abc".to_string(), " ".to_string()]
         );
+    }
+
+    #[test]
+    fn wrapped_text_handles_wide_chars_in_narrow_width() {
+        let mut lines = Vec::new();
+        push_wrapped_text(&mut lines, "你a", 1, Style::default(), LineFill::Natural);
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(rendered, vec!["你".to_string(), "a".to_string()]);
     }
 
     #[test]

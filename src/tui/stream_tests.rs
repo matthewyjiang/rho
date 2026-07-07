@@ -270,6 +270,17 @@ fn markdown_drain_hard_wraps_code_block_content() {
 }
 
 #[test]
+fn markdown_drain_uses_display_width_in_code_blocks() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("你a");
+    let fragment = stream.drain_renderable_markdown(6, true).unwrap();
+    assert_eq!(fragment.text.as_str(), "你");
+    assert_eq!(stream.emitted_text(), "你");
+    assert_eq!(stream.drain_renderable_markdown(6, true), None);
+}
+
+#[test]
 fn reset_clears_pending_emitted_and_leading_blank_state() {
     let mut stream = AppendOnlyStream::default();
     stream.push_delta("done\n");

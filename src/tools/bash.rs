@@ -126,6 +126,7 @@ impl Tool for Bash {
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
                 let _ = child.start_kill();
+                drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
                 drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
                 let secs = args.timeout_seconds.unwrap_or_default();
@@ -180,6 +181,19 @@ async fn read_stream<R>(
             Ok(n) => {
                 let _ = chunk_tx.send((kind, buffer[..n].to_vec()));
             }
+        }
+    }
+}
+
+fn drain_ready_stream_chunks(
+    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+) {
+    while let Ok((kind, bytes)) = chunk_rx.try_recv() {
+        match kind {
+            StreamKind::Stdout => stdout.extend(bytes),
+            StreamKind::Stderr => stderr.extend(bytes),
         }
     }
 }
