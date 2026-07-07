@@ -12,7 +12,7 @@ use std::{
 };
 
 use futures_util::{task::noop_waker_ref, FutureExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crossterm::{
     event::{
@@ -54,7 +54,7 @@ use stream::{AppendOnlyStream, StreamFragment};
 use theme::Theme;
 
 use crate::{
-    agent::{Agent, AgentEvent, SessionHistorySink},
+    agent::{Agent, AgentEvent, QuestionnaireRequest, QuestionnaireResponse, SessionHistorySink},
     auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
@@ -204,7 +204,7 @@ struct App {
     inline_viewport_width: Option<u16>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum ComposerMode {
     Input,
     Picker(UiPicker),
@@ -212,6 +212,82 @@ enum ComposerMode {
     ConfigNumberInput(ConfigNumberInput),
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
+    Questionnaire(QuestionnaireComposer),
+}
+
+#[derive(Debug)]
+struct QuestionAnswerRequest {
+    request: QuestionnaireRequest,
+    response_tx: oneshot::Sender<QuestionnaireResponse>,
+}
+
+#[derive(Debug)]
+struct QuestionnaireComposer {
+    request: QuestionnaireRequest,
+    response_tx: Option<oneshot::Sender<QuestionnaireResponse>>,
+    value: String,
+    cursor: usize,
+}
+
+impl QuestionnaireComposer {
+    fn new(
+        request: QuestionnaireRequest,
+        response_tx: oneshot::Sender<QuestionnaireResponse>,
+    ) -> Self {
+        Self {
+            value: request.default.clone().unwrap_or_default(),
+            cursor: request
+                .default
+                .as_ref()
+                .map(|value| value.chars().count())
+                .unwrap_or(0),
+            request,
+            response_tx: Some(response_tx),
+        }
+    }
+
+    fn char_len(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert_str(byte_index, text);
+        self.cursor += text.chars().count();
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete(&mut self) {
+        if self.cursor >= self.char_len() {
+            return;
+        }
+        let start = self.byte_index(self.cursor);
+        let end = self.byte_index(self.cursor + 1);
+        self.value.replace_range(start..end, "");
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -747,6 +823,9 @@ impl App {
                             ComposerMode::SecretInput(secret) => secret.insert_text(&text),
                             ComposerMode::ConfigNumberInput(input) => input.insert_text(&text),
                             ComposerMode::ConfigTextInput(input) => input.insert_text(&text),
+                            ComposerMode::Questionnaire(questionnaire) => {
+                                questionnaire.insert_text(&text);
+                            }
                             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
                         }
                         self.paste_burst.clear();
@@ -773,6 +852,10 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if self.handle_oauth_pending_key(key, terminal)? {
+            return Ok(());
+        }
+
+        if self.handle_questionnaire_key(key, terminal)? {
             return Ok(());
         }
 
@@ -1030,6 +1113,196 @@ impl App {
             }
             _ => Ok(true),
         }
+    }
+
+    fn handle_questionnaire_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::Questionnaire(_)) {
+            return Ok(false);
+        }
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                if self.ctrl_c_streak == 0 {
+                    if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                        questionnaire.value.clear();
+                        questionnaire.cursor = 0;
+                    }
+                    self.status = "answer cleared; press ctrl-c again to cancel".into();
+                    self.ctrl_c_streak = 1;
+                } else {
+                    self.composer = ComposerMode::Input;
+                    self.input.clear();
+                    self.paste_segments.clear();
+                    self.input_cursor = 0;
+                    self.command_palette_dismissed = false;
+                    self.clamp_command_selection();
+                    self.should_quit = true;
+                }
+                self.paste_burst.clear();
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                if self
+                    .paste_burst
+                    .should_insert_newline_for_enter(Instant::now())
+                {
+                    if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                        questionnaire.insert_char('\n');
+                    }
+                } else {
+                    self.submit_questionnaire_answer(terminal)?;
+                }
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => {
+                self.status = "answer required; press enter to submit or ctrl-c to quit".into();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Backspace) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.backspace();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Delete) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.delete();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Left) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.cursor = questionnaire.cursor.saturating_sub(1);
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.cursor = (questionnaire.cursor + 1).min(questionnaire.char_len());
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.cursor = 0;
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.cursor = questionnaire.char_len();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.insert_char('\n');
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.insert_char('\n');
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.insert_char(ch);
+                }
+                self.paste_burst.record_plain_char(Instant::now());
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => {
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+        }
+    }
+
+    fn submit_questionnaire_answer(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let ComposerMode::Questionnaire(mut questionnaire) =
+            std::mem::replace(&mut self.composer, ComposerMode::Input)
+        else {
+            return Ok(());
+        };
+        let answer = questionnaire.value.trim().to_string();
+        let answer = if answer.is_empty() {
+            questionnaire.request.default.clone().unwrap_or_default()
+        } else {
+            answer
+        };
+        if answer.is_empty() {
+            self.composer = ComposerMode::Questionnaire(questionnaire);
+            self.status = "answer cannot be empty".into();
+            return Ok(());
+        }
+        if let Some(response_tx) = questionnaire.response_tx.take() {
+            let _ = response_tx.send(QuestionnaireResponse {
+                answer: answer.clone(),
+            });
+        }
+        self.input.clear();
+        self.paste_segments.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.insert_entry(terminal, &Entry::User(answer))?;
+        self.status = "answer submitted".into();
+        Ok(())
+    }
+
+    fn open_questionnaire(
+        &mut self,
+        request: QuestionAnswerRequest,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<()> {
+        self.finish_streams(terminal)?;
+        self.input.clear();
+        self.paste_segments.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!("agent asks: {}", request.request.question)),
+        )?;
+        self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+            request.request,
+            request.response_tx,
+        ));
+        self.status = "waiting for your answer".into();
+        Ok(())
     }
 
     async fn handle_secret_key(
@@ -1699,7 +1972,8 @@ impl App {
     }
 
     fn command_palette_visible(&self) -> bool {
-        !self.command_palette_dismissed
+        matches!(self.composer, ComposerMode::Input)
+            && !self.command_palette_dismissed
             && self.cursor_in_command_token()
             && !self.command_matches().is_empty()
     }
@@ -1906,36 +2180,65 @@ impl App {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
             let callback_tool_call_active = Arc::clone(&tool_call_active);
             let run_steering_prompts = Arc::clone(&steering_prompts);
+            let (question_tx, mut question_rx) = mpsc::unbounded_channel::<QuestionAnswerRequest>();
             let mut content = Vec::with_capacity(1 + images.len());
             if !prompt.is_empty() {
                 content.push(ContentBlock::Text(prompt));
             }
             content.extend(images.into_iter().map(ContentBlock::Image));
-            let mut run_future = Box::pin(agent.run_with_content_and_events_and_steering(
-                content,
-                move |event| {
-                    match &event {
-                        AgentEvent::ToolStarted { .. } => {
-                            callback_tool_call_active.store(true, Ordering::SeqCst)
+            let question_request_tx = question_tx.clone();
+            let mut ask_questionnaire =
+                move |request: QuestionnaireRequest| -> crate::agent::QuestionnaireFuture {
+                    let question_request_tx = question_request_tx.clone();
+                    let (response_tx, response_rx) = oneshot::channel();
+                    Box::pin(async move {
+                        question_request_tx
+                            .send(QuestionAnswerRequest {
+                                request,
+                                response_tx,
+                            })
+                            .map_err(|_| {
+                                crate::agent::AgentError::Questionnaire(
+                                    "questionnaire UI is unavailable".into(),
+                                )
+                            })?;
+                        response_rx.await.map_err(|_| {
+                            crate::agent::AgentError::Questionnaire(
+                                "questionnaire answer was cancelled".into(),
+                            )
+                        })
+                    })
+                };
+            let mut run_future = Box::pin(
+                agent.run_with_content_and_events_questionnaire_and_steering(
+                    content,
+                    move |event| {
+                        match &event {
+                            AgentEvent::ToolStarted { .. } => {
+                                callback_tool_call_active.store(true, Ordering::SeqCst)
+                            }
+                            AgentEvent::ToolFinished { .. } => {
+                                callback_tool_call_active.store(false, Ordering::SeqCst)
+                            }
+                            AgentEvent::StepStarted(_)
+                            | AgentEvent::OutputDelta(_)
+                            | AgentEvent::ReasoningDelta(_)
+                            | AgentEvent::ContextUsage(_)
+                            | AgentEvent::Usage(_)
+                            | AgentEvent::ToolUpdated { .. }
+                            | AgentEvent::QuestionnaireStarted(_)
+                            | AgentEvent::QuestionnaireFinished(_) => {}
                         }
-                        AgentEvent::ToolFinished { .. } => {
-                            callback_tool_call_active.store(false, Ordering::SeqCst)
+                        let _ = event_tx.send(event);
+                        if callback_interrupt_requested.load(Ordering::SeqCst) {
+                            return Err(crate::model::ModelError::Interrupted);
                         }
-                        AgentEvent::StepStarted(_)
-                        | AgentEvent::OutputDelta(_)
-                        | AgentEvent::ReasoningDelta(_)
-                        | AgentEvent::ContextUsage(_)
-                        | AgentEvent::Usage(_)
-                        | AgentEvent::ToolUpdated { .. } => {}
-                    }
-                    let _ = event_tx.send(event);
-                    if callback_interrupt_requested.load(Ordering::SeqCst) {
-                        return Err(crate::model::ModelError::Interrupted);
-                    }
-                    Ok(())
-                },
-                move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
-            ));
+                        Ok(())
+                    },
+                    Some(&mut ask_questionnaire),
+                    move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
+                ),
+            );
             loop {
                 tokio::select! {
                     result = &mut run_future => {
@@ -1948,6 +2251,11 @@ impl App {
                         }
                         terminal.draw(|frame| self.draw(frame))?;
                         break result;
+                    }
+                    Some(request) = question_rx.recv() => {
+                        self.open_questionnaire(request, terminal)?;
+                        self.resize_inline_viewport_if_needed(terminal)?;
+                        terminal.draw(|frame| self.draw(frame))?;
                     }
                     Some(event) = event_rx.recv() => {
                         if let Err(err) = self.handle_queued_agent_event(event, terminal) {
@@ -2085,6 +2393,7 @@ impl App {
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
             ComposerMode::ConfigTextInput(input) => input.insert_text(text),
+            ComposerMode::Questionnaire(questionnaire) => questionnaire.insert_text(text),
             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
         }
     }
@@ -2094,6 +2403,9 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.handle_questionnaire_key(key, terminal)? {
+            return Ok(());
+        }
         if self.handle_running_config_number_key(key, terminal)? {
             return Ok(());
         }
@@ -3913,6 +4225,8 @@ impl App {
                     expanded,
                 }))
             }
+            AgentEvent::QuestionnaireStarted(_) => None,
+            AgentEvent::QuestionnaireFinished(_) => None,
         }
     }
 
@@ -3957,7 +4271,7 @@ impl App {
     ) -> ActiveFrame {
         let divider_style = match &self.composer {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
-            ComposerMode::Picker(_) => Theme::input_prompt(),
+            ComposerMode::Picker(_) | ComposerMode::Questionnaire(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
@@ -4052,6 +4366,7 @@ impl App {
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
+            ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
         }
     }
 
@@ -4133,6 +4448,14 @@ impl App {
                 x: input.cursor.min(width.max(1)) as u16,
                 y: 1,
             },
+            ComposerMode::Questionnaire(questionnaire) => {
+                let mut position =
+                    input_cursor_position(&questionnaire.value, questionnaire.cursor, width);
+                position.y = position
+                    .y
+                    .saturating_add(questionnaire_prompt_line_count(questionnaire, width) as u16);
+                position
+            }
             ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
                 x: display_width(&picker.filter)
@@ -4244,6 +4567,8 @@ impl App {
             lines.push(Line::raw("[secret input omitted]"));
         } else if matches!(self.composer, ComposerMode::OAuthPending(_)) {
             lines.push(Line::raw("[oauth login pending]"));
+        } else if matches!(self.composer, ComposerMode::Questionnaire(_)) {
+            lines.push(Line::raw("[questionnaire answer pending]"));
         } else {
             lines.extend(input_lines_with_images(
                 &self.input,
@@ -4636,6 +4961,60 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
         Theme::dim(),
         LineFill::Natural,
     )]
+}
+
+fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.extend(questionnaire_prompt_lines(questionnaire, width));
+    lines.extend(
+        input_visual_lines(&questionnaire.value, width)
+            .into_iter()
+            .map(|line| styled_line(line, width, Theme::text(), LineFill::Natural)),
+    );
+    lines
+}
+
+fn questionnaire_prompt_lines(
+    questionnaire: &QuestionnaireComposer,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    push_wrapped_text(
+        &mut lines,
+        &format!("answer: {}", questionnaire.request.question),
+        width,
+        Theme::input_prompt(),
+        LineFill::Natural,
+    );
+    if let Some(reason) = &questionnaire.request.reason {
+        push_wrapped_text(
+            &mut lines,
+            &format!("reason: {reason}"),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        );
+    }
+    if let Some(default) = &questionnaire.request.default {
+        push_wrapped_text(
+            &mut lines,
+            &format!("default: {default}"),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        );
+    }
+    lines.push(styled_line(
+        truncate_one_line("enter submit · shift-enter newline", width),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    ));
+    lines
+}
+
+fn questionnaire_prompt_line_count(questionnaire: &QuestionnaireComposer, width: usize) -> usize {
+    questionnaire_prompt_lines(questionnaire, width).len()
 }
 
 fn padded_content_width(width: usize) -> usize {

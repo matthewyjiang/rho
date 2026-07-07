@@ -137,6 +137,21 @@ impl ModelProvider for SequencedProvider {
     }
 }
 
+struct SequencedToolRecordingProvider {
+    requests: Arc<Mutex<Vec<Vec<Message>>>>,
+    tools: Arc<Mutex<Vec<Vec<ToolSpec>>>>,
+    responses: Mutex<VecDeque<ModelResponse>>,
+}
+
+#[async_trait(?Send)]
+impl ModelProvider for SequencedToolRecordingProvider {
+    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        self.tools.lock().unwrap().push(request.tools.clone());
+        self.requests.lock().unwrap().push(request.messages);
+        Ok(self.responses.lock().unwrap().pop_front().unwrap())
+    }
+}
+
 struct UsageStreamingProvider;
 
 #[async_trait(?Send)]
@@ -842,6 +857,141 @@ fn replace_history_keeps_initial_system_message() {
     assert!(
         matches!(agent.messages[2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous assistant"))
     );
+}
+
+#[tokio::test]
+async fn questionnaire_tool_is_only_advertised_when_handler_is_available() {
+    let provider = RecordingProvider::default();
+    let tools = provider.tools.clone();
+    let mut agent = test_agent(provider);
+
+    agent.run("hello".into()).await.unwrap();
+
+    assert!(!tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+
+    let provider = RecordingProvider::default();
+    let tools = provider.tools.clone();
+    let mut agent = test_agent(provider);
+    let mut ask_questionnaire = |_request: QuestionnaireRequest| -> QuestionnaireFuture {
+        panic!("questionnaire handler should not be called")
+    };
+
+    agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("hello".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert!(tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+}
+
+#[tokio::test]
+async fn questionnaire_tool_answer_is_returned_to_model() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let tools = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedToolRecordingProvider {
+        requests: requests.clone(),
+        tools: tools.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_question".into(),
+                name: questionnaire::TOOL_NAME.into(),
+                arguments: serde_json::json!({
+                    "question": "Which file should I edit?",
+                    "reason": "The request did not name a file.",
+                    "default": "src/main.rs"
+                }),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        ])),
+    };
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+    let mut events = Vec::new();
+    let mut ask_questionnaire = |request: QuestionnaireRequest| -> QuestionnaireFuture {
+        assert_eq!(request.question, "Which file should I edit?");
+        Box::pin(async {
+            Ok(QuestionnaireResponse {
+                answer: "src/lib.rs".into(),
+            })
+        })
+    };
+
+    let output = agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("edit the file".into())],
+            |event| {
+                events.push(event);
+                Ok(())
+            },
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, "done");
+    assert!(tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(matches!(
+        requests[1].last(),
+        Some(Message::ToolResult(ToolResult { id, ok: true, content }))
+            if id == "call_question" && content.contains("src/lib.rs")
+    ));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::QuestionnaireStarted(request) if request.question == "Which file should I edit?")));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::QuestionnaireFinished(response) if response.answer == "src/lib.rs")));
+}
+
+#[tokio::test]
+async fn invalid_questionnaire_arguments_return_failed_tool_result() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedProvider {
+        requests: requests.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_question".into(),
+                name: questionnaire::TOOL_NAME.into(),
+                arguments: serde_json::json!({"question": "   "}),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
+        ])),
+    };
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+    let mut ask_questionnaire = |_request: QuestionnaireRequest| -> QuestionnaireFuture {
+        panic!("invalid questionnaire should not call handler")
+    };
+
+    let output = agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("ask".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, "recovered");
+    let requests = requests.lock().unwrap();
+    assert!(matches!(
+        requests[1].last(),
+        Some(Message::ToolResult(ToolResult { ok: false, content, .. }))
+            if content == "question must not be empty"
+    ));
 }
 
 #[tokio::test]
