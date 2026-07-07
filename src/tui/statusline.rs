@@ -16,7 +16,6 @@ use crate::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
 pub(super) struct StatusLineState {
     pub(super) cwd: PathBuf,
     pub(super) branch: Option<String>,
-    pub(super) status: String,
     pub(super) usage: Option<ModelUsage>,
     pub(super) latest_usage: Option<ModelUsage>,
     pub(super) context_usage: Option<ContextUsage>,
@@ -31,7 +30,6 @@ pub(super) struct StatusLineState {
 impl StatusLineState {
     pub(super) fn from_tui(
         info: &TuiInfo,
-        status: impl Into<String>,
         usage: Option<ModelUsage>,
         latest_usage: Option<ModelUsage>,
         context_usage: Option<ContextUsage>,
@@ -41,7 +39,6 @@ impl StatusLineState {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
-            status: status.into(),
             usage,
             latest_usage,
             context_usage,
@@ -70,7 +67,6 @@ pub(super) fn statusline_lines(state: &StatusLineState, width: usize) -> Vec<Lin
     vec![
         render_row(state.left_top(), String::new(), width),
         render_row(format_usage(state), state.right_bottom(), width),
-        render_row(state.status.clone(), String::new(), width),
     ]
 }
 
@@ -312,7 +308,6 @@ mod tests {
         StatusLineState {
             cwd: PathBuf::from("/tmp/project"),
             branch: None,
-            status: "idle".into(),
             usage: Some(usage.clone()),
             latest_usage: Some(usage),
             context_usage: None,

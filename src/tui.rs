@@ -4214,7 +4214,6 @@ impl App {
         statusline_lines(
             &StatusLineState::from_tui(
                 &self.info,
-                &self.status,
                 self.cumulative_usage.clone(),
                 self.latest_usage.clone(),
                 self.current_context.clone(),
@@ -5712,7 +5711,8 @@ mod tests {
         let small_lines = app.active_lines_for_height(40, 4);
         let default_lines = app.active_lines_for_height(40, INLINE_VIEWPORT_HEIGHT as usize);
 
-        assert_eq!(line_text(&small_lines[0]), "─".repeat(40));
+        assert_eq!(line_text(&small_lines[0]), "");
+        assert_eq!(line_text(&small_lines[1]), "─".repeat(40));
         assert!(line_text(&default_lines[0]).contains("working"));
     }
 
@@ -5796,7 +5796,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
         let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
     }
 
     #[test]
@@ -5825,7 +5826,8 @@ mod tests {
         let bottom = rows.last().unwrap();
         let cursor = terminal.backend().cursor_position();
         assert!(rows.iter().any(|row| row.contains("line 29")), "{rows:#?}");
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
         assert!(cursor.y < height, "{cursor:?}");
         assert!(
             rows[cursor.y as usize].contains("line 29"),
@@ -5889,7 +5891,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
         let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
     }
 
     #[test]
