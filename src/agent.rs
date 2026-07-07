@@ -131,6 +131,15 @@ impl Agent {
         self.context_tracker.replace_provider();
     }
 
+    pub fn set_provider_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        if self.provider.set_reasoning(reasoning) {
+            self.context_tracker.replace_provider();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn reset(&mut self) {
         self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
         self.context_tracker.reset();

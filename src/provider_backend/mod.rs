@@ -152,6 +152,10 @@ impl ModelError {
 /// request history.
 #[async_trait::async_trait(?Send)]
 pub trait ModelProvider: Send + Sync {
+    fn set_reasoning(&mut self, _reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        false
+    }
+
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;
 
     async fn send_turn_stream(

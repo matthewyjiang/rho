@@ -3379,18 +3379,20 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let reasoning = self.info.reasoning.next();
-        let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
-                )?;
-                self.status = "reasoning change failed".into();
-                return Ok(());
-            }
-        };
-        agent.replace_provider(provider);
+        if !agent.set_provider_reasoning(reasoning) {
+            let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
+                    )?;
+                    self.status = "reasoning change failed".into();
+                    return Ok(());
+                }
+            };
+            agent.replace_provider(provider);
+        }
         self.info.reasoning = reasoning;
         let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.reasoning = reasoning;
@@ -3952,10 +3954,13 @@ impl App {
         viewport_height: usize,
         now: Instant,
     ) -> Vec<Line<'static>> {
-        let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
-            Theme::input_prompt()
-        } else {
-            Theme::dim()
+        let divider_style = match &self.composer {
+            ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
+            ComposerMode::Picker(_) => Theme::input_prompt(),
+            ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::OAuthPending(_) => Theme::dim(),
         };
         let divider = Line::styled("─".repeat(width.max(1)), divider_style);
         let composer_lines = self.composer_lines(width);
@@ -4193,7 +4198,10 @@ impl App {
             previous_was_tool = is_tool_entry(entry);
         }
 
-        let divider = Line::styled("─".repeat(width.max(1)), Theme::dim());
+        let divider = Line::styled(
+            "─".repeat(width.max(1)),
+            Theme::reasoning_input_border(self.info.reasoning),
+        );
         lines.push(divider.clone());
         if matches!(self.composer, ComposerMode::SecretInput(_)) {
             lines.push(Line::raw("[secret input omitted]"));
@@ -5512,6 +5520,34 @@ mod tests {
     }
 
     #[test]
+    fn input_divider_style_tracks_reasoning_level() {
+        let mut app = test_app();
+        app.input = "hello".into();
+
+        app.info.reasoning = ReasoningLevel::Off;
+        let off_lines = app.active_lines(20);
+        let off_style = off_lines[0].style;
+
+        app.info.reasoning = ReasoningLevel::High;
+        let high_lines = app.active_lines(20);
+        let high_style = high_lines[0].style;
+
+        assert_eq!(line_text(&high_lines[0]), "────────────────────");
+        assert_eq!(line_text(&high_lines[1]), "hello");
+        assert_eq!(line_text(&high_lines[2]), "────────────────────");
+        assert_eq!(
+            off_style,
+            Theme::reasoning_input_border(ReasoningLevel::Off)
+        );
+        assert_eq!(
+            high_style,
+            Theme::reasoning_input_border(ReasoningLevel::High)
+        );
+        assert_eq!(high_lines[2].style, high_style);
+        assert_ne!(off_style, high_style);
+    }
+
+    #[test]
     fn active_lines_for_height_uses_actual_viewport_height() {
         let mut app = test_app();
         app.running = true;
@@ -5690,7 +5726,10 @@ mod tests {
             .iter()
             .map(line_text)
             .collect::<Vec<_>>();
-        let input_index = lines.iter().position(|line| line == "/m").unwrap();
+        let input_index = lines
+            .iter()
+            .position(|line| line.trim_end() == "/m")
+            .unwrap();
         let suggestion_index = lines
             .iter()
             .position(|line| line.contains("> /model [model]"))
