@@ -59,7 +59,7 @@ impl AppendOnlyStream {
     }
 
     pub(super) fn drain_preview(&mut self) -> Option<StreamFragment> {
-        self.drain_preview_with_width(|text| display_width(text))
+        self.drain_preview_with_width(display_width)
     }
 
     pub(super) fn drain_preview_markdown(
