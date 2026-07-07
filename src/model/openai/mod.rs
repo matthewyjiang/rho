@@ -68,6 +68,12 @@ impl OpenAiProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for OpenAiProvider {
+    fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        self.reasoning_effort = reasoning.effort().map(str::to_string);
+        self.reasoning_summary = reasoning.summary().map(str::to_string);
+        true
+    }
+
     async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,

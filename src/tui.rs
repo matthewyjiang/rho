@@ -3334,18 +3334,20 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let reasoning = self.info.reasoning.next();
-        let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
-                )?;
-                self.status = "reasoning change failed".into();
-                return Ok(());
-            }
-        };
-        agent.replace_provider(provider);
+        if !agent.set_provider_reasoning(reasoning) {
+            let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(
+                        terminal,
+                        &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
+                    )?;
+                    self.status = "reasoning change failed".into();
+                    return Ok(());
+                }
+            };
+            agent.replace_provider(provider);
+        }
         self.info.reasoning = reasoning;
         let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.reasoning = reasoning;
