@@ -3982,24 +3982,26 @@ impl App {
 
         let mut content = Vec::new();
         if let Some(pending) = &self.pending_tool_call {
-            let spinner_lines = usize::from(self.loading_active());
             let pending_tool_output_lines = self
                 .info
                 .max_tool_output_lines
-                .min(available_content.saturating_sub(spinner_lines + 3).max(1));
+                .min(available_content.saturating_sub(3).max(1));
             content.extend(entry_lines(
                 &Entry::Tool(pending.clone()),
                 width,
                 pending_tool_output_lines,
             ));
         }
-        if self.loading_active() {
-            content.push(self.loading_spinner.line(now));
-        }
 
         let content_skip = content.len().saturating_sub(available_content);
         let visible_content_len = content.len().saturating_sub(content_skip);
         let mut lines = Vec::new();
+        if self.loading_active() {
+            lines.push(self.loading_spinner.line(now));
+            if visible_content_len > 0 || show_top_divider || visible_composer_len > 0 {
+                lines.push(Line::raw(""));
+            }
+        }
         lines.extend(content.into_iter().skip(content_skip));
         if show_top_divider {
             lines.push(divider.clone());
@@ -4009,7 +4011,13 @@ impl App {
         lines.extend(statusline_lines);
         lines.extend(command_lines);
 
-        let composer_y = visible_content_len + usize::from(show_top_divider);
+        let composer_y = visible_content_len
+            + usize::from(self.loading_active())
+            + usize::from(
+                self.loading_active()
+                    && (visible_content_len > 0 || show_top_divider || visible_composer_len > 0),
+            )
+            + usize::from(show_top_divider);
         let cursor_y = if visible_composer_len == 0 {
             0
         } else {
@@ -5552,6 +5560,7 @@ mod tests {
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(line_text(&lines[0]).contains("working"), "{rendered}");
+        assert_eq!(line_text(&lines[1]), "", "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -5608,6 +5617,36 @@ mod tests {
             spinner.frame_at(started_at + LoadingSpinner::FRAME_INTERVAL),
             "⠙"
         );
+    }
+
+    #[test]
+    fn loading_spinner_line_separates_frame_from_text() {
+        let started_at = Instant::now();
+        let spinner = LoadingSpinner {
+            started_at: Some(started_at),
+        };
+
+        assert_eq!(line_text(&spinner.line(started_at)), "⠋ working");
+    }
+
+    #[test]
+    fn active_lines_separate_spinner_from_content_with_blank_line() {
+        let mut app = test_app();
+        app.running = true;
+        app.pending_tool_call = Some(ToolEntry {
+            state: ToolEntryState::Running,
+            display_lines: vec!["bash".into(), "cargo test".into()],
+            expanded: false,
+        });
+
+        let lines =
+            app.active_lines_at_for_height(40, INLINE_VIEWPORT_HEIGHT as usize, Instant::now());
+
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(line_text(&lines[0]).contains("working"), "{rendered}");
+        assert_eq!(line_text(&lines[1]), "", "{rendered}");
+        assert!(rendered.contains("bash"), "{rendered}");
     }
 
     #[test]
