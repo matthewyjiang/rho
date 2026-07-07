@@ -59,6 +59,19 @@ pub(super) fn markdown_lines(
     lines
 }
 
+pub(super) fn markdown_rendered_width(text: &str, width: usize, in_code_block: bool) -> usize {
+    let mut in_code_block = in_code_block;
+    markdown_lines(text, width, &mut in_code_block)
+        .last()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| display_width(span.content.as_ref()))
+                .sum()
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct StyledSegment {
     text: String,
