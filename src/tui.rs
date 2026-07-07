@@ -46,8 +46,8 @@ mod theme;
 use markdown::push_wrapped_markdown;
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
-    display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
+    entry_lines, input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
+    session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
@@ -1480,9 +1480,8 @@ impl App {
         direction: HistoryDirection,
         terminal_width: usize,
     ) {
-        let input_width = input_box_text_width(terminal_width);
-        let visual_lines = input_visual_lines(&self.input, input_width);
-        let cursor_position = input_cursor_position(&self.input, self.input_cursor, input_width);
+        let visual_lines = input_visual_lines(&self.input, terminal_width);
+        let cursor_position = input_cursor_position(&self.input, self.input_cursor, terminal_width);
         let can_recall = match direction {
             HistoryDirection::Previous => cursor_position.y == 0,
             HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
@@ -3901,10 +3900,13 @@ impl App {
         viewport_height: usize,
         now: Instant,
     ) -> Vec<Line<'static>> {
-        let divider_style = if matches!(self.composer, ComposerMode::Picker(_)) {
-            Theme::input_prompt()
-        } else {
-            Theme::dim()
+        let divider_style = match &self.composer {
+            ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
+            ComposerMode::Picker(_) => Theme::input_prompt(),
+            ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::OAuthPending(_) => Theme::dim(),
         };
         let divider = Line::styled("─".repeat(width.max(1)), divider_style);
         let composer_lines = self.composer_lines(width);
@@ -3944,12 +3946,9 @@ impl App {
 
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
         match &self.composer {
-            ComposerMode::Input => input_lines_with_images(
-                &self.input,
-                &self.pending_images,
-                width,
-                Theme::reasoning_input_border(self.info.reasoning),
-            ),
+            ComposerMode::Input => {
+                input_lines_with_images(&self.input, &self.pending_images, width)
+            }
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
@@ -4025,13 +4024,7 @@ impl App {
     fn composer_cursor_position(&self, width: usize) -> Position {
         match &self.composer {
             ComposerMode::Input => {
-                let input_width = input_box_text_width(width);
-                let mut position =
-                    input_cursor_position(&self.input, self.input_cursor, input_width);
-                if input_box_has_border(width) {
-                    position.x = position.x.saturating_add(1);
-                    position.y = position.y.saturating_add(1);
-                }
+                let mut position = input_cursor_position(&self.input, self.input_cursor, width);
                 position.y = position.y.saturating_add(self.pending_images.len() as u16);
                 position
             }
@@ -4151,7 +4144,10 @@ impl App {
             previous_was_tool = is_tool_entry(entry);
         }
 
-        let divider = Line::styled("─".repeat(width.max(1)), Theme::dim());
+        let divider = Line::styled(
+            "─".repeat(width.max(1)),
+            Theme::reasoning_input_border(self.info.reasoning),
+        );
         lines.push(divider.clone());
         if matches!(self.composer, ComposerMode::SecretInput(_)) {
             lines.push(Line::raw("[secret input omitted]"));
@@ -4162,7 +4158,6 @@ impl App {
                 &self.input,
                 &self.pending_images,
                 width,
-                Theme::reasoning_input_border(self.info.reasoning),
             ));
         }
         lines.push(divider);
@@ -4790,7 +4785,6 @@ fn input_lines_with_images(
     input: &str,
     images: &[ImageContent],
     width: usize,
-    border_style: Style,
 ) -> Vec<Line<'static>> {
     let mut lines = images
         .iter()
@@ -4804,67 +4798,8 @@ fn input_lines_with_images(
             )
         })
         .collect::<Vec<_>>();
-    lines.extend(input_box_lines(input, width, border_style));
+    lines.extend(input_visual_lines(input, width).into_iter().map(Line::raw));
     lines
-}
-
-fn input_box_lines(input: &str, width: usize, border_style: Style) -> Vec<Line<'static>> {
-    let width = width.max(1);
-    let input_width = input_box_text_width(width);
-    if !input_box_has_border(width) {
-        return input_visual_lines(input, input_width)
-            .into_iter()
-            .map(|line| styled_line(line, width, Style::default(), LineFill::Natural))
-            .collect();
-    }
-
-    let top = input_box_border_line('╭', '╮', width, border_style);
-    let bottom = input_box_border_line('╰', '╯', width, border_style);
-    let mut lines = vec![top];
-    lines.extend(
-        input_visual_lines(input, input_width)
-            .into_iter()
-            .map(|line| {
-                let content_len = display_width(&line);
-                let padding = input_width.saturating_sub(content_len);
-                Line::from(vec![
-                    Span::styled("│", border_style),
-                    Span::raw(line),
-                    Span::raw(" ".repeat(padding)),
-                    Span::styled("│", border_style),
-                ])
-            }),
-    );
-    lines.push(bottom);
-    lines
-}
-
-fn input_box_has_border(width: usize) -> bool {
-    width >= 3
-}
-
-fn input_box_text_width(width: usize) -> usize {
-    if input_box_has_border(width) {
-        width - 2
-    } else {
-        width.max(1)
-    }
-}
-
-fn input_box_border_line(
-    left: char,
-    right: char,
-    width: usize,
-    border_style: Style,
-) -> Line<'static> {
-    let width = width.max(1);
-    if width == 1 {
-        return Line::from(Span::styled(left.to_string(), border_style));
-    }
-    Line::from(Span::styled(
-        format!("{left}{}{right}", "─".repeat(width.saturating_sub(2))),
-        border_style,
-    ))
 }
 
 fn render_user_entry(prompt: &str, images: &[ImageContent]) -> String {
@@ -5530,21 +5465,21 @@ mod tests {
     }
 
     #[test]
-    fn input_box_border_style_tracks_reasoning_level() {
+    fn input_divider_style_tracks_reasoning_level() {
         let mut app = test_app();
         app.input = "hello".into();
 
         app.info.reasoning = ReasoningLevel::Off;
-        let off_lines = app.composer_lines(20);
-        let off_style = off_lines[0].spans[0].style;
+        let off_lines = app.active_lines(20);
+        let off_style = off_lines[0].style;
 
         app.info.reasoning = ReasoningLevel::High;
-        let high_lines = app.composer_lines(20);
-        let high_style = high_lines[0].spans[0].style;
+        let high_lines = app.active_lines(20);
+        let high_style = high_lines[0].style;
 
-        assert_eq!(line_text(&high_lines[0]), "╭──────────────────╮");
-        assert_eq!(line_text(&high_lines[1]), "│hello             │");
-        assert_eq!(line_text(&high_lines[2]), "╰──────────────────╯");
+        assert_eq!(line_text(&high_lines[0]), "────────────────────");
+        assert_eq!(line_text(&high_lines[1]), "hello");
+        assert_eq!(line_text(&high_lines[2]), "────────────────────");
         assert_eq!(
             off_style,
             Theme::reasoning_input_border(ReasoningLevel::Off)
@@ -5553,24 +5488,8 @@ mod tests {
             high_style,
             Theme::reasoning_input_border(ReasoningLevel::High)
         );
-        assert_eq!(high_lines[1].spans[0].style, high_style);
-        assert_eq!(high_lines[1].spans[2].style, Style::default());
-        assert_eq!(high_lines[1].spans[3].style, high_style);
+        assert_eq!(high_lines[2].style, high_style);
         assert_ne!(off_style, high_style);
-    }
-
-    #[test]
-    fn input_box_pads_double_width_text_by_display_width() {
-        let lines = input_box_lines(
-            "😀",
-            10,
-            Theme::reasoning_input_border(ReasoningLevel::High),
-        );
-
-        assert_eq!(line_text(&lines[0]), "╭────────╮");
-        assert_eq!(line_text(&lines[1]), "│😀      │");
-        assert_eq!(line_text(&lines[2]), "╰────────╯");
-        assert_eq!(display_width(&line_text(&lines[1])), 10);
     }
 
     #[test]
@@ -5754,7 +5673,7 @@ mod tests {
             .collect::<Vec<_>>();
         let input_index = lines
             .iter()
-            .position(|line| line.trim_end_matches(&[' ', '│']) == "│/m")
+            .position(|line| line.trim_end() == "/m")
             .unwrap();
         let suggestion_index = lines
             .iter()

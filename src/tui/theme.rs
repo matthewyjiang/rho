@@ -227,7 +227,7 @@ impl Theme {
 
     pub(super) fn reasoning_input_border(level: crate::reasoning::ReasoningLevel) -> Style {
         let color = match level {
-            crate::reasoning::ReasoningLevel::Off => Palette::current().dim,
+            crate::reasoning::ReasoningLevel::Off => return Theme::dim(),
             crate::reasoning::ReasoningLevel::Minimal => AnsiColor::Blue.color(),
             crate::reasoning::ReasoningLevel::Low => AnsiColor::Cyan.color(),
             crate::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
