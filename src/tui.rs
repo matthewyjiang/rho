@@ -89,6 +89,8 @@ const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
+const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
+const STREAM_PREVIEW_MIN_CHARS: usize = 2;
 
 pub struct TuiInfo {
     pub cwd: PathBuf,
@@ -159,6 +161,12 @@ struct ActiveFrame {
     cursor: Position,
 }
 
+struct LiveStreamPreview {
+    kind: StreamKind,
+    text: String,
+    include_leading_blank: bool,
+}
+
 struct App {
     info: TuiInfo,
     input: String,
@@ -170,6 +178,8 @@ struct App {
     assistant_stream_in_code_block: bool,
     reasoning_stream: AppendOnlyStream,
     current_stream_kind: Option<StreamKind>,
+    stream_preview_deadline: Option<Instant>,
+    live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
     active_turn_show_reasoning_output: bool,
     running: bool,
@@ -677,6 +687,8 @@ impl App {
             assistant_stream_in_code_block: false,
             reasoning_stream: AppendOnlyStream::default(),
             current_stream_kind: None,
+            stream_preview_deadline: None,
+            live_stream_preview: None,
             current_turn_start: None,
             active_turn_show_reasoning_output,
             running: false,
@@ -1968,7 +1980,8 @@ impl App {
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
-                    _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
+                        self.drain_stream_preview(terminal)?;
                         match self.handle_running_terminal_events(
                             terminal,
                             &interrupt_requested,
@@ -2635,6 +2648,8 @@ impl App {
         self.assistant_stream_in_code_block = false;
         self.reasoning_stream.reset();
         self.current_stream_kind = None;
+        self.stream_preview_deadline = None;
+        self.live_stream_preview = None;
     }
 
     fn loading_active(&self) -> bool {
@@ -2648,6 +2663,16 @@ impl App {
     ) -> Result<(), crate::model::ModelError> {
         self.handle_agent_event(event, terminal)?;
         Ok(())
+    }
+
+    fn stream_sleep_deadline(&self) -> tokio::time::Instant {
+        let spinner_deadline = Instant::now() + LoadingSpinner::FRAME_INTERVAL;
+        let deadline = self
+            .stream_preview_deadline
+            .map_or(spinner_deadline, |stream_deadline| {
+                stream_deadline.min(spinner_deadline)
+            });
+        tokio::time::Instant::from_std(deadline)
     }
 
     fn handle_running_terminal_events(
@@ -2718,6 +2743,7 @@ impl App {
                 let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
+                self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
             }
             AgentEvent::ReasoningDelta(text) => {
@@ -2727,6 +2753,7 @@ impl App {
                 let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
                 self.reasoning_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
+                self.update_stream_preview_deadline(StreamKind::Reasoning);
                 Ok(switched || drained)
             }
             other => {
@@ -2761,6 +2788,7 @@ impl App {
             false
         };
         self.current_stream_kind = Some(kind);
+        self.update_stream_preview_deadline(kind);
         Ok(inserted)
     }
 
@@ -2784,6 +2812,7 @@ impl App {
             StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
         };
         if let Some(fragment) = fragment {
+            self.live_stream_preview = None;
             self.insert_stream_fragment(terminal, fragment, kind)?;
             Ok(true)
         } else {
@@ -2795,6 +2824,8 @@ impl App {
         let reasoning_finished = self.finish_stream(terminal, StreamKind::Reasoning)?;
         let assistant_finished = self.finish_stream(terminal, StreamKind::Assistant)?;
         self.current_stream_kind = None;
+        self.stream_preview_deadline = None;
+        self.live_stream_preview = None;
         Ok(reasoning_finished || assistant_finished)
     }
 
@@ -2815,12 +2846,58 @@ impl App {
             StreamKind::Assistant => self.assistant_stream.finish(),
             StreamKind::Reasoning => self.reasoning_stream.finish(),
         };
+        self.update_stream_preview_deadline(kind);
         if let Some(fragment) = fragment {
+            self.live_stream_preview = None;
             self.insert_stream_fragment(terminal, fragment, kind)?;
             Ok(true)
         } else {
             Ok(false)
         }
+    }
+
+    fn drain_stream_preview(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+        if self
+            .stream_preview_deadline
+            .is_none_or(|deadline| Instant::now() < deadline)
+        {
+            return Ok(false);
+        }
+        let Some(kind) = self.current_stream_kind else {
+            self.stream_preview_deadline = None;
+            return Ok(false);
+        };
+        let width = terminal.size()?.width as usize;
+        let inner_width = padded_content_width(width);
+        let preview = match kind {
+            StreamKind::Assistant => self
+                .assistant_stream
+                .drain_preview_markdown(inner_width, self.assistant_stream_in_code_block),
+            StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
+        };
+        self.update_stream_preview_deadline(kind);
+        if let Some(preview) = preview {
+            self.live_stream_preview = Some(LiveStreamPreview {
+                kind,
+                text: preview.render_text().to_string(),
+                include_leading_blank: preview.include_leading_blank(),
+            });
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
+        let pending_chars = match kind {
+            StreamKind::Assistant => self.assistant_stream.pending_text().chars().count(),
+            StreamKind::Reasoning => self.reasoning_stream.pending_text().chars().count(),
+        };
+        self.stream_preview_deadline = if pending_chars >= STREAM_PREVIEW_MIN_CHARS {
+            Some(Instant::now() + STREAM_PREVIEW_DELAY)
+        } else {
+            None
+        };
     }
 
     fn insert_final_answer_suffix(
@@ -2843,6 +2920,37 @@ impl App {
         Ok(())
     }
 
+    fn render_stream_preview_lines(
+        &self,
+        preview: &LiveStreamPreview,
+        width: usize,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if preview.include_leading_blank {
+            lines.push(Line::raw(""));
+        }
+        let mut text_lines = Vec::new();
+        if matches!(preview.kind, StreamKind::Assistant) {
+            let mut in_code_block = self.assistant_stream_in_code_block;
+            push_wrapped_markdown(
+                &mut text_lines,
+                &preview.text,
+                padded_content_width(width),
+                &mut in_code_block,
+            );
+        } else {
+            push_wrapped_text(
+                &mut text_lines,
+                &preview.text,
+                padded_content_width(width),
+                preview.kind.style(),
+                LineFill::Natural,
+            );
+        }
+        lines.extend(text_lines.into_iter().map(pad_display_line));
+        lines
+    }
+
     fn insert_stream_fragment(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -2852,7 +2960,6 @@ impl App {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             let width = terminal.size()?.width as usize;
-            let style = kind.style();
             let mut lines = Vec::new();
             if fragment.include_leading_blank() {
                 lines.push(Line::raw(""));
@@ -2870,7 +2977,7 @@ impl App {
                     &mut text_lines,
                     render_text,
                     padded_content_width(width),
-                    style,
+                    kind.style(),
                     LineFill::Natural,
                 );
             }
@@ -3991,6 +4098,10 @@ impl App {
                 width,
                 pending_tool_output_lines,
             ));
+        }
+
+        if let Some(preview) = &self.live_stream_preview {
+            content.extend(self.render_stream_preview_lines(preview, width));
         }
 
         let content_skip = content.len().saturating_sub(available_content);
