@@ -1,5 +1,7 @@
-#[cfg(test)]
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -68,6 +70,21 @@ pub trait CredentialStore: Send + Sync {
 pub struct OsCredentialStore;
 
 impl OsCredentialStore {
+    fn secret_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+        static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn cached_secret(account: &str) -> Option<Option<String>> {
+        Self::secret_cache().lock().ok()?.get(account).cloned()
+    }
+
+    fn remember_secret(account: &str, secret: Option<String>) {
+        if let Ok(mut cache) = Self::secret_cache().lock() {
+            cache.insert(account.to_string(), secret);
+        }
+    }
+
     fn entry(account: &str) -> CredentialResult<keyring::Entry> {
         keyring::Entry::new(SERVICE, account)
             .map_err(|err| CredentialError::StoreUnavailable(err.to_string()))
@@ -304,33 +321,46 @@ fn delete_chunks_for_manifest(account: &str, manifest: &str) -> CredentialResult
 
 impl CredentialStore for OsCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
-        match Self::load_chunked_secret(account)? {
-            Some(secret) => Ok(Some(secret)),
-            None => Self::get_entry_secret(account),
+        if let Some(secret) = Self::cached_secret(account) {
+            return Ok(secret);
         }
+
+        let secret = match Self::load_chunked_secret(account)? {
+            Some(secret) => Some(secret),
+            None => Self::get_entry_secret(account)?,
+        };
+        Self::remember_secret(account, secret.clone());
+        Ok(secret)
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
-        if should_chunk_secret(secret) {
-            return Self::set_chunked_secret(account, secret);
-        }
-        match Self::set_entry_secret(account, secret) {
-            Ok(()) => {
-                Self::delete_chunked_secret(account)?;
-                Ok(())
-            }
-            Err(err) => {
-                if should_retry_as_chunked(&err) {
-                    Self::set_chunked_secret(account, secret)
-                } else {
-                    Err(err)
+        let result = if should_chunk_secret(secret) {
+            Self::set_chunked_secret(account, secret)
+        } else {
+            match Self::set_entry_secret(account, secret) {
+                Ok(()) => {
+                    Self::delete_chunked_secret(account)?;
+                    Ok(())
+                }
+                Err(err) => {
+                    if should_retry_as_chunked(&err) {
+                        Self::set_chunked_secret(account, secret)
+                    } else {
+                        Err(err)
+                    }
                 }
             }
+        };
+        if result.is_ok() {
+            Self::remember_secret(account, Some(secret.to_string()));
         }
+        result
     }
 
     fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
-        Ok(Self::delete_entry_secret(account)? | Self::delete_chunked_secret(account)?)
+        let deleted = Self::delete_entry_secret(account)? | Self::delete_chunked_secret(account)?;
+        Self::remember_secret(account, None);
+        Ok(deleted)
     }
 }
 

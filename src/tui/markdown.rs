@@ -4,7 +4,7 @@ use ratatui::{
 };
 
 use super::{
-    render::{wrap_line_at_whitespace_ranges, wrap_line_hard},
+    render::{char_display_width, display_width, wrap_line_at_whitespace_ranges, wrap_line_hard},
     theme::Theme,
 };
 
@@ -152,7 +152,7 @@ fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
     wrap_line_at_whitespace_ranges(text, width)
         .into_iter()
         .rfind(|range| {
-            range.end < text.len() || text[range.clone()].chars().count() >= width.max(1)
+            range.end < text.len() || display_width(&text[range.clone()]) >= width.max(1)
         })
         .map(|range| CompleteStreamPrefix {
             byte_index: range.end,
@@ -163,18 +163,29 @@ fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
 
 fn complete_hard_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
     let width = width.max(1);
-    let complete_chars = text.chars().count() / width * width;
-    if complete_chars == 0 {
-        return CompleteStreamPrefix::default();
+    let mut line_width = 0;
+    let mut last_complete = 0;
+    for (index, ch) in text.char_indices() {
+        let ch_width = char_display_width(ch);
+        if line_width > 0 && line_width + ch_width > width {
+            last_complete = index;
+            line_width = 0;
+        }
+        line_width += ch_width;
+        let next = index + ch.len_utf8();
+        if line_width >= width {
+            last_complete = next;
+            line_width = 0;
+        }
     }
-    let byte_index = text
-        .char_indices()
-        .map(|(index, _)| index)
-        .nth(complete_chars)
-        .unwrap_or(text.len());
-    CompleteStreamPrefix {
-        byte_index,
-        ends_with_wrap: true,
+
+    if last_complete == 0 {
+        CompleteStreamPrefix::default()
+    } else {
+        CompleteStreamPrefix {
+            byte_index: last_complete,
+            ends_with_wrap: true,
+        }
     }
 }
 
@@ -281,7 +292,7 @@ fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
     wrap_line_hard(line, content_width.max(1))
         .into_iter()
         .map(|chunk| {
-            let chunk_width = chunk.chars().count();
+            let chunk_width = display_width(&chunk);
             let padding = " ".repeat(content_width.saturating_sub(chunk_width));
             Line::from(Span::styled(format!("│ {chunk}{padding} │"), style))
         })
@@ -750,6 +761,15 @@ mod tests {
         assert_eq!(line_text(&lines[1]), "│ let x = 1;       │");
         assert_eq!(line_text(&lines[2]), "╰──────────────────╯");
         assert_eq!(lines[1].spans[0].style, Theme::markdown_code_block());
+    }
+
+    #[test]
+    fn code_block_padding_uses_display_width() {
+        let mut in_code_block = false;
+        let lines = markdown_lines("```\n你\n```", 6, &mut in_code_block);
+
+        assert_eq!(line_text(&lines[1]), "│ 你 │");
+        assert_eq!(display_width(&line_text(&lines[1])), 6);
     }
 
     #[test]

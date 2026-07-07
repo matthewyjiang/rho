@@ -5,7 +5,11 @@ use std::{
 
 use ratatui::text::{Line, Span};
 
-use super::{theme::Theme, TuiInfo};
+use super::{
+    render::{display_width, truncate_one_line},
+    theme::Theme,
+    TuiInfo,
+};
 use crate::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,8 +229,8 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
         return Line::from(Span::styled(truncate_one_line(&left, width), style));
     }
 
-    let left_width = left.chars().count();
-    let right_width = right.chars().count();
+    let left_width = display_width(&left);
+    let right_width = display_width(&right);
     if left_width + right_width < width {
         let gap = " ".repeat(width - left_width - right_width);
         return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
@@ -234,9 +238,9 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
 
     let right_budget = right_width.min(width.saturating_div(2).max(1));
     let right = truncate_one_line(&right, right_budget);
-    let right_width = right.chars().count();
+    let right_width = display_width(&right);
     let left = truncate_one_line(&left, width.saturating_sub(right_width + 1).max(1));
-    let left_width = left.chars().count();
+    let left_width = display_width(&left);
     let gap = " ".repeat(width.saturating_sub(left_width + right_width));
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
 }
@@ -287,19 +291,6 @@ fn compact_cwd(path: &Path) -> String {
     }
 }
 
-fn truncate_one_line(text: &str, width: usize) -> String {
-    let mut text = text.replace('\n', " ");
-    if text.chars().count() <= width {
-        return text;
-    }
-    if width <= 1 {
-        return "…".chars().take(width).collect();
-    }
-    text = text.chars().take(width - 1).collect();
-    text.push('…');
-    text
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +323,21 @@ mod tests {
             model_metadata: Some(priced_metadata()),
             model_metadata_loading: false,
         }
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn statusline_rows_use_display_width_for_alignment() {
+        let line = render_row("项目".into(), "模型".into(), 10);
+        let text = line_text(&line);
+
+        assert_eq!(display_width(&text), 10);
     }
 
     #[test]
