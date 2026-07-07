@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.16.0...rho-coding-agent-v0.16.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **tui:** preview partial streaming lines ([#122](https://github.com/matthewyjiang/rho/issues/122)) ([2aa570f](https://github.com/matthewyjiang/rho/commit/2aa570f0c165f16b6b0fa86563a9ae03bbf3c87c))
+* **tui:** remove status info line ([#123](https://github.com/matthewyjiang/rho/issues/123)) ([926666f](https://github.com/matthewyjiang/rho/commit/926666fb2ad9e4d5c725308192707c66b8915e9e))
+
 ## [0.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.15.3...rho-coding-agent-v0.16.0) (2026-07-07)
 
 
