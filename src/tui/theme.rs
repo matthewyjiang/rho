@@ -225,6 +225,18 @@ impl Theme {
         Self::dim_block(Palette::current().user_background)
     }
 
+    pub(super) fn reasoning_input_border(level: crate::reasoning::ReasoningLevel) -> Style {
+        let color = match level {
+            crate::reasoning::ReasoningLevel::Off => Palette::current().dim,
+            crate::reasoning::ReasoningLevel::Minimal => AnsiColor::Blue.color(),
+            crate::reasoning::ReasoningLevel::Low => AnsiColor::Cyan.color(),
+            crate::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
+            crate::reasoning::ReasoningLevel::High => AnsiColor::Yellow.color(),
+            crate::reasoning::ReasoningLevel::Xhigh => AnsiColor::Magenta.color(),
+        };
+        Style::default().fg(color)
+    }
+
     pub(super) fn markdown_inline_code() -> Style {
         Style::default()
             .fg(Palette::current().warning)
