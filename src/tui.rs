@@ -23,7 +23,7 @@ use crossterm::{
     execute,
 };
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::{Backend, CrosstermBackend},
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -195,6 +195,7 @@ struct App {
     paste_burst: PasteBurst,
     paste_segments: Vec<PasteSegment>,
     transcript: Vec<Entry>,
+    last_status_notice: Option<String>,
     last_inserted_was_tool: bool,
     command_selection: usize,
     command_prefix: Option<String>,
@@ -704,6 +705,7 @@ impl App {
             paste_burst: PasteBurst::default(),
             paste_segments: Vec::new(),
             transcript: Vec::new(),
+            last_status_notice: None,
             last_inserted_was_tool: false,
             command_selection: 0,
             command_prefix: None,
@@ -823,7 +825,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.status = "input cleared; press ctrl-c again to quit".into();
+                    self.notify_status(terminal, "input cleared; press ctrl-c again to quit")?;
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -834,7 +836,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image();
+                self.paste_clipboard_image(terminal)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -887,10 +889,13 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.status = format!(
-                        "editing queued message; {} queued message(s) remain",
-                        self.queued_prompts.len()
-                    );
+                    self.notify_status(
+                        terminal,
+                        format!(
+                            "editing queued message; {} queued message(s) remain",
+                            self.queued_prompts.len()
+                        ),
+                    )?;
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -2071,25 +2076,35 @@ impl App {
         target.extend(self.steering_prompts.drain(..));
     }
 
-    fn paste_clipboard_image(&mut self) {
+    fn paste_clipboard_image<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
         if self.running {
-            self.status = "image paste is unavailable while a model turn is running".into();
-            return;
+            self.notify_status(
+                terminal,
+                "image paste is unavailable while a model turn is running",
+            )?;
+            return Ok(());
         }
         if !matches!(self.composer, ComposerMode::Input) {
-            self.status = "image paste is only available in the message box".into();
-            return;
+            self.notify_status(terminal, "image paste is only available in the message box")?;
+            return Ok(());
         }
         match read_clipboard_image() {
             Ok(image) => {
                 let summary = image_summary(&image);
                 self.pending_images.push(image);
-                self.status = format!("attached image {} ({summary})", self.pending_images.len());
+                self.notify_status(
+                    terminal,
+                    format!("attached image {} ({summary})", self.pending_images.len()),
+                )?;
             }
             Err(err) => {
-                self.status = format!("image paste failed: {err}");
+                self.notify_status(terminal, format!("image paste failed: {err}"))?;
             }
         }
+        Ok(())
     }
 
     fn insert_running_paste(&mut self, text: &str) {
@@ -2128,7 +2143,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.status = "input cleared; press esc to interrupt model".into();
+                    self.notify_status(terminal, "input cleared; press esc to interrupt model")?;
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -2136,7 +2151,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image();
+                self.paste_clipboard_image(terminal)?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -2146,7 +2161,10 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                self.status = "reset is unavailable while a model turn is running".into();
+                self.notify_status(
+                    terminal,
+                    "reset is unavailable while a model turn is running",
+                )?;
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -2179,10 +2197,13 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.status = format!(
-                        "editing queued message; {} queued message(s) remain",
-                        self.queued_prompts.len()
-                    );
+                    self.notify_status(
+                        terminal,
+                        format!(
+                            "editing queued message; {} queued message(s) remain",
+                            self.queued_prompts.len()
+                        ),
+                    )?;
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -4214,7 +4235,6 @@ impl App {
         statusline_lines(
             &StatusLineState::from_tui(
                 &self.info,
-                &self.status,
                 self.cumulative_usage.clone(),
                 self.latest_usage.clone(),
                 self.current_context.clone(),
@@ -4366,11 +4386,11 @@ impl App {
         lines
     }
 
-    fn insert_entry(
+    fn insert_entry<B: Backend>(
         &mut self,
-        terminal: &mut DefaultTerminal,
+        terminal: &mut Terminal<B>,
         entry: &Entry,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), B::Error> {
         let width = terminal.size()?.width as usize;
         if self.last_inserted_was_tool && is_tool_entry(entry) {
             insert_history_lines(terminal, vec![Line::raw("")])?;
@@ -4380,9 +4400,30 @@ impl App {
             terminal,
             entry_lines(entry, width, self.info.max_tool_output_lines),
         )?;
-        self.push_transcript_entry(entry.clone());
-        self.last_inserted_was_tool = is_tool_entry(entry);
+        self.record_inserted_entry(entry.clone());
         Ok(())
+    }
+
+    fn notify_status<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        status: impl Into<String>,
+    ) -> Result<(), B::Error> {
+        let status = status.into();
+        self.status = status.clone();
+        if self.last_status_notice.as_deref() == Some(status.as_str()) {
+            return Ok(());
+        }
+        self.insert_entry(terminal, &Entry::Notice(status))
+    }
+
+    fn record_inserted_entry(&mut self, entry: Entry) {
+        self.last_status_notice = match &entry {
+            Entry::Notice(text) => Some(text.clone()),
+            _ => None,
+        };
+        self.last_inserted_was_tool = is_tool_entry(&entry);
+        self.push_transcript_entry(entry);
     }
 
     fn reflow_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
@@ -4409,6 +4450,10 @@ impl App {
             previous_was_tool = is_tool_entry(entry);
         }
         insert_history_lines(terminal, lines)?;
+        self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
+            Entry::Notice(text) => Some(text.clone()),
+            _ => None,
+        });
         self.last_inserted_was_tool = previous_was_tool;
         Ok(())
     }
@@ -4423,7 +4468,13 @@ impl App {
                 Some(Entry::Reasoning(previous)) => previous.push_str(&text),
                 _ => self.transcript.push(Entry::Reasoning(text)),
             },
-            other => self.transcript.push(other),
+            other => {
+                self.last_status_notice = match &other {
+                    Entry::Notice(text) => Some(text.clone()),
+                    _ => None,
+                };
+                self.transcript.push(other);
+            }
         }
     }
 }
@@ -4884,10 +4935,10 @@ fn clear_terminal_for_history_reflow(terminal: &mut DefaultTerminal) -> std::io:
     terminal.clear()
 }
 
-fn insert_history_lines(
-    terminal: &mut DefaultTerminal,
+fn insert_history_lines<B: Backend>(
+    terminal: &mut Terminal<B>,
     lines: Vec<Line<'static>>,
-) -> std::io::Result<()> {
+) -> Result<(), B::Error> {
     // Ratatui's inline viewport tracks the real viewport anchor internally
     // (it is not necessarily at the bottom of the screen). Use its insertion
     // API so finalized chat is moved into terminal scrollback above the live
@@ -5712,7 +5763,8 @@ mod tests {
         let small_lines = app.active_lines_for_height(40, 4);
         let default_lines = app.active_lines_for_height(40, INLINE_VIEWPORT_HEIGHT as usize);
 
-        assert_eq!(line_text(&small_lines[0]), "─".repeat(40));
+        assert_eq!(line_text(&small_lines[0]), "");
+        assert_eq!(line_text(&small_lines[1]), "─".repeat(40));
         assert!(line_text(&default_lines[0]).contains("working"));
     }
 
@@ -5796,7 +5848,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
         let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
     }
 
     #[test]
@@ -5825,7 +5878,8 @@ mod tests {
         let bottom = rows.last().unwrap();
         let cursor = terminal.backend().cursor_position();
         assert!(rows.iter().any(|row| row.contains("line 29")), "{rows:#?}");
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
         assert!(cursor.y < height, "{cursor:?}");
         assert!(
             rows[cursor.y as usize].contains("line 29"),
@@ -5889,7 +5943,8 @@ mod tests {
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
         let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
-        assert!(bottom.contains("ready"), "{bottom:?}");
+        assert!(bottom.contains("low"), "{bottom:?}");
+        assert!(!bottom.contains("ready"), "{bottom:?}");
     }
 
     #[test]
@@ -6417,6 +6472,25 @@ mod tests {
     }
 
     #[test]
+    fn status_notice_suppresses_consecutive_duplicates() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+
+        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
+            .unwrap();
+        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
+            .unwrap();
+
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|entry| matches!(entry, Entry::Notice(text) if text == "input cleared; press ctrl-c again to quit"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn paste_burst_expires_before_enter_submit() {
         let start = Instant::now();
         let mut burst = PasteBurst::default();
@@ -6432,7 +6506,8 @@ mod tests {
         let mut app = test_app();
         app.running = true;
 
-        app.paste_clipboard_image();
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        app.paste_clipboard_image(&mut terminal).unwrap();
 
         assert!(app.pending_images.is_empty());
         assert_eq!(
