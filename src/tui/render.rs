@@ -4,6 +4,8 @@ use super::{
     Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT,
 };
 use crate::tool::ToolDisplayStyle;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use ratatui::{
     layout::Position,
     style::{Modifier, Style},
@@ -147,7 +149,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     picker
         .items
         .iter()
-        .map(|item| item.label.chars().count())
+        .map(|item| display_width(&item.label))
         .max()
         .unwrap_or(12)
         .clamp(12, max_label_width)
@@ -169,12 +171,15 @@ fn picker_item_line(
     let label = truncate_one_line(&item.label, label_width);
     let mut used_width = 2 + label_width;
     let mut spans = vec![Span::styled(
-        format!("{marker} {label:<label_width$}"),
+        format!(
+            "{marker} {label}{}",
+            " ".repeat(label_width.saturating_sub(display_width(&label)))
+        ),
         row_style,
     )];
     if let Some(badge) = &item.badge {
         let badge_text = truncate_one_line(&badge.text, 24);
-        used_width += 2 + badge_text.chars().count();
+        used_width += 2 + display_width(&badge_text);
         spans.push(Span::raw("  "));
         spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));
     }
@@ -229,16 +234,39 @@ pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[
 }
 
 pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
-    let mut text = text.replace('\n', " ");
-    if text.chars().count() <= width {
+    let text = text.replace('\n', " ");
+    if UnicodeWidthStr::width(text.as_str()) <= width {
         return text;
     }
     if width <= 1 {
         return "…".chars().take(width).collect();
     }
-    text = text.chars().take(width - 1).collect();
-    text.push('…');
-    text
+    truncate_to_display_width(&text, width - 1).into_owned() + "…"
+}
+
+pub(super) fn display_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+fn char_display_width(ch: char) -> usize {
+    UnicodeWidthChar::width(ch).unwrap_or(0)
+}
+
+fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'_, str> {
+    if display_width(text) <= max_width {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut end = 0;
+    let mut width = 0;
+    for (index, ch) in text.char_indices() {
+        let ch_width = char_display_width(ch);
+        if width + ch_width > max_width {
+            break;
+        }
+        width += ch_width;
+        end = index + ch.len_utf8();
+    }
+    std::borrow::Cow::Owned(text[..end].to_string())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -295,7 +323,7 @@ fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> V
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
         .filter(|range| {
-            range.end < line.len() || line[range.clone()].chars().count() >= width.max(1)
+            range.end < line.len() || display_width(&line[range.clone()]) >= width.max(1)
         })
         .map(|range| (offset + range.end, 'x'))
         .collect()
@@ -307,7 +335,7 @@ pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) ->
     Position {
         x: lines
             .last()
-            .map(|line| line.chars().count())
+            .map(|line| display_width(line))
             .unwrap_or_default() as u16,
         y: lines.len().saturating_sub(1) as u16,
     }
@@ -521,7 +549,7 @@ pub(super) fn styled_line(
     fill: LineFill,
 ) -> Line<'static> {
     if fill.pads_to_width() {
-        let len = text.chars().count();
+        let len = display_width(&text);
         if len < width {
             text.push_str(&" ".repeat(width - len));
         }
@@ -577,13 +605,14 @@ pub(super) fn wrap_line_at_whitespace_ranges(
         let mut prefer_width_split = false;
 
         for (relative_index, ch) in line[start..].char_indices() {
-            if count == width {
+            let ch_width = char_display_width(ch);
+            if count > 0 && count + ch_width > width {
                 overflow = true;
                 prefer_width_split = ch.is_whitespace();
                 break;
             }
 
-            count += 1;
+            count += ch_width;
             let next = start + relative_index + ch.len_utf8();
             if ch.is_whitespace() {
                 if saw_non_whitespace {
@@ -623,10 +652,18 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
 
     let mut chunks = Vec::new();
     let mut current = String::new();
+    let mut current_width = 0;
     for ch in line.chars() {
-        current.push(ch);
-        if current.chars().count() >= width {
+        let ch_width = char_display_width(ch);
+        if current_width > 0 && current_width + ch_width > width {
             chunks.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+        if current_width >= width {
+            chunks.push(std::mem::take(&mut current));
+            current_width = 0;
         }
     }
     if !current.is_empty() {

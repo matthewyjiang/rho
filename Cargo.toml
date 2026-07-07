@@ -36,6 +36,7 @@ base64 = "0.22"
 url = "2"
 webbrowser = "1"
 libc = "0.2"
+unicode-width = "0.2"
 
 [features]
 default = ["bundled-sqlite"]

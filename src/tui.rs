@@ -46,8 +46,8 @@ mod theme;
 use markdown::push_wrapped_markdown;
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
-    entry_lines, input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
-    session_header_lines, styled_line, truncate_one_line, LineFill,
+    display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
+    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
@@ -4825,7 +4825,7 @@ fn input_box_lines(input: &str, width: usize, border_style: Style) -> Vec<Line<'
         input_visual_lines(input, input_width)
             .into_iter()
             .map(|line| {
-                let content_len = line.chars().count();
+                let content_len = display_width(&line);
                 let padding = input_width.saturating_sub(content_len);
                 Line::from(vec![
                     Span::styled("│", border_style),
@@ -5557,6 +5557,20 @@ mod tests {
         assert_eq!(high_lines[1].spans[2].style, Style::default());
         assert_eq!(high_lines[1].spans[3].style, high_style);
         assert_ne!(off_style, high_style);
+    }
+
+    #[test]
+    fn input_box_pads_double_width_text_by_display_width() {
+        let lines = input_box_lines(
+            "😀",
+            10,
+            Theme::reasoning_input_border(ReasoningLevel::High),
+        );
+
+        assert_eq!(line_text(&lines[0]), "╭────────╮");
+        assert_eq!(line_text(&lines[1]), "│😀      │");
+        assert_eq!(line_text(&lines[2]), "╰────────╯");
+        assert_eq!(display_width(&line_text(&lines[1])), 10);
     }
 
     #[test]
