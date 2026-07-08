@@ -558,8 +558,12 @@ impl Agent {
         if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
             return Ok(());
         }
+        let Some(context_window) = estimate.context_window.filter(|window| *window > 0) else {
+            return Ok(());
+        };
+        let target_tokens = self.compaction.target_tokens(context_window);
         let Some(partition) =
-            partition_messages_for_compaction(&self.messages, self.compaction.recent_messages)
+            partition_messages_for_compaction(&self.messages, specs, target_tokens)
         else {
             return Ok(());
         };

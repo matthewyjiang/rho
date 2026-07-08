@@ -109,6 +109,7 @@ pub struct TuiInfo {
     pub max_tool_output_lines: usize,
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
+    pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
     pub config_path: Option<PathBuf>,
     pub auth_unavailable: Option<String>,
@@ -726,6 +727,8 @@ struct ConfigNumberInput {
 enum ConfigNumberKey {
     MaxOutputBytes,
     MaxToolOutputLines,
+    CompactThresholdPercent,
+    CompactTargetPercent,
 }
 
 #[derive(Clone, Debug)]
@@ -747,6 +750,8 @@ impl ConfigNumberKey {
         match self {
             ConfigNumberKey::MaxOutputBytes => "max output bytes",
             ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
+            ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
+            ConfigNumberKey::CompactTargetPercent => "compact target percent",
         }
     }
 }
@@ -1223,7 +1228,7 @@ impl App {
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
-        self.insert_recovered_history(terminal, agent)?;
+        self.insert_recovered_history(terminal)?;
         if self.info.open_resume_picker {
             self.open_resume_picker(terminal)?;
         }
@@ -1989,6 +1994,48 @@ impl App {
                         )?;
                         self.status = "config saved".into();
                     }
+                    ConfigNumberKey::CompactThresholdPercent => {
+                        let value = value.clamp(1, 100) as u8;
+                        let config = Config::load(self.info.config_path.clone()).and_then(
+                            |mut config| {
+                                config.set_compact_threshold_percent(value);
+                                config.save(self.info.config_path.clone())?;
+                                Ok(config)
+                            },
+                        )?;
+                        self.open_main_config_picker_selected(
+                            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
+                        )?;
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Notice(format!(
+                                "compact threshold set to {}%",
+                                config.compact_threshold_percent
+                            )),
+                        )?;
+                        self.status = "config saved".into();
+                    }
+                    ConfigNumberKey::CompactTargetPercent => {
+                        let value = value.clamp(1, 100) as u8;
+                        let config = Config::load(self.info.config_path.clone()).and_then(
+                            |mut config| {
+                                config.set_compact_target_percent(value);
+                                config.save(self.info.config_path.clone())?;
+                                Ok(config)
+                            },
+                        )?;
+                        self.open_main_config_picker_selected(
+                            config_picker::COMPACT_TARGET_PERCENT_VALUE,
+                        )?;
+                        self.insert_entry(
+                            terminal,
+                            &Entry::Notice(format!(
+                                "compact target set to {}%",
+                                config.compact_target_percent
+                            )),
+                        )?;
+                        self.status = "config saved".into();
+                    }
                 }
                 Ok(true)
             }
@@ -2715,6 +2762,9 @@ impl App {
         self.resize_inline_viewport_if_needed(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
+        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+            agent.set_compaction_config((&config).into());
+        }
         self.active_tool_call = false;
         self.pending_tool_call = None;
         let interrupt_requested = Arc::new(AtomicBool::new(false));
@@ -3452,6 +3502,25 @@ impl App {
             }
             config_picker::CHECK_FOR_UPDATES_VALUE => {
                 self.toggle_check_for_updates(terminal)?;
+            }
+            config_picker::AUTO_COMPACT_VALUE => {
+                self.toggle_auto_compact(terminal)?;
+            }
+            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::CompactThresholdPercent,
+                    config.compact_threshold_percent as usize,
+                ));
+                self.status = "edit compact threshold percent".into();
+            }
+            config_picker::COMPACT_TARGET_PERCENT_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::CompactTargetPercent,
+                    config.compact_target_percent as usize,
+                ));
+                self.status = "edit compact target percent".into();
             }
             config_picker::WEB_SEARCH_VALUE => {
                 self.composer =
@@ -4204,6 +4273,25 @@ impl App {
             config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(terminal),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(terminal),
+            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(terminal),
+            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::CompactThresholdPercent,
+                    config.compact_threshold_percent as usize,
+                ));
+                self.status = "edit compact threshold percent".into();
+                Ok(())
+            }
+            config_picker::COMPACT_TARGET_PERCENT_VALUE => {
+                let config = Config::load(self.info.config_path.clone())?;
+                self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                    ConfigNumberKey::CompactTargetPercent,
+                    config.compact_target_percent as usize,
+                ));
+                self.status = "edit compact target percent".into();
+                Ok(())
+            }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -4441,6 +4529,37 @@ impl App {
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
+        }
+        Ok(())
+    }
+
+    fn toggle_auto_compact(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            config.auto_compact = !config.auto_compact;
+            config.save(self.info.config_path.clone())?;
+            Ok(config.auto_compact)
+        });
+        match save_result {
+            Ok(auto_compact) => {
+                self.status = if auto_compact {
+                    "auto compact: on".into()
+                } else {
+                    "auto compact: off".into()
+                };
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not save auto compact setting: {err}")),
+                )?;
+                self.status = "config save failed".into();
+            }
+        }
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
         }
         Ok(())
     }
@@ -4698,14 +4817,16 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let (session, history) = Session::open_by_id(&self.info.cwd, session_id)?;
+        let (session, histories) = Session::open_by_id_with_histories(&self.info.cwd, session_id)?;
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
-        agent.replace_history(history);
+        let display_history = histories.display;
+        agent.replace_history(histories.model);
         agent.set_session_id(Some(full_id.clone()));
         agent.set_history_sink(SessionHistorySink::new(session));
         self.info.session_id = Some(full_id);
+        self.info.recovered_messages = display_history.clone();
         self.composer = ComposerMode::Input;
         self.input.clear();
         self.paste_segments.clear();
@@ -4717,7 +4838,7 @@ impl App {
         self.cumulative_usage = None;
         self.latest_usage = None;
         self.current_context = None;
-        let entries = transcript_entries_from_messages(agent.messages());
+        let entries = transcript_entries_from_messages(&display_history);
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
@@ -5176,12 +5297,8 @@ impl App {
         Ok(())
     }
 
-    fn insert_recovered_history(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &Agent,
-    ) -> std::io::Result<()> {
-        let entries = transcript_entries_from_messages(agent.messages());
+    fn insert_recovered_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        let entries = transcript_entries_from_messages(&self.info.recovered_messages);
         if entries.is_empty() {
             return Ok(());
         }
@@ -6538,6 +6655,7 @@ mod tests {
                 title_auth: None,
                 questionnaire_enabled: true,
                 session_id: None,
+                recovered_messages: Vec::new(),
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,
@@ -7692,6 +7810,7 @@ mod tests {
                 title_auth: None,
                 questionnaire_enabled: true,
                 session_id: None,
+                recovered_messages: Vec::new(),
                 open_resume_picker: false,
                 config_path: None,
                 auth_unavailable: None,

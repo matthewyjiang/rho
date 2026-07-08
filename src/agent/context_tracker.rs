@@ -51,7 +51,8 @@ impl ContextTracker {
         if let Some(context_window) = usage.context_window {
             self.last_context_window = Some(context_window);
         }
-        let context_usage = ContextUsage::from_model_usage(usage)?;
+        let mut context_usage = ContextUsage::from_model_usage(usage)?;
+        context_usage.context_window = self.context_window();
         self.unknown_after_compaction = false;
         Some(context_usage)
     }
@@ -62,7 +63,12 @@ impl ContextTracker {
     }
 
     pub(super) fn context_window(&self) -> Option<u64> {
-        self.last_context_window.or(self.configured_context_window)
+        match (self.last_context_window, self.configured_context_window) {
+            (Some(reported), Some(configured)) => Some(reported.min(configured)),
+            (Some(reported), None) => Some(reported),
+            (None, Some(configured)) => Some(configured),
+            (None, None) => None,
+        }
     }
 }
 
@@ -86,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_reported_usage_replaces_estimate_and_window() {
+    fn provider_reported_usage_keeps_safer_configured_window() {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(4_000));
 
@@ -101,6 +107,23 @@ mod tests {
 
         assert_eq!(usage.source, ContextUsageSource::ProviderReported);
         assert_eq!(usage.tokens, Some(150));
+        assert_eq!(usage.context_window, Some(4_000));
+        assert_eq!(tracker.context_window(), Some(4_000));
+    }
+
+    #[test]
+    fn provider_reported_usage_can_lower_configured_window() {
+        let mut tracker = ContextTracker::default();
+        tracker.set_configured_window(Some(10_000));
+
+        let usage = tracker
+            .record_provider_usage(&ModelUsage {
+                input_tokens: Some(100),
+                context_window: Some(8_000),
+                ..ModelUsage::default()
+            })
+            .unwrap();
+
         assert_eq!(usage.context_window, Some(8_000));
         assert_eq!(tracker.context_window(), Some(8_000));
     }

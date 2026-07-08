@@ -10,6 +10,7 @@ use crate::model::{ContextUsageSource, ModelProvider, ModelRequest, ModelRespons
 use crate::tool::{Tool, ToolCall, ToolSpec};
 
 type RecordedRequests = Arc<Mutex<Vec<(String, Vec<Message>)>>>;
+type RecordedToolRequests = Arc<Mutex<Vec<(String, Vec<Message>, Vec<ToolSpec>)>>>;
 
 #[derive(Clone, Default)]
 struct RecordingHistorySink {
@@ -200,7 +201,7 @@ impl ModelProvider for CompactingProvider {
     ) -> Result<ModelResponse, ModelError> {
         let is_summary_request = matches!(
             request.messages.first(),
-            Some(Message::System(text)) if text.starts_with("Summarize the conversation history")
+            Some(Message::System(text)) if text.starts_with("Summarize the compacted conversation history")
         );
         if is_summary_request {
             self.requests
@@ -226,6 +227,46 @@ impl ModelProvider for CompactingProvider {
         }))?;
         Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
             "ok".into(),
+        )]))
+    }
+}
+
+struct ToolRecordingCompactingProvider {
+    requests: RecordedToolRequests,
+}
+
+#[async_trait(?Send)]
+impl ModelProvider for ToolRecordingCompactingProvider {
+    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        unreachable!("streaming provider should use send_turn_stream")
+    }
+
+    async fn send_turn_stream(
+        &self,
+        request: ModelRequest,
+        _on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        let is_summary_request = matches!(
+            request.messages.first(),
+            Some(Message::System(text))
+                if text.starts_with("Summarize the compacted conversation history")
+        );
+        let kind = if is_summary_request {
+            "summary"
+        } else {
+            "normal"
+        };
+        self.requests
+            .lock()
+            .unwrap()
+            .push((kind.into(), request.messages, request.tools));
+        let text = if is_summary_request {
+            "compacted summary"
+        } else {
+            "ok"
+        };
+        Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+            text.into(),
         )]))
     }
 }
@@ -430,7 +471,7 @@ async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded
     agent.set_compaction_config(CompactionConfig {
         auto_compact: true,
         threshold_percent: 1,
-        recent_messages: 1,
+        target_percent: 1,
     });
     agent.set_context_window(Some(1_000));
 
@@ -455,6 +496,37 @@ async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded
 }
 
 #[tokio::test]
+async fn compaction_summary_request_sends_no_tools() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut tools = ToolRegistry::new();
+    tools.register(OkTool);
+    let mut agent = test_agent_with_tools(
+        ToolRecordingCompactingProvider {
+            requests: requests.clone(),
+        },
+        tools,
+    );
+    agent.set_compaction_config(CompactionConfig {
+        auto_compact: true,
+        threshold_percent: 1,
+        target_percent: 1,
+    });
+    agent.set_context_window(Some(1_000));
+
+    agent.run("first".into()).await.unwrap();
+    agent.run("second".into()).await.unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1].0, "summary");
+    assert!(requests[1].2.is_empty());
+    assert!(requests[2]
+        .2
+        .iter()
+        .any(|tool| tool.name.as_str() == "ok_tool"));
+}
+
+#[tokio::test]
 async fn emits_usage_for_compaction_summary_request() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = test_agent_with_tools(
@@ -466,7 +538,7 @@ async fn emits_usage_for_compaction_summary_request() {
     agent.set_compaction_config(CompactionConfig {
         auto_compact: true,
         threshold_percent: 1,
-        recent_messages: 1,
+        target_percent: 1,
     });
     agent.set_context_window(Some(1_000));
     let mut usage_events = Vec::new();
@@ -512,7 +584,7 @@ async fn compacts_after_tool_results_before_next_provider_call() {
     agent.set_compaction_config(CompactionConfig {
         auto_compact: true,
         threshold_percent: 1,
-        recent_messages: 1,
+        target_percent: 1,
     });
     agent.set_context_window(Some(1));
 
@@ -546,7 +618,7 @@ async fn unknown_after_compaction_is_not_overwritten_by_estimate_before_provider
     agent.set_compaction_config(CompactionConfig {
         auto_compact: true,
         threshold_percent: 1,
-        recent_messages: 1,
+        target_percent: 1,
     });
     agent.set_context_window(Some(1_000));
     let mut context_events = Vec::new();

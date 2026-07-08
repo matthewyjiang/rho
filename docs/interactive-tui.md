@@ -53,7 +53,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
 | `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
-| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility applies on the next model call; max output bytes changes save for the next session. |
+| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
 | `/exit` | Quit the TUI. |
 
