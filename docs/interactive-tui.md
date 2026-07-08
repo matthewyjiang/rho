@@ -50,8 +50,11 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
-| `/resume [id]` | Show [session resume](/sessions) help. Interactive session switching/listing is not implemented yet. |
+| `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
+| `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
+| `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
 | `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility applies on the next model call; max output bytes changes save for the next session. |
+| `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
 | `/exit` | Quit the TUI. |
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
@@ -82,6 +85,8 @@ Use `/model provider/model` to switch explicitly, including to a provider outsid
 ```
 
 A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
+
+Use `/title-model` to choose the model used for session title generation. The title model picker follows the same model catalog and auth availability rules as `/model`, but saves optional `title_provider`, `title_model`, and `title_auth` settings instead of changing the active chat model.
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
 
