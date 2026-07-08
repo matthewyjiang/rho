@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.17.0...rho-coding-agent-v0.17.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ci:** repair Arch package workflow ([#133](https://github.com/matthewyjiang/rho/issues/133)) ([8d351e7](https://github.com/matthewyjiang/rho/commit/8d351e7549217a4ebd94d7077f61882583a31d5f))
+
 ## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.16.1...rho-coding-agent-v0.17.0) (2026-07-08)
 
 
