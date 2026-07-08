@@ -9,7 +9,10 @@ pub mod questionnaire;
 
 pub use compaction::CompactionConfig;
 pub use history::{HistorySink, SessionHistorySink};
-pub use questionnaire::{QuestionnaireRequest, QuestionnaireResponse};
+pub use questionnaire::{
+    QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind, QuestionnaireRequest,
+    QuestionnaireResponse,
+};
 
 use compaction::{
     build_summary_request_messages, partition_messages_for_compaction,
@@ -24,10 +27,9 @@ use crate::model::{
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
-pub(crate) type QuestionnaireFuture =
+pub type QuestionnaireFuture =
     Pin<Box<dyn Future<Output = Result<QuestionnaireResponse, AgentError>> + Send>>;
-pub(crate) type QuestionnaireHandler<'a> =
-    &'a mut dyn FnMut(QuestionnaireRequest) -> QuestionnaireFuture;
+pub type QuestionnaireHandler<'a> = &'a mut dyn FnMut(QuestionnaireRequest) -> QuestionnaireFuture;
 
 #[derive(Debug, Error)]
 pub enum AgentError {

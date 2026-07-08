@@ -54,7 +54,10 @@ use stream::{AppendOnlyStream, StreamFragment};
 use theme::Theme;
 
 use crate::{
-    agent::{Agent, AgentEvent, QuestionnaireRequest, QuestionnaireResponse, SessionHistorySink},
+    agent::{
+        Agent, AgentEvent, QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind,
+        QuestionnaireRequest, QuestionnaireResponse, SessionHistorySink,
+    },
     auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
@@ -101,6 +104,7 @@ pub struct TuiInfo {
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
     pub max_tool_output_lines: usize,
+    pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub open_resume_picker: bool,
     pub config_path: Option<PathBuf>,
@@ -275,24 +279,73 @@ struct QuestionAnswerRequest {
 struct QuestionnaireComposer {
     request: QuestionnaireRequest,
     response: QuestionnaireResponseChannel,
+    fields: Vec<QuestionnaireFieldState>,
+    active_index: usize,
+}
+
+#[derive(Debug)]
+struct QuestionnaireFieldState {
     value: String,
     cursor: usize,
 }
 
 impl QuestionnaireComposer {
     fn new(request: QuestionnaireRequest, response: QuestionnaireResponseChannel) -> Self {
+        let fields = request
+            .questions
+            .iter()
+            .map(|question| {
+                let value = question.default.clone().unwrap_or_default();
+                let cursor = value.chars().count();
+                QuestionnaireFieldState { value, cursor }
+            })
+            .collect::<Vec<_>>();
         Self {
-            value: request.default.clone().unwrap_or_default(),
-            cursor: request
-                .default
-                .as_ref()
-                .map(|value| value.chars().count())
-                .unwrap_or(0),
             request,
             response,
+            fields,
+            active_index: 0,
         }
     }
 
+    fn active_field(&self) -> &QuestionnaireFieldState {
+        &self.fields[self.active_index]
+    }
+
+    fn active_field_mut(&mut self) -> &mut QuestionnaireFieldState {
+        &mut self.fields[self.active_index]
+    }
+
+    fn active_char_len(&self) -> usize {
+        self.active_field().char_len()
+    }
+
+    fn move_to_previous_field(&mut self) {
+        self.active_index = self.active_index.saturating_sub(1);
+    }
+
+    fn move_to_next_field(&mut self) {
+        self.active_index = (self.active_index + 1).min(self.fields.len().saturating_sub(1));
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        self.active_field_mut().insert_char(ch);
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        self.active_field_mut().insert_text(text);
+    }
+
+    fn backspace(&mut self) {
+        self.active_field_mut().backspace();
+    }
+
+    fn delete(&mut self) {
+        self.active_field_mut().delete();
+    }
+}
+
+impl QuestionnaireFieldState {
     fn char_len(&self) -> usize {
         self.value.chars().count()
     }
@@ -1175,21 +1228,46 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                        questionnaire.value.clear();
-                        questionnaire.cursor = 0;
+                        let field = questionnaire.active_field_mut();
+                        field.value.clear();
+                        field.cursor = 0;
                     }
                     self.status = "answer cleared; press ctrl-c again to cancel".into();
                     self.ctrl_c_streak = 1;
                 } else {
-                    self.composer = ComposerMode::Input;
-                    self.input.clear();
-                    self.paste_segments.clear();
-                    self.input_cursor = 0;
-                    self.command_palette_dismissed = false;
-                    self.clamp_command_selection();
+                    self.cancel_questionnaire_answer();
                     self.should_quit = true;
                 }
                 self.paste_burst.clear();
+                Ok(true)
+            }
+            (KeyModifiers::ALT, KeyCode::Up) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.move_to_previous_field();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::ALT, KeyCode::Down) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.move_to_next_field();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::ALT, KeyCode::Backspace) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    let field = questionnaire.active_field_mut();
+                    let new_cursor = previous_word_boundary(&field.value, field.cursor);
+                    let start = field.byte_index(new_cursor);
+                    let end = field.byte_index(field.cursor);
+                    field.value.replace_range(start..end, "");
+                    field.cursor = new_cursor;
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
@@ -1212,6 +1290,22 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (_, KeyCode::Tab) | (_, KeyCode::Down) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.move_to_next_field();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::BackTab) | (_, KeyCode::Up) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.move_to_previous_field();
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
             (_, KeyCode::Backspace) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
                     questionnaire.backspace();
@@ -1228,9 +1322,28 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (KeyModifiers::ALT, KeyCode::Left) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    let field = questionnaire.active_field_mut();
+                    field.cursor = previous_word_boundary(&field.value, field.cursor);
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::ALT, KeyCode::Right) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    let field = questionnaire.active_field_mut();
+                    field.cursor = next_word_boundary(&field.value, field.cursor);
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
             (_, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.cursor = questionnaire.cursor.saturating_sub(1);
+                    let field = questionnaire.active_field_mut();
+                    field.cursor = field.cursor.saturating_sub(1);
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1238,7 +1351,9 @@ impl App {
             }
             (_, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.cursor = (questionnaire.cursor + 1).min(questionnaire.char_len());
+                    let char_len = questionnaire.active_char_len();
+                    let field = questionnaire.active_field_mut();
+                    field.cursor = (field.cursor + 1).min(char_len);
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1246,7 +1361,7 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.cursor = 0;
+                    questionnaire.active_field_mut().cursor = 0;
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1254,7 +1369,8 @@ impl App {
             }
             (_, KeyCode::End) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.cursor = questionnaire.char_len();
+                    let char_len = questionnaire.active_char_len();
+                    questionnaire.active_field_mut().cursor = char_len;
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1298,33 +1414,37 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if let Some(display) = self.prepare_questionnaire_answer()? {
+            self.insert_entry(terminal, &Entry::User(display))?;
+        }
+        Ok(())
+    }
+
+    fn prepare_questionnaire_answer(&mut self) -> anyhow::Result<Option<String>> {
         let ComposerMode::Questionnaire(mut questionnaire) =
             std::mem::replace(&mut self.composer, ComposerMode::Input)
         else {
-            return Ok(());
+            return Ok(None);
         };
-        let answer = questionnaire.value.trim().to_string();
-        let answer = if answer.is_empty() {
-            questionnaire.request.default.clone().unwrap_or_default()
-        } else {
-            answer
-        };
-        if answer.is_empty() {
-            self.composer = ComposerMode::Questionnaire(questionnaire);
-            self.status = "answer cannot be empty".into();
-            return Ok(());
+        match questionnaire_answers(&questionnaire) {
+            Ok(answers) => {
+                let response = QuestionnaireResponse { answers };
+                let display = submitted_questionnaire_entry(&questionnaire.request, &response);
+                questionnaire.response.send_response(response);
+                self.input.clear();
+                self.paste_segments.clear();
+                self.input_cursor = 0;
+                self.command_palette_dismissed = false;
+                self.clamp_command_selection();
+                self.status = "answers submitted".into();
+                Ok(Some(display))
+            }
+            Err(error) => {
+                self.composer = ComposerMode::Questionnaire(questionnaire);
+                self.status = error;
+                Ok(None)
+            }
         }
-        questionnaire.response.send_response(QuestionnaireResponse {
-            answer: answer.clone(),
-        });
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
-        self.clamp_command_selection();
-        self.insert_entry(terminal, &Entry::User(answer))?;
-        self.status = "answer submitted".into();
-        Ok(())
     }
 
     fn cancel_questionnaire_answer(&mut self) {
@@ -1357,13 +1477,13 @@ impl App {
         self.clamp_command_selection();
         self.insert_entry(
             terminal,
-            &Entry::Notice(format!("agent asks: {}", request.request.question)),
+            &Entry::Notice(questionnaire_notice_text(&request.request)),
         )?;
         self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             request.request,
             request.response,
         ));
-        self.status = "waiting for your answer".into();
+        self.status = "waiting for your answers".into();
         Ok(())
     }
 
@@ -2280,6 +2400,10 @@ impl App {
                         }
                     })
                 };
+            let questionnaire_handler = self
+                .info
+                .questionnaire_enabled
+                .then_some(&mut ask_questionnaire as crate::agent::QuestionnaireHandler<'_>);
             let mut run_future = Box::pin(
                 agent.run_with_content_and_events_questionnaire_and_steering(
                     content,
@@ -2306,7 +2430,7 @@ impl App {
                         }
                         Ok(())
                     },
-                    Some(&mut ask_questionnaire),
+                    questionnaire_handler,
                     move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
                 ),
             );
@@ -4520,12 +4644,7 @@ impl App {
                 y: 1,
             },
             ComposerMode::Questionnaire(questionnaire) => {
-                let mut position =
-                    input_cursor_position(&questionnaire.value, questionnaire.cursor, width);
-                position.y = position
-                    .y
-                    .saturating_add(questionnaire_prompt_line_count(questionnaire, width) as u16);
-                position
+                questionnaire_cursor_position(questionnaire, width)
             }
             ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
@@ -5036,27 +5155,26 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
 
 fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.extend(questionnaire_prompt_lines(questionnaire, width));
-    lines.extend(
-        input_visual_lines(&questionnaire.value, width)
-            .into_iter()
-            .map(|line| styled_line(line, width, Theme::text(), LineFill::Natural)),
-    );
-    lines
-}
-
-fn questionnaire_prompt_lines(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        &format!("answer: {}", questionnaire.request.question),
-        width,
-        Theme::input_prompt(),
-        LineFill::Natural,
-    );
+    if let Some(title) = &questionnaire.request.title {
+        push_wrapped_text(
+            &mut lines,
+            title,
+            width,
+            Theme::input_prompt(),
+            LineFill::Natural,
+        );
+    } else {
+        push_wrapped_text(
+            &mut lines,
+            &format!(
+                "answer {} question(s)",
+                questionnaire.request.questions.len()
+            ),
+            width,
+            Theme::input_prompt(),
+            LineFill::Natural,
+        );
+    }
     if let Some(reason) = &questionnaire.request.reason {
         push_wrapped_text(
             &mut lines,
@@ -5066,26 +5184,255 @@ fn questionnaire_prompt_lines(
             LineFill::Natural,
         );
     }
-    if let Some(default) = &questionnaire.request.default {
+    lines.push(styled_line(
+        truncate_one_line(
+            "enter submit · tab/down next · shift-tab/up previous · shift-enter newline · esc cancel",
+            width,
+        ),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    ));
+
+    for (index, (question, field)) in questionnaire
+        .request
+        .questions
+        .iter()
+        .zip(questionnaire.fields.iter())
+        .enumerate()
+    {
+        lines.extend(questionnaire_question_lines(
+            question,
+            field,
+            index,
+            questionnaire.active_index == index,
+            width,
+        ));
+    }
+    lines
+}
+
+fn questionnaire_question_lines(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    index: usize,
+    active: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let marker = if active { ">" } else { " " };
+    let required = if question.required { "" } else { " optional" };
+    push_wrapped_text(
+        &mut lines,
+        &format!("{marker} {}. {}{required}", index + 1, question.question),
+        width,
+        if active {
+            Theme::input_prompt()
+        } else {
+            Theme::dim()
+        },
+        LineFill::Natural,
+    );
+    if let Some(help) = &question.help {
         push_wrapped_text(
             &mut lines,
-            &format!("default: {default}"),
+            &format!("  help: {help}"),
             width,
             Theme::dim(),
             LineFill::Natural,
         );
     }
-    lines.push(styled_line(
-        truncate_one_line("enter submit · shift-enter newline · esc cancel", width),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
+    let answer_hint = questionnaire_answer_hint(question);
+    if !answer_hint.is_empty() {
+        push_wrapped_text(
+            &mut lines,
+            &format!("  {answer_hint}"),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        );
+    }
+    lines.extend(
+        input_visual_lines(&field.value, width.saturating_sub(2).max(1))
+            .into_iter()
+            .map(|line| styled_line(format!("  {line}"), width, Theme::text(), LineFill::Natural)),
+    );
     lines
 }
 
-fn questionnaire_prompt_line_count(questionnaire: &QuestionnaireComposer, width: usize) -> usize {
-    questionnaire_prompt_lines(questionnaire, width).len()
+fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
+    let mut hints = Vec::new();
+    match question.kind {
+        QuestionnaireQuestionKind::Text => {}
+        QuestionnaireQuestionKind::Choice => {
+            hints.push(format!("choices: {}", question.choices.join(", ")));
+        }
+        QuestionnaireQuestionKind::Confirm => hints.push("answer yes or no".into()),
+    }
+    if let Some(default) = &question.default {
+        hints.push(format!("default: {default}"));
+    }
+    hints.join(" · ")
+}
+
+fn questionnaire_cursor_position(questionnaire: &QuestionnaireComposer, width: usize) -> Position {
+    let active_question = &questionnaire.request.questions[questionnaire.active_index];
+    let active_field = &questionnaire.fields[questionnaire.active_index];
+    let previous_height = questionnaire_header_line_count(questionnaire, width)
+        + questionnaire
+            .request
+            .questions
+            .iter()
+            .zip(questionnaire.fields.iter())
+            .take(questionnaire.active_index)
+            .map(|(question, field)| questionnaire_question_line_count(question, field, width))
+            .sum::<usize>()
+        + questionnaire_active_question_prefix_line_count(active_question, width);
+    let mut position = input_cursor_position(
+        &active_field.value,
+        active_field.cursor,
+        width.saturating_sub(2).max(1),
+    );
+    position.x = position.x.saturating_add(2);
+    position.y = position.y.saturating_add(previous_height as u16);
+    position
+}
+
+fn questionnaire_header_line_count(questionnaire: &QuestionnaireComposer, width: usize) -> usize {
+    let mut count = wrapped_line_count(
+        questionnaire.request.title.as_deref().map_or_else(
+            || {
+                format!(
+                    "answer {} question(s)",
+                    questionnaire.request.questions.len()
+                )
+            },
+            str::to_string,
+        ),
+        width,
+    );
+    if let Some(reason) = &questionnaire.request.reason {
+        count += wrapped_line_count(format!("reason: {reason}"), width);
+    }
+    count + 1
+}
+
+fn questionnaire_question_line_count(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    width: usize,
+) -> usize {
+    questionnaire_active_question_prefix_line_count(question, width)
+        + input_visual_lines(&field.value, width.saturating_sub(2).max(1)).len()
+}
+
+fn questionnaire_active_question_prefix_line_count(
+    question: &QuestionnaireQuestion,
+    width: usize,
+) -> usize {
+    let required = if question.required { "" } else { " optional" };
+    let mut count = wrapped_line_count(format!("> 1. {}{required}", question.question), width);
+    if let Some(help) = &question.help {
+        count += wrapped_line_count(format!("  help: {help}"), width);
+    }
+    let answer_hint = questionnaire_answer_hint(question);
+    if !answer_hint.is_empty() {
+        count += wrapped_line_count(format!("  {answer_hint}"), width);
+    }
+    count
+}
+
+fn wrapped_line_count(text: String, width: usize) -> usize {
+    input_visual_lines(&text, width).len()
+}
+
+fn questionnaire_answers(
+    questionnaire: &QuestionnaireComposer,
+) -> Result<Vec<QuestionnaireAnswer>, String> {
+    questionnaire
+        .request
+        .questions
+        .iter()
+        .zip(questionnaire.fields.iter())
+        .enumerate()
+        .map(|(index, (question, field))| {
+            let answer = normalize_questionnaire_answer(question, &field.value)
+                .map_err(|error| format!("question {}: {error}", index + 1))?;
+            Ok(QuestionnaireAnswer {
+                id: question.id.clone(),
+                answer,
+            })
+        })
+        .collect()
+}
+
+fn normalize_questionnaire_answer(
+    question: &QuestionnaireQuestion,
+    value: &str,
+) -> Result<String, String> {
+    let trimmed = value.trim();
+    let answer = if trimmed.is_empty() {
+        question.default.as_deref().unwrap_or_default().to_string()
+    } else {
+        trimmed.to_string()
+    };
+    if answer.is_empty() {
+        return if question.required {
+            Err("answer cannot be empty".into())
+        } else {
+            Ok(String::new())
+        };
+    }
+    match question.kind {
+        QuestionnaireQuestionKind::Text => Ok(answer),
+        QuestionnaireQuestionKind::Choice => question
+            .choices
+            .iter()
+            .find(|choice| choice.eq_ignore_ascii_case(&answer))
+            .cloned()
+            .ok_or_else(|| format!("answer must be one of {}", question.choices.join(", "))),
+        QuestionnaireQuestionKind::Confirm => match answer.to_ascii_lowercase().as_str() {
+            "yes" | "y" | "true" => Ok("yes".into()),
+            "no" | "n" | "false" => Ok("no".into()),
+            _ => Err("answer must be yes or no".into()),
+        },
+    }
+}
+
+fn submitted_questionnaire_entry(
+    request: &QuestionnaireRequest,
+    response: &QuestionnaireResponse,
+) -> String {
+    if response.answers.len() == 1 {
+        return response.answers[0].answer.clone();
+    }
+    let mut lines = Vec::new();
+    if let Some(title) = &request.title {
+        lines.push(title.clone());
+    } else {
+        lines.push("questionnaire answers".into());
+    }
+    for answer in &response.answers {
+        let label = request
+            .questions
+            .iter()
+            .find(|question| question.id == answer.id)
+            .map(|question| question.question.as_str())
+            .unwrap_or(answer.id.as_str());
+        lines.push(format!("{label}: {}", answer.answer));
+    }
+    lines.join(
+        "
+",
+    )
+}
+
+fn questionnaire_notice_text(request: &QuestionnaireRequest) -> String {
+    match (&request.title, request.questions.as_slice()) {
+        (Some(title), _) => format!("agent asks: {title}"),
+        (None, [question]) => format!("agent asks: {}", question.question),
+        (None, questions) => format!("agent asks {} questions", questions.len()),
+    }
 }
 
 fn padded_content_width(width: usize) -> usize {
@@ -5458,6 +5805,7 @@ mod tests {
                 title_provider: None,
                 title_model: None,
                 title_auth: None,
+                questionnaire_enabled: true,
                 session_id: None,
                 open_resume_picker: false,
                 config_path: None,
@@ -5628,9 +5976,17 @@ mod tests {
         let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
         app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             QuestionnaireRequest {
-                question: "Which file?".into(),
+                title: None,
                 reason: None,
-                default: None,
+                questions: vec![QuestionnaireQuestion {
+                    id: "file".into(),
+                    question: "Which file?".into(),
+                    help: None,
+                    default: None,
+                    kind: QuestionnaireQuestionKind::Text,
+                    required: true,
+                    choices: Vec::new(),
+                }],
             },
             QuestionnaireResponseChannel::new(reply_tx),
         ));
@@ -5648,6 +6004,60 @@ mod tests {
             Ok(QuestionnaireReply::Cancelled(
                 QuestionnaireCancelReason::UserCancelled
             ))
+        ));
+    }
+
+    #[test]
+    fn questionnaire_submit_sends_multi_question_answers() {
+        let mut app = test_app();
+        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+            QuestionnaireRequest {
+                title: Some("PR details".into()),
+                reason: Some("Need missing preferences".into()),
+                questions: vec![
+                    QuestionnaireQuestion {
+                        id: "branch".into(),
+                        question: "Which branch?".into(),
+                        help: None,
+                        default: Some("main".into()),
+                        kind: QuestionnaireQuestionKind::Text,
+                        required: true,
+                        choices: Vec::new(),
+                    },
+                    QuestionnaireQuestion {
+                        id: "tests".into(),
+                        question: "Run tests?".into(),
+                        help: None,
+                        default: Some("yes".into()),
+                        kind: QuestionnaireQuestionKind::Confirm,
+                        required: true,
+                        choices: Vec::new(),
+                    },
+                ],
+            },
+            QuestionnaireResponseChannel::new(reply_tx),
+        ));
+        if let ComposerMode::Questionnaire(questionnaire) = &mut app.composer {
+            questionnaire.fields[0].value = "release".into();
+            questionnaire.fields[0].cursor = "release".chars().count();
+            questionnaire.fields[1].value = "n".into();
+            questionnaire.fields[1].cursor = 1;
+        }
+        let display = app.prepare_questionnaire_answer().unwrap().unwrap();
+
+        assert!(display.contains("Which branch?: release"), "{display}");
+        assert!(display.contains("Run tests?: no"), "{display}");
+
+        assert!(matches!(app.composer, ComposerMode::Input));
+        assert_eq!(app.status, "answers submitted");
+        assert!(matches!(
+            reply_rx.try_recv(),
+            Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers }))
+                if answers == vec![
+                    QuestionnaireAnswer { id: "branch".into(), answer: "release".into() },
+                    QuestionnaireAnswer { id: "tests".into(), answer: "no".into() },
+                ]
         ));
     }
 
@@ -6434,6 +6844,7 @@ mod tests {
                 title_provider: None,
                 title_model: None,
                 title_auth: None,
+                questionnaire_enabled: true,
                 session_id: None,
                 open_resume_picker: false,
                 config_path: None,
