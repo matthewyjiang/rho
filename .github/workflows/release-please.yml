@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write
 
@@ -38,12 +37,51 @@ jobs:
         run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Dispatch Arch package workflow
-        if: ${{ steps.release.outputs.release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release.outputs.tag_name }}
-        run: gh workflow run publish-arch-package.yml --ref "$TAG"
+
+  publish-arch-package:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Sy --noconfirm base-devel git pacman-contrib rust sqlite
+
+      - name: Checkout package repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+
+      - name: Build package
+        run: |
+          set -euo pipefail
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm"
+
+      - name: Checkout mjiang-extras
+        uses: actions/checkout@v4
+        with:
+          repository: matthewyjiang/mjiang-extras
+          token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+          path: mjiang-extras
+
+      - name: Publish package files
+        run: |
+          set -euo pipefail
+
+          chmod +x mjiang-extras/scripts/publish-packages.sh
+          mjiang-extras/scripts/publish-packages.sh --repo-dir mjiang-extras ./*.pkg.tar.zst
+
+          cd mjiang-extras
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add x86_64/
+          git commit -m "Update packages from ${{ github.repository }}" || exit 0
+          git push
 
   release-binaries:
     needs: release
