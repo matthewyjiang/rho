@@ -21,6 +21,7 @@ Use `/login` in the interactive TUI:
 | `/login openai` | masked OpenAI API-key entry |
 | `/login openai-codex` | browser-based Codex OAuth owned by Rho |
 | `/login anthropic` | masked Anthropic API-key entry |
+| `rho login openai-codex --device-auth` | Codex device-code login for remote/headless sessions |
 | `/login github-copilot` | GitHub device code login for GitHub Copilot |
 
 Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.

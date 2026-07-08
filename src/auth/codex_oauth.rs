@@ -2,18 +2,19 @@ use std::{collections::HashMap, time::Duration};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Alphanumeric, Rng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    time::timeout,
+    time::{sleep, timeout, Instant},
 };
 use url::Url;
 
 use crate::credentials::CodexTokens;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const ISSUER_URL: &str = "https://auth.openai.com";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const SCOPE: &str = "openid profile email offline_access api.connectors.read api.connectors.invoke";
@@ -23,6 +24,9 @@ const CALLBACK_REDIRECT_HOST: &str = "localhost";
 const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_PATH: &str = "/auth/callback";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
+const DEVICE_CODE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub struct OAuthRequest {
@@ -30,6 +34,15 @@ pub struct OAuthRequest {
     pub redirect_uri: String,
     pub state: String,
     pub verifier: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CodexDeviceLogin {
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: Duration,
+    device_auth_id: String,
+    interval: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +65,10 @@ pub enum CodexOAuthError {
     InvalidCallback(String),
     #[error("OAuth was denied or failed: {0}")]
     OAuthDenied(String),
+    #[error("Codex device login setup failed: {0}")]
+    DeviceSetup(String),
+    #[error("timed out waiting for Codex device login")]
+    DeviceTimeout,
     #[error("token exchange failed: {0}")]
     Request(#[from] reqwest::Error),
     #[error("token response was missing {0}")]
@@ -77,7 +94,38 @@ struct IdTokenAuthClaims {
     chatgpt_account_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DeviceUserCodeResponse {
+    device_auth_id: Option<String>,
+    #[serde(alias = "usercode")]
+    user_code: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_interval_seconds")]
+    interval: Option<u64>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceTokenResponse {
+    authorization_code: Option<String>,
+    code_verifier: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DeviceUserCodeRequest<'a> {
+    client_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct DeviceTokenRequest<'a> {
+    device_auth_id: &'a str,
+    user_code: &'a str,
+}
+
 pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
+    let client = http_client()?;
     let listeners = bind_callback_listeners().await?;
     let request = build_oauth_request();
 
@@ -96,11 +144,21 @@ pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
         Err(_) => return Err(CodexOAuthError::Timeout),
     };
 
-    exchange_code(
-        &reqwest::Client::new(),
-        &code,
-        &request.redirect_uri,
-        &request.verifier,
+    exchange_code(&client, &code, &request.redirect_uri, &request.verifier).await
+}
+
+pub async fn start_codex_device_login() -> Result<CodexDeviceLogin, CodexOAuthError> {
+    start_codex_device_login_with_endpoint(&http_client()?, &device_user_code_url()).await
+}
+
+pub async fn complete_codex_device_login(
+    login: CodexDeviceLogin,
+) -> Result<CodexTokens, CodexOAuthError> {
+    complete_codex_device_login_with_endpoints(
+        &http_client()?,
+        login,
+        &device_token_url(),
+        &device_redirect_uri(),
     )
     .await
 }
@@ -148,6 +206,25 @@ fn random_token(len: usize) -> String {
 fn pkce_challenge(verifier: &str) -> String {
     let digest = Sha256::digest(verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn http_client() -> Result<reqwest::Client, CodexOAuthError> {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(CodexOAuthError::Request)
+}
+
+fn device_user_code_url() -> String {
+    format!("{ISSUER_URL}/api/accounts/deviceauth/usercode")
+}
+
+fn device_token_url() -> String {
+    format!("{ISSUER_URL}/api/accounts/deviceauth/token")
+}
+
+fn device_redirect_uri() -> String {
+    format!("{ISSUER_URL}/deviceauth/callback")
 }
 
 struct CallbackListeners {
@@ -263,14 +340,153 @@ pub fn parse_callback_request_line(
     Ok(CallbackOutcome::Code(code.clone()))
 }
 
+async fn start_codex_device_login_with_endpoint(
+    client: &reqwest::Client,
+    endpoint: &str,
+) -> Result<CodexDeviceLogin, CodexOAuthError> {
+    let response: DeviceUserCodeResponse = client
+        .post(endpoint)
+        .json(&DeviceUserCodeRequest {
+            client_id: CLIENT_ID,
+        })
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    if let Some(error) = response.error {
+        return Err(CodexOAuthError::DeviceSetup(
+            response.error_description.unwrap_or(error),
+        ));
+    }
+
+    Ok(CodexDeviceLogin {
+        device_auth_id: required(response.device_auth_id, "device_auth_id")?,
+        user_code: required(response.user_code, "user_code")?,
+        verification_uri: format!("{ISSUER_URL}/codex/device"),
+        expires_in: DEVICE_CODE_TIMEOUT,
+        interval: response
+            .interval
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_DEVICE_POLL_INTERVAL),
+    })
+}
+
+async fn complete_codex_device_login_with_endpoints(
+    client: &reqwest::Client,
+    login: CodexDeviceLogin,
+    token_endpoint: &str,
+    redirect_uri: &str,
+) -> Result<CodexTokens, CodexOAuthError> {
+    complete_codex_device_login_with_exchange_endpoint(
+        client,
+        login,
+        token_endpoint,
+        redirect_uri,
+        TOKEN_URL,
+    )
+    .await
+}
+
+async fn complete_codex_device_login_with_exchange_endpoint(
+    client: &reqwest::Client,
+    login: CodexDeviceLogin,
+    token_endpoint: &str,
+    redirect_uri: &str,
+    exchange_endpoint: &str,
+) -> Result<CodexTokens, CodexOAuthError> {
+    let deadline = Instant::now() + login.expires_in;
+
+    loop {
+        if Instant::now() >= deadline {
+            return Err(CodexOAuthError::DeviceTimeout);
+        }
+
+        let response = client
+            .post(token_endpoint)
+            .json(&DeviceTokenRequest {
+                device_auth_id: &login.device_auth_id,
+                user_code: &login.user_code,
+            })
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let response: DeviceTokenResponse = response.json().await?;
+            if let Some(error) = response.error {
+                return Err(CodexOAuthError::OAuthDenied(
+                    response.error_description.unwrap_or(error),
+                ));
+            }
+            let authorization_code = required(response.authorization_code, "authorization_code")?;
+            let code_verifier = required(response.code_verifier, "code_verifier")?;
+            return exchange_code_with_endpoint(
+                client,
+                exchange_endpoint,
+                &authorization_code,
+                redirect_uri,
+                &code_verifier,
+            )
+            .await;
+        }
+
+        let status = response.status();
+        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            sleep(login.interval.min(remaining)).await;
+            continue;
+        }
+
+        response.error_for_status()?;
+    }
+}
+
+fn required<T>(value: Option<T>, field: &'static str) -> Result<T, CodexOAuthError> {
+    value.ok_or(CodexOAuthError::MissingToken(field))
+}
+
+fn deserialize_optional_interval_seconds<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Interval {
+        String(String),
+        Number(u64),
+    }
+
+    let value = Option::<Interval>::deserialize(deserializer)?;
+    match value {
+        Some(Interval::String(value)) => value
+            .trim()
+            .parse()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(Interval::Number(value)) => Ok(Some(value)),
+        None => Ok(None),
+    }
+}
+
 async fn exchange_code(
     client: &reqwest::Client,
     code: &str,
     redirect_uri: &str,
     verifier: &str,
 ) -> Result<CodexTokens, CodexOAuthError> {
+    exchange_code_with_endpoint(client, TOKEN_URL, code, redirect_uri, verifier).await
+}
+
+async fn exchange_code_with_endpoint(
+    client: &reqwest::Client,
+    endpoint: &str,
+    code: &str,
+    redirect_uri: &str,
+    verifier: &str,
+) -> Result<CodexTokens, CodexOAuthError> {
     let response: TokenResponse = client
-        .post(TOKEN_URL)
+        .post(endpoint)
         .form(&[
             ("client_id", CLIENT_ID),
             ("grant_type", "authorization_code"),
@@ -314,6 +530,10 @@ fn account_id_from_id_token(id_token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     #[test]
     fn authorize_url_contains_pkce_and_loopback_redirect() {
@@ -387,5 +607,100 @@ mod tests {
             .unwrap(),
             CallbackOutcome::Error("access_denied".into())
         );
+    }
+
+    #[tokio::test]
+    async fn codex_device_login_posts_client_id_and_parses_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            let len = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..len]);
+            assert!(request.contains("POST / HTTP/1.1"));
+            assert!(request.contains("application/json"));
+            assert!(request.contains("app_EMoamEEZ73f0CkXaXp7hrann"));
+            let body = r#"{"device_auth_id":"device","user_code":"ABCD-EFGH","interval":"1"}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+
+        let login = start_codex_device_login_with_endpoint(&reqwest::Client::new(), &endpoint)
+            .await
+            .unwrap();
+
+        assert_eq!(login.user_code, "ABCD-EFGH");
+        assert_eq!(
+            login.verification_uri,
+            "https://auth.openai.com/codex/device"
+        );
+        assert_eq!(login.expires_in, DEVICE_CODE_TIMEOUT);
+        assert_eq!(login.interval, Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn codex_device_login_exchanges_authorization_code_for_tokens() {
+        let token_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let token_endpoint = format!("http://{}", token_listener.local_addr().unwrap());
+        let exchange_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let exchange_endpoint = format!("http://{}", exchange_listener.local_addr().unwrap());
+
+        tokio::spawn(async move {
+            let (mut stream, _) = token_listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            let len = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..len]);
+            assert!(request.contains("device_auth_id"));
+            assert!(request.contains("ABCD-EFGH"));
+            let body = r#"{"authorization_code":"auth-code","code_challenge":"challenge","code_verifier":"verifier"}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+        tokio::spawn(async move {
+            let (mut stream, _) = exchange_listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            let len = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..len]);
+            assert!(request.contains("code=auth-code"));
+            assert!(request
+                .contains("redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback"));
+            assert!(request.contains("code_verifier=verifier"));
+            let body = r#"{"access_token":"access","refresh_token":"refresh","id_token":"id"}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+
+        let tokens = complete_codex_device_login_with_exchange_endpoint(
+            &reqwest::Client::new(),
+            CodexDeviceLogin {
+                user_code: "ABCD-EFGH".into(),
+                verification_uri: "https://auth.openai.com/codex/device".into(),
+                expires_in: Duration::from_secs(10),
+                device_auth_id: "device".into(),
+                interval: Duration::from_millis(1),
+            },
+            &token_endpoint,
+            "https://auth.openai.com/deviceauth/callback",
+            &exchange_endpoint,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(tokens.access_token, "access");
+        assert_eq!(tokens.refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(tokens.id_token.as_deref(), Some("id"));
     }
 }
