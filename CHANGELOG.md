@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.16.1...rho-coding-agent-v0.17.0) (2026-07-08)
+
+
+### Features
+
+* **auth:** add Codex device login ([#128](https://github.com/matthewyjiang/rho/issues/128)) ([135efef](https://github.com/matthewyjiang/rho/commit/135efeff41672a52b69c4819c76d4be2b8931f6c))
+* **questionnaire:** add user question tool ([#127](https://github.com/matthewyjiang/rho/issues/127)) ([3ccef80](https://github.com/matthewyjiang/rho/commit/3ccef805ea852e54a5df00ad559189fd84ca8af7))
+
 ## [0.16.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.16.0...rho-coding-agent-v0.16.1) (2026-07-07)
 
 
