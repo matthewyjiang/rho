@@ -137,6 +137,21 @@ impl ModelProvider for SequencedProvider {
     }
 }
 
+struct SequencedToolRecordingProvider {
+    requests: Arc<Mutex<Vec<Vec<Message>>>>,
+    tools: Arc<Mutex<Vec<Vec<ToolSpec>>>>,
+    responses: Mutex<VecDeque<ModelResponse>>,
+}
+
+#[async_trait(?Send)]
+impl ModelProvider for SequencedToolRecordingProvider {
+    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        self.tools.lock().unwrap().push(request.tools.clone());
+        self.requests.lock().unwrap().push(request.messages);
+        Ok(self.responses.lock().unwrap().pop_front().unwrap())
+    }
+}
+
 struct UsageStreamingProvider;
 
 #[async_trait(?Send)]
@@ -842,6 +857,244 @@ fn replace_history_keeps_initial_system_message() {
     assert!(
         matches!(agent.messages[2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "previous assistant"))
     );
+}
+
+#[tokio::test]
+async fn questionnaire_tool_is_only_advertised_when_handler_is_available() {
+    let provider = RecordingProvider::default();
+    let tools = provider.tools.clone();
+    let mut agent = test_agent(provider);
+
+    agent.run("hello".into()).await.unwrap();
+
+    assert!(!tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+
+    let provider = RecordingProvider::default();
+    let tools = provider.tools.clone();
+    let mut agent = test_agent(provider);
+    let mut ask_questionnaire = |_request: QuestionnaireRequest| -> QuestionnaireFuture {
+        panic!("questionnaire handler should not be called")
+    };
+
+    agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("hello".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert!(tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+}
+
+#[tokio::test]
+async fn questionnaire_tool_answer_is_returned_to_model() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let tools = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedToolRecordingProvider {
+        requests: requests.clone(),
+        tools: tools.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_question".into(),
+                name: questionnaire::TOOL_NAME.into(),
+                arguments: serde_json::json!({
+                    "question": "Which file should I edit?",
+                    "reason": "The request did not name a file.",
+                    "default": "src/main.rs"
+                }),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        ])),
+    };
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+    let mut events = Vec::new();
+    let mut ask_questionnaire = |request: QuestionnaireRequest| -> QuestionnaireFuture {
+        assert_eq!(request.questions[0].question, "Which file should I edit?");
+        let id = request.questions[0].id.clone();
+        Box::pin(async move {
+            Ok(QuestionnaireResponse {
+                answers: vec![QuestionnaireAnswer {
+                    id,
+                    answer: serde_json::json!("src/lib.rs"),
+                }],
+            })
+        })
+    };
+
+    let output = agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("edit the file".into())],
+            |event| {
+                events.push(event);
+                Ok(())
+            },
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, "done");
+    assert!(tools.lock().unwrap()[0]
+        .iter()
+        .any(|tool| tool.name == questionnaire::TOOL_NAME));
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(matches!(
+        requests[1].last(),
+        Some(Message::ToolResult(ToolResult { id, ok: true, content }))
+            if id == "call_question" && content.contains("src/lib.rs")
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::QuestionnaireStarted(request)
+            if request.questions[0].question == "Which file should I edit?"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::QuestionnaireFinished(response)
+            if matches!(response.answers.as_slice(), [QuestionnaireAnswer { answer, .. }] if answer == &serde_json::json!("src/lib.rs"))
+    )));
+}
+
+#[tokio::test]
+async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedProvider {
+        requests: requests.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_questionnaire".into(),
+                name: questionnaire::TOOL_NAME.into(),
+                arguments: serde_json::json!({
+                    "title": "PR details",
+                    "reason": "I need the missing release preferences.",
+                    "questions": [
+                        {
+                            "id": "target_branch",
+                            "question": "Which branch should I target?",
+                            "type": "choice",
+                            "choices": ["main", "develop"],
+                            "allow_other": true,
+                            "default": "main"
+                        },
+                        {
+                            "id": "test_suites",
+                            "question": "Which test suites should I run?",
+                            "type": "multi_select",
+                            "choices": ["unit", "e2e", "lint"],
+                            "default": ["unit", "lint"]
+                        },
+                        {
+                            "id": "include_tests",
+                            "question": "Should I include tests?",
+                            "type": "confirm",
+                            "default": true
+                        }
+                    ]
+                }),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        ])),
+    };
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+    let mut ask_questionnaire = |request: QuestionnaireRequest| -> QuestionnaireFuture {
+        assert_eq!(request.title.as_deref(), Some("PR details"));
+        assert_eq!(request.questions.len(), 3);
+        assert_eq!(request.questions[0].choices, vec!["main", "develop"]);
+        assert!(request.questions[0].allow_other);
+        assert_eq!(
+            request.questions[1].default,
+            Some(serde_json::json!(["unit", "lint"]))
+        );
+        Box::pin(async move {
+            Ok(QuestionnaireResponse {
+                answers: vec![
+                    QuestionnaireAnswer {
+                        id: "target_branch".into(),
+                        answer: serde_json::json!("release"),
+                    },
+                    QuestionnaireAnswer {
+                        id: "test_suites".into(),
+                        answer: serde_json::json!(["unit", "e2e"]),
+                    },
+                    QuestionnaireAnswer {
+                        id: "include_tests".into(),
+                        answer: serde_json::json!("yes"),
+                    },
+                ],
+            })
+        })
+    };
+
+    let output = agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("prep release".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, "done");
+    let requests = requests.lock().unwrap();
+    assert!(matches!(
+        requests[1].last(),
+        Some(Message::ToolResult(ToolResult { id, ok: true, content }))
+            if id == "call_questionnaire"
+                && content.contains("target_branch")
+                && content.contains("release")
+                && content.contains("test_suites")
+                && content.contains("e2e")
+                && content.contains("include_tests")
+                && content.contains("yes")
+    ));
+}
+
+#[tokio::test]
+async fn invalid_questionnaire_arguments_return_failed_tool_result() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedProvider {
+        requests: requests.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_question".into(),
+                name: questionnaire::TOOL_NAME.into(),
+                arguments: serde_json::json!({"question": "   "}),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
+        ])),
+    };
+    let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
+    let mut ask_questionnaire = |_request: QuestionnaireRequest| -> QuestionnaireFuture {
+        panic!("invalid questionnaire should not call handler")
+    };
+
+    let output = agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("ask".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, "recovered");
+    let requests = requests.lock().unwrap();
+    assert!(matches!(
+        requests[1].last(),
+        Some(Message::ToolResult(ToolResult { ok: false, content, .. }))
+            if content == "questions[0].question must not be empty"
+    ));
 }
 
 #[tokio::test]

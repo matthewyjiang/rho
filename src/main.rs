@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
                     title_model: cfg.title_model,
                     title_auth: cfg.title_auth,
                     max_tool_output_lines: cfg.max_tool_output_lines,
+                    questionnaire_enabled: !cli.no_tools,
                     session_id,
                     open_resume_picker,
                     config_path,

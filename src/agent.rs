@@ -1,11 +1,18 @@
+use std::{future::Future, pin::Pin};
+
 use thiserror::Error;
 
 mod compaction;
 mod context_tracker;
 mod history;
+pub mod questionnaire;
 
 pub use compaction::CompactionConfig;
 pub use history::{HistorySink, SessionHistorySink};
+pub use questionnaire::{
+    QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind, QuestionnaireRequest,
+    QuestionnaireResponse,
+};
 
 use compaction::{
     build_summary_request_messages, partition_messages_for_compaction,
@@ -20,6 +27,10 @@ use crate::model::{
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
+pub type QuestionnaireFuture =
+    Pin<Box<dyn Future<Output = Result<QuestionnaireResponse, AgentError>> + Send>>;
+pub type QuestionnaireHandler<'a> = &'a mut dyn FnMut(QuestionnaireRequest) -> QuestionnaireFuture;
+
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error("Provider error: {0}")]
@@ -28,6 +39,8 @@ pub enum AgentError {
     Tool(#[from] ToolError),
     #[error("Message persistence error: {0}")]
     MessagePersistence(#[from] anyhow::Error),
+    #[error("Questionnaire error: {0}")]
+    Questionnaire(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +67,8 @@ pub enum AgentEvent {
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
     },
+    QuestionnaireStarted(QuestionnaireRequest),
+    QuestionnaireFinished(QuestionnaireResponse),
 }
 
 pub struct Agent {
@@ -192,10 +207,29 @@ impl Agent {
     pub async fn run_with_content_and_events_and_steering(
         &mut self,
         user_content: Vec<ContentBlock>,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
+    ) -> Result<String, AgentError> {
+        self.run_with_content_and_events_questionnaire_and_steering(
+            user_content,
+            on_event,
+            None,
+            next_steer,
+        )
+        .await
+    }
+
+    pub async fn run_with_content_and_events_questionnaire_and_steering(
+        &mut self,
+        user_content: Vec<ContentBlock>,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        mut ask_questionnaire: Option<QuestionnaireHandler<'_>>,
         mut next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
     ) -> Result<String, AgentError> {
-        let specs = self.tools.specs();
+        let mut specs = self.tools.specs();
+        if ask_questionnaire.is_some() {
+            specs.push(questionnaire::tool_spec());
+        }
         self.push_message(Message::User(user_content))?;
 
         let mut step = 1usize;
@@ -280,21 +314,40 @@ impl Agent {
                         let mut deferred_interrupt = None;
                         for call in tool_calls.iter().cloned() {
                             let name = call.name.clone();
-                            let tool = self.tools.get(&call.name);
-                            let (display_style, command, start_display_lines) = match &tool {
-                                Some(tool) => {
-                                    let display_style = tool.display_style();
-                                    let command = tool.display_command(&call.arguments);
-                                    let start_display_lines =
-                                        tool.display_start_lines(&call.arguments, &self.ctx);
-                                    (display_style, command, start_display_lines)
-                                }
-                                None => (
-                                    ToolDisplayStyle::default_tool(),
-                                    None,
-                                    vec![call.name.clone()],
-                                ),
+                            let is_questionnaire = name == questionnaire::TOOL_NAME;
+                            let tool = (!is_questionnaire)
+                                .then(|| self.tools.get(&call.name))
+                                .flatten();
+                            let questionnaire_request = if is_questionnaire {
+                                Some(questionnaire::parse_request(call.arguments.clone()))
+                            } else {
+                                None
                             };
+                            let (display_style, command, start_display_lines) =
+                                match (&tool, &questionnaire_request) {
+                                    (_, Some(Ok(request))) => (
+                                        ToolDisplayStyle::default_tool(),
+                                        None,
+                                        questionnaire::start_display_lines(request),
+                                    ),
+                                    (_, Some(Err(err))) => (
+                                        ToolDisplayStyle::default_tool(),
+                                        None,
+                                        vec![questionnaire::TOOL_NAME.into(), err.clone()],
+                                    ),
+                                    (Some(tool), None) => {
+                                        let display_style = tool.display_style();
+                                        let command = tool.display_command(&call.arguments);
+                                        let start_display_lines =
+                                            tool.display_start_lines(&call.arguments, &self.ctx);
+                                        (display_style, command, start_display_lines)
+                                    }
+                                    (None, None) => (
+                                        ToolDisplayStyle::default_tool(),
+                                        None,
+                                        vec![call.name.clone()],
+                                    ),
+                                };
                             if deferred_interrupt.is_none() {
                                 on_event(AgentEvent::ToolStarted {
                                     name: name.clone(),
@@ -307,72 +360,160 @@ impl Agent {
                                 self.push_message(message)?;
                             }
 
-                            let (result, event_content, display_lines) = match tool {
-                                Some(tool) => {
-                                    let event_content =
-                                        tool.display_content(&call.arguments, &self.ctx);
-                                    let execution_tool = tool.clone();
-                                    let args = call.arguments.clone();
-                                    let ctx = self.ctx.clone();
-                                    let id = call.id.clone();
-                                    let (progress_tx, mut progress_rx) =
-                                        tokio::sync::mpsc::unbounded_channel();
-                                    let mut task = tokio::spawn(async move {
-                                        let mut on_update = move |display_lines| {
-                                            let _ = progress_tx.send(display_lines);
-                                        };
-                                        execution_tool
-                                            .call_with_updates(args, ctx, id, &mut on_update)
-                                            .await
-                                    });
-                                    let result = loop {
-                                        tokio::select! {
-                                            Some(display_lines) = progress_rx.recv() => {
-                                                if deferred_interrupt.is_none() {
-                                                    match on_event(AgentEvent::ToolUpdated { display_lines }) {
-                                                        Ok(()) => {}
-                                                        Err(ModelError::Interrupted) => {
-                                                            deferred_interrupt = Some(ModelError::Interrupted);
-                                                        }
-                                                        Err(err) => return Err(err.into()),
-                                                    }
+                            let (result, event_content, display_lines) = if let Some(parse_result) =
+                                questionnaire_request
+                            {
+                                match parse_result {
+                                    Ok(request) => {
+                                        if deferred_interrupt.is_none() {
+                                            match on_event(AgentEvent::QuestionnaireStarted(
+                                                request.clone(),
+                                            )) {
+                                                Ok(()) => {}
+                                                Err(ModelError::Interrupted) => {
+                                                    deferred_interrupt =
+                                                        Some(ModelError::Interrupted);
                                                 }
-                                            }
-                                            joined = &mut task => {
-                                                break match joined {
-                                                    Ok(Ok(result)) => result,
-                                                    Ok(Err(err)) => ToolResult {
-                                                        id: call.id.clone(),
-                                                        ok: false,
-                                                        content: err.to_string(),
-                                                    },
-                                                    Err(err) => ToolResult {
-                                                        id: call.id.clone(),
-                                                        ok: false,
-                                                        content: format!("tool task failed: {err}"),
-                                                    },
-                                                };
+                                                Err(err) => return Err(err.into()),
                                             }
                                         }
-                                    };
-                                    let mut display_lines =
-                                        tool.display_lines(&call.arguments, &self.ctx, &result);
-                                    if !result.ok
-                                        && !display_lines.iter().any(|line| line == &result.content)
-                                    {
-                                        display_lines.push(result.content.clone());
+                                        let result = if deferred_interrupt.is_some() {
+                                            ToolResult {
+                                                id: call.id.clone(),
+                                                ok: false,
+                                                content: "questionnaire interrupted".into(),
+                                            }
+                                        } else if let Some(ask_questionnaire) =
+                                            ask_questionnaire.as_mut()
+                                        {
+                                            match ask_questionnaire(request.clone()).await {
+                                                Ok(response) => {
+                                                    if deferred_interrupt.is_none() {
+                                                        match on_event(
+                                                            AgentEvent::QuestionnaireFinished(
+                                                                response.clone(),
+                                                            ),
+                                                        ) {
+                                                            Ok(()) => {}
+                                                            Err(ModelError::Interrupted) => {
+                                                                deferred_interrupt =
+                                                                    Some(ModelError::Interrupted);
+                                                            }
+                                                            Err(err) => return Err(err.into()),
+                                                        }
+                                                    }
+                                                    ToolResult {
+                                                        id: call.id.clone(),
+                                                        ok: true,
+                                                        content: questionnaire::response_content(
+                                                            &response,
+                                                        ),
+                                                    }
+                                                }
+                                                Err(err) => ToolResult {
+                                                    id: call.id.clone(),
+                                                    ok: false,
+                                                    content: format!("questionnaire failed: {err}"),
+                                                },
+                                            }
+                                        } else {
+                                            ToolResult {
+                                                id: call.id.clone(),
+                                                ok: false,
+                                                content:
+                                                    "questionnaire is unavailable in this mode"
+                                                        .into(),
+                                            }
+                                        };
+                                        let display_lines = questionnaire::finished_display_lines(
+                                            &request,
+                                            &result.content,
+                                        );
+                                        (result, None, display_lines)
                                     }
-                                    (result, event_content, display_lines)
+                                    Err(err) => {
+                                        let result = ToolResult {
+                                            id: call.id.clone(),
+                                            ok: false,
+                                            content: err,
+                                        };
+                                        let display_lines = vec![
+                                            questionnaire::TOOL_NAME.into(),
+                                            result.content.clone(),
+                                        ];
+                                        (result, None, display_lines)
+                                    }
                                 }
-                                None => {
-                                    let result = ToolResult {
-                                        id: call.id.clone(),
-                                        ok: false,
-                                        content: format!("Unknown tool: {}", call.name),
-                                    };
-                                    let display_lines =
-                                        vec![call.name.clone(), result.content.clone()];
-                                    (result, None, display_lines)
+                            } else {
+                                match tool {
+                                    Some(tool) => {
+                                        let event_content =
+                                            tool.display_content(&call.arguments, &self.ctx);
+                                        let execution_tool = tool.clone();
+                                        let args = call.arguments.clone();
+                                        let ctx = self.ctx.clone();
+                                        let id = call.id.clone();
+                                        let (progress_tx, mut progress_rx) =
+                                            tokio::sync::mpsc::unbounded_channel();
+                                        let mut task = tokio::spawn(async move {
+                                            let mut on_update = move |display_lines| {
+                                                let _ = progress_tx.send(display_lines);
+                                            };
+                                            execution_tool
+                                                .call_with_updates(args, ctx, id, &mut on_update)
+                                                .await
+                                        });
+                                        let result = loop {
+                                            tokio::select! {
+                                                Some(display_lines) = progress_rx.recv() => {
+                                                    if deferred_interrupt.is_none() {
+                                                        match on_event(AgentEvent::ToolUpdated { display_lines }) {
+                                                            Ok(()) => {}
+                                                            Err(ModelError::Interrupted) => {
+                                                                deferred_interrupt = Some(ModelError::Interrupted);
+                                                            }
+                                                            Err(err) => return Err(err.into()),
+                                                        }
+                                                    }
+                                                }
+                                                joined = &mut task => {
+                                                    break match joined {
+                                                        Ok(Ok(result)) => result,
+                                                        Ok(Err(err)) => ToolResult {
+                                                            id: call.id.clone(),
+                                                            ok: false,
+                                                            content: err.to_string(),
+                                                        },
+                                                        Err(err) => ToolResult {
+                                                            id: call.id.clone(),
+                                                            ok: false,
+                                                            content: format!("tool task failed: {err}"),
+                                                        },
+                                                    };
+                                                }
+                                            }
+                                        };
+                                        let mut display_lines =
+                                            tool.display_lines(&call.arguments, &self.ctx, &result);
+                                        if !result.ok
+                                            && !display_lines
+                                                .iter()
+                                                .any(|line| line == &result.content)
+                                        {
+                                            display_lines.push(result.content.clone());
+                                        }
+                                        (result, event_content, display_lines)
+                                    }
+                                    None => {
+                                        let result = ToolResult {
+                                            id: call.id.clone(),
+                                            ok: false,
+                                            content: format!("Unknown tool: {}", call.name),
+                                        };
+                                        let display_lines =
+                                            vec![call.name.clone(), result.content.clone()];
+                                        (result, None, display_lines)
+                                    }
                                 }
                             };
                             let display_content =
