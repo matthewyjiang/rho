@@ -25,6 +25,12 @@ jobs:
       - name: Build package
         run: |
           set -euo pipefail
+
+          if [[ "$GITHUB_REF_NAME" == rho-coding-agent-v* ]]; then
+            version="${GITHUB_REF_NAME#rho-coding-agent-v}"
+            sed -i "s/^pkgver=.*/pkgver=$version # x-release-please-version/" PKGBUILD
+          fi
+
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm"
