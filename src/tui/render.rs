@@ -535,7 +535,7 @@ fn push_hard_wrapped_text(
     push_wrapped_text_with(lines, text, width, style, fill, wrap_line_hard);
 }
 
-fn push_wrapped_text_with(
+pub(super) fn push_wrapped_text_with(
     lines: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
@@ -594,7 +594,7 @@ fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 
-fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
         .map(|range| line[range].to_string())

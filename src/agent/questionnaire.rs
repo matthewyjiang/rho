@@ -22,8 +22,8 @@ pub struct QuestionnaireQuestion {
     #[serde(default)]
     pub help: Option<String>,
     #[serde(default)]
-    pub default: Option<String>,
-    #[serde(default)]
+    pub default: Option<Value>,
+    #[serde(rename = "type", alias = "kind", default)]
     pub kind: QuestionnaireQuestionKind,
     #[serde(default = "default_required")]
     pub required: bool,
@@ -79,7 +79,7 @@ struct RawQuestionnaireQuestion {
     help: Option<String>,
     #[serde(default)]
     reason: Option<String>,
-    #[serde(rename = "type", default)]
+    #[serde(rename = "type", alias = "kind", default)]
     kind: Option<QuestionnaireQuestionKind>,
     #[serde(default)]
     default: Option<Value>,
@@ -227,7 +227,10 @@ pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
             lines.push(format!("   help: {help}"));
         }
         if let Some(default) = &question.default {
-            lines.push(format!("   default: {default}"));
+            lines.push(format!(
+                "   default: {}",
+                questionnaire_default_display(default)
+            ));
         }
         if !question.choices.is_empty() {
             let suffix = if question.allow_other { ", other" } else { "" };
@@ -249,6 +252,21 @@ pub fn finished_display_lines(request: &QuestionnaireRequest, result_content: &s
         lines.push(result_content.to_string());
     }
     lines
+}
+
+fn questionnaire_default_display(default: &Value) -> String {
+    match default {
+        Value::Array(values) => values
+            .iter()
+            .map(questionnaire_default_display)
+            .collect::<Vec<_>>()
+            .join(", "),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Null => String::new(),
+        Value::Object(_) => default.to_string(),
+    }
 }
 
 fn parse_question(
@@ -334,7 +352,7 @@ fn normalize_default(
     kind: QuestionnaireQuestionKind,
     choices: &[String],
     allow_other: bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Value>, String> {
     let Some(default) = default else {
         return Ok(None);
     };
@@ -343,23 +361,9 @@ fn normalize_default(
             Value::Null => return Ok(None),
             Value::Array(values) => values
                 .into_iter()
-                .map(|value| match value {
-                    Value::String(value) => Ok(value),
-                    Value::Bool(value) => Ok(value.to_string()),
-                    Value::Number(value) => Ok(value.to_string()),
-                    Value::Null | Value::Array(_) | Value::Object(_) => Err(format!(
-                        "questions[{index}].default array values must be strings, booleans, or numbers"
-                    )),
-                })
+                .map(|value| scalar_default_value(index, value, /*in_array*/ true))
                 .collect::<Result<Vec<_>, _>>()?,
-            Value::String(value) => split_multi_default(&value),
-            Value::Bool(value) => vec![value.to_string()],
-            Value::Number(value) => vec![value.to_string()],
-            Value::Object(_) => {
-                return Err(format!(
-                    "questions[{index}].default must be a string, boolean, number, or array"
-                ));
-            }
+            value => vec![scalar_default_value(index, value, /*in_array*/ false)?],
         };
         let mut normalized = Vec::new();
         for value in values {
@@ -370,8 +374,8 @@ fn normalize_default(
                 .iter()
                 .find(|choice| choice.eq_ignore_ascii_case(&value))
             {
-                Some(choice) => normalized.push(choice.clone()),
-                None if allow_other => normalized.push(value),
+                Some(choice) => normalized.push(Value::String(choice.clone())),
+                None if allow_other => normalized.push(Value::String(value)),
                 None => {
                     return Err(format!(
                         "questions[{index}].default must match one of the choices"
@@ -379,49 +383,49 @@ fn normalize_default(
                 }
             }
         }
-        return Ok((!normalized.is_empty()).then(|| normalized.join(", ")));
+        return Ok((!normalized.is_empty()).then_some(Value::Array(normalized)));
     }
 
     let value = match default {
         Value::Null => return Ok(None),
-        Value::String(value) => value,
         Value::Bool(value) if matches!(kind, QuestionnaireQuestionKind::Confirm) => {
             if value { "yes" } else { "no" }.into()
         }
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::Array(_) | Value::Object(_) => {
-            return Err(format!(
-                "questions[{index}].default must be a string, boolean, or number"
-            ));
-        }
+        value => scalar_default_value(index, value, /*in_array*/ false)?,
     };
     let Some(value) = trim_optional(Some(value)) else {
         return Ok(None);
     };
     match kind {
-        QuestionnaireQuestionKind::Text => Ok(Some(value)),
+        QuestionnaireQuestionKind::Text => Ok(Some(Value::String(value))),
         QuestionnaireQuestionKind::Choice => choices
             .iter()
             .find(|choice| choice.eq_ignore_ascii_case(&value))
             .cloned()
             .or_else(|| allow_other.then_some(value))
+            .map(Value::String)
             .map(Some)
             .ok_or_else(|| format!("questions[{index}].default must match one of the choices")),
         QuestionnaireQuestionKind::MultiSelect => unreachable!("multi_select handled above"),
         QuestionnaireQuestionKind::Confirm => normalize_confirm_value(&value)
+            .map(Value::String)
             .map(Some)
             .ok_or_else(|| format!("questions[{index}].default must be yes or no")),
     }
 }
 
-fn split_multi_default(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+fn scalar_default_value(index: usize, value: Value, in_array: bool) -> Result<String, String> {
+    match value {
+        Value::String(value) => Ok(value),
+        Value::Bool(value) => Ok(value.to_string()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Null | Value::Array(_) | Value::Object(_) => {
+            let location = if in_array { " array values" } else { "" };
+            Err(format!(
+                "questions[{index}].default{location} must be strings, booleans, or numbers"
+            ))
+        }
+    }
 }
 
 fn normalize_confirm_value(value: &str) -> Option<String> {
@@ -492,7 +496,7 @@ mod tests {
                     id: "file".into(),
                     question: "Which file?".into(),
                     help: Some("Use a repo-relative path".into()),
-                    default: Some("src/main.rs".into()),
+                    default: Some(json!("src/main.rs")),
                     kind: QuestionnaireQuestionKind::Choice,
                     required: true,
                     choices: vec!["src/main.rs".into(), "src/lib.rs".into()],
@@ -514,7 +518,7 @@ mod tests {
         assert_eq!(request.questions.len(), 1);
         assert_eq!(request.questions[0].id, "q1");
         assert_eq!(request.questions[0].question, "Which file?");
-        assert_eq!(request.questions[0].default.as_deref(), Some("src/main.rs"));
+        assert_eq!(request.questions[0].default, Some(json!("src/main.rs")));
     }
 
     #[test]
@@ -538,7 +542,7 @@ mod tests {
             QuestionnaireQuestionKind::MultiSelect
         );
         assert!(request.questions[0].allow_other);
-        assert_eq!(request.questions[0].default.as_deref(), Some("unit, smoke"));
+        assert_eq!(request.questions[0].default, Some(json!(["unit", "smoke"])));
     }
 
     #[test]
@@ -588,11 +592,51 @@ mod tests {
         .unwrap();
 
         assert_eq!(request.questions[0].kind, QuestionnaireQuestionKind::Choice);
-        assert_eq!(request.questions[0].default.as_deref(), Some("detailed"));
+        assert_eq!(request.questions[0].default, Some(json!("detailed")));
         assert_eq!(
             request.questions[1].kind,
             QuestionnaireQuestionKind::Confirm
         );
-        assert_eq!(request.questions[1].default.as_deref(), Some("yes"));
+        assert_eq!(request.questions[1].default, Some(json!("yes")));
+    }
+
+    #[test]
+    fn questionnaire_question_serializes_type_field() {
+        let question = QuestionnaireQuestion {
+            id: "apply".into(),
+            question: "Apply changes?".into(),
+            help: None,
+            default: Some(json!("no")),
+            kind: QuestionnaireQuestionKind::Confirm,
+            required: true,
+            choices: Vec::new(),
+            allow_other: false,
+        };
+
+        let value = serde_json::to_value(&question).unwrap();
+
+        assert_eq!(value.get("type"), Some(&json!("confirm")));
+        assert!(value.get("kind").is_none());
+        let round_tripped: QuestionnaireQuestion = serde_json::from_value(value).unwrap();
+        assert_eq!(round_tripped.kind, QuestionnaireQuestionKind::Confirm);
+    }
+
+    #[test]
+    fn parse_request_accepts_kind_alias() {
+        let request = parse_request(json!({
+            "questions": [
+                {
+                    "id": "apply",
+                    "question": "Apply changes?",
+                    "kind": "confirm"
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.questions[0].kind,
+            QuestionnaireQuestionKind::Confirm
+        );
     }
 }

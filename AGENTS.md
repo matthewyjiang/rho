@@ -56,6 +56,13 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 - Do not add tests for statically defined constants or negative tests for behavior that has been removed.
 - Avoid mutating process environment in tests; pass environment-derived values or dependencies explicitly where possible.
 
+## rho smoke tests with herdr
+
+- When running inside herdr, you can smoke test rho itself by launching it from source in a sibling pane with `cargo run`.
+- Use herdr to control that pane like a user would: split a pane, run `cargo run`, wait for expected output, send text or keys, and read the pane output to verify behavior.
+- Prefer this for quick end-to-end checks of terminal UI flows, command handling, startup behavior, and regressions that unit tests do not cover.
+- Keep smoke tests focused and lightweight. Capture only relevant excerpts from pane output, and close any temporary panes when they are no longer needed.
+
 ## Pull requests
 
 - Prefer the most user-visible Conventional Commit type for the PR title, usually `feat`, `fix`, `docs`, or `refactor`.

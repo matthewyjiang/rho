@@ -47,7 +47,8 @@ use markdown::push_wrapped_markdown;
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
     display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
+    push_wrapped_text, push_wrapped_text_with, session_header_lines, styled_line,
+    truncate_one_line, wrap_line_at_whitespace, LineFill,
 };
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
@@ -421,24 +422,12 @@ impl QuestionnaireFieldState {
     fn empty(question: &QuestionnaireQuestion) -> Self {
         let selection = match question.kind {
             QuestionnaireQuestionKind::Text => FieldSelection::Text,
-            QuestionnaireQuestionKind::Choice => {
-                if question.required {
-                    FieldSelection::Single(0)
-                } else {
-                    FieldSelection::None
-                }
-            }
+            QuestionnaireQuestionKind::Choice => FieldSelection::None,
             QuestionnaireQuestionKind::MultiSelect => FieldSelection::Multi {
                 selected: Vec::new(),
                 other: false,
             },
-            QuestionnaireQuestionKind::Confirm => {
-                if question.required {
-                    FieldSelection::Single(0)
-                } else {
-                    FieldSelection::None
-                }
-            }
+            QuestionnaireQuestionKind::Confirm => FieldSelection::None,
         };
         Self {
             selection,
@@ -449,16 +438,19 @@ impl QuestionnaireFieldState {
     }
 
     fn new(question: &QuestionnaireQuestion) -> Self {
-        let default = question.default.as_deref().unwrap_or_default();
         let (selection, choice_cursor, other_value) = match question.kind {
-            QuestionnaireQuestionKind::Text => (FieldSelection::Text, 0, default.to_string()),
-            QuestionnaireQuestionKind::Choice => default_choice_selection(question, default),
-            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question, default),
-            QuestionnaireQuestionKind::Confirm => match default.to_ascii_lowercase().as_str() {
-                "" if !question.required => (FieldSelection::None, 0, String::new()),
-                "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
-                _ => (FieldSelection::Single(0), 0, String::new()),
-            },
+            QuestionnaireQuestionKind::Text => (
+                FieldSelection::Text,
+                0,
+                question
+                    .default
+                    .as_ref()
+                    .map(questionnaire_default_string)
+                    .unwrap_or_default(),
+            ),
+            QuestionnaireQuestionKind::Choice => default_choice_selection(question),
+            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question),
+            QuestionnaireQuestionKind::Confirm => default_confirm_selection(question),
         };
         let other_cursor = other_value.chars().count();
         Self {
@@ -597,50 +589,40 @@ impl QuestionnaireFieldState {
     }
 }
 
-fn default_choice_selection(
-    question: &QuestionnaireQuestion,
-    default: &str,
-) -> (FieldSelection, usize, String) {
+fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
+    let Some(default) = question.default.as_ref().map(questionnaire_default_string) else {
+        return (FieldSelection::None, 0, String::new());
+    };
     if let Some(index) = question
         .choices
         .iter()
-        .position(|choice| choice.eq_ignore_ascii_case(default))
+        .position(|choice| choice.eq_ignore_ascii_case(&default))
     {
         return (FieldSelection::Single(index), index, String::new());
     }
-    if !default.is_empty() && question.allow_other {
-        return (
-            FieldSelection::Other,
-            question.choices.len(),
-            default.to_string(),
-        );
+    if question.allow_other {
+        return (FieldSelection::Other, question.choices.len(), default);
     }
-    if question.required {
-        (FieldSelection::Single(0), 0, String::new())
-    } else {
-        (FieldSelection::None, 0, String::new())
-    }
+    (FieldSelection::None, 0, String::new())
 }
 
-fn default_multi_selection(
-    question: &QuestionnaireQuestion,
-    default: &str,
-) -> (FieldSelection, usize, String) {
+fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
     let mut selected = Vec::new();
     let mut other_values = Vec::new();
-    for value in default
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    for value in question
+        .default
+        .as_ref()
+        .map(questionnaire_default_strings)
+        .unwrap_or_default()
     {
         if let Some(index) = question
             .choices
             .iter()
-            .position(|choice| choice.eq_ignore_ascii_case(value))
+            .position(|choice| choice.eq_ignore_ascii_case(&value))
         {
             selected.push(index);
         } else if question.allow_other {
-            other_values.push(value.to_string());
+            other_values.push(value);
         }
     }
     selected.sort_unstable();
@@ -656,6 +638,60 @@ fn default_multi_selection(
         choice_cursor,
         other_values.join(", "),
     )
+}
+
+fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
+    match question
+        .default
+        .as_ref()
+        .map(questionnaire_default_string)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "yes" | "y" | "true" => (FieldSelection::Single(0), 0, String::new()),
+        "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
+        _ => (FieldSelection::None, 0, String::new()),
+    }
+}
+
+fn questionnaire_default_strings(default: &serde_json::Value) -> Vec<String> {
+    match default {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(questionnaire_default_string)
+            .filter(|value| !value.is_empty())
+            .collect(),
+        value => {
+            let value = questionnaire_default_string(value);
+            if value.is_empty() {
+                Vec::new()
+            } else {
+                vec![value]
+            }
+        }
+    }
+}
+
+fn questionnaire_default_string(default: &serde_json::Value) -> String {
+    match default {
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => default.to_string(),
+    }
+}
+
+fn questionnaire_default_display(default: &serde_json::Value) -> String {
+    match default {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(questionnaire_default_display)
+            .collect::<Vec<_>>()
+            .join(", "),
+        value => questionnaire_default_string(value),
+    }
 }
 
 fn choice_count(question: &QuestionnaireQuestion) -> usize {
@@ -5625,7 +5661,10 @@ fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
         hints.push("other available".into());
     }
     if let Some(default) = &question.default {
-        hints.push(format!("default: {default}"));
+        hints.push(format!(
+            "default: {}",
+            questionnaire_default_display(default)
+        ));
     }
     hints.join(" · ")
 }
@@ -5813,7 +5852,16 @@ fn questionnaire_question_prefix_line_count(
 }
 
 fn wrapped_line_count(text: String, width: usize) -> usize {
-    input_visual_lines(&text, width).len()
+    let mut lines = Vec::new();
+    push_wrapped_text_with(
+        &mut lines,
+        &text,
+        width,
+        Theme::text(),
+        LineFill::Natural,
+        wrap_line_at_whitespace,
+    );
+    lines.len()
 }
 
 fn questionnaire_answers(
@@ -6542,7 +6590,7 @@ mod tests {
                         id: "branch".into(),
                         question: "Which branch?".into(),
                         help: None,
-                        default: Some("main".into()),
+                        default: Some(serde_json::json!("main")),
                         kind: QuestionnaireQuestionKind::Choice,
                         required: true,
                         choices: vec!["main".into(), "develop".into()],
@@ -6552,7 +6600,7 @@ mod tests {
                         id: "test_suites".into(),
                         question: "Which test suites should I run?".into(),
                         help: None,
-                        default: Some("unit".into()),
+                        default: Some(serde_json::json!(["unit"])),
                         kind: QuestionnaireQuestionKind::MultiSelect,
                         required: true,
                         choices: vec!["unit".into(), "e2e".into(), "lint".into()],
@@ -6562,7 +6610,7 @@ mod tests {
                         id: "apply".into(),
                         question: "Apply changes?".into(),
                         help: None,
-                        default: Some("yes".into()),
+                        default: Some(serde_json::json!("yes")),
                         kind: QuestionnaireQuestionKind::Confirm,
                         required: true,
                         choices: Vec::new(),
@@ -6605,6 +6653,94 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn required_confirm_without_default_requires_explicit_choice() {
+        let question = QuestionnaireQuestion {
+            id: "apply".into(),
+            question: "Apply changes?".into(),
+            help: None,
+            default: None,
+            kind: QuestionnaireQuestionKind::Confirm,
+            required: true,
+            choices: Vec::new(),
+            allow_other: false,
+        };
+        let field = QuestionnaireFieldState::new(&question);
+
+        assert_eq!(field.selection, FieldSelection::None);
+        assert_eq!(
+            normalize_questionnaire_answer(&question, &field),
+            Err("answer is not selected".into())
+        );
+
+        let mut field = field;
+        field.toggle_highlighted(&question);
+        assert_eq!(
+            normalize_questionnaire_answer(&question, &field),
+            Ok(serde_json::json!("yes"))
+        );
+    }
+
+    #[test]
+    fn multi_select_default_preserves_commas() {
+        let question = QuestionnaireQuestion {
+            id: "targets".into(),
+            question: "Targets?".into(),
+            help: None,
+            default: Some(serde_json::json!(["New York, NY", "Los Angeles, CA"])),
+            kind: QuestionnaireQuestionKind::MultiSelect,
+            required: true,
+            choices: vec!["New York, NY".into(), "Boston, MA".into()],
+            allow_other: true,
+        };
+
+        let field = QuestionnaireFieldState::new(&question);
+
+        assert_eq!(
+            field.selection,
+            FieldSelection::Multi {
+                selected: vec![0],
+                other: true
+            }
+        );
+        assert_eq!(field.other_value, "Los Angeles, CA");
+        assert_eq!(
+            normalize_questionnaire_answer(&question, &field),
+            Ok(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
+        );
+    }
+
+    #[test]
+    fn questionnaire_cursor_counts_whitespace_wrapped_question_lines() {
+        let question = QuestionnaireQuestion {
+            id: "style".into(),
+            question: "hello wide world".into(),
+            help: None,
+            default: None,
+            kind: QuestionnaireQuestionKind::Choice,
+            required: true,
+            choices: vec!["brief".into(), "detailed".into()],
+            allow_other: false,
+        };
+        let field = QuestionnaireFieldState::new(&question);
+        let expected_cursor = questionnaire_question_cursor(&question, &field, 3, 14);
+        let rendered = questionnaire_frame(
+            &QuestionnaireComposer {
+                request: QuestionnaireRequest {
+                    title: None,
+                    reason: None,
+                    questions: vec![question.clone()],
+                },
+                response: QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
+                fields: vec![field],
+                active_index: 0,
+            },
+            14,
+        );
+
+        assert_eq!(expected_cursor, rendered.1);
+        assert_eq!(expected_cursor.y, 6);
+    }
     #[test]
     fn pasted_multiline_input_collapses_to_marker_and_expands() {
         let mut app = test_app();

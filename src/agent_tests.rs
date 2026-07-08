@@ -1010,7 +1010,10 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
         assert_eq!(request.questions.len(), 3);
         assert_eq!(request.questions[0].choices, vec!["main", "develop"]);
         assert!(request.questions[0].allow_other);
-        assert_eq!(request.questions[1].default.as_deref(), Some("unit, lint"));
+        assert_eq!(
+            request.questions[1].default,
+            Some(serde_json::json!(["unit", "lint"]))
+        );
         Box::pin(async move {
             Ok(QuestionnaireResponse {
                 answers: vec![
