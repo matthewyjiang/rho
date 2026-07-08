@@ -25,6 +25,15 @@ rho --resume <session-uuid>
 rho -R <session-uuid-prefix>
 ```
 
+You can also omit the ID to open an interactive picker for saved sessions in the current workspace:
+
+```bash
+rho --resume
+rho -R
+```
+
+Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker.
+
 After you send at least one message, Rho prints a resume command on exit that you can paste later.
 
 ## Resetting history
