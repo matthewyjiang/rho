@@ -285,8 +285,19 @@ struct QuestionnaireComposer {
 
 #[derive(Debug)]
 struct QuestionnaireFieldState {
-    value: String,
-    cursor: usize,
+    selection: FieldSelection,
+    choice_cursor: usize,
+    other_value: String,
+    other_cursor: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FieldSelection {
+    Text,
+    None,
+    Single(usize),
+    Multi { selected: Vec<usize>, other: bool },
+    Other,
 }
 
 impl QuestionnaireComposer {
@@ -294,11 +305,7 @@ impl QuestionnaireComposer {
         let fields = request
             .questions
             .iter()
-            .map(|question| {
-                let value = question.default.clone().unwrap_or_default();
-                let cursor = value.chars().count();
-                QuestionnaireFieldState { value, cursor }
-            })
+            .map(QuestionnaireFieldState::new)
             .collect::<Vec<_>>();
         Self {
             request,
@@ -306,6 +313,10 @@ impl QuestionnaireComposer {
             fields,
             active_index: 0,
         }
+    }
+
+    fn active_question(&self) -> &QuestionnaireQuestion {
+        &self.request.questions[self.active_index]
     }
 
     fn active_field(&self) -> &QuestionnaireFieldState {
@@ -328,65 +339,332 @@ impl QuestionnaireComposer {
         self.active_index = (self.active_index + 1).min(self.fields.len().saturating_sub(1));
     }
 
-    fn insert_char(&mut self, ch: char) {
-        self.active_field_mut().insert_char(ch);
+    fn move_active_choice_previous(&mut self) {
+        let question = self.active_question().clone();
+        self.active_field_mut().move_choice_previous(&question);
     }
 
-    fn insert_text(&mut self, text: &str) {
+    fn move_active_choice_next(&mut self) {
+        let question = self.active_question().clone();
+        self.active_field_mut().move_choice_next(&question);
+    }
+
+    fn toggle_active_choice(&mut self) {
+        let question = self.active_question().clone();
+        self.active_field_mut().toggle_highlighted(&question);
+    }
+
+    fn clear_active_answer(&mut self) {
+        let question = self.active_question().clone();
+        *self.active_field_mut() = QuestionnaireFieldState::empty(&question);
+    }
+
+    fn active_text_entry_active(&self) -> bool {
+        self.active_field()
+            .text_entry_active(self.active_question())
+    }
+
+    fn insert_char(&mut self, ch: char) -> bool {
+        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
+            return false;
+        }
+        self.active_field_mut().insert_char(ch);
+        true
+    }
+
+    fn insert_text(&mut self, text: &str) -> bool {
+        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
+            return false;
+        }
         self.active_field_mut().insert_text(text);
+        true
     }
 
     fn backspace(&mut self) {
-        self.active_field_mut().backspace();
+        if self.active_text_entry_active() {
+            self.active_field_mut().backspace();
+        }
     }
 
     fn delete(&mut self) {
-        self.active_field_mut().delete();
+        if self.active_text_entry_active() {
+            self.active_field_mut().delete();
+        }
+    }
+
+    fn activate_other_for_typing(&mut self) -> bool {
+        let question = self.active_question().clone();
+        if !question.allow_other {
+            return false;
+        }
+        match &mut self.active_field_mut().selection {
+            FieldSelection::Text | FieldSelection::Other => true,
+            FieldSelection::None | FieldSelection::Single(_) => {
+                let field = self.active_field_mut();
+                field.selection = FieldSelection::Other;
+                field.choice_cursor = question.choices.len();
+                true
+            }
+            FieldSelection::Multi { .. } => {
+                let field = self.active_field_mut();
+                if let FieldSelection::Multi { other, .. } = &mut field.selection {
+                    *other = true;
+                }
+                field.choice_cursor = question.choices.len();
+                true
+            }
+        }
     }
 }
 
 impl QuestionnaireFieldState {
+    fn empty(question: &QuestionnaireQuestion) -> Self {
+        let selection = match question.kind {
+            QuestionnaireQuestionKind::Text => FieldSelection::Text,
+            QuestionnaireQuestionKind::Choice => {
+                if question.required {
+                    FieldSelection::Single(0)
+                } else {
+                    FieldSelection::None
+                }
+            }
+            QuestionnaireQuestionKind::MultiSelect => FieldSelection::Multi {
+                selected: Vec::new(),
+                other: false,
+            },
+            QuestionnaireQuestionKind::Confirm => {
+                if question.required {
+                    FieldSelection::Single(0)
+                } else {
+                    FieldSelection::None
+                }
+            }
+        };
+        Self {
+            selection,
+            choice_cursor: 0,
+            other_value: String::new(),
+            other_cursor: 0,
+        }
+    }
+
+    fn new(question: &QuestionnaireQuestion) -> Self {
+        let default = question.default.as_deref().unwrap_or_default();
+        let (selection, choice_cursor, other_value) = match question.kind {
+            QuestionnaireQuestionKind::Text => (FieldSelection::Text, 0, default.to_string()),
+            QuestionnaireQuestionKind::Choice => default_choice_selection(question, default),
+            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question, default),
+            QuestionnaireQuestionKind::Confirm => match default.to_ascii_lowercase().as_str() {
+                "" if !question.required => (FieldSelection::None, 0, String::new()),
+                "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
+                _ => (FieldSelection::Single(0), 0, String::new()),
+            },
+        };
+        let other_cursor = other_value.chars().count();
+        Self {
+            selection,
+            choice_cursor,
+            other_value,
+            other_cursor,
+        }
+    }
+
     fn char_len(&self) -> usize {
-        self.value.chars().count()
+        self.other_value.chars().count()
     }
 
     fn byte_index(&self, char_index: usize) -> usize {
-        self.value
+        self.other_value
             .char_indices()
             .nth(char_index)
             .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
+            .unwrap_or(self.other_value.len())
     }
 
     fn insert_char(&mut self, ch: char) {
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
+        let byte_index = self.byte_index(self.other_cursor);
+        self.other_value.insert(byte_index, ch);
+        self.other_cursor += 1;
     }
 
     fn insert_text(&mut self, text: &str) {
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, text);
-        self.cursor += text.chars().count();
+        let byte_index = self.byte_index(self.other_cursor);
+        self.other_value.insert_str(byte_index, text);
+        self.other_cursor += text.chars().count();
     }
 
     fn backspace(&mut self) {
-        if self.cursor == 0 {
+        if self.other_cursor == 0 {
             return;
         }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
+        let start = self.byte_index(self.other_cursor - 1);
+        let end = self.byte_index(self.other_cursor);
+        self.other_value.replace_range(start..end, "");
+        self.other_cursor -= 1;
     }
 
     fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
+        if self.other_cursor >= self.char_len() {
             return;
         }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
+        let start = self.byte_index(self.other_cursor);
+        let end = self.byte_index(self.other_cursor + 1);
+        self.other_value.replace_range(start..end, "");
+    }
+
+    fn text_entry_active(&self, question: &QuestionnaireQuestion) -> bool {
+        match &self.selection {
+            FieldSelection::Text | FieldSelection::Other => true,
+            FieldSelection::None | FieldSelection::Single(_) => false,
+            FieldSelection::Multi { other, .. } => {
+                *other && self.choice_cursor == question.choices.len()
+            }
+        }
+    }
+
+    fn move_choice_previous(&mut self, question: &QuestionnaireQuestion) {
+        let count = choice_count(question);
+        if count == 0 || matches!(self.selection, FieldSelection::Text) {
+            return;
+        }
+        self.choice_cursor = self.choice_cursor.saturating_sub(1);
+        self.select_highlighted_for_single(question);
+    }
+
+    fn move_choice_next(&mut self, question: &QuestionnaireQuestion) {
+        let count = choice_count(question);
+        if count == 0 || matches!(self.selection, FieldSelection::Text) {
+            return;
+        }
+        self.choice_cursor = (self.choice_cursor + 1).min(count.saturating_sub(1));
+        self.select_highlighted_for_single(question);
+    }
+
+    fn toggle_highlighted(&mut self, question: &QuestionnaireQuestion) {
+        match &mut self.selection {
+            FieldSelection::Text => {}
+            FieldSelection::None | FieldSelection::Single(_) => {
+                if question.allow_other && self.choice_cursor == question.choices.len() {
+                    self.selection = FieldSelection::Other;
+                } else {
+                    self.selection = FieldSelection::Single(
+                        self.choice_cursor
+                            .min(choice_count(question).saturating_sub(1)),
+                    );
+                }
+            }
+            FieldSelection::Multi { selected, other } => {
+                if question.allow_other && self.choice_cursor == question.choices.len() {
+                    *other = !*other;
+                } else {
+                    let cursor = self
+                        .choice_cursor
+                        .min(question.choices.len().saturating_sub(1));
+                    if selected.contains(&cursor) {
+                        selected.retain(|index| *index != cursor);
+                    } else {
+                        selected.push(cursor);
+                        selected.sort_unstable();
+                        selected.dedup();
+                    }
+                }
+            }
+            FieldSelection::Other => {
+                if self.choice_cursor < question.choices.len() {
+                    self.selection = FieldSelection::Single(self.choice_cursor);
+                }
+            }
+        }
+    }
+
+    fn select_highlighted_for_single(&mut self, question: &QuestionnaireQuestion) {
+        match &mut self.selection {
+            FieldSelection::None | FieldSelection::Single(_) => {
+                if question.allow_other && self.choice_cursor == question.choices.len() {
+                    self.selection = FieldSelection::Other;
+                } else {
+                    self.selection = FieldSelection::Single(
+                        self.choice_cursor
+                            .min(choice_count(question).saturating_sub(1)),
+                    );
+                }
+            }
+            FieldSelection::Other if self.choice_cursor < question.choices.len() => {
+                self.selection = FieldSelection::Single(self.choice_cursor);
+            }
+            FieldSelection::Text | FieldSelection::Multi { .. } | FieldSelection::Other => {}
+        }
+    }
+}
+
+fn default_choice_selection(
+    question: &QuestionnaireQuestion,
+    default: &str,
+) -> (FieldSelection, usize, String) {
+    if let Some(index) = question
+        .choices
+        .iter()
+        .position(|choice| choice.eq_ignore_ascii_case(default))
+    {
+        return (FieldSelection::Single(index), index, String::new());
+    }
+    if !default.is_empty() && question.allow_other {
+        return (
+            FieldSelection::Other,
+            question.choices.len(),
+            default.to_string(),
+        );
+    }
+    if question.required {
+        (FieldSelection::Single(0), 0, String::new())
+    } else {
+        (FieldSelection::None, 0, String::new())
+    }
+}
+
+fn default_multi_selection(
+    question: &QuestionnaireQuestion,
+    default: &str,
+) -> (FieldSelection, usize, String) {
+    let mut selected = Vec::new();
+    let mut other_values = Vec::new();
+    for value in default
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(index) = question
+            .choices
+            .iter()
+            .position(|choice| choice.eq_ignore_ascii_case(value))
+        {
+            selected.push(index);
+        } else if question.allow_other {
+            other_values.push(value.to_string());
+        }
+    }
+    selected.sort_unstable();
+    selected.dedup();
+    let other = !other_values.is_empty();
+    let choice_cursor = selected
+        .first()
+        .copied()
+        .or_else(|| other.then_some(question.choices.len()))
+        .unwrap_or(0);
+    (
+        FieldSelection::Multi { selected, other },
+        choice_cursor,
+        other_values.join(", "),
+    )
+}
+
+fn choice_count(question: &QuestionnaireQuestion) -> usize {
+    match question.kind {
+        QuestionnaireQuestionKind::Text => 0,
+        QuestionnaireQuestionKind::Confirm => 2,
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
+            question.choices.len() + usize::from(question.allow_other)
+        }
     }
 }
 
@@ -1228,9 +1506,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                        let field = questionnaire.active_field_mut();
-                        field.value.clear();
-                        field.cursor = 0;
+                        questionnaire.clear_active_answer();
                     }
                     self.status = "answer cleared; press ctrl-c again to cancel".into();
                     self.ctrl_c_streak = 1;
@@ -1241,7 +1517,7 @@ impl App {
                 self.paste_burst.clear();
                 Ok(true)
             }
-            (KeyModifiers::ALT, KeyCode::Up) => {
+            (KeyModifiers::ALT, KeyCode::Up) | (_, KeyCode::BackTab) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
                     questionnaire.move_to_previous_field();
                 }
@@ -1249,7 +1525,7 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
-            (KeyModifiers::ALT, KeyCode::Down) => {
+            (KeyModifiers::ALT, KeyCode::Down) | (_, KeyCode::Tab) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
                     questionnaire.move_to_next_field();
                 }
@@ -1259,12 +1535,15 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let field = questionnaire.active_field_mut();
-                    let new_cursor = previous_word_boundary(&field.value, field.cursor);
-                    let start = field.byte_index(new_cursor);
-                    let end = field.byte_index(field.cursor);
-                    field.value.replace_range(start..end, "");
-                    field.cursor = new_cursor;
+                    if questionnaire.active_text_entry_active() {
+                        let field = questionnaire.active_field_mut();
+                        let new_cursor =
+                            previous_word_boundary(&field.other_value, field.other_cursor);
+                        let start = field.byte_index(new_cursor);
+                        let end = field.byte_index(field.other_cursor);
+                        field.other_value.replace_range(start..end, "");
+                        field.other_cursor = new_cursor;
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1290,17 +1569,17 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
-            (_, KeyCode::Tab) | (_, KeyCode::Down) => {
+            (_, KeyCode::Up) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_to_next_field();
+                    questionnaire.move_active_choice_previous();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
-            (_, KeyCode::BackTab) | (_, KeyCode::Up) => {
+            (_, KeyCode::Down) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_to_previous_field();
+                    questionnaire.move_active_choice_next();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1324,8 +1603,11 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let field = questionnaire.active_field_mut();
-                    field.cursor = previous_word_boundary(&field.value, field.cursor);
+                    if questionnaire.active_text_entry_active() {
+                        let field = questionnaire.active_field_mut();
+                        field.other_cursor =
+                            previous_word_boundary(&field.other_value, field.other_cursor);
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1333,8 +1615,11 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let field = questionnaire.active_field_mut();
-                    field.cursor = next_word_boundary(&field.value, field.cursor);
+                    if questionnaire.active_text_entry_active() {
+                        let field = questionnaire.active_field_mut();
+                        field.other_cursor =
+                            next_word_boundary(&field.other_value, field.other_cursor);
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1342,8 +1627,12 @@ impl App {
             }
             (_, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let field = questionnaire.active_field_mut();
-                    field.cursor = field.cursor.saturating_sub(1);
+                    if questionnaire.active_text_entry_active() {
+                        let field = questionnaire.active_field_mut();
+                        field.other_cursor = field.other_cursor.saturating_sub(1);
+                    } else {
+                        questionnaire.move_active_choice_previous();
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1351,9 +1640,13 @@ impl App {
             }
             (_, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let char_len = questionnaire.active_char_len();
-                    let field = questionnaire.active_field_mut();
-                    field.cursor = (field.cursor + 1).min(char_len);
+                    if questionnaire.active_text_entry_active() {
+                        let char_len = questionnaire.active_char_len();
+                        let field = questionnaire.active_field_mut();
+                        field.other_cursor = (field.other_cursor + 1).min(char_len);
+                    } else {
+                        questionnaire.move_active_choice_next();
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1361,7 +1654,9 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.active_field_mut().cursor = 0;
+                    if questionnaire.active_text_entry_active() {
+                        questionnaire.active_field_mut().other_cursor = 0;
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1369,8 +1664,10 @@ impl App {
             }
             (_, KeyCode::End) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    let char_len = questionnaire.active_char_len();
-                    questionnaire.active_field_mut().cursor = char_len;
+                    if questionnaire.active_text_entry_active() {
+                        let char_len = questionnaire.active_char_len();
+                        questionnaire.active_field_mut().other_cursor = char_len;
+                    }
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1392,13 +1689,26 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (_, KeyCode::Char(' ')) => {
+                if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    if questionnaire.active_text_entry_active() {
+                        questionnaire.insert_char(' ');
+                    } else {
+                        questionnaire.toggle_active_choice();
+                    }
+                }
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.insert_char(ch);
+                    if questionnaire.insert_char(ch) {
+                        self.paste_burst.record_plain_char(Instant::now());
+                    }
                 }
-                self.paste_burst.record_plain_char(Instant::now());
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -2588,7 +2898,9 @@ impl App {
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
             ComposerMode::ConfigTextInput(input) => input.insert_text(text),
-            ComposerMode::Questionnaire(questionnaire) => questionnaire.insert_text(text),
+            ComposerMode::Questionnaire(questionnaire) => {
+                questionnaire.insert_text(text);
+            }
             ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
         }
     }
@@ -5154,6 +5466,13 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
 }
 
 fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> Vec<Line<'static>> {
+    questionnaire_frame(questionnaire, width).0
+}
+
+fn questionnaire_frame(
+    questionnaire: &QuestionnaireComposer,
+    width: usize,
+) -> (Vec<Line<'static>>, Position) {
     let mut lines = Vec::new();
     if let Some(title) = &questionnaire.request.title {
         push_wrapped_text(
@@ -5186,7 +5505,7 @@ fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> V
     }
     lines.push(styled_line(
         truncate_one_line(
-            "enter submit · tab/down next · shift-tab/up previous · shift-enter newline · esc cancel",
+            "enter submit · up/down choose · space toggle · tab next · type only for other",
             width,
         ),
         width,
@@ -5194,6 +5513,7 @@ fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> V
         LineFill::Natural,
     ));
 
+    let mut cursor = Position { x: 0, y: 0 };
     for (index, (question, field)) in questionnaire
         .request
         .questions
@@ -5201,29 +5521,28 @@ fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> V
         .zip(questionnaire.fields.iter())
         .enumerate()
     {
-        lines.extend(questionnaire_question_lines(
-            question,
-            field,
-            index,
-            questionnaire.active_index == index,
-            width,
-        ));
+        let active = questionnaire.active_index == index;
+        let before = lines.len();
+        questionnaire_push_question_lines(&mut lines, question, field, index, active, width);
+        if active {
+            cursor = questionnaire_question_cursor(question, field, before, width);
+        }
     }
-    lines
+    (lines, cursor)
 }
 
-fn questionnaire_question_lines(
+fn questionnaire_push_question_lines(
+    lines: &mut Vec<Line<'static>>,
     question: &QuestionnaireQuestion,
     field: &QuestionnaireFieldState,
     index: usize,
     active: bool,
     width: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
+) {
     let marker = if active { ">" } else { " " };
     let required = if question.required { "" } else { " optional" };
     push_wrapped_text(
-        &mut lines,
+        lines,
         &format!("{marker} {}. {}{required}", index + 1, question.question),
         width,
         if active {
@@ -5235,7 +5554,7 @@ fn questionnaire_question_lines(
     );
     if let Some(help) = &question.help {
         push_wrapped_text(
-            &mut lines,
+            lines,
             &format!("  help: {help}"),
             width,
             Theme::dim(),
@@ -5245,29 +5564,65 @@ fn questionnaire_question_lines(
     let answer_hint = questionnaire_answer_hint(question);
     if !answer_hint.is_empty() {
         push_wrapped_text(
-            &mut lines,
+            lines,
             &format!("  {answer_hint}"),
             width,
             Theme::dim(),
             LineFill::Natural,
         );
     }
-    lines.extend(
-        input_visual_lines(&field.value, width.saturating_sub(2).max(1))
-            .into_iter()
-            .map(|line| styled_line(format!("  {line}"), width, Theme::text(), LineFill::Natural)),
-    );
-    lines
+
+    match question.kind {
+        QuestionnaireQuestionKind::Text => {
+            push_prefixed_input_lines(lines, "  ", &field.other_value, width, Theme::text());
+        }
+        QuestionnaireQuestionKind::Choice
+        | QuestionnaireQuestionKind::MultiSelect
+        | QuestionnaireQuestionKind::Confirm => {
+            for choice_index in 0..choice_count(question) {
+                let highlighted = active && field.choice_cursor == choice_index;
+                let line_marker = if highlighted { " >" } else { "  " };
+                let selection_marker =
+                    questionnaire_selection_marker(question, field, choice_index);
+                let label = questionnaire_choice_label(question, choice_index);
+                push_wrapped_text(
+                    lines,
+                    &format!("{line_marker} {selection_marker} {label}"),
+                    width,
+                    if highlighted {
+                        Theme::input_prompt()
+                    } else {
+                        Theme::text()
+                    },
+                    LineFill::Natural,
+                );
+                if question.allow_other
+                    && choice_index == question.choices.len()
+                    && questionnaire_other_selected(field)
+                {
+                    push_prefixed_input_lines(
+                        lines,
+                        "      other: ",
+                        &field.other_value,
+                        width,
+                        Theme::text(),
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
     let mut hints = Vec::new();
     match question.kind {
-        QuestionnaireQuestionKind::Text => {}
-        QuestionnaireQuestionKind::Choice => {
-            hints.push(format!("choices: {}", question.choices.join(", ")));
-        }
-        QuestionnaireQuestionKind::Confirm => hints.push("answer yes or no".into()),
+        QuestionnaireQuestionKind::Text => hints.push("free text only when needed".into()),
+        QuestionnaireQuestionKind::Choice => hints.push("select one".into()),
+        QuestionnaireQuestionKind::MultiSelect => hints.push("select one or more".into()),
+        QuestionnaireQuestionKind::Confirm => hints.push("select yes or no".into()),
+    }
+    if !question.choices.is_empty() && question.allow_other {
+        hints.push("other available".into());
     }
     if let Some(default) = &question.default {
         hints.push(format!("default: {default}"));
@@ -5275,58 +5630,173 @@ fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
     hints.join(" · ")
 }
 
+fn questionnaire_selection_marker(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    choice_index: usize,
+) -> &'static str {
+    match (&question.kind, &field.selection) {
+        (QuestionnaireQuestionKind::MultiSelect, FieldSelection::Multi { selected, other }) => {
+            if choice_index < question.choices.len() {
+                if selected.contains(&choice_index) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                }
+            } else if *other {
+                "[x]"
+            } else {
+                "[ ]"
+            }
+        }
+        (_, FieldSelection::Single(index)) if *index == choice_index => "(x)",
+        (_, FieldSelection::Other)
+            if question.allow_other && choice_index == question.choices.len() =>
+        {
+            "(x)"
+        }
+        (_, FieldSelection::None) => "( )",
+        _ => "( )",
+    }
+}
+
+fn questionnaire_choice_label(question: &QuestionnaireQuestion, choice_index: usize) -> String {
+    match question.kind {
+        QuestionnaireQuestionKind::Confirm => {
+            if choice_index == 0 {
+                "yes".into()
+            } else {
+                "no".into()
+            }
+        }
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => question
+            .choices
+            .get(choice_index)
+            .cloned()
+            .unwrap_or_else(|| "Other".into()),
+        QuestionnaireQuestionKind::Text => String::new(),
+    }
+}
+
+fn questionnaire_other_selected(field: &QuestionnaireFieldState) -> bool {
+    match &field.selection {
+        FieldSelection::Other => true,
+        FieldSelection::Multi { other, .. } => *other,
+        FieldSelection::Text | FieldSelection::None | FieldSelection::Single(_) => false,
+    }
+}
+
+fn push_prefixed_input_lines(
+    lines: &mut Vec<Line<'static>>,
+    prefix: &str,
+    value: &str,
+    width: usize,
+    style: Style,
+) {
+    let prefix_width = display_width(prefix);
+    let input_width = width.saturating_sub(prefix_width).max(1);
+    let continuation = " ".repeat(prefix_width);
+    for (index, line) in input_visual_lines(value, input_width)
+        .into_iter()
+        .enumerate()
+    {
+        let prefix = if index == 0 { prefix } else { &continuation };
+        lines.push(styled_line(
+            format!("{prefix}{line}"),
+            width,
+            style,
+            LineFill::Natural,
+        ));
+    }
+}
+
 fn questionnaire_cursor_position(questionnaire: &QuestionnaireComposer, width: usize) -> Position {
-    let active_question = &questionnaire.request.questions[questionnaire.active_index];
-    let active_field = &questionnaire.fields[questionnaire.active_index];
-    let previous_height = questionnaire_header_line_count(questionnaire, width)
-        + questionnaire
-            .request
-            .questions
-            .iter()
-            .zip(questionnaire.fields.iter())
-            .take(questionnaire.active_index)
-            .map(|(question, field)| questionnaire_question_line_count(question, field, width))
-            .sum::<usize>()
-        + questionnaire_active_question_prefix_line_count(active_question, width);
-    let mut position = input_cursor_position(
-        &active_field.value,
-        active_field.cursor,
-        width.saturating_sub(2).max(1),
-    );
-    position.x = position.x.saturating_add(2);
-    position.y = position.y.saturating_add(previous_height as u16);
+    questionnaire_frame(questionnaire, width).1
+}
+
+fn questionnaire_question_cursor(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    start_y: usize,
+    width: usize,
+) -> Position {
+    let prefix_height = questionnaire_question_prefix_line_count(question, width);
+    match question.kind {
+        QuestionnaireQuestionKind::Text => prefixed_input_cursor(
+            &field.other_value,
+            field.other_cursor,
+            "  ",
+            start_y + prefix_height,
+            width,
+        ),
+        QuestionnaireQuestionKind::Choice
+        | QuestionnaireQuestionKind::MultiSelect
+        | QuestionnaireQuestionKind::Confirm => {
+            let mut y = start_y + prefix_height;
+            for choice_index in 0..choice_count(question) {
+                if field.choice_cursor == choice_index {
+                    if question.allow_other
+                        && choice_index == question.choices.len()
+                        && field.text_entry_active(question)
+                    {
+                        let option_lines = wrapped_line_count(
+                            format!(
+                                " > {} {}",
+                                questionnaire_selection_marker(question, field, choice_index),
+                                questionnaire_choice_label(question, choice_index)
+                            ),
+                            width,
+                        );
+                        return prefixed_input_cursor(
+                            &field.other_value,
+                            field.other_cursor,
+                            "      other: ",
+                            y + option_lines,
+                            width,
+                        );
+                    }
+                    return Position { x: 1, y: y as u16 };
+                }
+                y += wrapped_line_count(
+                    format!(
+                        "   {} {}",
+                        questionnaire_selection_marker(question, field, choice_index),
+                        questionnaire_choice_label(question, choice_index)
+                    ),
+                    width,
+                );
+                if question.allow_other
+                    && choice_index == question.choices.len()
+                    && questionnaire_other_selected(field)
+                {
+                    y += input_visual_lines(
+                        &field.other_value,
+                        width.saturating_sub(display_width("      other: ")).max(1),
+                    )
+                    .len();
+                }
+            }
+            Position { x: 1, y: y as u16 }
+        }
+    }
+}
+
+fn prefixed_input_cursor(
+    value: &str,
+    cursor: usize,
+    prefix: &str,
+    start_y: usize,
+    width: usize,
+) -> Position {
+    let prefix_width = display_width(prefix);
+    let mut position =
+        input_cursor_position(value, cursor, width.saturating_sub(prefix_width).max(1));
+    position.x = position.x.saturating_add(prefix_width as u16);
+    position.y = position.y.saturating_add(start_y as u16);
     position
 }
 
-fn questionnaire_header_line_count(questionnaire: &QuestionnaireComposer, width: usize) -> usize {
-    let mut count = wrapped_line_count(
-        questionnaire.request.title.as_deref().map_or_else(
-            || {
-                format!(
-                    "answer {} question(s)",
-                    questionnaire.request.questions.len()
-                )
-            },
-            str::to_string,
-        ),
-        width,
-    );
-    if let Some(reason) = &questionnaire.request.reason {
-        count += wrapped_line_count(format!("reason: {reason}"), width);
-    }
-    count + 1
-}
-
-fn questionnaire_question_line_count(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    width: usize,
-) -> usize {
-    questionnaire_active_question_prefix_line_count(question, width)
-        + input_visual_lines(&field.value, width.saturating_sub(2).max(1)).len()
-}
-
-fn questionnaire_active_question_prefix_line_count(
+fn questionnaire_question_prefix_line_count(
     question: &QuestionnaireQuestion,
     width: usize,
 ) -> usize {
@@ -5356,7 +5826,7 @@ fn questionnaire_answers(
         .zip(questionnaire.fields.iter())
         .enumerate()
         .map(|(index, (question, field))| {
-            let answer = normalize_questionnaire_answer(question, &field.value)
+            let answer = normalize_questionnaire_answer(question, field)
                 .map_err(|error| format!("question {}: {error}", index + 1))?;
             Ok(QuestionnaireAnswer {
                 id: question.id.clone(),
@@ -5368,34 +5838,70 @@ fn questionnaire_answers(
 
 fn normalize_questionnaire_answer(
     question: &QuestionnaireQuestion,
-    value: &str,
-) -> Result<String, String> {
-    let trimmed = value.trim();
-    let answer = if trimmed.is_empty() {
-        question.default.as_deref().unwrap_or_default().to_string()
-    } else {
-        trimmed.to_string()
-    };
-    if answer.is_empty() {
-        return if question.required {
-            Err("answer cannot be empty".into())
-        } else {
-            Ok(String::new())
-        };
-    }
+    field: &QuestionnaireFieldState,
+) -> Result<serde_json::Value, String> {
     match question.kind {
-        QuestionnaireQuestionKind::Text => Ok(answer),
-        QuestionnaireQuestionKind::Choice => question
-            .choices
-            .iter()
-            .find(|choice| choice.eq_ignore_ascii_case(&answer))
-            .cloned()
-            .ok_or_else(|| format!("answer must be one of {}", question.choices.join(", "))),
-        QuestionnaireQuestionKind::Confirm => match answer.to_ascii_lowercase().as_str() {
-            "yes" | "y" | "true" => Ok("yes".into()),
-            "no" | "n" | "false" => Ok("no".into()),
-            _ => Err("answer must be yes or no".into()),
+        QuestionnaireQuestionKind::Text => {
+            normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
+        }
+        QuestionnaireQuestionKind::Choice => match &field.selection {
+            FieldSelection::Single(index) => question
+                .choices
+                .get(*index)
+                .cloned()
+                .map(serde_json::Value::String)
+                .ok_or_else(|| "answer is not selected".into()),
+            FieldSelection::Other => {
+                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
+            }
+            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
+            FieldSelection::Text | FieldSelection::None | FieldSelection::Multi { .. } => {
+                Err("answer is not selected".into())
+            }
         },
+        QuestionnaireQuestionKind::MultiSelect => match &field.selection {
+            FieldSelection::Multi { selected, other } => {
+                let mut answers = selected
+                    .iter()
+                    .filter_map(|index| question.choices.get(*index).cloned())
+                    .collect::<Vec<_>>();
+                if *other {
+                    let other_answer = normalize_text_answer(question, &field.other_value)?;
+                    if !other_answer.is_empty() {
+                        answers.push(other_answer);
+                    }
+                }
+                if answers.is_empty() && question.required {
+                    return Err("select at least one answer".into());
+                }
+                Ok(serde_json::Value::Array(
+                    answers.into_iter().map(serde_json::Value::String).collect(),
+                ))
+            }
+            FieldSelection::Text
+            | FieldSelection::None
+            | FieldSelection::Single(_)
+            | FieldSelection::Other => Err("answer is not selected".into()),
+        },
+        QuestionnaireQuestionKind::Confirm => match field.selection {
+            FieldSelection::Single(0) => Ok(serde_json::json!("yes")),
+            FieldSelection::Single(1) => Ok(serde_json::json!("no")),
+            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
+            FieldSelection::Text
+            | FieldSelection::None
+            | FieldSelection::Single(_)
+            | FieldSelection::Multi { .. }
+            | FieldSelection::Other => Err("answer is not selected".into()),
+        },
+    }
+}
+
+fn normalize_text_answer(question: &QuestionnaireQuestion, value: &str) -> Result<String, String> {
+    let answer = value.trim().to_string();
+    if answer.is_empty() && question.required {
+        Err("answer cannot be empty".into())
+    } else {
+        Ok(answer)
     }
 }
 
@@ -5404,7 +5910,7 @@ fn submitted_questionnaire_entry(
     response: &QuestionnaireResponse,
 ) -> String {
     if response.answers.len() == 1 {
-        return response.answers[0].answer.clone();
+        return questionnaire_answer_display(&response.answers[0].answer);
     }
     let mut lines = Vec::new();
     if let Some(title) = &request.title {
@@ -5419,12 +5925,27 @@ fn submitted_questionnaire_entry(
             .find(|question| question.id == answer.id)
             .map(|question| question.question.as_str())
             .unwrap_or(answer.id.as_str());
-        lines.push(format!("{label}: {}", answer.answer));
+        lines.push(format!(
+            "{label}: {}",
+            questionnaire_answer_display(&answer.answer)
+        ));
     }
-    lines.join(
-        "
-",
-    )
+    lines.join("\n")
+}
+
+fn questionnaire_answer_display(answer: &serde_json::Value) -> String {
+    match answer {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(questionnaire_answer_display)
+            .collect::<Vec<_>>()
+            .join(", "),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Object(_) => answer.to_string(),
+    }
 }
 
 fn questionnaire_notice_text(request: &QuestionnaireRequest) -> String {
@@ -5986,6 +6507,7 @@ mod tests {
                     kind: QuestionnaireQuestionKind::Text,
                     required: true,
                     choices: Vec::new(),
+                    allow_other: false,
                 }],
             },
             QuestionnaireResponseChannel::new(reply_tx),
@@ -6008,7 +6530,7 @@ mod tests {
     }
 
     #[test]
-    fn questionnaire_submit_sends_multi_question_answers() {
+    fn questionnaire_submit_sends_selection_answers() {
         let mut app = test_app();
         let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
         app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
@@ -6021,33 +6543,54 @@ mod tests {
                         question: "Which branch?".into(),
                         help: None,
                         default: Some("main".into()),
-                        kind: QuestionnaireQuestionKind::Text,
+                        kind: QuestionnaireQuestionKind::Choice,
                         required: true,
-                        choices: Vec::new(),
+                        choices: vec!["main".into(), "develop".into()],
+                        allow_other: true,
                     },
                     QuestionnaireQuestion {
-                        id: "tests".into(),
-                        question: "Run tests?".into(),
+                        id: "test_suites".into(),
+                        question: "Which test suites should I run?".into(),
+                        help: None,
+                        default: Some("unit".into()),
+                        kind: QuestionnaireQuestionKind::MultiSelect,
+                        required: true,
+                        choices: vec!["unit".into(), "e2e".into(), "lint".into()],
+                        allow_other: false,
+                    },
+                    QuestionnaireQuestion {
+                        id: "apply".into(),
+                        question: "Apply changes?".into(),
                         help: None,
                         default: Some("yes".into()),
                         kind: QuestionnaireQuestionKind::Confirm,
                         required: true,
                         choices: Vec::new(),
+                        allow_other: false,
                     },
                 ],
             },
             QuestionnaireResponseChannel::new(reply_tx),
         ));
         if let ComposerMode::Questionnaire(questionnaire) = &mut app.composer {
-            questionnaire.fields[0].value = "release".into();
-            questionnaire.fields[0].cursor = "release".chars().count();
-            questionnaire.fields[1].value = "n".into();
-            questionnaire.fields[1].cursor = 1;
+            questionnaire.fields[0].selection = FieldSelection::Other;
+            questionnaire.fields[0].choice_cursor = 2;
+            questionnaire.fields[0].other_value = "release".into();
+            questionnaire.fields[0].other_cursor = "release".chars().count();
+            questionnaire.fields[1].selection = FieldSelection::Multi {
+                selected: vec![0, 1],
+                other: false,
+            };
+            questionnaire.fields[2].selection = FieldSelection::Single(1);
         }
         let display = app.prepare_questionnaire_answer().unwrap().unwrap();
 
         assert!(display.contains("Which branch?: release"), "{display}");
-        assert!(display.contains("Run tests?: no"), "{display}");
+        assert!(
+            display.contains("Which test suites should I run?: unit, e2e"),
+            "{display}"
+        );
+        assert!(display.contains("Apply changes?: no"), "{display}");
 
         assert!(matches!(app.composer, ComposerMode::Input));
         assert_eq!(app.status, "answers submitted");
@@ -6055,8 +6598,9 @@ mod tests {
             reply_rx.try_recv(),
             Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers }))
                 if answers == vec![
-                    QuestionnaireAnswer { id: "branch".into(), answer: "release".into() },
-                    QuestionnaireAnswer { id: "tests".into(), answer: "no".into() },
+                    QuestionnaireAnswer { id: "branch".into(), answer: serde_json::json!("release") },
+                    QuestionnaireAnswer { id: "test_suites".into(), answer: serde_json::json!(["unit", "e2e"]) },
+                    QuestionnaireAnswer { id: "apply".into(), answer: serde_json::json!("no") },
                 ]
         ));
     }

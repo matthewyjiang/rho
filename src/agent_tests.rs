@@ -922,7 +922,7 @@ async fn questionnaire_tool_answer_is_returned_to_model() {
             Ok(QuestionnaireResponse {
                 answers: vec![QuestionnaireAnswer {
                     id,
-                    answer: "src/lib.rs".into(),
+                    answer: serde_json::json!("src/lib.rs"),
                 }],
             })
         })
@@ -960,7 +960,7 @@ async fn questionnaire_tool_answer_is_returned_to_model() {
     assert!(events.iter().any(|event| matches!(
         event,
         AgentEvent::QuestionnaireFinished(response)
-            if matches!(response.answers.as_slice(), [QuestionnaireAnswer { answer, .. }] if answer == "src/lib.rs")
+            if matches!(response.answers.as_slice(), [QuestionnaireAnswer { answer, .. }] if answer == &serde_json::json!("src/lib.rs"))
     )));
 }
 
@@ -980,7 +980,17 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
                         {
                             "id": "target_branch",
                             "question": "Which branch should I target?",
+                            "type": "choice",
+                            "choices": ["main", "develop"],
+                            "allow_other": true,
                             "default": "main"
+                        },
+                        {
+                            "id": "test_suites",
+                            "question": "Which test suites should I run?",
+                            "type": "multi_select",
+                            "choices": ["unit", "e2e", "lint"],
+                            "default": ["unit", "lint"]
                         },
                         {
                             "id": "include_tests",
@@ -997,17 +1007,24 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
     let mut agent = test_agent_with_tools(provider, ToolRegistry::new());
     let mut ask_questionnaire = |request: QuestionnaireRequest| -> QuestionnaireFuture {
         assert_eq!(request.title.as_deref(), Some("PR details"));
-        assert_eq!(request.questions.len(), 2);
+        assert_eq!(request.questions.len(), 3);
+        assert_eq!(request.questions[0].choices, vec!["main", "develop"]);
+        assert!(request.questions[0].allow_other);
+        assert_eq!(request.questions[1].default.as_deref(), Some("unit, lint"));
         Box::pin(async move {
             Ok(QuestionnaireResponse {
                 answers: vec![
                     QuestionnaireAnswer {
                         id: "target_branch".into(),
-                        answer: "release".into(),
+                        answer: serde_json::json!("release"),
+                    },
+                    QuestionnaireAnswer {
+                        id: "test_suites".into(),
+                        answer: serde_json::json!(["unit", "e2e"]),
                     },
                     QuestionnaireAnswer {
                         id: "include_tests".into(),
-                        answer: "yes".into(),
+                        answer: serde_json::json!("yes"),
                     },
                 ],
             })
@@ -1032,6 +1049,8 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
             if id == "call_questionnaire"
                 && content.contains("target_branch")
                 && content.contains("release")
+                && content.contains("test_suites")
+                && content.contains("e2e")
                 && content.contains("include_tests")
                 && content.contains("yes")
     ));

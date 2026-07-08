@@ -29,6 +29,8 @@ pub struct QuestionnaireQuestion {
     pub required: bool,
     #[serde(default)]
     pub choices: Vec<String>,
+    #[serde(default)]
+    pub allow_other: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ pub enum QuestionnaireQuestionKind {
     #[default]
     Text,
     Choice,
+    MultiSelect,
     Confirm,
 }
 
@@ -48,7 +51,7 @@ pub struct QuestionnaireResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionnaireAnswer {
     pub id: String,
-    pub answer: String,
+    pub answer: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,12 +87,14 @@ struct RawQuestionnaireQuestion {
     required: Option<bool>,
     #[serde(default)]
     choices: Vec<String>,
+    #[serde(default)]
+    allow_other: bool,
 }
 
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         name: TOOL_NAME.into(),
-        description: "Ask a concise user form only when missing input blocks correctness, safety, or requested preferences. Main mode: group all related missing inputs into questions[]. Prefer assumptions when safe; ask once, not a chain of single questions.".into(),
+        description: "Ask a concise selection form only when missing input blocks correctness, safety, or requested preferences. Main mode: concrete choice or multi_select questions with allow_other when needed. Avoid free-text fields unless truly unavoidable.".into(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -111,7 +116,7 @@ pub fn tool_spec() -> ToolSpec {
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["question"],
+                        "required": ["question", "type"],
                         "properties": {
                             "id": {
                                 "type": "string",
@@ -127,20 +132,25 @@ pub fn tool_spec() -> ToolSpec {
                             },
                             "type": {
                                 "type": "string",
-                                "enum": ["text", "choice", "confirm"],
-                                "description": "Question type. Use choice when valid answers are known, confirm for yes/no. Defaults to text."
+                                "enum": ["choice", "multi_select", "confirm"],
+                                "description": "Question type. Use choice for one answer, multi_select for several, confirm for yes/no. Defaults to choice when choices are provided."
                             },
                             "choices": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Allowed answers for choice questions."
+                                "description": "Concrete answers the user can select from. Required for choice and multi_select."
+                            },
+                            "allow_other": {
+                                "type": "boolean",
+                                "description": "Add an Other option so the user only types when none of the concrete choices fit."
                             },
                             "default": {
-                                "description": "Optional default answer. For confirm, use true/false or yes/no.",
+                                "description": "Optional default answer. For multi_select, use an array of selected choices. For confirm, use true/false or yes/no.",
                                 "oneOf": [
                                     { "type": "string" },
                                     { "type": "boolean" },
-                                    { "type": "number" }
+                                    { "type": "number" },
+                                    { "type": "array", "items": { "type": "string" } }
                                 ]
                             },
                             "required": {
@@ -159,6 +169,7 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
     let raw: RawQuestionnaireRequest = serde_json::from_value(arguments)
         .map_err(|err| format!("invalid questionnaire arguments: {err}"))?;
     let mut questions = raw.questions;
+    let legacy_single_question = questions.is_empty() && raw.question.is_some();
     if questions.is_empty() {
         if let Some(question) = raw.question {
             questions.push(RawQuestionnaireQuestion {
@@ -170,6 +181,7 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
                 default: raw.default,
                 required: None,
                 choices: Vec::new(),
+                allow_other: false,
             });
         }
     }
@@ -185,7 +197,7 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
     let questions = questions
         .into_iter()
         .enumerate()
-        .map(|(index, question)| parse_question(index, question))
+        .map(|(index, question)| parse_question(index, question, legacy_single_question))
         .collect::<Result<Vec<_>, _>>()?;
     ensure_unique_ids(&questions)?;
     Ok(QuestionnaireRequest {
@@ -218,7 +230,11 @@ pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
             lines.push(format!("   default: {default}"));
         }
         if !question.choices.is_empty() {
-            lines.push(format!("   choices: {}", question.choices.join(", ")));
+            let suffix = if question.allow_other { ", other" } else { "" };
+            lines.push(format!(
+                "   choices: {}{suffix}",
+                question.choices.join(", ")
+            ));
         }
         if !question.required {
             lines.push("   optional".into());
@@ -238,6 +254,7 @@ pub fn finished_display_lines(request: &QuestionnaireRequest, result_content: &s
 fn parse_question(
     index: usize,
     raw: RawQuestionnaireQuestion,
+    allow_text: bool,
 ) -> Result<QuestionnaireQuestion, String> {
     let id = match trim_optional(raw.id) {
         Some(id) => id,
@@ -264,18 +281,41 @@ fn parse_question(
     } else {
         QuestionnaireQuestionKind::Choice
     });
-    if matches!(kind, QuestionnaireQuestionKind::Choice) && choices.is_empty() {
+    if matches!(kind, QuestionnaireQuestionKind::Text) && !allow_text {
+        return Err(format!(
+            "questions[{index}] must use choice, multi_select, or confirm"
+        ));
+    }
+    if matches!(
+        kind,
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect
+    ) && choices.is_empty()
+    {
         return Err(format!(
             "questions[{index}].choices must include at least one choice"
         ));
     }
-    if !matches!(kind, QuestionnaireQuestionKind::Choice) && !choices.is_empty() {
+    if !matches!(
+        kind,
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect
+    ) && !choices.is_empty()
+    {
         return Err(format!(
-            "questions[{index}].choices is only valid for choice questions"
+            "questions[{index}].choices is only valid for choice or multi_select questions"
+        ));
+    }
+    if raw.allow_other
+        && !matches!(
+            kind,
+            QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect
+        )
+    {
+        return Err(format!(
+            "questions[{index}].allow_other is only valid for choice or multi_select questions"
         ));
     }
 
-    let default = normalize_default(index, raw.default, kind, &choices)?;
+    let default = normalize_default(index, raw.default, kind, &choices, raw.allow_other)?;
     Ok(QuestionnaireQuestion {
         id,
         question,
@@ -284,6 +324,7 @@ fn parse_question(
         kind,
         required: raw.required.unwrap_or_else(default_required),
         choices,
+        allow_other: raw.allow_other,
     })
 }
 
@@ -292,10 +333,55 @@ fn normalize_default(
     default: Option<Value>,
     kind: QuestionnaireQuestionKind,
     choices: &[String],
+    allow_other: bool,
 ) -> Result<Option<String>, String> {
     let Some(default) = default else {
         return Ok(None);
     };
+    if matches!(kind, QuestionnaireQuestionKind::MultiSelect) {
+        let values = match default {
+            Value::Null => return Ok(None),
+            Value::Array(values) => values
+                .into_iter()
+                .map(|value| match value {
+                    Value::String(value) => Ok(value),
+                    Value::Bool(value) => Ok(value.to_string()),
+                    Value::Number(value) => Ok(value.to_string()),
+                    Value::Null | Value::Array(_) | Value::Object(_) => Err(format!(
+                        "questions[{index}].default array values must be strings, booleans, or numbers"
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            Value::String(value) => split_multi_default(&value),
+            Value::Bool(value) => vec![value.to_string()],
+            Value::Number(value) => vec![value.to_string()],
+            Value::Object(_) => {
+                return Err(format!(
+                    "questions[{index}].default must be a string, boolean, number, or array"
+                ));
+            }
+        };
+        let mut normalized = Vec::new();
+        for value in values {
+            let Some(value) = trim_optional(Some(value)) else {
+                continue;
+            };
+            match choices
+                .iter()
+                .find(|choice| choice.eq_ignore_ascii_case(&value))
+            {
+                Some(choice) => normalized.push(choice.clone()),
+                None if allow_other => normalized.push(value),
+                None => {
+                    return Err(format!(
+                        "questions[{index}].default must match one of the choices"
+                    ));
+                }
+            }
+        }
+        return Ok((!normalized.is_empty()).then(|| normalized.join(", ")));
+    }
+
     let value = match default {
         Value::Null => return Ok(None),
         Value::String(value) => value,
@@ -319,12 +405,23 @@ fn normalize_default(
             .iter()
             .find(|choice| choice.eq_ignore_ascii_case(&value))
             .cloned()
+            .or_else(|| allow_other.then_some(value))
             .map(Some)
             .ok_or_else(|| format!("questions[{index}].default must match one of the choices")),
+        QuestionnaireQuestionKind::MultiSelect => unreachable!("multi_select handled above"),
         QuestionnaireQuestionKind::Confirm => normalize_confirm_value(&value)
             .map(Some)
             .ok_or_else(|| format!("questions[{index}].default must be yes or no")),
     }
+}
+
+fn split_multi_default(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn normalize_confirm_value(value: &str) -> Option<String> {
@@ -378,6 +475,8 @@ mod tests {
                     "id": " file ",
                     "question": "  Which file?  ",
                     "help": "  Use a repo-relative path  ",
+                    "type": "choice",
+                    "choices": ["src/main.rs", "src/lib.rs"],
                     "default": "  src/main.rs  "
                 }
             ]
@@ -394,9 +493,10 @@ mod tests {
                     question: "Which file?".into(),
                     help: Some("Use a repo-relative path".into()),
                     default: Some("src/main.rs".into()),
-                    kind: QuestionnaireQuestionKind::Text,
+                    kind: QuestionnaireQuestionKind::Choice,
                     required: true,
-                    choices: Vec::new(),
+                    choices: vec!["src/main.rs".into(), "src/lib.rs".into()],
+                    allow_other: false,
                 }],
             }
         );
@@ -418,10 +518,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_request_normalizes_multi_select_defaults_and_other() {
+        let request = parse_request(json!({
+            "questions": [
+                {
+                    "id": "suites",
+                    "question": "Which suites?",
+                    "type": "multi_select",
+                    "choices": ["unit", "e2e"],
+                    "allow_other": true,
+                    "default": ["Unit", "smoke"]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.questions[0].kind,
+            QuestionnaireQuestionKind::MultiSelect
+        );
+        assert!(request.questions[0].allow_other);
+        assert_eq!(request.questions[0].default.as_deref(), Some("unit, smoke"));
+    }
+
+    #[test]
     fn parse_request_rejects_empty_questions() {
         let err = parse_request(json!({ "questions": [] })).unwrap_err();
 
         assert_eq!(err, "questions must include at least one question");
+    }
+
+    #[test]
+    fn parse_request_rejects_text_questions_in_forms() {
+        let err = parse_request(json!({
+            "questions": [
+                {
+                    "id": "freeform",
+                    "question": "What should I do?"
+                }
+            ]
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            "questions[0] must use choice, multi_select, or confirm"
+        );
     }
 
     #[test]
@@ -431,6 +573,7 @@ mod tests {
                 {
                     "id": "style",
                     "question": "Style?",
+                    "type": "choice",
                     "choices": ["brief", "detailed"],
                     "default": "Detailed"
                 },
