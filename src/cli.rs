@@ -42,6 +42,15 @@ pub enum Command {
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
     },
+    /// Log in to a provider from a browser or device-code flow.
+    Login {
+        /// Provider to authenticate, for example openai-codex or github-copilot.
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        /// Use Codex OAuth device-code login instead of opening a local browser callback.
+        #[arg(long)]
+        device_auth: bool,
+    },
     /// Update rho using the detected installation method.
     Update,
 }

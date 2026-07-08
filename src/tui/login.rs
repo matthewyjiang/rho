@@ -109,21 +109,66 @@ impl App {
             return Ok(());
         }
 
-        self.status = "waiting for Codex login; press esc to cancel".into();
+        if std::env::var_os("SSH_CONNECTION").is_some()
+            || std::env::var_os("SSH_TTY").is_some()
+            || std::env::var_os("HERDR_ENV").is_some()
+        {
+            self.start_codex_device_login(target, terminal).await
+        } else {
+            self.status = "waiting for Codex login; press esc to cancel".into();
+            self.composer = ComposerMode::OAuthPending(target.clone());
+            self.pending_oauth_login = Some(PendingOAuthLogin {
+                target,
+                handle: tokio::spawn(async {
+                    codex_oauth::run_codex_oauth_flow()
+                        .await
+                        .map(PendingOAuthResult::Codex)
+                        .map_err(|err| err.to_string())
+                }),
+            });
+            self.insert_entry(
+                terminal,
+                &Entry::Notice("opening browser for Codex login. Press esc to cancel.".into()),
+            )?;
+            Ok(())
+        }
+    }
+
+    async fn start_codex_device_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.status = "starting Codex device login".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        let login = match codex_oauth::start_codex_device_login().await {
+            Ok(login) => login,
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "login failed".into();
+                return Ok(());
+            }
+        };
+
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "Codex login: visit {} and enter code {}",
+                login.verification_uri, login.user_code
+            )),
+        )?;
+
+        self.status = "waiting for Codex device login; press esc to cancel".into();
         self.composer = ComposerMode::OAuthPending(target.clone());
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
-            handle: tokio::spawn(async {
-                codex_oauth::run_codex_oauth_flow()
+            handle: tokio::spawn(async move {
+                codex_oauth::complete_codex_device_login(login)
                     .await
                     .map(PendingOAuthResult::Codex)
                     .map_err(|err| err.to_string())
             }),
         });
-        self.insert_entry(
-            terminal,
-            &Entry::Notice("opening browser for Codex login. Press esc to cancel.".into()),
-        )?;
         Ok(())
     }
 
