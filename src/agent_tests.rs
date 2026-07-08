@@ -271,6 +271,43 @@ impl ModelProvider for ToolRecordingCompactingProvider {
     }
 }
 
+struct FailingSummaryProvider {
+    requests: RecordedRequests,
+}
+
+#[async_trait(?Send)]
+impl ModelProvider for FailingSummaryProvider {
+    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        unreachable!("streaming provider should use send_turn_stream")
+    }
+
+    async fn send_turn_stream(
+        &self,
+        request: ModelRequest,
+        _on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        let is_summary_request = matches!(
+            request.messages.first(),
+            Some(Message::System(text))
+                if text.starts_with("Summarize the compacted conversation history")
+        );
+        if is_summary_request {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(("summary".into(), request.messages));
+            return Err(ModelError::InvalidResponse("summary failed".into()));
+        }
+        self.requests
+            .lock()
+            .unwrap()
+            .push(("normal".into(), request.messages));
+        Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+            "ok".into(),
+        )]))
+    }
+}
+
 struct OkTool;
 
 #[async_trait]
@@ -493,6 +530,39 @@ async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded
     assert!(
         matches!(requests[2].1.last(), Some(Message::User(blocks)) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "second"))
     );
+}
+
+#[tokio::test]
+async fn failed_compaction_summary_skips_compaction_and_turn_succeeds() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = test_agent_with_tools(
+        FailingSummaryProvider {
+            requests: requests.clone(),
+        },
+        ToolRegistry::new(),
+    );
+    agent.set_compaction_config(CompactionConfig {
+        auto_compact: true,
+        threshold_percent: 1,
+        target_percent: 1,
+    });
+    agent.set_context_window(Some(1_000));
+
+    agent.run("first".into()).await.unwrap();
+    let answer = agent.run("second".into()).await.unwrap();
+
+    assert_eq!(answer, "ok");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].0, "normal");
+    assert_eq!(requests[1].0, "summary");
+    assert_eq!(requests[2].0, "normal");
+    assert!(requests[2].1.iter().any(|message| {
+        matches!(message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "first"))
+    }));
+    assert!(!requests[2].1.iter().any(|message| {
+        matches!(message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.starts_with("Automatic compaction summary")))
+    }));
 }
 
 #[tokio::test]
