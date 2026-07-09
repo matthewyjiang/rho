@@ -180,11 +180,9 @@ fn should_show(content_len: usize, viewport_len: usize) -> bool {
 }
 
 fn rounding_divide(numerator: usize, denominator: usize) -> usize {
-    if denominator == 0 {
-        0
-    } else {
-        (numerator + denominator / 2) / denominator
-    }
+    (numerator + denominator / 2)
+        .checked_div(denominator)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

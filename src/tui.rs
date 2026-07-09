@@ -171,7 +171,6 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
 #[cfg(test)]
 struct ActiveFrame {
     lines: Vec<Line<'static>>,
-    cursor: Position,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5288,25 +5287,7 @@ impl App {
                 .take(layout.commands.height as usize),
         );
 
-        let full_cursor = self.composer_cursor_position(width);
-        let max_cursor_x = width.max(1).saturating_sub(1) as u16;
-        let max_cursor_y = viewport_height.max(1).saturating_sub(1) as u16;
-        ActiveFrame {
-            lines,
-            cursor: Position {
-                x: full_cursor.x.min(max_cursor_x),
-                y: layout
-                    .composer
-                    .y
-                    .saturating_add(
-                        full_cursor
-                            .y
-                            .saturating_sub(layout.composer_start as u16)
-                            .min(layout.composer.height.max(1).saturating_sub(1)),
-                    )
-                    .min(max_cursor_y),
-            },
-        }
+        ActiveFrame { lines }
     }
 
     fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
@@ -5399,6 +5380,7 @@ impl App {
         Line::styled("─".repeat(width.max(1)), divider_style)
     }
 
+    #[cfg(test)]
     fn history_lines(&mut self, width: usize, now: Instant) -> Vec<Line<'static>> {
         let history_len = self.history_len(width, now);
         self.visible_history_lines(width, now, 0, history_len)
@@ -5493,12 +5475,6 @@ impl App {
             HistoryScroll::Bottom => max_start,
             HistoryScroll::Manual { top_line } => top_line.min(max_start),
         }
-    }
-
-    #[cfg(test)]
-    fn history_at_bottom(&mut self, width: usize, height: usize, now: Instant) -> bool {
-        let history_len = self.history_len(width, now);
-        self.history_at_bottom_for_len(history_len, width, height, now)
     }
 
     fn history_at_bottom_for_len(
@@ -5974,23 +5950,6 @@ fn recovered_history_tail(
     }
 
     (selected_start, entries[selected_start..].to_vec())
-}
-
-fn transcript_lines(
-    entries: &[Entry],
-    width: usize,
-    max_tool_output_lines: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut previous_was_tool = false;
-    for entry in entries {
-        if previous_was_tool && is_tool_entry(entry) {
-            lines.push(Line::raw(""));
-        }
-        lines.extend(entry_lines(entry, width, max_tool_output_lines));
-        previous_was_tool = is_tool_entry(entry);
-    }
-    lines
 }
 
 fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
