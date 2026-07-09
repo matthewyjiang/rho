@@ -4547,10 +4547,13 @@ impl App {
         )
     }
 
-    fn toggle_selected_model_favorite(
+    fn toggle_selected_model_favorite<B: Backend>(
         &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<()>
+    where
+        B::Error: Send + Sync + 'static,
+    {
         let Some((action, value)) = self.active_picker_selection() else {
             return Ok(());
         };
@@ -4568,16 +4571,27 @@ impl App {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
-        let pinned = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             let pinned = favorites::toggle_favorite(
                 &mut config.favorite_models,
                 &favorite.provider,
                 &favorite.model,
             );
             config.save(self.info.config_path.clone())?;
-            self.info.favorite_models = config.favorite_models.clone();
-            Ok(pinned)
-        })?;
+            Ok((pinned, config.favorite_models))
+        });
+        let (pinned, favorite_models) = match save_result {
+            Ok(saved) => saved,
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("could not save pinned models: {err}")),
+                )?;
+                self.status = "config save failed".into();
+                return Ok(());
+            }
+        };
+        self.info.favorite_models = favorite_models;
 
         self.refresh_available_auths();
         let mut picker = match action {
@@ -8437,6 +8451,38 @@ mod tests {
         assert_eq!(picker.selected_item().unwrap().value, "model-b");
         picker.select_next();
         assert_eq!(picker.selected_item().unwrap().value, "model-a");
+    }
+
+    #[test]
+    fn favorite_save_failure_keeps_model_picker_open() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut app = test_app();
+        app.info.config_path = Some(config_dir.path().to_path_buf());
+        let selected_value = "openai/gpt-5.5";
+        app.composer = ComposerMode::Picker(UiPicker::new(
+            "select model",
+            "ctrl-p pin/unpin",
+            vec![PickerItem {
+                label: selected_value.into(),
+                detail: None,
+                preview: None,
+                badge: None,
+                value: selected_value.into(),
+            }],
+            PickerAction::SelectModel,
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+
+        app.toggle_selected_model_favorite(&mut terminal).unwrap();
+
+        assert!(matches!(app.composer, ComposerMode::Picker(_)));
+        assert_eq!(app.active_picker_selection().unwrap().1, selected_value);
+        assert!(app.info.favorite_models.is_empty());
+        assert_eq!(app.status, "config save failed");
+        assert!(matches!(
+            app.transcript.last(),
+            Some(Entry::Error(message)) if message.starts_with("could not save pinned models: ")
+        ));
     }
 
     #[test]
