@@ -33,8 +33,8 @@ const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/respons
 const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
-const OPENAI_SEARCH_MODEL: &str = "gpt-4.1-mini";
-const CODEX_SEARCH_MODEL: &str = "gpt-5.4";
+const OPENAI_SEARCH_MODEL: &str = "gpt-5.6-luna";
+const CODEX_SEARCH_MODEL: &str = "gpt-5.6-luna";
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
 
