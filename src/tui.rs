@@ -12,6 +12,7 @@ use std::{
 };
 
 use futures_util::{task::noop_waker_ref, FutureExt};
+use history_cache::HistoryLineCache;
 use tokio::sync::{mpsc, oneshot};
 
 use crossterm::{
@@ -31,6 +32,7 @@ use ratatui::{
     DefaultTerminal, Frame, Terminal,
 };
 mod config_picker;
+mod history_cache;
 mod login;
 mod markdown;
 mod model_picker;
@@ -38,6 +40,7 @@ mod paste_burst;
 mod picker;
 mod provider_picker;
 mod render;
+mod scrollbar;
 mod session_picker;
 mod skill_picker;
 mod statusline;
@@ -52,6 +55,7 @@ use render::{
     push_wrapped_text, push_wrapped_text_with, session_header_lines, styled_line,
     truncate_one_line, wrap_line_at_whitespace, LineFill,
 };
+use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
 use theme::Theme;
@@ -173,6 +177,7 @@ struct ActiveFrame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScreenLayout {
     history: Rect,
+    history_scrollbar: Option<HistoryScrollbar>,
     jump_to_bottom: Option<Rect>,
     top_divider: Rect,
     composer: Rect,
@@ -216,6 +221,7 @@ struct App {
     paste_burst: PasteBurst,
     paste_segments: Vec<PasteSegment>,
     transcript: Vec<Entry>,
+    history_lines: HistoryLineCache,
     last_status_notice: Option<String>,
     last_inserted_was_tool: bool,
     command_selection: usize,
@@ -233,6 +239,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     history_scroll: HistoryScroll,
+    history_scrollbar_drag: Option<HistoryScrollbarDrag>,
 }
 
 #[derive(Debug)]
@@ -1185,6 +1192,7 @@ impl App {
             paste_burst: PasteBurst::default(),
             paste_segments: Vec::new(),
             transcript: Vec::new(),
+            history_lines: HistoryLineCache::default(),
             last_status_notice: None,
             last_inserted_was_tool: false,
             command_selection: 0,
@@ -1202,6 +1210,7 @@ impl App {
             pending_model_metadata: None,
             pending_session_title: None,
             history_scroll: HistoryScroll::Bottom,
+            history_scrollbar_drag: None,
         }
     }
 
@@ -1271,6 +1280,7 @@ impl App {
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
+                self.history_scrollbar_drag = None;
                 self.clamp_history_scroll_for_terminal(terminal)?;
             }
             Event::Mouse(mouse) => {
@@ -3762,6 +3772,7 @@ impl App {
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
+                    self.history_scrollbar_drag = None;
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
@@ -4055,6 +4066,7 @@ impl App {
         if let Entry::Assistant(text) = &mut self.transcript[*first] {
             *text = answer.to_string();
         }
+        self.history_lines.invalidate_from(*first);
         for index in stale.iter().rev() {
             self.transcript.remove(*index);
         }
@@ -4128,6 +4140,7 @@ impl App {
         self.pending_session_title = None;
         self.current_turn_start = None;
         self.transcript.clear();
+        self.history_lines.invalidate_from(0);
         self.last_inserted_was_tool = false;
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
@@ -4950,6 +4963,7 @@ impl App {
             self.info.max_tool_output_lines,
         );
         self.transcript = visible_entries;
+        self.history_lines.invalidate_from(0);
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
@@ -5051,6 +5065,7 @@ impl App {
         }
         if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
             tool.expanded = expand;
+            self.history_lines.invalidate_from(index);
         }
         self.status = if expand {
             "tool output expanded".into()
@@ -5126,24 +5141,23 @@ impl App {
         }
     }
 
-    fn draw(&self, frame: &mut Frame<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
         let width = area.width as usize;
-        let history_lines = self.history_lines(width, now);
-        let layout = self.screen_layout_for_history_len(area, now, history_lines.len());
-        let history_start =
-            self.visible_history_start(history_lines.len(), layout.history.height as usize);
-        let history_visible = history_lines
-            .into_iter()
-            .skip(history_start)
-            .take(layout.history.height as usize)
-            .collect::<Vec<_>>();
+        let history_len = self.history_len(width, now);
+        let layout = self.screen_layout_for_history_len(area, now, history_len);
+        let history_start = self.visible_history_start(history_len, layout.history.height as usize);
+        let history_visible =
+            self.visible_history_lines(width, now, history_start, layout.history.height as usize);
 
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history,
         );
+        if let Some(scrollbar) = layout.history_scrollbar {
+            scrollbar.render(frame, self.history_scrollbar_drag.is_some());
+        }
         if let Some(button) = layout.jump_to_bottom {
             frame.render_widget(
                 Paragraph::new(vec![self.jump_to_bottom_line(width)]).style(Style::default()),
@@ -5211,18 +5225,22 @@ impl App {
     }
 
     #[cfg(test)]
-    fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
+    fn active_lines(&mut self, width: usize) -> Vec<Line<'static>> {
         self.active_lines_at_for_height(width, DEFAULT_TUI_HEIGHT as usize, Instant::now())
     }
 
     #[cfg(test)]
-    fn active_lines_for_height(&self, width: usize, viewport_height: usize) -> Vec<Line<'static>> {
+    fn active_lines_for_height(
+        &mut self,
+        width: usize,
+        viewport_height: usize,
+    ) -> Vec<Line<'static>> {
         self.active_lines_at_for_height(width, viewport_height, Instant::now())
     }
 
     #[cfg(test)]
     fn active_lines_at_for_height(
-        &self,
+        &mut self,
         width: usize,
         viewport_height: usize,
         now: Instant,
@@ -5233,21 +5251,17 @@ impl App {
 
     #[cfg(test)]
     fn active_frame_at_for_height(
-        &self,
+        &mut self,
         width: usize,
         viewport_height: usize,
         now: Instant,
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
-        let history_lines = self.history_lines(width, now);
-        let layout = self.screen_layout_for_history_len(area, now, history_lines.len());
-        let history_start =
-            self.visible_history_start(history_lines.len(), layout.history.height as usize);
-        let mut lines = history_lines
-            .into_iter()
-            .skip(history_start)
-            .take(layout.history.height as usize)
-            .collect::<Vec<_>>();
+        let history_len = self.history_len(width, now);
+        let layout = self.screen_layout_for_history_len(area, now, history_len);
+        let history_start = self.visible_history_start(history_len, layout.history.height as usize);
+        let mut lines =
+            self.visible_history_lines(width, now, history_start, layout.history.height as usize);
         if layout.jump_to_bottom.is_some() {
             lines.push(self.jump_to_bottom_line(width));
         }
@@ -5295,8 +5309,8 @@ impl App {
         }
     }
 
-    fn screen_layout(&self, area: Rect, now: Instant) -> ScreenLayout {
-        let history_len = self.history_lines(area.width as usize, now).len();
+    fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
+        let history_len = self.history_len(area.width as usize, now);
         self.screen_layout_for_history_len(area, now, history_len)
     }
 
@@ -5358,6 +5372,11 @@ impl App {
 
         ScreenLayout {
             history,
+            history_scrollbar: HistoryScrollbar::new(
+                history,
+                history_len,
+                self.visible_history_start(history_len, history_height),
+            ),
             jump_to_bottom,
             top_divider,
             composer,
@@ -5380,13 +5399,74 @@ impl App {
         Line::styled("─".repeat(width.max(1)), divider_style)
     }
 
-    fn history_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
-        let mut lines = session_header_lines(&self.info, width);
-        lines.extend(transcript_lines(
-            &self.transcript,
-            width,
-            self.info.max_tool_output_lines,
-        ));
+    fn history_lines(&mut self, width: usize, now: Instant) -> Vec<Line<'static>> {
+        let history_len = self.history_len(width, now);
+        self.visible_history_lines(width, now, 0, history_len)
+    }
+
+    fn history_len(&mut self, width: usize, now: Instant) -> usize {
+        self.history_static_len(width)
+            .saturating_add(self.history_live_lines(width, now).len())
+    }
+
+    fn visible_history_lines(
+        &mut self,
+        width: usize,
+        now: Instant,
+        start: usize,
+        count: usize,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if count == 0 {
+            return lines;
+        }
+
+        let header_lines = session_header_lines(&self.info, width);
+        let header_len = header_lines.len();
+        if start < header_len {
+            let header_count = count.min(header_len - start);
+            lines.extend(header_lines[start..start + header_count].iter().cloned());
+        }
+
+        if lines.len() < count {
+            let transcript_start = start.saturating_sub(header_len);
+            let transcript_count = count - lines.len();
+            self.history_lines.extend_visible_lines(
+                &self.transcript,
+                width,
+                self.info.max_tool_output_lines,
+                transcript_start,
+                transcript_count,
+                &mut lines,
+            );
+        }
+
+        let static_len = header_len.saturating_add(self.cached_transcript_line_count(width));
+        if lines.len() < count {
+            let live_start = start.saturating_sub(static_len);
+            lines.extend(
+                self.history_live_lines(width, now)
+                    .into_iter()
+                    .skip(live_start)
+                    .take(count - lines.len()),
+            );
+        }
+        lines
+    }
+
+    fn history_static_len(&mut self, width: usize) -> usize {
+        session_header_lines(&self.info, width)
+            .len()
+            .saturating_add(self.cached_transcript_line_count(width))
+    }
+
+    fn cached_transcript_line_count(&mut self, width: usize) -> usize {
+        self.history_lines
+            .line_count(&self.transcript, width, self.info.max_tool_output_lines)
+    }
+
+    fn history_live_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
         if let Some(pending) = &self.pending_tool_call {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
                 lines.push(Line::raw(""));
@@ -5401,9 +5481,7 @@ impl App {
             lines.extend(self.render_stream_preview_lines(preview, width));
         }
         if self.loading_active() {
-            if !lines.is_empty() {
-                lines.push(Line::raw(""));
-            }
+            lines.push(Line::raw(""));
             lines.push(self.loading_spinner.line(now));
         }
         lines
@@ -5418,8 +5496,8 @@ impl App {
     }
 
     #[cfg(test)]
-    fn history_at_bottom(&self, width: usize, height: usize, now: Instant) -> bool {
-        let history_len = self.history_lines(width, now).len();
+    fn history_at_bottom(&mut self, width: usize, height: usize, now: Instant) -> bool {
+        let history_len = self.history_len(width, now);
         self.history_at_bottom_for_len(history_len, width, height, now)
     }
 
@@ -5436,8 +5514,8 @@ impl App {
     }
 
     #[cfg(test)]
-    fn should_show_jump_to_bottom(&self, width: usize, height: usize, now: Instant) -> bool {
-        let history_len = self.history_lines(width, now).len();
+    fn should_show_jump_to_bottom(&mut self, width: usize, height: usize, now: Instant) -> bool {
+        let history_len = self.history_len(width, now);
         self.should_show_jump_to_bottom_for_len(history_len, width, height, now)
     }
 
@@ -5483,6 +5561,7 @@ impl App {
 
     fn scroll_history_to_bottom(&mut self) {
         self.history_scroll = HistoryScroll::Bottom;
+        self.history_scrollbar_drag = None;
     }
 
     fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
@@ -5500,33 +5579,33 @@ impl App {
     }
 
     fn scroll_history_lines(&mut self, width: usize, height: usize, now: Instant, delta: isize) {
-        let history_len = self.history_lines(width, now).len();
-        let history_height = self.history_height_for_screen(width, height, now, true);
-        let max_start = history_len.saturating_sub(history_height);
-        let current = self.visible_history_start(history_len, history_height);
+        let history_len = self.history_len(width, now);
+        let reserved_height = self.history_height_for_screen(width, height, now, true);
+        let unreserved_height = self.history_height_for_screen(width, height, now, false);
+        let max_start = history_len.saturating_sub(reserved_height);
+        let current = self.visible_history_start(history_len, reserved_height);
         let next = current.saturating_add_signed(delta).min(max_start);
-        if next >= max_start {
-            self.history_scroll = HistoryScroll::Bottom;
-        } else {
-            self.history_scroll = HistoryScroll::Manual { top_line: next };
+        self.history_scroll = scroll_state_for_top_line(history_len, unreserved_height, next);
+        if matches!(self.history_scroll, HistoryScroll::Bottom) {
+            self.history_scrollbar_drag = None;
         }
     }
 
     fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
         if matches!(self.history_scroll, HistoryScroll::Bottom) {
+            self.history_scrollbar_drag = None;
             return;
         }
-        let history_len = self.history_lines(width, now).len();
-        let history_height = self.history_height_for_screen(width, height, now, true);
-        let max_start = history_len.saturating_sub(history_height);
+        let history_len = self.history_len(width, now);
+        let reserved_height = self.history_height_for_screen(width, height, now, true);
+        let unreserved_height = self.history_height_for_screen(width, height, now, false);
+        let max_start = history_len.saturating_sub(reserved_height);
         if let HistoryScroll::Manual { top_line } = self.history_scroll {
-            self.history_scroll = if top_line >= max_start {
-                HistoryScroll::Bottom
-            } else {
-                HistoryScroll::Manual {
-                    top_line: top_line.min(max_start),
-                }
-            };
+            self.history_scroll =
+                scroll_state_for_top_line(history_len, unreserved_height, top_line.min(max_start));
+            if matches!(self.history_scroll, HistoryScroll::Bottom) {
+                self.history_scrollbar_drag = None;
+            }
         }
     }
 
@@ -5564,12 +5643,14 @@ impl App {
         let now = Instant::now();
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
+                self.history_scrollbar_drag = None;
                 self.scroll_history_page_up(width, height, now);
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (_, KeyCode::PageDown) => {
+                self.history_scrollbar_drag = None;
                 self.scroll_history_page_down(width, height, now);
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -5598,24 +5679,47 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
+                self.history_scrollbar_drag = None;
                 self.scroll_history_lines(width, height, now, -3);
             }
             MouseEventKind::ScrollDown => {
+                self.history_scrollbar_drag = None;
                 self.scroll_history_lines(width, height, now, 3);
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                if layout
+                if let Some(scrollbar) = layout
+                    .history_scrollbar
+                    .filter(|scrollbar| scrollbar.contains(column, row))
+                {
+                    let drag = scrollbar.begin_drag(row);
+                    self.history_scrollbar_drag = Some(drag);
+                    self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
+                } else if layout
                     .jump_to_bottom
                     .is_some_and(|rect| rect.contains(Position { x: column, y: row }))
                 {
+                    self.history_scrollbar_drag = None;
                     self.scroll_history_to_bottom();
                 }
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(drag) = self.history_scrollbar_drag {
+                    let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                    if let Some(scrollbar) = layout.history_scrollbar {
+                        self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.history_scrollbar_drag = None;
+            }
             MouseEventKind::Down(MouseButton::Right)
             | MouseEventKind::Down(MouseButton::Middle)
-            | MouseEventKind::Up(_)
-            | MouseEventKind::Drag(_)
+            | MouseEventKind::Up(MouseButton::Right)
+            | MouseEventKind::Up(MouseButton::Middle)
+            | MouseEventKind::Drag(MouseButton::Right)
+            | MouseEventKind::Drag(MouseButton::Middle)
             | MouseEventKind::Moved
             | MouseEventKind::ScrollLeft
             | MouseEventKind::ScrollRight => {}
@@ -5745,6 +5849,7 @@ impl App {
         }
         transcript.extend(visible_entries);
         self.transcript = transcript;
+        self.history_lines.invalidate_from(0);
         self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
             Entry::Notice(text) => Some(text.clone()),
             Entry::User(_)
@@ -5803,18 +5908,33 @@ impl App {
     fn push_transcript_entry(&mut self, entry: Entry) {
         match entry {
             Entry::Assistant(text) => match self.transcript.last_mut() {
-                Some(Entry::Assistant(previous)) => previous.push_str(&text),
-                _ => self.transcript.push(Entry::Assistant(text)),
+                Some(Entry::Assistant(previous)) => {
+                    previous.push_str(&text);
+                    self.history_lines
+                        .invalidate_from(self.transcript.len().saturating_sub(1));
+                }
+                _ => {
+                    self.history_lines.invalidate_from(self.transcript.len());
+                    self.transcript.push(Entry::Assistant(text));
+                }
             },
             Entry::Reasoning(text) => match self.transcript.last_mut() {
-                Some(Entry::Reasoning(previous)) => previous.push_str(&text),
-                _ => self.transcript.push(Entry::Reasoning(text)),
+                Some(Entry::Reasoning(previous)) => {
+                    previous.push_str(&text);
+                    self.history_lines
+                        .invalidate_from(self.transcript.len().saturating_sub(1));
+                }
+                _ => {
+                    self.history_lines.invalidate_from(self.transcript.len());
+                    self.transcript.push(Entry::Reasoning(text));
+                }
             },
             other => {
                 self.last_status_notice = match &other {
                     Entry::Notice(text) => Some(text.clone()),
                     _ => None,
                 };
+                self.history_lines.invalidate_from(self.transcript.len());
                 self.transcript.push(other);
             }
         }
@@ -7306,6 +7426,24 @@ mod tests {
     }
 
     #[test]
+    fn single_character_fast_enter_is_not_treated_as_paste() {
+        let start = Instant::now();
+        let mut app = test_app();
+
+        assert!(app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            start
+        ));
+        assert!(!app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            start + Duration::from_millis(1)
+        ));
+
+        assert_eq!(app.input, "y");
+        assert!(app.paste_segments.is_empty());
+    }
+
+    #[test]
     fn pasted_multiline_input_collapses_to_marker_and_expands() {
         let mut app = test_app();
 
@@ -7830,7 +7968,7 @@ mod tests {
 
     #[test]
     fn active_lines_hide_spinner_when_idle() {
-        let app = test_app();
+        let mut app = test_app();
         let rendered = app
             .active_lines_at_for_height(40, DEFAULT_TUI_HEIGHT as usize, Instant::now())
             .iter()
@@ -7843,7 +7981,7 @@ mod tests {
 
     #[test]
     fn draw_anchors_last_live_line_to_viewport_bottom() {
-        let app = test_app();
+        let mut app = test_app();
         let height = 24;
         let backend = TestBackend::new(60, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -8452,7 +8590,7 @@ mod tests {
     #[test]
     fn history_lines_include_header_transcript_pending_preview_and_spinner() {
         let mut app = test_app();
-        app.transcript.push(Entry::User("hello".into()));
+        app.push_transcript_entry(Entry::User("hello".into()));
         app.pending_tool_call = Some(ToolEntry {
             state: ToolEntryState::Running,
             display_lines: vec!["bash".into(), "cargo test".into()],
@@ -8484,7 +8622,7 @@ mod tests {
     fn fullscreen_history_starts_at_bottom() {
         let mut app = test_app();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
 
         let lines = app.active_lines_for_height(40, 12);
@@ -8499,7 +8637,7 @@ mod tests {
         let mut app = test_app();
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
 
         assert!(app
@@ -8522,11 +8660,36 @@ mod tests {
     }
 
     #[test]
+    fn small_scroll_to_rendered_bottom_resumes_bottom_following() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..20 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        let history_len = app.history_len(40, Instant::now());
+        let rendered_bottom_start = history_len.saturating_sub(app.history_height_for_screen(
+            40,
+            12,
+            Instant::now(),
+            false,
+        ));
+        app.history_scroll = HistoryScroll::Manual {
+            top_line: rendered_bottom_start.saturating_sub(1),
+        };
+
+        app.handle_mouse_event(MouseEventKind::ScrollDown, 0, 0, &mut terminal)
+            .unwrap();
+
+        assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+        assert!(!app.should_show_jump_to_bottom(40, 12, Instant::now()));
+    }
+
+    #[test]
     fn pagedown_moves_manual_scroll_toward_bottom() {
         let mut app = test_app();
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
 
         app.handle_history_key(
@@ -8557,7 +8720,7 @@ mod tests {
         app.input = "draft".into();
         app.input_cursor = app.input_char_len();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
 
         let bottom_lines = app
@@ -8600,7 +8763,7 @@ mod tests {
         let mut app = test_app();
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
 
         app.handle_mouse_event(MouseEventKind::ScrollUp, 0, 0, &mut terminal)
@@ -8621,17 +8784,118 @@ mod tests {
     }
 
     #[test]
+    fn scrollbar_renders_when_history_overflows() {
+        let mut app = test_app();
+        for index in 0..20 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        let height = 12;
+        let mut terminal = Terminal::new(TestBackend::new(40, height)).unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let rows = (0..height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), row))
+            .collect::<Vec<_>>();
+        assert!(rows.iter().any(|row| row.ends_with('█')), "{rows:#?}");
+    }
+
+    #[test]
+    fn dragging_scrollbar_updates_history_scroll() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..30 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        app.scroll_history_page_up(40, 12, Instant::now());
+        app.scroll_history_page_up(40, 12, Instant::now());
+        app.scroll_history_page_up(40, 12, Instant::now());
+        let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+        let scrollbar = layout.history_scrollbar.unwrap();
+        let thumb_row = (scrollbar.rect.y..scrollbar.rect.y.saturating_add(scrollbar.rect.height))
+            .find(|row| {
+                matches!(
+                    scrollbar.begin_drag(*row),
+                    HistoryScrollbarDrag::Thumb { .. }
+                )
+            })
+            .unwrap();
+
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            scrollbar.rect.x,
+            thumb_row,
+            &mut terminal,
+        )
+        .unwrap();
+        assert!(matches!(
+            app.history_scrollbar_drag,
+            Some(HistoryScrollbarDrag::Thumb { .. })
+        ));
+        let before = match app.history_scroll {
+            HistoryScroll::Manual { top_line } => top_line,
+            HistoryScroll::Bottom => panic!("expected manual scroll"),
+        };
+
+        let drag_row = scrollbar.rect.y;
+
+        app.handle_mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            scrollbar.rect.x,
+            drag_row,
+            &mut terminal,
+        )
+        .unwrap();
+        let after = match app.history_scroll {
+            HistoryScroll::Manual { top_line } => top_line,
+            HistoryScroll::Bottom => usize::MAX,
+        };
+        assert!(after < before, "before={before} after={after}");
+
+        app.handle_mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            scrollbar.rect.x,
+            drag_row,
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.history_scrollbar_drag, None);
+    }
+
+    #[test]
+    fn clicking_scrollbar_track_jumps_history_scroll() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..30 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+        let scrollbar = layout.history_scrollbar.unwrap();
+
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            scrollbar.rect.x,
+            scrollbar.rect.y.saturating_add(scrollbar.rect.height - 1),
+            &mut terminal,
+        )
+        .unwrap();
+
+        assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    }
+
+    #[test]
     fn manual_scroll_preserves_top_line_when_new_output_arrives() {
         let mut app = test_app();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
         app.scroll_history_page_up(40, 12, Instant::now());
-        let before_start =
-            app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+        let before_len = app.history_len(40, Instant::now());
+        let before_start = app.visible_history_start(before_len, 6);
 
-        app.transcript.push(Entry::Assistant("new output".into()));
-        let after_start = app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+        app.push_transcript_entry(Entry::Assistant("new output".into()));
+        let after_len = app.history_len(40, Instant::now());
+        let after_start = app.visible_history_start(after_len, 6);
 
         assert_eq!(after_start, before_start);
     }
@@ -8640,13 +8904,14 @@ mod tests {
     fn bottom_scroll_follows_new_output() {
         let mut app = test_app();
         for index in 0..20 {
-            app.transcript.push(Entry::User(format!("message {index}")));
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
         }
-        let before_start =
-            app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+        let before_len = app.history_len(40, Instant::now());
+        let before_start = app.visible_history_start(before_len, 6);
 
-        app.transcript.push(Entry::Assistant("new output".into()));
-        let after_start = app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+        app.push_transcript_entry(Entry::Assistant("new output".into()));
+        let after_len = app.history_len(40, Instant::now());
+        let after_start = app.visible_history_start(after_len, 6);
 
         assert!(after_start > before_start);
     }
