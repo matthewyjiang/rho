@@ -1339,6 +1339,12 @@ impl App {
             {
                 Some(PasteBurstKey::Char(ch))
             }
+            (KeyModifiers::NONE, KeyCode::Tab)
+                if self.paste_burst.has_pending()
+                    && self.composer_accepts_paste_burst_char('\t') =>
+            {
+                Some(PasteBurstKey::Char('\t'))
+            }
             (KeyModifiers::NONE, KeyCode::Enter) if self.composer_accepts_paste_burst_enter() => {
                 Some(PasteBurstKey::Enter)
             }
@@ -2944,6 +2950,7 @@ impl App {
                         break result;
                     }
                     Some(request) = question_rx.recv() => {
+                        self.flush_pending_paste_burst();
                         self.open_questionnaire(request, terminal)?;
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
@@ -7125,6 +7132,44 @@ mod tests {
 
         assert_eq!(app.input, "[ pasted: 2 lines ]");
         assert_eq!(app.expanded_input(), "alpha\nbeta");
+    }
+
+    #[test]
+    fn key_event_paste_burst_preserves_tabs() {
+        let start = Instant::now();
+        let mut app = test_app();
+        let keys = [
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        ];
+
+        for (index, key) in keys.into_iter().enumerate() {
+            assert!(app.handle_paste_burst_key_at(key, start + Duration::from_millis(index as u64)));
+        }
+        app.flush_pending_paste_burst();
+
+        assert_eq!(app.input, "ab\tc");
+        assert_eq!(app.expanded_input(), "ab\tc");
+    }
+
+    #[test]
+    fn single_char_prompt_enter_is_not_treated_as_paste() {
+        let start = Instant::now();
+        let mut app = test_app();
+
+        assert!(app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            start
+        ));
+        assert!(!app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            start + Duration::from_millis(1)
+        ));
+
+        assert_eq!(app.input, "y");
+        assert!(app.paste_segments.is_empty());
     }
 
     #[test]

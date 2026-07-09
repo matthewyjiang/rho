@@ -48,11 +48,7 @@ impl PasteBurst {
     }
 
     pub(super) fn push_enter_if_paste(&mut self, now: Instant) -> PasteBurstEnter {
-        let follows_pending_text = self
-            .last_event_at
-            .is_some_and(|last| now.saturating_duration_since(last) <= PASTE_BURST_GAP);
-        let follows_plain_text_burst = self.suppresses_enter_at(now);
-        if !follows_pending_text && !follows_plain_text_burst {
+        if !self.suppresses_enter_at(now) {
             return PasteBurstEnter::NotPaste;
         }
 
@@ -121,7 +117,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn buffers_enter_that_immediately_follows_pending_text() {
+    fn one_char_before_enter_is_not_paste_sized() {
         let start = Instant::now();
         let mut burst = PasteBurst::default();
 
@@ -129,9 +125,9 @@ mod tests {
 
         assert_eq!(
             burst.push_enter_if_paste(start + Duration::from_millis(1)),
-            PasteBurstEnter::Buffered
+            PasteBurstEnter::NotPaste
         );
-        assert_eq!(burst.take_pending().as_deref(), Some("a\n"));
+        assert_eq!(burst.take_pending().as_deref(), Some("a"));
     }
 
     #[test]
