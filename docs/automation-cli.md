@@ -27,7 +27,7 @@ Options:
       --auth <AUTH>            [possible values: api-key, codex, anthropic-api-key, github-copilot]
       --no-system-prompt       Do not send rho's system prompt, including AGENTS.md and skill context
       --no-tools               Do not expose any tools to the model
-      --reasoning <REASONING>  Override reasoning level: off, minimal, low, medium, high, or xhigh
+      --reasoning <REASONING>  Override reasoning level: off, minimal, low, medium, high, xhigh, or max
   -R, --resume [<ID>]          Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker
   -h, --help                   Print help
 ```

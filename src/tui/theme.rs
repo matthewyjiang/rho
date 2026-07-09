@@ -233,6 +233,7 @@ impl Theme {
             crate::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
             crate::reasoning::ReasoningLevel::High => AnsiColor::Yellow.color(),
             crate::reasoning::ReasoningLevel::Xhigh => AnsiColor::Magenta.color(),
+            crate::reasoning::ReasoningLevel::Max => AnsiColor::Red.color(),
         };
         Style::default().fg(color)
     }

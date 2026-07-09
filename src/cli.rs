@@ -21,7 +21,7 @@ pub struct Cli {
     /// Do not expose any tools to the model.
     #[arg(long)]
     pub no_tools: bool,
-    /// Override reasoning level: off, minimal, low, medium, high, or xhigh.
+    /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
     /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.

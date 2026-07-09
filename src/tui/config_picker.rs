@@ -30,7 +30,7 @@ pub(super) fn config_picker(
                 detail: Some(format!(
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
-                    info.reasoning.next()
+                    info.reasoning.next_for_model(&info.provider, &info.model)
                 )),
                 preview: None,
                 badge: Some(PickerBadge {
