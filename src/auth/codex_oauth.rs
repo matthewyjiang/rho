@@ -89,9 +89,47 @@ struct IdTokenClaims {
     auth: Option<IdTokenAuthClaims>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChatGptPlan {
+    Free,
+    Go,
+    Plus,
+    Pro,
+    ProLite,
+    Team,
+    SelfServeBusinessUsageBased,
+    Business,
+    EnterpriseCbpUsageBased,
+    Enterprise,
+    Edu,
+    Unknown,
+}
+
+impl ChatGptPlan {
+    fn from_claim(claim: &str) -> Self {
+        match claim.trim().to_ascii_lowercase().as_str() {
+            "free" => Self::Free,
+            "go" => Self::Go,
+            "plus" => Self::Plus,
+            "pro" => Self::Pro,
+            "prolite" => Self::ProLite,
+            "team" => Self::Team,
+            "self_serve_business_usage_based" => Self::SelfServeBusinessUsageBased,
+            "business" => Self::Business,
+            "enterprise_cbp_usage_based" => Self::EnterpriseCbpUsageBased,
+            "enterprise" | "hc" => Self::Enterprise,
+            "education" | "edu" => Self::Edu,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct IdTokenAuthClaims {
+    #[serde(default)]
     chatgpt_account_id: Option<String>,
+    #[serde(default)]
+    chatgpt_plan_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -520,6 +558,23 @@ async fn exchange_code_with_endpoint(
     })
 }
 
+pub(crate) fn chatgpt_plan_from_id_token(id_token: &str) -> ChatGptPlan {
+    let payload = id_token.split('.').nth(1);
+    let Some(payload) = payload else {
+        return ChatGptPlan::Unknown;
+    };
+    let Ok(decoded) = URL_SAFE_NO_PAD.decode(payload) else {
+        return ChatGptPlan::Unknown;
+    };
+    let Ok(claims) = serde_json::from_slice::<IdTokenClaims>(&decoded) else {
+        return ChatGptPlan::Unknown;
+    };
+    let Some(plan_type) = claims.auth.and_then(|auth| auth.chatgpt_plan_type) else {
+        return ChatGptPlan::Unknown;
+    };
+    ChatGptPlan::from_claim(&plan_type)
+}
+
 fn account_id_from_id_token(id_token: &str) -> Option<String> {
     let payload = id_token.split('.').nth(1)?;
     let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
@@ -559,6 +614,58 @@ mod tests {
             query.get("code_challenge").unwrap(),
             &pkce_challenge("verifier123")
         );
+    }
+
+    #[test]
+    fn extracts_plan_from_id_token_claims() {
+        for (plan, expected) in [
+            ("free", ChatGptPlan::Free),
+            ("go", ChatGptPlan::Go),
+            ("plus", ChatGptPlan::Plus),
+            ("pro", ChatGptPlan::Pro),
+            ("prolite", ChatGptPlan::ProLite),
+            ("team", ChatGptPlan::Team),
+            (
+                "self_serve_business_usage_based",
+                ChatGptPlan::SelfServeBusinessUsageBased,
+            ),
+            ("business", ChatGptPlan::Business),
+            (
+                "enterprise_cbp_usage_based",
+                ChatGptPlan::EnterpriseCbpUsageBased,
+            ),
+            ("hc", ChatGptPlan::Enterprise),
+            ("education", ChatGptPlan::Edu),
+            ("unexpected", ChatGptPlan::Unknown),
+        ] {
+            let claims = serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_plan_type": plan
+                }
+            });
+            let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+            let id_token = format!("header.{payload}.signature");
+
+            assert_eq!(
+                chatgpt_plan_from_id_token(&id_token),
+                expected,
+                "plan: {plan}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_plan_is_returned_for_invalid_or_missing_id_token_claims() {
+        assert_eq!(
+            chatgpt_plan_from_id_token("not-a-jwt"),
+            ChatGptPlan::Unknown
+        );
+
+        let claims = serde_json::json!({"sub": "user-123"});
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let id_token = format!("header.{payload}.signature");
+
+        assert_eq!(chatgpt_plan_from_id_token(&id_token), ChatGptPlan::Unknown);
     }
 
     #[test]

@@ -271,7 +271,9 @@ pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
 }
 
 pub(super) fn display_width(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
+    text.split(char::is_control)
+        .map(UnicodeWidthStr::width)
+        .sum()
 }
 
 pub(super) fn char_display_width(ch: char) -> usize {
@@ -701,7 +703,12 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Style;
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        style::{Color, Style},
+        widgets::{Paragraph, Widget},
+    };
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -712,6 +719,37 @@ mod tests {
 
     fn line_styles(line: &Line<'_>) -> Vec<Style> {
         line.spans.iter().map(|span| span.style).collect()
+    }
+
+    #[test]
+    fn display_width_ignores_control_characters_filtered_by_ratatui() {
+        assert_eq!(display_width("left\tright"), 9);
+        assert_eq!(display_width("left\rright"), 9);
+        assert_eq!(display_width("left\u{1b}right"), 9);
+    }
+
+    #[test]
+    fn tool_block_with_tabs_fills_the_full_width() {
+        let width = 20;
+        let mut lines = Vec::new();
+        push_tool_block_with_style(
+            &mut lines,
+            &["bash".into(), "one\ttwo\tthree".into()],
+            width,
+            10,
+            false,
+            Style::default().bg(Color::Green),
+        );
+
+        assert!(lines
+            .iter()
+            .all(|line| display_width(&line_text(line)) == width));
+
+        let area = Rect::new(0, 0, width as u16, lines.len() as u16);
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new(lines).render(area, &mut buffer);
+        assert!((0..area.height)
+            .all(|row| { (0..area.width).all(|column| buffer[(column, row)].bg == Color::Green) }));
     }
 
     #[test]
