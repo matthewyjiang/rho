@@ -34,6 +34,7 @@ mod config_picker;
 mod login;
 mod markdown;
 mod model_picker;
+mod paste_burst;
 mod picker;
 mod provider_picker;
 mod render;
@@ -44,6 +45,7 @@ mod stream;
 mod theme;
 
 use markdown::push_wrapped_markdown;
+use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use render::{
     display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
@@ -86,12 +88,10 @@ use crate::{
 };
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 18;
-const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
-const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
-const PASTE_BURST_MIN_CHARS: usize = 2;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const MAX_TERMINAL_EVENTS_PER_TICK: usize = 4096;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
@@ -926,6 +926,12 @@ enum StreamKind {
     Reasoning,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteBurstKey {
+    Char(char),
+    Enter,
+}
+
 fn is_tool_entry(entry: &Entry) -> bool {
     matches!(entry, Entry::Tool(_))
 }
@@ -963,13 +969,6 @@ impl StreamKind {
             Self::Reasoning => Entry::Reasoning(text),
         }
     }
-}
-
-#[derive(Default)]
-struct PasteBurst {
-    last_plain_char_at: Option<Instant>,
-    plain_char_count: usize,
-    suppress_enter_until: Option<Instant>,
 }
 
 impl ConfigNumberInput {
@@ -1122,40 +1121,6 @@ impl SecretInput {
     }
 }
 
-impl PasteBurst {
-    fn record_plain_char(&mut self, now: Instant) {
-        self.plain_char_count = match self.last_plain_char_at {
-            Some(last) if now.saturating_duration_since(last) <= PASTE_BURST_GAP => {
-                self.plain_char_count.saturating_add(1)
-            }
-            _ => 1,
-        };
-        self.last_plain_char_at = Some(now);
-        if self.plain_char_count >= PASTE_BURST_MIN_CHARS {
-            self.suppress_enter_until = now.checked_add(PASTE_ENTER_SUPPRESSION);
-        }
-    }
-
-    fn should_insert_newline_for_enter(&mut self, now: Instant) -> bool {
-        if self
-            .suppress_enter_until
-            .is_some_and(|deadline| now <= deadline)
-        {
-            self.suppress_enter_until = now.checked_add(PASTE_ENTER_SUPPRESSION);
-            true
-        } else {
-            self.clear();
-            false
-        }
-    }
-
-    fn clear(&mut self) {
-        self.last_plain_char_at = None;
-        self.plain_char_count = 0;
-        self.suppress_enter_until = None;
-    }
-}
-
 impl App {
     fn new(info: TuiInfo) -> Self {
         Self::new_with_credentials(info, Arc::new(OsCredentialStore))
@@ -1243,31 +1208,25 @@ impl App {
             self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             self.resize_inline_viewport_if_needed(terminal)?;
+            if !event::poll(Duration::from_millis(0))? {
+                self.flush_due_paste_burst();
+            }
             terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.handle_key(key, terminal, agent).await?;
+            if event::poll(self.event_poll_timeout(Duration::from_millis(100)))? {
+                let mut event_count = 0;
+                loop {
+                    let event = event::read()?;
+                    self.handle_terminal_event(event, terminal, agent).await?;
+                    event_count += 1;
+                    if self.should_quit
+                        || event_count >= MAX_TERMINAL_EVENTS_PER_TICK
+                        || !event::poll(Duration::from_millis(0))?
+                    {
+                        break;
                     }
-                    Event::Paste(text) => {
-                        let text = normalize_paste(&text);
-                        match &mut self.composer {
-                            ComposerMode::Input => self.insert_pasted_input_text(&text),
-                            ComposerMode::SecretInput(secret) => secret.insert_text(&text),
-                            ComposerMode::ConfigNumberInput(input) => input.insert_text(&text),
-                            ComposerMode::ConfigTextInput(input) => input.insert_text(&text),
-                            ComposerMode::Questionnaire(questionnaire) => {
-                                questionnaire.insert_text(&text);
-                            }
-                            ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
-                        }
-                        self.paste_burst.clear();
-                    }
-                    Event::Resize(_, _) => {
-                        self.reflow_history(terminal)?;
-                    }
-                    _ => {}
                 }
+            } else {
+                self.flush_due_paste_burst();
             }
         }
         let width = terminal.size()?.width as usize;
@@ -1278,12 +1237,162 @@ impl App {
         })
     }
 
+    async fn handle_terminal_event(
+        &mut self,
+        event: Event,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        match event {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                self.handle_key(key, terminal, agent).await?;
+            }
+            Event::Paste(text) => {
+                self.flush_pending_paste_burst();
+                let text = normalize_paste(&text);
+                self.insert_paste(&text);
+                self.paste_burst.clear();
+            }
+            Event::Resize(_, _) => {
+                self.flush_pending_paste_burst();
+                self.reflow_history(terminal)?;
+            }
+            Event::FocusGained | Event::FocusLost | Event::Mouse(_) | Event::Key(_) => {}
+        }
+        Ok(())
+    }
+
+    fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
+        self.paste_burst.poll_timeout(Instant::now(), idle_timeout)
+    }
+
+    fn flush_due_paste_burst(&mut self) {
+        if self.paste_burst.is_due(Instant::now()) {
+            self.flush_pending_paste_burst();
+        }
+    }
+
+    fn flush_pending_paste_burst(&mut self) {
+        let Some(text) = self.paste_burst.take_pending() else {
+            return;
+        };
+        let text = normalize_paste(&text);
+        self.insert_paste(&text);
+    }
+
+    fn handle_paste_burst_key(&mut self, key: KeyEvent) -> bool {
+        self.handle_paste_burst_key_at(key, Instant::now())
+    }
+
+    fn handle_paste_burst_key_at(&mut self, key: KeyEvent, now: Instant) -> bool {
+        let Some(burst_key) = self.paste_burst_key(key) else {
+            self.flush_pending_paste_burst();
+            return false;
+        };
+
+        match burst_key {
+            PasteBurstKey::Char(ch) => {
+                if !self.paste_burst.can_continue(now) {
+                    self.flush_pending_paste_burst();
+                }
+                self.paste_burst.push_plain_char(ch, now);
+                self.ctrl_c_streak = 0;
+                true
+            }
+            PasteBurstKey::Enter => match self.paste_burst.push_enter_if_paste(now) {
+                PasteBurstEnter::Buffered => {
+                    self.ctrl_c_streak = 0;
+                    true
+                }
+                PasteBurstEnter::InsertNewline => {
+                    self.insert_paste_burst_newline();
+                    self.ctrl_c_streak = 0;
+                    true
+                }
+                PasteBurstEnter::NotPaste => {
+                    self.flush_pending_paste_burst();
+                    false
+                }
+            },
+        }
+    }
+
+    fn insert_paste_burst_newline(&mut self) {
+        match &mut self.composer {
+            ComposerMode::Input => self.insert_input_char('\n'),
+            ComposerMode::Questionnaire(questionnaire) => {
+                questionnaire.insert_char('\n');
+            }
+            ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::Picker(_)
+            | ComposerMode::OAuthPending(_) => {}
+        }
+    }
+
+    fn paste_burst_key(&self, key: KeyEvent) -> Option<PasteBurstKey> {
+        match (key.modifiers, key.code) {
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && self.composer_accepts_paste_burst_char(ch) =>
+            {
+                Some(PasteBurstKey::Char(ch))
+            }
+            (KeyModifiers::NONE, KeyCode::Tab)
+                if self.paste_burst.has_pending()
+                    && self.composer_accepts_paste_burst_char('\t') =>
+            {
+                Some(PasteBurstKey::Char('\t'))
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) if self.composer_accepts_paste_burst_enter() => {
+                Some(PasteBurstKey::Enter)
+            }
+            _ => None,
+        }
+    }
+
+    fn composer_accepts_paste_burst_char(&self, ch: char) -> bool {
+        match &self.composer {
+            ComposerMode::Input => true,
+            ComposerMode::Questionnaire(questionnaire) => {
+                questionnaire.active_text_entry_active()
+                    || (ch != ' ' && questionnaire.active_question().allow_other)
+            }
+            ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::Picker(_)
+            | ComposerMode::OAuthPending(_) => false,
+        }
+    }
+
+    fn composer_accepts_paste_burst_enter(&self) -> bool {
+        match &self.composer {
+            ComposerMode::Input => true,
+            ComposerMode::Questionnaire(questionnaire) => {
+                questionnaire.active_text_entry_active()
+                    || (self.paste_burst.has_pending()
+                        && questionnaire.active_question().allow_other)
+            }
+            ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::Picker(_)
+            | ComposerMode::OAuthPending(_) => false,
+        }
+    }
+
     async fn handle_key(
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
+        if self.handle_paste_burst_key(key) {
+            return Ok(());
+        }
+
         if self.handle_oauth_pending_key(key, terminal)? {
             return Ok(());
         }
@@ -1437,21 +1546,13 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                if self
-                    .paste_burst
-                    .should_insert_newline_for_enter(Instant::now())
-                {
-                    self.insert_input_char('\n');
-                } else {
-                    self.submit(terminal, agent).await?;
-                }
+                self.submit(terminal, agent).await?;
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
-                self.paste_burst.record_plain_char(Instant::now());
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -1608,16 +1709,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if self
-                    .paste_burst
-                    .should_insert_newline_for_enter(Instant::now())
-                {
-                    if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                        questionnaire.insert_char('\n');
-                    }
-                } else {
-                    self.submit_questionnaire_answer(terminal)?;
-                }
+                self.submit_questionnaire_answer(terminal)?;
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -1763,9 +1855,7 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.insert_char(ch) {
-                        self.paste_burst.record_plain_char(Instant::now());
-                    }
+                    questionnaire.insert_char(ch);
                 }
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -1923,7 +2013,6 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 secret.insert_char(ch);
-                self.paste_burst.record_plain_char(Instant::now());
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -2861,6 +2950,7 @@ impl App {
                         break result;
                     }
                     Some(request) = question_rx.recv() => {
+                        self.flush_pending_paste_burst();
                         self.open_questionnaire(request, terminal)?;
                         self.resize_inline_viewport_if_needed(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
@@ -3006,7 +3096,7 @@ impl App {
         Ok(())
     }
 
-    fn insert_running_paste(&mut self, text: &str) {
+    fn insert_paste(&mut self, text: &str) {
         match &mut self.composer {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
@@ -3024,6 +3114,10 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.handle_paste_burst_key(key) {
+            return Ok(());
+        }
+
         if self.handle_questionnaire_key(key, terminal)? {
             return Ok(());
         }
@@ -3143,21 +3237,13 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                if self
-                    .paste_burst
-                    .should_insert_newline_for_enter(Instant::now())
-                {
-                    self.insert_input_char('\n');
-                } else {
-                    self.submit_during_turn(terminal)?;
-                }
+                self.submit_during_turn(terminal)?;
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
-                self.paste_burst.record_plain_char(Instant::now());
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -3617,6 +3703,10 @@ impl App {
             .map_or(spinner_deadline, |stream_deadline| {
                 stream_deadline.min(spinner_deadline)
             });
+        let deadline = self
+            .paste_burst
+            .deadline()
+            .map_or(deadline, |paste_deadline| paste_deadline.min(deadline));
         tokio::time::Instant::from_std(deadline)
     }
 
@@ -3646,10 +3736,12 @@ impl App {
                 }
                 Event::Paste(text) => {
                     let text = normalize_paste(&text);
-                    self.insert_running_paste(&text);
+                    self.flush_pending_paste_burst();
+                    self.insert_paste(&text);
                     self.paste_burst.clear();
                 }
                 Event::Resize(_, _) => {
+                    self.flush_pending_paste_burst();
                     self.reflow_history(terminal)?;
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
@@ -3657,6 +3749,7 @@ impl App {
                 _ => {}
             }
         }
+        self.flush_due_paste_burst();
         Ok(control)
     }
 
@@ -7021,6 +7114,82 @@ mod tests {
         assert_eq!(expected_cursor, rendered.1);
         assert_eq!(expected_cursor.y, 6);
     }
+
+    #[test]
+    fn key_event_paste_burst_collapses_through_common_paste_path() {
+        let start = Instant::now();
+        let mut app = test_app();
+
+        for (index, ch) in "alpha\nbeta".chars().enumerate() {
+            let key = if ch == '\n' {
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            } else {
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
+            };
+            assert!(app.handle_paste_burst_key_at(key, start + Duration::from_millis(index as u64)));
+        }
+        app.flush_pending_paste_burst();
+
+        assert_eq!(app.input, "[ pasted: 2 lines ]");
+        assert_eq!(app.expanded_input(), "alpha\nbeta");
+    }
+
+    #[test]
+    fn key_event_paste_burst_preserves_tabs() {
+        let start = Instant::now();
+        let mut app = test_app();
+        let keys = [
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        ];
+
+        for (index, key) in keys.into_iter().enumerate() {
+            assert!(app.handle_paste_burst_key_at(key, start + Duration::from_millis(index as u64)));
+        }
+        app.flush_pending_paste_burst();
+
+        assert_eq!(app.input, "ab\tc");
+        assert_eq!(app.expanded_input(), "ab\tc");
+    }
+
+    #[test]
+    fn single_char_prompt_enter_is_not_treated_as_paste() {
+        let start = Instant::now();
+        let mut app = test_app();
+
+        assert!(app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            start
+        ));
+        assert!(!app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            start + Duration::from_millis(1)
+        ));
+
+        assert_eq!(app.input, "y");
+        assert!(app.paste_segments.is_empty());
+    }
+
+    #[test]
+    fn idle_key_event_text_is_inserted_without_paste_marker() {
+        let start = Instant::now();
+        let mut app = test_app();
+
+        assert!(app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            start
+        ));
+        assert!(!app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            start + Duration::from_millis(20)
+        ));
+
+        assert_eq!(app.input, "a");
+        assert!(app.paste_segments.is_empty());
+    }
+
     #[test]
     fn pasted_multiline_input_collapses_to_marker_and_expands() {
         let mut app = test_app();
@@ -8152,15 +8321,6 @@ mod tests {
     }
 
     #[test]
-    fn paste_burst_treats_enter_as_newline() {
-        let start = Instant::now();
-        let mut burst = PasteBurst::default();
-        burst.record_plain_char(start);
-        burst.record_plain_char(start + Duration::from_millis(1));
-        assert!(burst.should_insert_newline_for_enter(start + Duration::from_millis(2)));
-    }
-
-    #[test]
     fn status_notice_suppresses_consecutive_duplicates() {
         let mut app = test_app();
         let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
@@ -8177,17 +8337,6 @@ mod tests {
                 .count(),
             1
         );
-    }
-
-    #[test]
-    fn paste_burst_expires_before_enter_submit() {
-        let start = Instant::now();
-        let mut burst = PasteBurst::default();
-        burst.record_plain_char(start);
-        burst.record_plain_char(start + Duration::from_millis(1));
-        assert!(!burst.should_insert_newline_for_enter(
-            start + PASTE_ENTER_SUPPRESSION + Duration::from_millis(2)
-        ));
     }
 
     #[test]
