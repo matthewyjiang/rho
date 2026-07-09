@@ -3414,6 +3414,7 @@ impl App {
             CommandId::Skills => self.execute_skills_command(terminal),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::New
+            | CommandId::Compact
             | CommandId::Model
             | CommandId::RefreshModelList
             | CommandId::Login
@@ -4123,8 +4124,57 @@ impl App {
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(terminal),
         }
+    }
+
+    async fn execute_compact_command(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        self.status = "compacting context".into();
+        terminal.draw(|frame| self.draw(frame))?;
+
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let compacted = agent
+            .compact(move |event| {
+                let _ = event_tx.send(event);
+                Ok(())
+            })
+            .await;
+        while let Ok(event) = event_rx.try_recv() {
+            self.handle_queued_agent_event(event, terminal)?;
+        }
+
+        match compacted {
+            Ok(true) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice("compacted conversation context".into()),
+                )?;
+                self.status = "context compacted".into();
+            }
+            Ok(false) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(
+                        "not enough conversation history to compact, or the model context window is unknown"
+                            .into(),
+                    ),
+                )?;
+                self.status = "context not compacted".into();
+            }
+            Err(err) => {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Error(format!("failed to compact conversation context: {err}")),
+                )?;
+                self.status = "context compaction failed".into();
+            }
+        }
+        Ok(())
     }
 
     fn execute_exit_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {

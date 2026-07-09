@@ -72,6 +72,11 @@ pub enum AgentEvent {
     QuestionnaireFinished(QuestionnaireResponse),
 }
 
+enum CompactionTrigger {
+    Automatic,
+    Manual,
+}
+
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
@@ -162,6 +167,15 @@ impl Agent {
         self.context_tracker.reset();
     }
 
+    pub async fn compact(
+        &mut self,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<bool, AgentError> {
+        let specs = self.tools.specs();
+        self.compact_history(&specs, CompactionTrigger::Manual, on_event)
+            .await
+    }
+
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
         self.run_with_events(user_prompt, |_| Ok(())).await
     }
@@ -236,7 +250,8 @@ impl Agent {
 
         let mut step = 1usize;
         loop {
-            self.maybe_compact_history(&specs, &mut on_event).await?;
+            self.compact_history(&specs, CompactionTrigger::Automatic, &mut on_event)
+                .await?;
             on_event(AgentEvent::StepStarted(step))?;
             if let Some(context_usage) = self
                 .context_tracker
@@ -551,25 +566,28 @@ impl Agent {
         }
     }
 
-    async fn maybe_compact_history(
+    async fn compact_history(
         &mut self,
         specs: &[crate::tool::ToolSpec],
-        on_event: &mut impl FnMut(AgentEvent) -> Result<(), ModelError>,
-    ) -> Result<(), AgentError> {
+        trigger: CompactionTrigger,
+        mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+    ) -> Result<bool, AgentError> {
         let estimate = self
             .context_tracker
             .estimate_for_compaction(&self.messages, specs);
-        if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
-            return Ok(());
+        if matches!(trigger, CompactionTrigger::Automatic)
+            && !should_compact(&self.compaction, estimate.tokens, estimate.context_window)
+        {
+            return Ok(false);
         }
         let Some(context_window) = estimate.context_window.filter(|window| *window > 0) else {
-            return Ok(());
+            return Ok(false);
         };
         let target_tokens = self.compaction.target_tokens(context_window);
         let Some(partition) =
             partition_messages_for_compaction(&self.messages, specs, target_tokens)
         else {
-            return Ok(());
+            return Ok(false);
         };
 
         let response = match self
@@ -591,10 +609,14 @@ impl Agent {
         {
             Ok(response) => response,
             Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
-            // A failed summary must not abort the turn: the threshold leaves
-            // headroom below the hard window, so the next request can proceed
-            // uncompacted and compaction retries before the following call.
-            Err(_) => return Ok(()),
+            // Automatic compaction is best effort because its threshold leaves
+            // headroom for the normal request. Manual compaction reports failure.
+            Err(err) => {
+                return match trigger {
+                    CompactionTrigger::Automatic => Ok(false),
+                    CompactionTrigger::Manual => Err(err.into()),
+                };
+            }
         };
         let ModelResponse::Assistant(blocks) = response;
         let summary = blocks
@@ -608,14 +630,14 @@ impl Agent {
             .trim()
             .to_string();
         if summary.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         self.messages = replacement_history_from_summary(partition, summary);
         self.persist_history_replacement()?;
         let context_usage = self.context_tracker.record_compaction();
         on_event(AgentEvent::ContextUsage(context_usage))?;
-        Ok(())
+        Ok(true)
     }
 
     fn persist_history_replacement(&mut self) -> Result<(), AgentError> {

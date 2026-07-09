@@ -10,6 +10,7 @@ pub enum CommandId {
     RefreshModelList,
     Resume,
     Config,
+    Compact,
     Skills,
     Exit,
 }
@@ -84,6 +85,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+    },
+    CommandSpec {
+        id: CommandId::Compact,
+        name: "compact",
+        usage: "/compact",
+        description: "compact older conversation context",
     },
     CommandSpec {
         id: CommandId::Skills,
@@ -234,6 +241,14 @@ mod tests {
         let matches = matching_commands(command_prefix("/nope").unwrap());
 
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn parses_compact_command() {
+        let invocation = parse_command("/compact").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Compact);
+        assert_eq!(invocation.name, "compact");
     }
 
     #[test]
