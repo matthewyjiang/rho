@@ -496,6 +496,40 @@ async fn emits_provider_reported_context_usage_from_model_usage() {
 }
 
 #[tokio::test]
+async fn manual_compaction_works_when_auto_compaction_is_disabled() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = test_agent_with_tools(
+        CompactingProvider {
+            requests: requests.clone(),
+        },
+        ToolRegistry::new(),
+    );
+    agent.set_context_window(Some(1_000));
+
+    agent.run("first".into()).await.unwrap();
+    agent.run("second".into()).await.unwrap();
+    let compacted = agent.compact(|_| Ok(())).await.unwrap();
+
+    assert!(compacted);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[2].0, "summary");
+    assert!(agent.messages().iter().any(|message| {
+        matches!(message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("compacted summary")))
+    }));
+}
+
+#[tokio::test]
+async fn manual_compaction_reports_when_history_cannot_be_compacted() {
+    let mut agent = test_agent(RecordingProvider::default());
+    agent.set_context_window(Some(1_000));
+
+    let compacted = agent.compact(|_| Ok(())).await.unwrap();
+
+    assert!(!compacted);
+}
+
+#[tokio::test]
 async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded_with_configured_context_window(
 ) {
     let requests = Arc::new(Mutex::new(Vec::new()));
