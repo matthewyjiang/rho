@@ -63,6 +63,11 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 - Prefer this for quick end-to-end checks of terminal UI flows, command handling, startup behavior, and regressions that unit tests do not cover.
 - Keep smoke tests focused and lightweight. Capture only relevant excerpts from pane output, and close any temporary panes when they are no longer needed.
 
+## Rho experience tests
+
+- If you are the rho agent, (not other agents like claude/pi), you should report any issues you experience with using the agent harness so that the experience can be improved.
+
+
 ## Pull requests
 
 - Prefer the most user-visible Conventional Commit type for the PR title, usually `feat`, `fix`, `docs`, or `refactor`.
