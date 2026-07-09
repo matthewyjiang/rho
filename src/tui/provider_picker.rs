@@ -8,12 +8,20 @@ pub(super) fn provider_picker(verb: &str, action: PickerAction) -> UiPicker {
     provider_picker_for_targets(verb, action, catalog::login_targets())
 }
 
-pub(super) fn logout_provider_picker(store: &dyn CredentialStore) -> UiPicker {
-    let targets = catalog::login_targets()
-        .into_iter()
-        .filter(|target| provider_has_stored_credentials(store, &target.provider).unwrap_or(false))
-        .collect();
-    provider_picker_for_targets("logout", PickerAction::LogoutProvider, targets)
+pub(super) fn logout_provider_picker(
+    store: &dyn CredentialStore,
+) -> crate::credentials::CredentialResult<UiPicker> {
+    let mut targets = Vec::new();
+    for target in catalog::login_targets() {
+        if provider_has_stored_credentials(store, &target.provider)? {
+            targets.push(target);
+        }
+    }
+    Ok(provider_picker_for_targets(
+        "logout",
+        PickerAction::LogoutProvider,
+        targets,
+    ))
 }
 
 fn provider_picker_for_targets(
