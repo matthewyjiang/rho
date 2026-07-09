@@ -1,0 +1,25 @@
+mod agent;
+mod app;
+mod auth;
+mod cli;
+mod clipboard_image;
+mod commands;
+mod config;
+mod credentials;
+mod herdr;
+mod model;
+mod paths;
+mod prompt;
+mod provider_backend;
+mod reasoning;
+mod session;
+mod skills;
+mod tool;
+mod tools;
+mod transcript;
+mod tui;
+mod update;
+mod workspace;
+
+pub use app::run;
+pub use cli::Cli;
