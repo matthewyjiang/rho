@@ -17,6 +17,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
+    auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
     config::Config,
     credentials::{load_codex_tokens, load_provider_api_key, CodexTokens, OsCredentialStore},
     model::openai::auth::{refresh_codex_token, CodexAuthSource},
@@ -34,7 +35,7 @@ const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
 const OPENAI_SEARCH_MODEL: &str = "gpt-5.6-luna";
-const CODEX_SEARCH_MODEL: &str = "gpt-5.6-luna";
+const CODEX_SEARCH_MODEL: &str = "gpt-5.6-terra";
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
 
@@ -594,7 +595,23 @@ impl OpenAiSearchAuth {
 
     fn model(&self) -> &'static str {
         match self {
-            Self::Codex { .. } => CODEX_SEARCH_MODEL,
+            Self::Codex { tokens, .. } => match tokens
+                .id_token
+                .as_deref()
+                .map(chatgpt_plan_from_id_token)
+                .unwrap_or(ChatGptPlan::Unknown)
+            {
+                ChatGptPlan::Free | ChatGptPlan::Go | ChatGptPlan::Unknown => CODEX_SEARCH_MODEL,
+                ChatGptPlan::Plus
+                | ChatGptPlan::Pro
+                | ChatGptPlan::ProLite
+                | ChatGptPlan::Team
+                | ChatGptPlan::SelfServeBusinessUsageBased
+                | ChatGptPlan::Business
+                | ChatGptPlan::EnterpriseCbpUsageBased
+                | ChatGptPlan::Enterprise
+                | ChatGptPlan::Edu => OPENAI_SEARCH_MODEL,
+            },
             Self::ApiKey(_) => OPENAI_SEARCH_MODEL,
         }
     }
@@ -674,6 +691,8 @@ async fn openai_search(
                     tokens: refreshed,
                     source: CodexAuthSource::Store,
                 };
+                let body =
+                    openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
                 let retried = send_openai_search_request(&auth, &body).await?;
                 status = retried.0;
                 text = retried.1;
@@ -2218,6 +2237,8 @@ mod tests {
         thread,
     };
 
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
     use super::*;
 
     fn test_context() -> ToolContext {
@@ -2446,18 +2467,55 @@ mod tests {
     }
 
     #[test]
-    fn uses_luna_for_codex_web_search() {
-        let auth = OpenAiSearchAuth::Codex {
+    fn uses_terra_for_free_go_and_unknown_codex_web_search_plans() {
+        for plan in ["free", "go", "unrecognized"] {
+            let auth = codex_web_search_auth(Some(plan));
+
+            assert_eq!(auth.model(), "gpt-5.6-terra", "plan: {plan}");
+        }
+
+        assert_eq!(codex_web_search_auth(None).model(), "gpt-5.6-terra");
+    }
+
+    #[test]
+    fn uses_luna_for_paid_codex_web_search_plans() {
+        for plan in [
+            "plus",
+            "pro",
+            "prolite",
+            "team",
+            "self_serve_business_usage_based",
+            "business",
+            "enterprise_cbp_usage_based",
+            "enterprise",
+            "edu",
+        ] {
+            let auth = codex_web_search_auth(Some(plan));
+
+            assert_eq!(auth.model(), "gpt-5.6-luna", "plan: {plan}");
+        }
+    }
+
+    fn codex_web_search_auth(plan: Option<&str>) -> OpenAiSearchAuth {
+        let id_token = plan.map(|plan| {
+            let claims = json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_plan_type": plan
+                }
+            });
+            let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+            format!("header.{payload}.signature")
+        });
+
+        OpenAiSearchAuth::Codex {
             tokens: CodexTokens {
                 access_token: "test-token".into(),
                 refresh_token: None,
-                id_token: None,
+                id_token,
                 account_id: None,
             },
             source: CodexAuthSource::Env,
-        };
-
-        assert_eq!(auth.model(), "gpt-5.6-luna");
+        }
     }
 
     #[test]
