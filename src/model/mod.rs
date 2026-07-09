@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod context;
+pub mod favorites;
 pub mod github_copilot;
 pub mod image;
 pub mod models_dev;

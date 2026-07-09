@@ -222,13 +222,18 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ResumeSession => "select",
     };
+    let pin = if picker.help.contains("ctrl-p") {
+        " · Ctrl-P to pin/unpin"
+    } else {
+        ""
+    };
     let tab = if picker.help.contains("tab") {
         " · Tab to complete"
     } else {
         ""
     };
     format!(
-        "  {} · Type to search · Enter to {action}{tab} · Esc to cancel",
+        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to cancel",
         picker.title
     )
 }
@@ -236,6 +241,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
 fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
         PickerBadgeTone::Selected => Theme::warning(),
+        PickerBadgeTone::Favorite => Theme::success(),
     }
 }
 

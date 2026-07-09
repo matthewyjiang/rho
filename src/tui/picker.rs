@@ -28,6 +28,7 @@ pub(super) struct PickerBadge {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerBadgeTone {
     Selected,
+    Favorite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -49,7 +49,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | --- | --- |
 | `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
-| `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). |
+| `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
 | `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
@@ -59,7 +59,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
 
-Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
+Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
 
 ## Login and logout
 
@@ -73,7 +73,7 @@ Logging in does not normally switch provider/model. Use `/model` to switch model
 
 ## Model picker
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 
