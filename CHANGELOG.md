@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.18.0...rho-coding-agent-v0.18.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **model:** use copilot api models without fallback ([#140](https://github.com/matthewyjiang/rho/issues/140)) ([c5756d8](https://github.com/matthewyjiang/rho/commit/c5756d80750177d62ffd524cf376c8d17f7b13e5))
+* **tui:** collapse pasted key bursts ([#139](https://github.com/matthewyjiang/rho/issues/139)) ([805fb4d](https://github.com/matthewyjiang/rho/commit/805fb4db38db5039557617ee9026f0ef9d1987f6))
+* **tui:** place spinner above input box ([#141](https://github.com/matthewyjiang/rho/issues/141)) ([edb3093](https://github.com/matthewyjiang/rho/commit/edb3093780e6100e05e70bf159f2c2ce8f4b9b41))
+
 ## [0.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.17.1...rho-coding-agent-v0.18.0) (2026-07-09)
 
 
