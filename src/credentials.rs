@@ -566,6 +566,20 @@ fn provider_has_env_override_from(
     env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
 
+pub fn provider_has_stored_credentials(
+    store: &dyn CredentialStore,
+    provider: &str,
+) -> CredentialResult<bool> {
+    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
+        Some(ProviderAuthKind::ApiKey { account, .. })
+        | Some(ProviderAuthKind::CodexOAuth { account, .. })
+        | Some(ProviderAuthKind::GithubCopilotDevice { account, .. }) => {
+            Ok(store.get_secret(account)?.is_some())
+        }
+        None => Ok(false),
+    }
+}
+
 pub fn provider_has_credentials(
     store: &dyn CredentialStore,
     provider: &str,
@@ -573,14 +587,7 @@ pub fn provider_has_credentials(
     if provider_has_env_override(provider) {
         return Ok(true);
     }
-    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(ProviderAuthKind::ApiKey { account, .. }) => Ok(store.get_secret(account)?.is_some()),
-        Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
-        Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
-            Ok(load_github_copilot_tokens(store)?.is_some())
-        }
-        None => Ok(false),
-    }
+    provider_has_stored_credentials(store, provider)
 }
 
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {

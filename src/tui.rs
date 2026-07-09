@@ -8422,6 +8422,22 @@ mod tests {
     }
 
     #[test]
+    fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
+        let store = MemoryCredentialStore::default();
+        save_openai_api_key(&store, "sk-test").unwrap();
+        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+
+        let picker = provider_picker::logout_provider_picker(&store);
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["openai", "anthropic"]);
+    }
+
+    #[test]
     fn model_picker_uses_all_available_auths() {
         let store = Arc::new(MemoryCredentialStore::default());
         save_openai_api_key(store.as_ref(), "sk-test").unwrap();

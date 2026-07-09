@@ -22,7 +22,10 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
-            self.open_provider_picker("logout", PickerAction::LogoutProvider);
+            self.composer = ComposerMode::Picker(provider_picker::logout_provider_picker(
+                self.credential_store.as_ref(),
+            ));
+            self.status = "select provider to logout".into();
             return Ok(());
         }
         self.logout_provider(&invocation.args, terminal, agent)
