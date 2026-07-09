@@ -9,7 +9,8 @@ export default defineConfig({
     nav: [
       { text: 'Getting started', link: '/getting-started' },
       { text: 'Interactive TUI', link: '/interactive-tui' },
-      { text: 'Automation', link: '/automation-cli' }
+      { text: 'Automation', link: '/automation-cli' },
+      { text: 'Changelog', link: '/changelog' }
     ],
     sidebar: [
       {
@@ -24,7 +25,8 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Sessions', link: '/sessions' },
-          { text: 'Development', link: '/development' }
+          { text: 'Development', link: '/development' },
+          { text: 'Changelog', link: '/changelog' }
         ]
       }
     ],
