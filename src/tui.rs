@@ -4135,18 +4135,50 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         self.status = "compacting context".into();
+        self.running = true;
+        self.loading_spinner.start();
         terminal.draw(|frame| self.draw(frame))?;
 
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let compacted = agent
-            .compact(move |event| {
+        let compacted = {
+            let mut compact_future = Box::pin(agent.compact(move |event| {
                 let _ = event_tx.send(event);
                 Ok(())
-            })
-            .await;
+            }));
+            loop {
+                tokio::select! {
+                    result = &mut compact_future => break result,
+                    Some(event) = event_rx.recv() => {
+                        self.handle_queued_agent_event(event, terminal)?;
+                        terminal.draw(|frame| self.draw(frame))?;
+                    }
+                    _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
+                        match self.handle_running_terminal_events(
+                            terminal,
+                            &interrupt_requested,
+                            &tool_call_active,
+                        ) {
+                            Ok(StreamControl::Interrupt) => {
+                                break Err(crate::agent::AgentError::Provider(
+                                    crate::model::ModelError::Interrupted,
+                                ));
+                            }
+                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
+                        }
+                        self.clamp_history_scroll_for_terminal(terminal)?;
+                        terminal.draw(|frame| self.draw(frame))?;
+                    }
+                }
+            }
+        };
         while let Ok(event) = event_rx.try_recv() {
             self.handle_queued_agent_event(event, terminal)?;
         }
+        self.running = false;
+        self.loading_spinner.stop();
 
         match compacted {
             Ok(true) => {
