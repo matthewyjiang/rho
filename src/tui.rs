@@ -5612,7 +5612,7 @@ impl App {
 
     fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
         if matches!(self.history_scroll, HistoryScroll::Bottom) {
-            self.hide_history_scrollbar();
+            self.history_scrollbar_drag = None;
             return;
         }
         let history_len = self.history_len(width, now);
@@ -5711,11 +5711,12 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                if let Some(scrollbar) = layout
+                let scrollbar = layout
                     .history_scrollbar
                     .filter(|scrollbar| scrollbar.contains(column, row))
-                {
+                    .filter(|_| self.should_render_history_scrollbar(now));
+                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
+                if let Some(scrollbar) = scrollbar {
                     self.reveal_history_scrollbar(now);
                     let drag = scrollbar.begin_drag(row);
                     self.history_scrollbar_drag = Some(drag);
@@ -8859,6 +8860,7 @@ mod tests {
         app.scroll_history_page_up(40, 12, Instant::now());
         app.scroll_history_page_up(40, 12, Instant::now());
         app.scroll_history_page_up(40, 12, Instant::now());
+        app.reveal_history_scrollbar(Instant::now());
         let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
         let scrollbar = layout.history_scrollbar.unwrap();
         let thumb_row = (scrollbar.rect.y..scrollbar.rect.y.saturating_add(scrollbar.rect.height))
@@ -8920,6 +8922,7 @@ mod tests {
         }
         let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
         let scrollbar = layout.history_scrollbar.unwrap();
+        app.reveal_history_scrollbar(Instant::now());
 
         app.handle_mouse_event(
             MouseEventKind::Down(MouseButton::Left),
@@ -8930,6 +8933,50 @@ mod tests {
         .unwrap();
 
         assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    }
+
+    #[test]
+    fn clicking_hidden_scrollbar_does_not_scroll_history() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..30 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        app.scroll_history_page_up(40, 12, Instant::now());
+        let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+        let scrollbar = layout.history_scrollbar.unwrap();
+        let before = app.history_scroll;
+
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            scrollbar.rect.x,
+            scrollbar.rect.y.saturating_add(scrollbar.rect.height - 1),
+            &mut terminal,
+        )
+        .unwrap();
+
+        assert_eq!(app.history_scroll, before);
+        assert_eq!(app.history_scrollbar_drag, None);
+    }
+
+    #[test]
+    fn clamping_bottom_scroll_preserves_scrollbar_hover() {
+        let mut app = test_app();
+        for index in 0..30 {
+            app.push_transcript_entry(Entry::User(format!("message {index}")));
+        }
+        let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+        let scrollbar = layout.history_scrollbar.unwrap();
+        app.update_history_scrollbar_hover(
+            layout.history_scrollbar,
+            scrollbar.rect.x,
+            scrollbar.rect.y,
+        );
+
+        app.clamp_history_scroll(40, 12, Instant::now());
+
+        assert!(app.history_scrollbar_hovered);
+        assert!(app.should_render_history_scrollbar(Instant::now()));
     }
 
     #[test]
