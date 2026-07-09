@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.17.1...rho-coding-agent-v0.18.0) (2026-07-09)
+
+
+### Features
+
+* **agent:** add auto compaction ([#131](https://github.com/matthewyjiang/rho/issues/131)) ([e4dbc74](https://github.com/matthewyjiang/rho/commit/e4dbc74f5c32a6d1c57a856e86979ba483f6f45c))
+
 ## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.17.0...rho-coding-agent-v0.17.1) (2026-07-08)
 
 
