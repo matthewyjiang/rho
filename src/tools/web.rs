@@ -34,7 +34,7 @@ const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
 const OPENAI_SEARCH_MODEL: &str = "gpt-5.6-luna";
-const CODEX_SEARCH_MODEL: &str = "gpt-5.6-luna";
+const CODEX_SEARCH_MODEL: &str = "gpt-5.6-terra";
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
 
@@ -2443,6 +2443,21 @@ mod tests {
 
         assert_eq!(filtered, "rust async site:github.com -site:example.com");
         assert_eq!(brave_freshness(Some("week")), Some("pw"));
+    }
+
+    #[test]
+    fn uses_terra_for_codex_web_search() {
+        let auth = OpenAiSearchAuth::Codex {
+            tokens: CodexTokens {
+                access_token: "test-token".into(),
+                refresh_token: None,
+                id_token: None,
+                account_id: None,
+            },
+            source: CodexAuthSource::Env,
+        };
+
+        assert_eq!(auth.model(), "gpt-5.6-terra");
     }
 
     #[test]

@@ -3005,6 +3005,7 @@ impl App {
                             terminal,
                             &interrupt_requested,
                             &tool_call_active,
+                            RunningInputMode::Turn,
                         ) {
                             Ok(StreamControl::Interrupt) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
@@ -3022,6 +3023,7 @@ impl App {
                             terminal,
                             &interrupt_requested,
                             &tool_call_active,
+                            RunningInputMode::Turn,
                         ) {
                             Ok(StreamControl::Interrupt) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
@@ -3766,6 +3768,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
+        input_mode: RunningInputMode,
     ) -> Result<StreamControl, crate::model::ModelError> {
         let mut control = StreamControl::Continue;
         while event::poll(Duration::from_millis(0))? {
@@ -3776,16 +3779,18 @@ impl App {
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
                         );
                     }
-                    self.handle_key_during_turn(key, terminal).map_err(|err| {
-                        crate::model::ModelError::InvalidResponse(err.to_string())
-                    })?;
+                    if input_mode == RunningInputMode::Turn {
+                        self.handle_key_during_turn(key, terminal).map_err(|err| {
+                            crate::model::ModelError::InvalidResponse(err.to_string())
+                        })?;
+                    }
                     if self.should_quit {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
                         );
                     }
                 }
-                Event::Paste(text) => {
+                Event::Paste(text) if input_mode == RunningInputMode::Turn => {
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
                     self.insert_paste(&text);
@@ -3798,7 +3803,7 @@ impl App {
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
                 }
-                Event::Mouse(mouse) => {
+                Event::Mouse(mouse) if input_mode == RunningInputMode::Turn => {
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
                 _ => {}
@@ -4134,6 +4139,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
+        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+            agent.set_compaction_config((&config).into());
+        }
+        self.steering_prompts.clear();
         self.status = "compacting context".into();
         self.running = true;
         self.loading_spinner.start();
@@ -4159,6 +4168,7 @@ impl App {
                             terminal,
                             &interrupt_requested,
                             &tool_call_active,
+                            RunningInputMode::Compacting,
                         ) {
                             Ok(StreamControl::Interrupt) => {
                                 break Err(crate::agent::AgentError::Provider(
@@ -7169,6 +7179,12 @@ enum StreamControl {
     Continue,
     Interrupt,
     Resize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunningInputMode {
+    Turn,
+    Compacting,
 }
 
 #[derive(Clone, Copy, Debug)]
