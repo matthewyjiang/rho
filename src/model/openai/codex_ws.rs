@@ -11,6 +11,7 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use crate::credentials::CodexTokens;
 use crate::model::{ModelError, ModelEvent, ModelResponse};
 
+use super::codex_request::CodexRequestMode;
 use super::stream::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
@@ -73,12 +74,22 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
+        mode: CodexRequestMode,
         on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
-        let plan = state.continuation.plan_request(&candidate, body);
-        let frame = response_create_frame(plan.body.clone());
+        let plan = if mode.supports_incremental_websocket() {
+            state.continuation.plan_request(&candidate, body)
+        } else {
+            state.continuation.reset();
+            CodexRequestPlan {
+                planned_delta: false,
+                reset_reason: None,
+                body,
+            }
+        };
+        let frame = response_create_frame(plan.body.clone(), mode);
 
         match state.send_frame(&self.ws_url, tokens, frame).await {
             Ok(output) => {
@@ -156,6 +167,10 @@ async fn connect_codex_ws(
     let headers = request.headers_mut();
     headers.insert(USER_AGENT, HeaderValue::from_static("codex-cli"));
     headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
+    headers.insert(
+        "OpenAI-Beta",
+        HeaderValue::from_static("responses_websockets=2026-02-06"),
+    );
     let authorization = HeaderValue::from_str(&format!("Bearer {}", tokens.access_token))
         .map_err(|err| CodexWsFailure::Transport(format!("invalid bearer token header: {err}")))?;
     headers.insert(AUTHORIZATION, authorization);
@@ -247,11 +262,14 @@ impl CodexWsCompleted {
     }
 }
 
-fn response_create_frame(body: Value) -> Value {
-    json!({
-        "type": "response.create",
-        "response": body,
-    })
+fn response_create_frame(mut body: Value, mode: CodexRequestMode) -> Value {
+    if mode.uses_responses_lite() {
+        body["client_metadata"] = json!({
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true",
+        });
+    }
+    body["type"] = json!("response.create");
+    body
 }
 
 fn codex_ws_url(api_base: &str) -> String {
@@ -668,6 +686,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn responses_lite_websocket_request_sets_lite_client_metadata() {
+        let (url, frames) = ws_server(1).await;
+        let transport = CodexWsTransport::new_with_url(url);
+        let mut on_event = None;
+
+        transport
+            .send_responses_turn(
+                body(vec![json!({"role":"user","content":"one"})]),
+                &tokens(),
+                CodexRequestMode::ResponsesLite,
+                &mut on_event,
+            )
+            .await
+            .unwrap();
+
+        let frames = frames.lock().unwrap();
+        assert_eq!(
+            frames[0]["client_metadata"]
+                ["ws_request_header_x_openai_internal_codex_responses_lite"],
+            "true"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_state() {
+        let (url, frames) = ws_server(2).await;
+        let transport = CodexWsTransport::new_with_url(url);
+        let mut on_event = None;
+
+        transport
+            .send_responses_turn(
+                body(vec![json!({"role":"user","content":"one"})]),
+                &tokens(),
+                CodexRequestMode::ResponsesLite,
+                &mut on_event,
+            )
+            .await
+            .unwrap();
+        transport
+            .send_responses_turn(
+                body(vec![
+                    json!({"role":"user","content":"one"}),
+                    json!({"role":"assistant","content":"two"}),
+                    json!({"role":"user","content":"three"}),
+                ]),
+                &tokens(),
+                CodexRequestMode::ResponsesLite,
+                &mut on_event,
+            )
+            .await
+            .unwrap();
+
+        let frames = frames.lock().unwrap();
+        assert_eq!(frames.len(), 2);
+        assert!(frames[1].get("previous_response_id").is_none());
+        assert_eq!(
+            frames[1]["input"],
+            json!([
+                {"role":"user","content":"one"},
+                {"role":"assistant","content":"two"},
+                {"role":"user","content":"three"}
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn first_websocket_request_sends_full_input_without_previous_response_id() {
         let (url, frames) = ws_server(1).await;
         let transport = CodexWsTransport::new_with_url(url);
@@ -677,6 +761,7 @@ mod tests {
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
@@ -686,11 +771,8 @@ mod tests {
         let frames = frames.lock().unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["type"], "response.create");
-        assert!(frames[0]["response"].get("previous_response_id").is_none());
-        assert_eq!(
-            frames[0]["response"]["input"],
-            json!([{"role":"user","content":"one"}])
-        );
+        assert!(frames[0].get("previous_response_id").is_none());
+        assert_eq!(frames[0]["input"], json!([{"role":"user","content":"one"}]));
     }
 
     #[tokio::test]
@@ -703,6 +785,7 @@ mod tests {
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
@@ -715,6 +798,7 @@ mod tests {
                     json!({"role":"user","content":"three"}),
                 ]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
@@ -729,9 +813,9 @@ mod tests {
         ));
         let frames = frames.lock().unwrap();
         assert_eq!(frames.len(), 2);
-        assert_eq!(frames[1]["response"]["previous_response_id"], "resp_1");
+        assert_eq!(frames[1]["previous_response_id"], "resp_1");
         assert_eq!(
-            frames[1]["response"]["input"],
+            frames[1]["input"],
             json!([
                 {"role":"assistant","content":"two"},
                 {"role":"user","content":"three"}
@@ -868,6 +952,7 @@ mod tests {
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
@@ -880,6 +965,7 @@ mod tests {
                     json!({"role":"user","content":"two"}),
                 ]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
@@ -894,13 +980,14 @@ mod tests {
                     json!({"role":"user","content":"two"}),
                 ]),
                 &tokens(),
+                CodexRequestMode::Standard,
                 &mut on_event,
             )
             .await
             .unwrap();
         let frames = frames.lock().unwrap();
         assert_eq!(frames.len(), 2);
-        assert!(frames[1]["response"].get("previous_response_id").is_none());
+        assert!(frames[1].get("previous_response_id").is_none());
     }
 
     #[tokio::test]
@@ -922,6 +1009,7 @@ mod tests {
                 .send_responses_turn(
                     body(vec![json!({"role":"user","content":"one"})]),
                     &tokens(),
+                    CodexRequestMode::Standard,
                     &mut on_event,
                 )
                 .await

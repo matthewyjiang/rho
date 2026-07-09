@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub(crate) mod auth;
 pub mod cache;
+mod codex_request;
 mod codex_ws;
 pub(crate) mod convert;
 pub(crate) mod stream;
@@ -13,11 +14,9 @@ pub(crate) mod types;
 pub use cache::prompt_cache_key_from_session_id;
 
 use auth::{load_codex_tokens_for_request, refresh_codex_token, Auth, CodexAuthSource};
+use codex_request::{build_codex_responses_body, CodexRequestMode};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
-use convert::{
-    codex_input_items, codex_reasoning_param, convert_openai_response, to_openai_message,
-    to_openai_tool, to_responses_tool,
-};
+use convert::{convert_openai_response, to_openai_message, to_openai_tool};
 use stream::{
     collect_codex_sse_response, convert_streamed_response, handle_openai_stream_line,
     trim_sse_line_end,
@@ -250,9 +249,10 @@ impl OpenAiProvider {
             self.reasoning_effort.as_deref(),
             self.reasoning_summary.as_deref(),
         )?;
+        let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
-            .send_responses_turn(body.clone(), &tokens, &mut on_event)
+            .send_responses_turn(body.clone(), &tokens, mode, &mut on_event)
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
@@ -265,12 +265,18 @@ impl OpenAiProvider {
 
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_request = |token: &str| {
-            self.client
+            let request = self
+                .client
                 .post(&url)
                 .bearer_auth(token)
                 .header("User-Agent", "codex-cli")
                 .header("originator", "codex_cli_rs")
-                .json(&body)
+                .json(&body);
+            if mode.uses_responses_lite() {
+                request.header("x-openai-internal-codex-responses-lite", "true")
+            } else {
+                request
+            }
         };
         let mut req = make_request(&tokens.access_token);
         if let Some(account_id) = tokens.account_id.as_deref() {
@@ -345,38 +351,6 @@ impl OpenAiProvider {
             }
         }
     }
-}
-
-fn build_codex_responses_body(
-    model: &str,
-    request: ModelRequest,
-    reasoning_effort: Option<&str>,
-    reasoning_summary: Option<&str>,
-) -> Result<Value, ModelError> {
-    let mut instructions = Vec::new();
-    let input = codex_input_items(request.messages, &mut instructions)?;
-    let tools: Vec<_> = request.tools.into_iter().map(to_responses_tool).collect();
-    let instructions = instructions.join("\n\n");
-    let mut body = json!({
-        "model": model,
-        "instructions": instructions,
-        "input": input,
-        "store": false,
-        "stream": true
-    });
-
-    if let Some(prompt_cache_key) = request.prompt_cache_key {
-        body["prompt_cache_key"] = json!(prompt_cache_key);
-    }
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
-    if let Some(reasoning) = codex_reasoning_param(reasoning_effort, reasoning_summary) {
-        body["reasoning"] = reasoning;
-    }
-
-    Ok(body)
 }
 
 #[cfg(test)]

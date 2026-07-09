@@ -89,6 +89,16 @@ pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
     })
 }
 
+pub(crate) fn to_responses_lite_tool(tool: ToolSpec) -> serde_json::Value {
+    json!({
+        "type": "function",
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": tool.input_schema,
+        "strict": false,
+    })
+}
+
 pub(crate) fn codex_input_items(
     messages: Vec<Message>,
     instructions: &mut Vec<String>,
