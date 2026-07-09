@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.18.1...rho-coding-agent-v0.19.0) (2026-07-09)
+
+
+### Features
+
+* **tui:** add app-owned transcript scrolling ([#144](https://github.com/matthewyjiang/rho/issues/144)) ([a62dbb5](https://github.com/matthewyjiang/rho/commit/a62dbb5bb9132157f45b642ec9c37d2bd80b938b))
+
 ## [0.18.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.18.0...rho-coding-agent-v0.18.1) (2026-07-09)
 
 
