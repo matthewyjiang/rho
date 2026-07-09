@@ -5191,14 +5191,17 @@ impl App {
 
         let content_skip = content.len().saturating_sub(available_content);
         let visible_content_len = content.len().saturating_sub(content_skip);
+        let top_spacer_visible = self.loading_active()
+            && (visible_content_len > 0 || show_top_divider || visible_composer_len > 0)
+            && available_content > visible_content_len;
         let mut lines = Vec::new();
+        lines.extend(content.into_iter().skip(content_skip));
         if self.loading_active() {
-            lines.push(self.loading_spinner.line(now));
-            if visible_content_len > 0 || show_top_divider || visible_composer_len > 0 {
+            if top_spacer_visible {
                 lines.push(Line::raw(""));
             }
+            lines.push(self.loading_spinner.line(now));
         }
-        lines.extend(content.into_iter().skip(content_skip));
         if show_top_divider {
             lines.push(divider.clone());
         }
@@ -5208,11 +5211,8 @@ impl App {
         lines.extend(command_lines);
 
         let composer_y = visible_content_len
+            + usize::from(top_spacer_visible)
             + usize::from(self.loading_active())
-            + usize::from(
-                self.loading_active()
-                    && (visible_content_len > 0 || show_top_divider || visible_composer_len > 0),
-            )
             + usize::from(show_top_divider);
         let cursor_y = if visible_composer_len == 0 {
             0
@@ -7532,8 +7532,9 @@ mod tests {
         let lines = app.active_lines(40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(line_text(&lines[0]).contains("working"), "{rendered}");
-        assert_eq!(line_text(&lines[1]), "", "{rendered}");
+        assert_eq!(line_text(&lines[0]), "", "{rendered}");
+        assert!(line_text(&lines[1]).contains("working"), "{rendered}");
+        assert_eq!(line_text(&lines[2]), "─".repeat(40), "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -7576,7 +7577,8 @@ mod tests {
 
         assert_eq!(line_text(&small_lines[0]), "");
         assert_eq!(line_text(&small_lines[1]), "─".repeat(40));
-        assert!(line_text(&default_lines[0]).contains("working"));
+        assert_eq!(line_text(&default_lines[0]), "");
+        assert!(line_text(&default_lines[1]).contains("working"));
     }
 
     #[test]
@@ -7618,9 +7620,25 @@ mod tests {
 
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(line_text(&lines[0]).contains("working"), "{rendered}");
-        assert_eq!(line_text(&lines[1]), "", "{rendered}");
         assert!(rendered.contains("bash"), "{rendered}");
+        let tool_index = lines
+            .iter()
+            .position(|line| line_text(line).contains("bash"))
+            .unwrap();
+        assert_eq!(
+            line_text(&lines[tool_index + 2]).trim_end(),
+            "",
+            "{rendered}"
+        );
+        assert!(
+            line_text(&lines[tool_index + 4]).contains("working"),
+            "{rendered}"
+        );
+        assert_eq!(
+            line_text(&lines[tool_index + 5]),
+            "─".repeat(40),
+            "{rendered}"
+        );
     }
 
     #[test]
