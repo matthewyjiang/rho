@@ -1,13 +1,9 @@
 openai_codex_models = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex-spark",
-]
-
-github_copilot_models = [
-  "gpt-4.1",
-  "gpt-4o",
-  "o4-mini",
-  "claude-sonnet-4",
 ]

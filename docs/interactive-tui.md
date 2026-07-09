@@ -73,7 +73,7 @@ Logging in does not normally switch provider/model. Use `/model` to switch model
 
 ## Model picker
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available; a static fallback is shown if no cached Copilot list exists.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 

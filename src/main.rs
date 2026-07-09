@@ -32,7 +32,8 @@ use crate::{
     credentials::{save_codex_tokens, save_github_copilot_tokens, OsCredentialStore},
     herdr::{HerdrReporter, HerdrState},
     model::{
-        build_provider, catalog, models_dev::cached_model_metadata, registry, ModelError,
+        build_provider, catalog, models_dev::cached_model_metadata,
+        provider_models::refresh_provider_models_with_store, registry, ModelError,
         UnavailableProvider,
     },
     session::Session,
@@ -57,6 +58,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = cli.config.clone();
     let mut cfg = Config::load(config_path.clone())?;
+    let store = OsCredentialStore;
+    refresh_cli_model_cache(&cli, &store).await?;
     let save_config = apply_cli_overrides(&mut cfg, &cli)?;
     if save_config {
         cfg.save(config_path.clone())?;
@@ -248,6 +251,20 @@ fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn refresh_cli_model_cache(
+    cli: &Cli,
+    store: &dyn credentials::CredentialStore,
+) -> anyhow::Result<()> {
+    let provider = cli
+        .provider
+        .as_deref()
+        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider));
+    if let Some(provider) = provider {
+        refresh_model_list_for_cli_provider(provider, store).await?;
+    }
+    Ok(())
+}
+
 fn apply_cli_overrides(cfg: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
     let mut save_config = false;
     if let Some(provider) = &cli.provider {
@@ -310,6 +327,37 @@ fn apply_model_override(cfg: &mut Config, model: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn refresh_model_list_for_cli_provider(
+    provider: &str,
+    store: &dyn credentials::CredentialStore,
+) -> anyhow::Result<()> {
+    let Some(descriptor) = registry::provider_descriptor(provider) else {
+        return Ok(());
+    };
+    if descriptor.model_refresh.is_none() || catalog::default_model_for_provider(provider).is_some()
+    {
+        return Ok(());
+    }
+    match refresh_provider_models_with_store(provider, store).await {
+        Ok(_) => Ok(()),
+        Err(err) if provider_requires_cached_models(provider) => Err(err.into()),
+        Err(_) => Ok(()),
+    }
+}
+
+fn provider_requires_cached_models(provider: &str) -> bool {
+    registry::provider_descriptor(provider)
+        .map(|descriptor| {
+            descriptor.model_source == registry::ProviderModelSource::CachedProviderModels
+        })
+        .unwrap_or(false)
+}
+
+fn explicit_model_provider(model: &str) -> Option<&str> {
+    let (provider, model) = model.trim().split_once('/')?;
+    (!provider.trim().is_empty() && !model.trim().is_empty()).then_some(provider.trim())
+}
+
 fn automation_prompt(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
     automation_prompt_with_stdin(parts, read_stdin, &mut io::stdin())
 }
@@ -345,9 +393,12 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::model::provider_models::{
-        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
-        ProviderModel,
+    use crate::{
+        credentials::{save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore},
+        model::provider_models::{
+            replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
+            with_provider_models_cache_dir_for_tests, ProviderModel,
+        },
     };
 
     fn unique_cache_dir(name: &str) -> std::path::PathBuf {
@@ -525,7 +576,70 @@ mod tests {
     }
 
     #[test]
-    fn cli_github_copilot_provider_override_uses_static_fallback_default() {
+    fn cli_github_copilot_provider_override_requires_cached_default() {
+        let cache_dir = unique_cache_dir("github-copilot-empty");
+        with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: Some("github-copilot".into()),
+                model: None,
+                config: None,
+                auth: None,
+                no_system_prompt: false,
+                no_tools: false,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
+
+            let err = apply_cli_overrides(&mut cfg, &cli).unwrap_err();
+
+            assert!(err.to_string().contains("no cached models"));
+        });
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[tokio::test]
+    async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let models_url = format!("http://{}/models", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+                .await
+                .unwrap();
+            let body = r#"{"data":[{"id":"copilot-api-model"}]}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+                .await
+                .unwrap();
+            tokio::io::AsyncWriteExt::shutdown(&mut stream)
+                .await
+                .unwrap();
+        });
+        let cache_dir = unique_cache_dir("github-copilot-refresh");
+        let store = MemoryCredentialStore::default();
+        save_github_copilot_tokens(
+            &store,
+            &GitHubCopilotTokens {
+                github_access_token: "github".into(),
+                github_refresh_token: None,
+                github_expires_at_unix: None,
+                copilot_token: Some("copilot-test-token".into()),
+                copilot_expires_at_unix: Some(i64::MAX),
+                copilot_refresh_after_unix: None,
+                copilot_token_endpoint: None,
+                copilot_chat_endpoint: None,
+                copilot_models_endpoint: Some(models_url),
+            },
+        )
+        .unwrap();
+        set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
         let mut cfg = Config::default();
         let cli = Cli {
             provider: Some("github-copilot".into()),
@@ -539,33 +653,63 @@ mod tests {
             command: None,
         };
 
+        let refresh = refresh_cli_model_cache(&cli, &store).await;
+        refresh.unwrap();
         apply_cli_overrides(&mut cfg, &cli).unwrap();
+        set_provider_models_cache_dir_for_tests(None);
+        let _ = std::fs::remove_dir_all(cache_dir);
 
         assert_eq!(cfg.provider, "github-copilot");
-        assert_eq!(cfg.model, "gpt-4.1");
+        assert_eq!(cfg.model, "copilot-api-model");
         assert_eq!(cfg.auth, "github-copilot");
     }
 
     #[test]
+    fn cli_github_copilot_provider_override_uses_cached_default() {
+        with_cached_provider_models("github-copilot", vec!["copilot-cached-model"], || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: Some("github-copilot".into()),
+                model: None,
+                config: None,
+                auth: None,
+                no_system_prompt: false,
+                no_tools: false,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
+
+            apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+            assert_eq!(cfg.provider, "github-copilot");
+            assert_eq!(cfg.model, "copilot-cached-model");
+            assert_eq!(cfg.auth, "github-copilot");
+        });
+    }
+
+    #[test]
     fn cli_github_copilot_model_override_selects_matching_auth() {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: None,
-            model: Some("github-copilot/gpt-4.1".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
+        with_cached_provider_models("github-copilot", vec!["gpt-4.1"], || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: None,
+                model: Some("github-copilot/gpt-4.1".into()),
+                config: None,
+                auth: None,
+                no_system_prompt: false,
+                no_tools: false,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
 
-        apply_cli_overrides(&mut cfg, &cli).unwrap();
+            apply_cli_overrides(&mut cfg, &cli).unwrap();
 
-        assert_eq!(cfg.provider, "github-copilot");
-        assert_eq!(cfg.model, "gpt-4.1");
-        assert_eq!(cfg.auth, "github-copilot");
+            assert_eq!(cfg.provider, "github-copilot");
+            assert_eq!(cfg.model, "gpt-4.1");
+            assert_eq!(cfg.auth, "github-copilot");
+        });
     }
 
     #[test]
