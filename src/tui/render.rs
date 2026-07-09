@@ -1,7 +1,7 @@
 use super::{
     markdown::push_wrapped_markdown,
     theme::{Theme, ToolStyle},
-    Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker, INLINE_VIEWPORT_HEIGHT,
+    Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker, DEFAULT_TUI_HEIGHT,
 };
 use crate::tool::ToolDisplayStyle;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -12,7 +12,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-const MAX_PICKER_ITEMS: usize = INLINE_VIEWPORT_HEIGHT as usize - 12;
+const MAX_PICKER_ITEMS: usize = DEFAULT_TUI_HEIGHT as usize - 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LineFill {

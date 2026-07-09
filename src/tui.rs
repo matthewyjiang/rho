@@ -16,19 +16,19 @@ use tokio::sync::{mpsc, oneshot};
 
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+        MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
+    backend::Backend,
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget},
-    DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
+    widgets::Paragraph,
+    DefaultTerminal, Frame, Terminal,
 };
 mod config_picker;
 mod login;
@@ -87,7 +87,7 @@ use crate::{
     tool::ToolDisplayStyle,
 };
 
-const INLINE_VIEWPORT_HEIGHT: u16 = 18;
+const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
@@ -119,16 +119,15 @@ pub struct TuiInfo {
 
 pub struct TuiResult {
     pub resume_session_id: Option<String>,
-    exit_lines: Vec<Line<'static>>,
+    exit_summary: Option<String>,
 }
 
 pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
     agent.set_session_id(info.session_id.clone());
-    let mut terminal = ratatui::init_with_options(TerminalOptions {
-        viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
-    });
+    let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
     let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
+    let mouse_capture_enabled = enable_mouse_capture().is_ok();
     let modified_keys_enabled = enable_modified_keys().is_ok();
     let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
     let herdr = info.herdr.clone();
@@ -152,19 +151,35 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
     if modified_keys_enabled {
         let _ = disable_modified_keys();
     }
+    if mouse_capture_enabled {
+        let _ = disable_mouse_capture();
+    }
     if bracketed_paste_enabled {
         let _ = disable_bracketed_paste();
     }
     ratatui::restore();
     if let Ok(result) = &result {
-        print_exit_lines(&result.exit_lines)?;
+        print_exit_summary(result.exit_summary.as_deref())?;
     }
     result
 }
 
+#[cfg(test)]
 struct ActiveFrame {
     lines: Vec<Line<'static>>,
     cursor: Position,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScreenLayout {
+    history: Rect,
+    jump_to_bottom: Option<Rect>,
+    top_divider: Rect,
+    composer: Rect,
+    bottom_divider: Rect,
+    statusline: Rect,
+    commands: Rect,
+    composer_start: usize,
 }
 
 struct LiveStreamPreview {
@@ -217,8 +232,7 @@ struct App {
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
-    inline_viewport_height: u16,
-    inline_viewport_width: Option<u16>,
+    history_scroll: HistoryScroll,
 }
 
 #[derive(Debug)]
@@ -848,6 +862,12 @@ struct LoadingSpinner {
     started_at: Option<Instant>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryScroll {
+    Bottom,
+    Manual { top_line: usize },
+}
+
 impl LoadingSpinner {
     const FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     const FRAME_INTERVAL: Duration = Duration::from_millis(80);
@@ -1181,8 +1201,7 @@ impl App {
             model_metadata: None,
             pending_model_metadata: None,
             pending_session_title: None,
-            inline_viewport_height: INLINE_VIEWPORT_HEIGHT,
-            inline_viewport_width: None,
+            history_scroll: HistoryScroll::Bottom,
         }
     }
 
@@ -1207,7 +1226,6 @@ impl App {
             self.poll_model_metadata_fetch(agent);
             self.poll_pending_session_title(terminal)?;
             self.poll_pending_oauth_login(terminal, agent).await?;
-            self.resize_inline_viewport_if_needed(terminal)?;
             if !event::poll(Duration::from_millis(0))? {
                 self.flush_due_paste_burst();
             }
@@ -1229,11 +1247,9 @@ impl App {
                 self.flush_due_paste_burst();
             }
         }
-        let width = terminal.size()?.width as usize;
-        let exit_lines = self.exit_lines(width);
         Ok(TuiResult {
-            resume_session_id: self.info.session_id,
-            exit_lines,
+            resume_session_id: self.info.session_id.clone(),
+            exit_summary: self.exit_summary(),
         })
     }
 
@@ -1255,9 +1271,12 @@ impl App {
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
-                self.reflow_history(terminal)?;
+                self.clamp_history_scroll_for_terminal(terminal)?;
             }
-            Event::FocusGained | Event::FocusLost | Event::Mouse(_) | Event::Key(_) => {}
+            Event::Mouse(mouse) => {
+                self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+            }
+            Event::FocusGained | Event::FocusLost | Event::Key(_) => {}
         }
         Ok(())
     }
@@ -1339,12 +1358,6 @@ impl App {
             {
                 Some(PasteBurstKey::Char(ch))
             }
-            (KeyModifiers::NONE, KeyCode::Tab)
-                if self.paste_burst.has_pending()
-                    && self.composer_accepts_paste_burst_char('\t') =>
-            {
-                Some(PasteBurstKey::Char('\t'))
-            }
             (KeyModifiers::NONE, KeyCode::Enter) if self.composer_accepts_paste_burst_enter() => {
                 Some(PasteBurstKey::Enter)
             }
@@ -1390,6 +1403,10 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
+            return Ok(());
+        }
+
+        if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
 
@@ -2076,7 +2093,7 @@ impl App {
                             Config::load(self.info.config_path.clone())?.max_output_bytes,
                             value,
                         ));
-                        self.reflow_history(terminal)?;
+                        self.clamp_history_scroll_for_terminal(terminal)?;
                         self.insert_entry(
                             terminal,
                             &Entry::Notice(format!("max tool output lines set to {value}")),
@@ -2848,7 +2865,7 @@ impl App {
             .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
             .await;
         self.loading_spinner.start();
-        self.resize_inline_viewport_if_needed(terminal)?;
+        self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
         if let Ok(config) = Config::load(self.info.config_path.clone()) {
@@ -2950,9 +2967,8 @@ impl App {
                         break result;
                     }
                     Some(request) = question_rx.recv() => {
-                        self.flush_pending_paste_burst();
                         self.open_questionnaire(request, terminal)?;
-                        self.resize_inline_viewport_if_needed(terminal)?;
+                        self.clamp_history_scroll_for_terminal(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                     Some(event) = event_rx.recv() => {
@@ -2971,7 +2987,7 @@ impl App {
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
                         self.drain_steering_prompts_to(&steering_prompts);
-                        self.resize_inline_viewport_if_needed(terminal)?;
+                        self.clamp_history_scroll_for_terminal(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                     _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
@@ -2988,7 +3004,7 @@ impl App {
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
                         self.drain_steering_prompts_to(&steering_prompts);
-                        self.resize_inline_viewport_if_needed(terminal)?;
+                        self.clamp_history_scroll_for_terminal(terminal)?;
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                 }
@@ -3115,6 +3131,10 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
+            return Ok(());
+        }
+
+        if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
 
@@ -3742,9 +3762,12 @@ impl App {
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
-                    self.reflow_history(terminal)?;
+                    self.clamp_history_scroll_for_terminal(terminal)?;
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
+                }
+                Event::Mouse(mouse) => {
+                    self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
                 _ => {}
             }
@@ -3998,29 +4021,15 @@ impl App {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             let width = terminal.size()?.width as usize;
-            let mut lines = Vec::new();
-            if fragment.include_leading_blank() {
-                lines.push(Line::raw(""));
-            }
-            let mut text_lines = Vec::new();
             if matches!(kind, StreamKind::Assistant) {
+                let mut text_lines = Vec::new();
                 push_wrapped_markdown(
                     &mut text_lines,
                     render_text,
                     padded_content_width(width),
                     &mut self.assistant_stream_in_code_block,
                 );
-            } else {
-                push_wrapped_text(
-                    &mut text_lines,
-                    render_text,
-                    padded_content_width(width),
-                    kind.style(),
-                    LineFill::Natural,
-                );
             }
-            lines.extend(text_lines.into_iter().map(pad_display_line));
-            insert_history_lines(terminal, lines)?;
             self.last_inserted_was_tool = false;
         }
         let text = fragment.into_text();
@@ -4120,7 +4129,8 @@ impl App {
         self.current_turn_start = None;
         self.transcript.clear();
         self.last_inserted_was_tool = false;
-        self.reflow_history(terminal)?;
+        self.scroll_history_to_bottom();
+        self.clamp_history_scroll_for_terminal(terminal)?;
         self.status = "new session".into();
         Ok(())
     }
@@ -4941,7 +4951,8 @@ impl App {
         );
         self.transcript = visible_entries;
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
-        self.reflow_history(terminal)?;
+        self.scroll_history_to_bottom();
+        self.clamp_history_scroll_for_terminal(terminal)?;
         self.insert_entry(
             terminal,
             &Entry::Notice(format!("resumed session {short_id}")),
@@ -5046,7 +5057,7 @@ impl App {
         } else {
             "tool output collapsed".into()
         };
-        self.reflow_history(terminal)
+        self.clamp_history_scroll_for_terminal(terminal)
     }
 
     fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
@@ -5116,20 +5127,92 @@ impl App {
     }
 
     fn draw(&self, frame: &mut Frame<'_>) {
+        let now = Instant::now();
         let area = frame.area();
         let width = area.width as usize;
-        let active = self.active_frame_at_for_height(width, area.height as usize, Instant::now());
-        frame.render_widget(Paragraph::new(active.lines).style(Style::default()), area);
+        let history_lines = self.history_lines(width, now);
+        let layout = self.screen_layout_for_history_len(area, now, history_lines.len());
+        let history_start =
+            self.visible_history_start(history_lines.len(), layout.history.height as usize);
+        let history_visible = history_lines
+            .into_iter()
+            .skip(history_start)
+            .take(layout.history.height as usize)
+            .collect::<Vec<_>>();
 
+        frame.render_widget(
+            Paragraph::new(history_visible).style(Style::default()),
+            layout.history,
+        );
+        if let Some(button) = layout.jump_to_bottom {
+            frame.render_widget(
+                Paragraph::new(vec![self.jump_to_bottom_line(width)]).style(Style::default()),
+                button,
+            );
+        }
+        if layout.top_divider.height > 0 {
+            frame.render_widget(
+                Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
+                layout.top_divider,
+            );
+        }
+
+        let composer_lines = self.composer_lines(width);
+        let composer_visible = composer_lines
+            .into_iter()
+            .skip(layout.composer_start)
+            .take(layout.composer.height as usize)
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(composer_visible).style(Style::default()),
+            layout.composer,
+        );
+        if layout.bottom_divider.height > 0 {
+            frame.render_widget(
+                Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
+                layout.bottom_divider,
+            );
+        }
+        frame.render_widget(
+            Paragraph::new(
+                self.statusline_lines(width)
+                    .into_iter()
+                    .take(layout.statusline.height as usize)
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default()),
+            layout.statusline,
+        );
+        frame.render_widget(
+            Paragraph::new(
+                self.command_suggestion_lines(width)
+                    .into_iter()
+                    .take(layout.commands.height as usize)
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default()),
+            layout.commands,
+        );
+
+        let full_cursor = self.composer_cursor_position(width);
+        let max_cursor_x = width.max(1).saturating_sub(1) as u16;
+        let composer_height = layout.composer.height.max(1);
+        let cursor_y = full_cursor
+            .y
+            .saturating_sub(layout.composer_start as u16)
+            .min(composer_height.saturating_sub(1));
         frame.set_cursor_position(Position {
-            x: area.x.saturating_add(active.cursor.x),
-            y: area.y.saturating_add(active.cursor.y),
+            x: layout
+                .composer
+                .x
+                .saturating_add(full_cursor.x.min(max_cursor_x)),
+            y: layout.composer.y.saturating_add(cursor_y),
         });
     }
 
     #[cfg(test)]
     fn active_lines(&self, width: usize) -> Vec<Line<'static>> {
-        self.active_lines_at_for_height(width, INLINE_VIEWPORT_HEIGHT as usize, Instant::now())
+        self.active_lines_at_for_height(width, DEFAULT_TUI_HEIGHT as usize, Instant::now())
     }
 
     #[cfg(test)]
@@ -5148,12 +5231,144 @@ impl App {
             .lines
     }
 
+    #[cfg(test)]
     fn active_frame_at_for_height(
         &self,
         width: usize,
         viewport_height: usize,
         now: Instant,
     ) -> ActiveFrame {
+        let area = Rect::new(0, 0, width as u16, viewport_height as u16);
+        let history_lines = self.history_lines(width, now);
+        let layout = self.screen_layout_for_history_len(area, now, history_lines.len());
+        let history_start =
+            self.visible_history_start(history_lines.len(), layout.history.height as usize);
+        let mut lines = history_lines
+            .into_iter()
+            .skip(history_start)
+            .take(layout.history.height as usize)
+            .collect::<Vec<_>>();
+        if layout.jump_to_bottom.is_some() {
+            lines.push(self.jump_to_bottom_line(width));
+        }
+        if layout.top_divider.height > 0 {
+            lines.push(self.divider_line(width));
+        }
+        lines.extend(
+            self.composer_lines(width)
+                .into_iter()
+                .skip(layout.composer_start)
+                .take(layout.composer.height as usize),
+        );
+        if layout.bottom_divider.height > 0 {
+            lines.push(self.divider_line(width));
+        }
+        lines.extend(
+            self.statusline_lines(width)
+                .into_iter()
+                .take(layout.statusline.height as usize),
+        );
+        lines.extend(
+            self.command_suggestion_lines(width)
+                .into_iter()
+                .take(layout.commands.height as usize),
+        );
+
+        let full_cursor = self.composer_cursor_position(width);
+        let max_cursor_x = width.max(1).saturating_sub(1) as u16;
+        let max_cursor_y = viewport_height.max(1).saturating_sub(1) as u16;
+        ActiveFrame {
+            lines,
+            cursor: Position {
+                x: full_cursor.x.min(max_cursor_x),
+                y: layout
+                    .composer
+                    .y
+                    .saturating_add(
+                        full_cursor
+                            .y
+                            .saturating_sub(layout.composer_start as u16)
+                            .min(layout.composer.height.max(1).saturating_sub(1)),
+                    )
+                    .min(max_cursor_y),
+            },
+        }
+    }
+
+    fn screen_layout(&self, area: Rect, now: Instant) -> ScreenLayout {
+        let history_len = self.history_lines(area.width as usize, now).len();
+        self.screen_layout_for_history_len(area, now, history_len)
+    }
+
+    fn screen_layout_for_history_len(
+        &self,
+        area: Rect,
+        now: Instant,
+        history_len: usize,
+    ) -> ScreenLayout {
+        let width = area.width as usize;
+        let height = area.height as usize;
+        let composer_lines = self.composer_lines(width);
+        let statusline_lines = self.statusline_lines(width);
+        let command_lines = self.command_suggestion_lines(width);
+        let full_cursor = self.composer_cursor_position(width);
+        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
+
+        let statusline_height = statusline_lines.len().min(height);
+        let bottom_divider_height = usize::from(height > statusline_height);
+        let command_height = command_lines
+            .len()
+            .min(height.saturating_sub(statusline_height + bottom_divider_height));
+        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
+        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
+        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
+        let show_jump_to_bottom =
+            self.should_show_jump_to_bottom_for_len(history_len, width, height, now);
+        let reserved_above_composer =
+            usize::from(show_top_divider).saturating_add(usize::from(show_jump_to_bottom));
+        let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
+        let visible_composer_len = composer_lines.len().min(composer_budget);
+        let composer_start =
+            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
+        let history_height =
+            available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len);
+
+        let mut y = area.y;
+        let history = Rect::new(area.x, y, area.width, history_height as u16);
+        y = y.saturating_add(history.height);
+        let jump_to_bottom = show_jump_to_bottom.then(|| {
+            let rect = Rect::new(area.x, y, area.width, 1);
+            y = y.saturating_add(1);
+            rect
+        });
+        let top_divider = if show_top_divider {
+            let rect = Rect::new(area.x, y, area.width, 1);
+            y = y.saturating_add(1);
+            rect
+        } else {
+            Rect::new(area.x, y, area.width, 0)
+        };
+        let composer = Rect::new(area.x, y, area.width, visible_composer_len as u16);
+        y = y.saturating_add(composer.height);
+        let bottom_divider = Rect::new(area.x, y, area.width, bottom_divider_height as u16);
+        y = y.saturating_add(bottom_divider.height);
+        let statusline = Rect::new(area.x, y, area.width, statusline_height as u16);
+        y = y.saturating_add(statusline.height);
+        let commands = Rect::new(area.x, y, area.width, command_height as u16);
+
+        ScreenLayout {
+            history,
+            jump_to_bottom,
+            top_divider,
+            composer,
+            bottom_divider,
+            statusline,
+            commands,
+            composer_start,
+        }
+    }
+
+    fn divider_line(&self, width: usize) -> Line<'static> {
         let divider_style = match &self.composer {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
             ComposerMode::Picker(_) | ComposerMode::Questionnaire(_) => Theme::input_prompt(),
@@ -5162,87 +5377,250 @@ impl App {
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::OAuthPending(_) => Theme::dim(),
         };
-        let divider = Line::styled("─".repeat(width.max(1)), divider_style);
-        let composer_lines = self.composer_lines(width);
-        let statusline_lines = self.statusline_lines(width);
-        let command_lines = self.command_suggestion_lines(width);
-        let bottom_height = 1 + statusline_lines.len() + command_lines.len();
-        let available_above_bottom = viewport_height.saturating_sub(bottom_height);
-        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
-        let composer_budget = available_above_bottom.saturating_sub(usize::from(show_top_divider));
-        let visible_composer_len = composer_lines.len().min(composer_budget);
-        let full_cursor = self.composer_cursor_position(width);
-        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
-        let composer_start =
-            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
-        let composer_end = composer_start.saturating_add(visible_composer_len);
-        let available_content = available_above_bottom
-            .saturating_sub(usize::from(show_top_divider) + visible_composer_len);
+        Line::styled("─".repeat(width.max(1)), divider_style)
+    }
 
-        let mut content = Vec::new();
+    fn history_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
+        let mut lines = session_header_lines(&self.info, width);
+        lines.extend(transcript_lines(
+            &self.transcript,
+            width,
+            self.info.max_tool_output_lines,
+        ));
         if let Some(pending) = &self.pending_tool_call {
-            let pending_tool_output_lines = self
-                .info
-                .max_tool_output_lines
-                .min(available_content.saturating_sub(3).max(1));
-            content.extend(entry_lines(
+            if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
+                lines.push(Line::raw(""));
+            }
+            lines.extend(entry_lines(
                 &Entry::Tool(pending.clone()),
                 width,
-                pending_tool_output_lines,
+                self.info.max_tool_output_lines,
             ));
         }
-
         if let Some(preview) = &self.live_stream_preview {
-            content.extend(self.render_stream_preview_lines(preview, width));
+            lines.extend(self.render_stream_preview_lines(preview, width));
         }
-
-        let content_skip = content.len().saturating_sub(available_content);
-        let visible_content_len = content.len().saturating_sub(content_skip);
-        let top_spacer_visible = self.loading_active()
-            && (visible_content_len > 0 || show_top_divider || visible_composer_len > 0)
-            && available_content > visible_content_len;
-        let mut lines = Vec::new();
-        lines.extend(content.into_iter().skip(content_skip));
         if self.loading_active() {
-            if top_spacer_visible {
+            if !lines.is_empty() {
                 lines.push(Line::raw(""));
             }
             lines.push(self.loading_spinner.line(now));
         }
-        if show_top_divider {
-            lines.push(divider.clone());
-        }
-        lines.extend(composer_lines[composer_start..composer_end].iter().cloned());
-        lines.push(divider);
-        lines.extend(statusline_lines);
-        lines.extend(command_lines);
+        lines
+    }
 
-        let composer_y = visible_content_len
-            + usize::from(top_spacer_visible)
-            + usize::from(self.loading_active())
-            + usize::from(show_top_divider);
-        let cursor_y = if visible_composer_len == 0 {
-            0
-        } else {
-            composer_y + cursor_line.saturating_sub(composer_start)
-        };
-        let trimmed_from_top = lines.len().saturating_sub(viewport_height);
-        let lines = if trimmed_from_top == 0 {
-            lines
-        } else {
-            lines.into_iter().skip(trimmed_from_top).collect()
-        };
-        let max_cursor_x = width.max(1).saturating_sub(1) as u16;
-        let max_cursor_y = viewport_height.max(1).saturating_sub(1) as u16;
-        ActiveFrame {
-            lines,
-            cursor: Position {
-                x: full_cursor.x.min(max_cursor_x),
-                y: cursor_y
-                    .saturating_sub(trimmed_from_top)
-                    .min(max_cursor_y as usize) as u16,
-            },
+    fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
+        let max_start = history_len.saturating_sub(height);
+        match self.history_scroll {
+            HistoryScroll::Bottom => max_start,
+            HistoryScroll::Manual { top_line } => top_line.min(max_start),
         }
+    }
+
+    #[cfg(test)]
+    fn history_at_bottom(&self, width: usize, height: usize, now: Instant) -> bool {
+        let history_len = self.history_lines(width, now).len();
+        self.history_at_bottom_for_len(history_len, width, height, now)
+    }
+
+    fn history_at_bottom_for_len(
+        &self,
+        history_len: usize,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) -> bool {
+        let history_height = self.history_height_for_screen(width, height, now, false);
+        self.visible_history_start(history_len, history_height)
+            >= history_len.saturating_sub(history_height)
+    }
+
+    #[cfg(test)]
+    fn should_show_jump_to_bottom(&self, width: usize, height: usize, now: Instant) -> bool {
+        let history_len = self.history_lines(width, now).len();
+        self.should_show_jump_to_bottom_for_len(history_len, width, height, now)
+    }
+
+    fn should_show_jump_to_bottom_for_len(
+        &self,
+        history_len: usize,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) -> bool {
+        self.history_height_for_screen(width, height, now, false) > 0
+            && !self.history_at_bottom_for_len(history_len, width, height, now)
+    }
+
+    fn history_height_for_screen(
+        &self,
+        width: usize,
+        height: usize,
+        _now: Instant,
+        include_jump_button: bool,
+    ) -> usize {
+        let composer_lines = self.composer_lines(width);
+        let statusline_lines = self.statusline_lines(width);
+        let command_lines = self.command_suggestion_lines(width);
+        let full_cursor = self.composer_cursor_position(width);
+        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
+        let statusline_height = statusline_lines.len().min(height);
+        let bottom_divider_height = usize::from(height > statusline_height);
+        let command_height = command_lines
+            .len()
+            .min(height.saturating_sub(statusline_height + bottom_divider_height));
+        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
+        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
+        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
+        let reserved_above_composer =
+            usize::from(show_top_divider) + usize::from(include_jump_button);
+        let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
+        let visible_composer_len = composer_lines.len().min(composer_budget);
+        let _composer_start =
+            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
+        available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len)
+    }
+
+    fn scroll_history_to_bottom(&mut self) {
+        self.history_scroll = HistoryScroll::Bottom;
+    }
+
+    fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
+        let page = self
+            .history_height_for_screen(width, height, now, true)
+            .max(1);
+        self.scroll_history_lines(width, height, now, -(page as isize));
+    }
+
+    fn scroll_history_page_down(&mut self, width: usize, height: usize, now: Instant) {
+        let page = self
+            .history_height_for_screen(width, height, now, true)
+            .max(1);
+        self.scroll_history_lines(width, height, now, page as isize);
+    }
+
+    fn scroll_history_lines(&mut self, width: usize, height: usize, now: Instant, delta: isize) {
+        let history_len = self.history_lines(width, now).len();
+        let history_height = self.history_height_for_screen(width, height, now, true);
+        let max_start = history_len.saturating_sub(history_height);
+        let current = self.visible_history_start(history_len, history_height);
+        let next = current.saturating_add_signed(delta).min(max_start);
+        if next >= max_start {
+            self.history_scroll = HistoryScroll::Bottom;
+        } else {
+            self.history_scroll = HistoryScroll::Manual { top_line: next };
+        }
+    }
+
+    fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
+        if matches!(self.history_scroll, HistoryScroll::Bottom) {
+            return;
+        }
+        let history_len = self.history_lines(width, now).len();
+        let history_height = self.history_height_for_screen(width, height, now, true);
+        let max_start = history_len.saturating_sub(history_height);
+        if let HistoryScroll::Manual { top_line } = self.history_scroll {
+            self.history_scroll = if top_line >= max_start {
+                HistoryScroll::Bottom
+            } else {
+                HistoryScroll::Manual {
+                    top_line: top_line.min(max_start),
+                }
+            };
+        }
+    }
+
+    fn clamp_history_scroll_for_terminal<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
+        let size = terminal.size()?;
+        self.clamp_history_scroll(size.width as usize, size.height as usize, Instant::now());
+        Ok(())
+    }
+
+    fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
+        let text = if width < 24 {
+            "↓ bottom ^g"
+        } else {
+            "↓ jump to bottom  ctrl+g"
+        };
+        styled_line(
+            text.to_string(),
+            width.max(1),
+            Theme::accent(),
+            LineFill::PadToWidth,
+        )
+    }
+
+    fn handle_history_key<B: Backend>(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        let size = terminal.size()?;
+        let width = size.width as usize;
+        let height = size.height as usize;
+        let now = Instant::now();
+        match (key.modifiers, key.code) {
+            (_, KeyCode::PageUp) => {
+                self.scroll_history_page_up(width, height, now);
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (_, KeyCode::PageDown) => {
+                self.scroll_history_page_down(width, height, now);
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+                self.scroll_history_to_bottom();
+                self.paste_burst.clear();
+                self.ctrl_c_streak = 0;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn handle_mouse_event<B: Backend>(
+        &mut self,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
+        let size = terminal.size()?;
+        let width = size.width as usize;
+        let height = size.height as usize;
+        let now = Instant::now();
+        match kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_history_lines(width, height, now, -3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_history_lines(width, height, now, 3);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                if layout
+                    .jump_to_bottom
+                    .is_some_and(|rect| rect.contains(Position { x: column, y: row }))
+                {
+                    self.scroll_history_to_bottom();
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right)
+            | MouseEventKind::Down(MouseButton::Middle)
+            | MouseEventKind::Up(_)
+            | MouseEventKind::Drag(_)
+            | MouseEventKind::Moved
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => {}
+        }
+        Ok(())
     }
 
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -5257,50 +5635,6 @@ impl App {
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
         }
-    }
-
-    fn desired_inline_viewport_height(&self, width: usize, terminal_height: u16) -> u16 {
-        let terminal_height = terminal_height.max(1);
-        let base_height = INLINE_VIEWPORT_HEIGHT as usize;
-        let base_live_height = self
-            .active_frame_at_for_height(width, base_height, Instant::now())
-            .lines
-            .len();
-        let overlay_height = self.composer_lines(width).len()
-            + self.statusline_lines(width).len()
-            + self.command_suggestion_lines(width).len()
-            + 2;
-        let height = base_live_height.max(overlay_height) as u16;
-        height.max(1).min(terminal_height)
-    }
-
-    fn resize_inline_viewport_if_needed(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<()> {
-        let size = terminal.size()?;
-        let desired_height = self.desired_inline_viewport_height(size.width as usize, size.height);
-        if self
-            .inline_viewport_width
-            .is_some_and(|width| width != size.width)
-        {
-            self.inline_viewport_height = desired_height;
-            return self.reflow_history(terminal);
-        }
-        if desired_height == self.inline_viewport_height {
-            self.inline_viewport_width = Some(size.width);
-            return Ok(());
-        }
-
-        *terminal = Terminal::with_options(
-            CrosstermBackend::new(std::io::stdout()),
-            TerminalOptions {
-                viewport: Viewport::Inline(desired_height),
-            },
-        )?;
-        self.inline_viewport_height = desired_height;
-        self.inline_viewport_width = Some(size.width);
-        self.reflow_history(terminal)
     }
 
     fn statusline_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -5385,8 +5719,7 @@ impl App {
     }
 
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let width = terminal.size()?.width as usize;
-        insert_history_lines(terminal, session_header_lines(&self.info, width))?;
+        let _ = terminal.size()?;
         Ok(())
     }
 
@@ -5403,60 +5736,32 @@ impl App {
             RECOVERED_HISTORY_LINE_LIMIT,
             self.info.max_tool_output_lines,
         );
-        let mut lines = Vec::new();
+        let mut transcript = Vec::new();
         if omitted > 0 {
-            lines.extend(entry_lines(
-                &Entry::Notice(format!(
-                    "resumed session; showing last {} messages, omitted {omitted} earlier messages",
-                    visible_entries.len()
-                )),
-                width,
-                self.info.max_tool_output_lines,
-            ));
+            transcript.push(Entry::Notice(format!(
+                "resumed session; showing last {} messages, omitted {omitted} earlier messages",
+                visible_entries.len()
+            )));
         }
-        lines.extend(transcript_lines(
-            &visible_entries,
-            width,
-            self.info.max_tool_output_lines,
-        ));
-
-        insert_history_lines(terminal, lines)?;
-        self.transcript = visible_entries;
+        transcript.extend(visible_entries);
+        self.transcript = transcript;
+        self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
+            Entry::Notice(text) => Some(text.clone()),
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Reasoning(_)
+            | Entry::Tool(_)
+            | Entry::Error(_) => None,
+        });
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         Ok(())
     }
 
-    fn exit_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut lines = session_header_lines(&self.info, width);
-        let mut previous_was_tool = false;
-        for entry in &self.transcript {
-            if previous_was_tool && is_tool_entry(entry) {
-                lines.push(Line::raw(""));
-            }
-            lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
-            previous_was_tool = is_tool_entry(entry);
-        }
-
-        let divider = Line::styled(
-            "─".repeat(width.max(1)),
-            Theme::reasoning_input_border(self.info.reasoning),
-        );
-        lines.push(divider.clone());
-        if matches!(self.composer, ComposerMode::SecretInput(_)) {
-            lines.push(Line::raw("[secret input omitted]"));
-        } else if matches!(self.composer, ComposerMode::OAuthPending(_)) {
-            lines.push(Line::raw("[oauth login pending]"));
-        } else if matches!(self.composer, ComposerMode::Questionnaire(_)) {
-            lines.push(Line::raw("[questionnaire answer pending]"));
-        } else {
-            lines.extend(input_lines_with_images(
-                &self.input,
-                &self.pending_images,
-                width,
-            ));
-        }
-        lines.push(divider);
-        lines
+    fn exit_summary(&self) -> Option<String> {
+        self.info
+            .session_id
+            .as_ref()
+            .map(|session_id| format!("rho session saved: {session_id}"))
     }
 
     fn insert_entry<B: Backend>(
@@ -5464,15 +5769,7 @@ impl App {
         terminal: &mut Terminal<B>,
         entry: &Entry,
     ) -> Result<(), B::Error> {
-        let width = terminal.size()?.width as usize;
-        if self.last_inserted_was_tool && is_tool_entry(entry) {
-            insert_history_lines(terminal, vec![Line::raw("")])?;
-        }
-
-        insert_history_lines(
-            terminal,
-            entry_lines(entry, width, self.info.max_tool_output_lines),
-        )?;
+        let _ = terminal.size()?;
         self.record_inserted_entry(entry.clone());
         Ok(())
     }
@@ -5493,42 +5790,14 @@ impl App {
     fn record_inserted_entry(&mut self, entry: Entry) {
         self.last_status_notice = match &entry {
             Entry::Notice(text) => Some(text.clone()),
-            _ => None,
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Reasoning(_)
+            | Entry::Tool(_)
+            | Entry::Error(_) => None,
         };
         self.last_inserted_was_tool = is_tool_entry(&entry);
         self.push_transcript_entry(entry);
-    }
-
-    fn reflow_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        clear_terminal_for_history_reflow(terminal)?;
-        let result = self.replay_history(terminal);
-        if result.is_ok() {
-            let size = terminal.size()?;
-            self.inline_viewport_width = Some(size.width);
-            self.inline_viewport_height =
-                self.desired_inline_viewport_height(size.width as usize, size.height);
-        }
-        result
-    }
-
-    fn replay_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        let width = terminal.size()?.width as usize;
-        let mut lines = session_header_lines(&self.info, width);
-        let mut previous_was_tool = false;
-        for entry in &self.transcript {
-            if previous_was_tool && is_tool_entry(entry) {
-                lines.push(Line::raw(""));
-            }
-            lines.extend(entry_lines(entry, width, self.info.max_tool_output_lines));
-            previous_was_tool = is_tool_entry(entry);
-        }
-        insert_history_lines(terminal, lines)?;
-        self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
-            Entry::Notice(text) => Some(text.clone()),
-            _ => None,
-        });
-        self.last_inserted_was_tool = previous_was_tool;
-        Ok(())
     }
 
     fn push_transcript_entry(&mut self, entry: Entry) {
@@ -6393,137 +6662,13 @@ fn pad_display_line(line: Line<'static>) -> Line<'static> {
     Line::from(spans)
 }
 
-fn print_exit_lines(lines: &[Line<'_>]) -> std::io::Result<()> {
-    let mut stdout = std::io::stdout();
-    stdout.write_all(b"\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[H")?;
-    for line in lines {
-        write_styled_line(&mut stdout, line)?;
-        stdout.write_all(b"\n")?;
-    }
-    stdout.flush()
-}
-
-fn write_styled_line(stdout: &mut impl Write, line: &Line<'_>) -> std::io::Result<()> {
-    for span in &line.spans {
-        write_style(stdout, span.style)?;
-        stdout.write_all(span.content.as_bytes())?;
-        stdout.write_all(b"\x1b[0m")?;
-    }
-    Ok(())
-}
-
-fn write_style(stdout: &mut impl Write, style: Style) -> std::io::Result<()> {
-    if style.add_modifier.contains(Modifier::BOLD) {
-        stdout.write_all(b"\x1b[1m")?;
-    }
-    if style.add_modifier.contains(Modifier::DIM) {
-        stdout.write_all(b"\x1b[2m")?;
-    }
-    if style.add_modifier.contains(Modifier::ITALIC) {
-        stdout.write_all(b"\x1b[3m")?;
-    }
-    if let Some(color) = style.fg {
-        write_color(stdout, color, /*foreground*/ true)?;
-    }
-    if let Some(color) = style.bg {
-        write_color(stdout, color, /*foreground*/ false)?;
-    }
-    Ok(())
-}
-
-fn write_color(stdout: &mut impl Write, color: Color, foreground: bool) -> std::io::Result<()> {
-    let code = match (foreground, color) {
-        (_, Color::Reset) => {
-            if foreground {
-                39
-            } else {
-                49
-            }
-        }
-        (true, Color::Black) => 30,
-        (true, Color::Red) => 31,
-        (true, Color::Green) => 32,
-        (true, Color::Yellow) => 33,
-        (true, Color::Blue) => 34,
-        (true, Color::Magenta) => 35,
-        (true, Color::Cyan) => 36,
-        (true, Color::Gray) => 37,
-        (true, Color::DarkGray) => 90,
-        (true, Color::LightRed) => 91,
-        (true, Color::LightGreen) => 92,
-        (true, Color::LightYellow) => 93,
-        (true, Color::LightBlue) => 94,
-        (true, Color::LightMagenta) => 95,
-        (true, Color::LightCyan) => 96,
-        (true, Color::White) => 97,
-        (false, Color::Black) => 40,
-        (false, Color::Red) => 41,
-        (false, Color::Green) => 42,
-        (false, Color::Yellow) => 43,
-        (false, Color::Blue) => 44,
-        (false, Color::Magenta) => 45,
-        (false, Color::Cyan) => 46,
-        (false, Color::Gray) => 47,
-        (false, Color::DarkGray) => 100,
-        (false, Color::LightRed) => 101,
-        (false, Color::LightGreen) => 102,
-        (false, Color::LightYellow) => 103,
-        (false, Color::LightBlue) => 104,
-        (false, Color::LightMagenta) => 105,
-        (false, Color::LightCyan) => 106,
-        (false, Color::White) => 107,
-        (true, Color::Indexed(index)) => {
-            write!(stdout, "\x1b[38;5;{index}m")?;
-            return Ok(());
-        }
-        (false, Color::Indexed(index)) => {
-            write!(stdout, "\x1b[48;5;{index}m")?;
-            return Ok(());
-        }
-        (true, Color::Rgb(red, green, blue)) => {
-            write!(stdout, "\x1b[38;2;{red};{green};{blue}m")?;
-            return Ok(());
-        }
-        (false, Color::Rgb(red, green, blue)) => {
-            write!(stdout, "\x1b[48;2;{red};{green};{blue}m")?;
-            return Ok(());
-        }
+fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
+    let Some(summary) = summary else {
+        return Ok(());
     };
-    write!(stdout, "\x1b[{code}m")
-}
-
-fn clear_terminal_for_history_reflow(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    // Codex handles terminal resize by rebuilding source-backed transcript
-    // scrollback after clearing stale terminal-wrapped rows. Do the same here,
-    // but avoid purging scrollback because rho runs inline after shell output
-    // that it cannot reconstruct.
-    let size = terminal.size()?;
     let mut stdout = std::io::stdout();
-    stdout.write_all(b"\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[H")?;
-    stdout.flush()?;
-
-    // The ANSI clear homes the real cursor, but ratatui also tracks cursor and
-    // inline viewport state internally. Update that state before resizing so
-    // the replay starts at the top of the cleared terminal instead of at the
-    // old inline viewport anchor.
-    terminal.set_cursor_position(Position { x: 0, y: 0 })?;
-    terminal.resize(Rect::new(0, 0, size.width, size.height))?;
-    terminal.clear()
-}
-
-fn insert_history_lines<B: Backend>(
-    terminal: &mut Terminal<B>,
-    lines: Vec<Line<'static>>,
-) -> Result<(), B::Error> {
-    // Ratatui's inline viewport tracks the real viewport anchor internally
-    // (it is not necessarily at the bottom of the screen). Use its insertion
-    // API so finalized chat is moved into terminal scrollback above the live
-    // composer without guessing the viewport position.
-    let height = lines.len().max(1) as u16;
-    terminal.insert_before(height, |buf| {
-        Paragraph::new(lines).render(buf.area, buf);
-    })?;
-    Ok(())
+    writeln!(stdout, "{summary}")?;
+    stdout.flush()
 }
 
 fn previous_word_boundary(input: &str, cursor: usize) -> usize {
@@ -6556,6 +6701,14 @@ fn enable_bracketed_paste() -> std::io::Result<()> {
 
 fn disable_bracketed_paste() -> std::io::Result<()> {
     execute!(std::io::stdout(), DisableBracketedPaste)
+}
+
+fn enable_mouse_capture() -> std::io::Result<()> {
+    execute!(std::io::stdout(), EnableMouseCapture)
+}
+
+fn disable_mouse_capture() -> std::io::Result<()> {
+    execute!(std::io::stdout(), DisableMouseCapture)
 }
 
 fn enable_keyboard_enhancements() -> std::io::Result<()> {
@@ -6706,7 +6859,7 @@ enum HistoryDirection {
 mod tests {
     use super::*;
     use crate::credentials::{save_anthropic_api_key, save_openai_api_key, MemoryCredentialStore};
-    use ratatui::{backend::TestBackend, Terminal, TerminalOptions, Viewport};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -7135,44 +7288,6 @@ mod tests {
     }
 
     #[test]
-    fn key_event_paste_burst_preserves_tabs() {
-        let start = Instant::now();
-        let mut app = test_app();
-        let keys = [
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
-        ];
-
-        for (index, key) in keys.into_iter().enumerate() {
-            assert!(app.handle_paste_burst_key_at(key, start + Duration::from_millis(index as u64)));
-        }
-        app.flush_pending_paste_burst();
-
-        assert_eq!(app.input, "ab\tc");
-        assert_eq!(app.expanded_input(), "ab\tc");
-    }
-
-    #[test]
-    fn single_char_prompt_enter_is_not_treated_as_paste() {
-        let start = Instant::now();
-        let mut app = test_app();
-
-        assert!(app.handle_paste_burst_key_at(
-            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
-            start
-        ));
-        assert!(!app.handle_paste_burst_key_at(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            start + Duration::from_millis(1)
-        ));
-
-        assert_eq!(app.input, "y");
-        assert!(app.paste_segments.is_empty());
-    }
-
-    #[test]
     fn idle_key_event_text_is_inserted_without_paste_marker() {
         let start = Instant::now();
         let mut app = test_app();
@@ -7577,9 +7692,7 @@ mod tests {
         let lines = app.active_lines(40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert_eq!(line_text(&lines[0]), "", "{rendered}");
-        assert!(line_text(&lines[1]).contains("working"), "{rendered}");
-        assert_eq!(line_text(&lines[2]), "─".repeat(40), "{rendered}");
+        assert!(rendered.contains("working"), "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -7591,15 +7704,41 @@ mod tests {
 
         app.info.reasoning = ReasoningLevel::Off;
         let off_lines = app.active_lines(20);
-        let off_style = off_lines[0].style;
+        let off_divider = off_lines
+            .iter()
+            .find(|line| line_text(line) == "────────────────────")
+            .unwrap();
+        let off_style = off_divider.style;
 
         app.info.reasoning = ReasoningLevel::High;
         let high_lines = app.active_lines(20);
-        let high_style = high_lines[0].style;
+        let divider_indices = high_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                (line_text(line) == "────────────────────").then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let input_index = high_lines
+            .iter()
+            .position(|line| line_text(line) == "hello")
+            .unwrap();
+        let composer_top_divider = divider_indices
+            .iter()
+            .copied()
+            .find(|index| *index + 1 == input_index)
+            .unwrap();
+        let high_style = high_lines[composer_top_divider].style;
 
-        assert_eq!(line_text(&high_lines[0]), "────────────────────");
-        assert_eq!(line_text(&high_lines[1]), "hello");
-        assert_eq!(line_text(&high_lines[2]), "────────────────────");
+        assert_eq!(
+            line_text(&high_lines[composer_top_divider]),
+            "────────────────────"
+        );
+        assert_eq!(line_text(&high_lines[input_index]), "hello");
+        assert_eq!(
+            line_text(&high_lines[input_index + 1]),
+            "────────────────────"
+        );
         assert_eq!(
             off_style,
             Theme::reasoning_input_border(ReasoningLevel::Off)
@@ -7608,7 +7747,7 @@ mod tests {
             high_style,
             Theme::reasoning_input_border(ReasoningLevel::High)
         );
-        assert_eq!(high_lines[2].style, high_style);
+        assert_eq!(high_lines[input_index + 1].style, high_style);
         assert_ne!(off_style, high_style);
     }
 
@@ -7618,12 +7757,22 @@ mod tests {
         app.running = true;
 
         let small_lines = app.active_lines_for_height(40, 4);
-        let default_lines = app.active_lines_for_height(40, INLINE_VIEWPORT_HEIGHT as usize);
+        let default_lines = app.active_lines_for_height(40, DEFAULT_TUI_HEIGHT as usize);
+        let small_rendered = small_lines.iter().map(line_text).collect::<Vec<_>>().join(
+            "
+",
+        );
+        let default_rendered = default_lines
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
 
-        assert_eq!(line_text(&small_lines[0]), "");
-        assert_eq!(line_text(&small_lines[1]), "─".repeat(40));
-        assert_eq!(line_text(&default_lines[0]), "");
-        assert!(line_text(&default_lines[1]).contains("working"));
+        assert!(!small_rendered.contains("working"), "{small_rendered}");
+        assert!(default_rendered.contains("working"), "{default_rendered}");
     }
 
     #[test]
@@ -7660,37 +7809,30 @@ mod tests {
             expanded: false,
         });
 
-        let lines =
-            app.active_lines_at_for_height(40, INLINE_VIEWPORT_HEIGHT as usize, Instant::now());
+        let lines = app.active_lines_at_for_height(40, DEFAULT_TUI_HEIGHT as usize, Instant::now());
 
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(rendered.contains("bash"), "{rendered}");
-        let tool_index = lines
-            .iter()
-            .position(|line| line_text(line).contains("bash"))
-            .unwrap();
-        assert_eq!(
-            line_text(&lines[tool_index + 2]).trim_end(),
-            "",
-            "{rendered}"
-        );
+        assert!(rendered.contains("working"), "{rendered}");
         assert!(
-            line_text(&lines[tool_index + 4]).contains("working"),
+            rendered.contains(
+                "
+
+⠋ working"
+            ) || rendered.contains(
+                "working
+"
+            ),
             "{rendered}"
         );
-        assert_eq!(
-            line_text(&lines[tool_index + 5]),
-            "─".repeat(40),
-            "{rendered}"
-        );
+        assert!(rendered.contains("bash"), "{rendered}");
     }
 
     #[test]
     fn active_lines_hide_spinner_when_idle() {
         let app = test_app();
         let rendered = app
-            .active_lines_at_for_height(40, INLINE_VIEWPORT_HEIGHT as usize, Instant::now())
+            .active_lines_at_for_height(40, DEFAULT_TUI_HEIGHT as usize, Instant::now())
             .iter()
             .map(line_text)
             .collect::<Vec<_>>()
@@ -7700,24 +7842,11 @@ mod tests {
     }
 
     #[test]
-    fn desired_inline_viewport_height_shrinks_to_live_lines() {
-        let app = test_app();
-
-        assert!(app.desired_inline_viewport_height(60, 24) < INLINE_VIEWPORT_HEIGHT);
-    }
-
-    #[test]
     fn draw_anchors_last_live_line_to_viewport_bottom() {
         let app = test_app();
-        let height = app.desired_inline_viewport_height(60, 24);
+        let height = 24;
         let backend = TestBackend::new(60, height);
-        let mut terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(height),
-            },
-        )
-        .unwrap();
+        let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -7736,13 +7865,7 @@ mod tests {
         app.input_cursor = app.input_char_len();
         let height = 8;
         let backend = TestBackend::new(40, height);
-        let mut terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(height),
-            },
-        )
-        .unwrap();
+        let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -7767,15 +7890,9 @@ mod tests {
         app.input = "/m".into();
         app.input_cursor = 2;
         app.clamp_command_selection();
-        let height = app.desired_inline_viewport_height(60, 24);
+        let height = 24;
         let backend = TestBackend::new(60, height);
-        let mut terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(height),
-            },
-        )
-        .unwrap();
+        let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -7804,15 +7921,9 @@ mod tests {
         );
         picker.filter = "x".repeat(120);
         app.composer = ComposerMode::Picker(picker);
-        let height = app.desired_inline_viewport_height(40, 24);
+        let height = 24;
         let backend = TestBackend::new(40, height);
-        let mut terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(height),
-            },
-        )
-        .unwrap();
+        let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -8336,6 +8447,220 @@ mod tests {
 
         assert_eq!(input, "/skill:caveman");
         assert_eq!(cursor, 14);
+    }
+
+    #[test]
+    fn history_lines_include_header_transcript_pending_preview_and_spinner() {
+        let mut app = test_app();
+        app.transcript.push(Entry::User("hello".into()));
+        app.pending_tool_call = Some(ToolEntry {
+            state: ToolEntryState::Running,
+            display_lines: vec!["bash".into(), "cargo test".into()],
+            expanded: false,
+        });
+        app.live_stream_preview = Some(LiveStreamPreview {
+            kind: StreamKind::Assistant,
+            text: "partial answer".into(),
+            include_leading_blank: true,
+        });
+        app.running = true;
+        app.loading_spinner.started_at = Some(Instant::now());
+
+        let rendered = app
+            .history_lines(60, Instant::now())
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("rho  v"), "{rendered}");
+        assert!(rendered.contains("hello"), "{rendered}");
+        assert!(rendered.contains("bash"), "{rendered}");
+        assert!(rendered.contains("partial answer"), "{rendered}");
+        assert!(rendered.contains("working"), "{rendered}");
+    }
+
+    #[test]
+    fn fullscreen_history_starts_at_bottom() {
+        let mut app = test_app();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+
+        let lines = app.active_lines_for_height(40, 12);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("message 19"), "{rendered}");
+        assert!(!rendered.contains("message 0"), "{rendered}");
+    }
+
+    #[test]
+    fn pageup_enters_manual_scroll_and_ctrl_g_returns_to_bottom() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+
+        assert!(app
+            .handle_history_key(
+                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+                &mut terminal,
+            )
+            .unwrap());
+        assert!(matches!(app.history_scroll, HistoryScroll::Manual { .. }));
+        assert!(app.should_show_jump_to_bottom(40, 12, Instant::now()));
+
+        assert!(app
+            .handle_history_key(
+                KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+                &mut terminal,
+            )
+            .unwrap());
+        assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+        assert!(!app.should_show_jump_to_bottom(40, 12, Instant::now()));
+    }
+
+    #[test]
+    fn pagedown_moves_manual_scroll_toward_bottom() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+
+        app.handle_history_key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            &mut terminal,
+        )
+        .unwrap();
+        let before = match app.history_scroll {
+            HistoryScroll::Manual { top_line } => top_line,
+            HistoryScroll::Bottom => panic!("expected manual scroll"),
+        };
+
+        app.handle_history_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut terminal,
+        )
+        .unwrap();
+
+        match app.history_scroll {
+            HistoryScroll::Manual { top_line } => assert!(top_line > before),
+            HistoryScroll::Bottom => {}
+        }
+    }
+
+    #[test]
+    fn jump_button_renders_above_composer_only_when_scrolled_up() {
+        let mut app = test_app();
+        app.input = "draft".into();
+        app.input_cursor = app.input_char_len();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+
+        let bottom_lines = app
+            .active_lines_for_height(40, 12)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>();
+        assert!(!bottom_lines
+            .iter()
+            .any(|line| line.contains("jump to bottom")));
+
+        app.scroll_history_page_up(40, 12, Instant::now());
+        let scrolled_lines = app
+            .active_lines_for_height(40, 12)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>();
+        let button_index = scrolled_lines
+            .iter()
+            .position(|line| line.contains("jump to bottom"))
+            .unwrap();
+        let input_index = scrolled_lines
+            .iter()
+            .position(|line| line.trim_end() == "draft")
+            .unwrap();
+
+        assert!(button_index < input_index, "{scrolled_lines:#?}");
+    }
+
+    #[test]
+    fn compact_jump_button_renders_on_narrow_terminals() {
+        let app = test_app();
+
+        assert!(line_text(&app.jump_to_bottom_line(16)).contains("bottom ^g"));
+        assert!(line_text(&app.jump_to_bottom_line(40)).contains("ctrl+g"));
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_history_and_clicking_jump_button_returns_to_bottom() {
+        let mut app = test_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+
+        app.handle_mouse_event(MouseEventKind::ScrollUp, 0, 0, &mut terminal)
+            .unwrap();
+        assert!(matches!(app.history_scroll, HistoryScroll::Manual { .. }));
+
+        let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+        let button = layout.jump_to_bottom.unwrap();
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            button.x,
+            button.y,
+            &mut terminal,
+        )
+        .unwrap();
+
+        assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    }
+
+    #[test]
+    fn manual_scroll_preserves_top_line_when_new_output_arrives() {
+        let mut app = test_app();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+        app.scroll_history_page_up(40, 12, Instant::now());
+        let before_start =
+            app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+
+        app.transcript.push(Entry::Assistant("new output".into()));
+        let after_start = app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+
+        assert_eq!(after_start, before_start);
+    }
+
+    #[test]
+    fn bottom_scroll_follows_new_output() {
+        let mut app = test_app();
+        for index in 0..20 {
+            app.transcript.push(Entry::User(format!("message {index}")));
+        }
+        let before_start =
+            app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+
+        app.transcript.push(Entry::Assistant("new output".into()));
+        let after_start = app.visible_history_start(app.history_lines(40, Instant::now()).len(), 6);
+
+        assert!(after_start > before_start);
+    }
+
+    #[test]
+    fn exit_summary_is_minimal_and_session_only() {
+        let mut app = test_app();
+        assert_eq!(app.exit_summary(), None);
+
+        app.info.session_id = Some("session-123".into());
+        assert_eq!(
+            app.exit_summary().as_deref(),
+            Some("rho session saved: session-123")
+        );
     }
 
     #[test]
