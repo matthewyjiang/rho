@@ -68,7 +68,7 @@ Some commands can replace the message box with a picker. Use `up` and `down` to 
 
 `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
 
-`/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
+`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
 

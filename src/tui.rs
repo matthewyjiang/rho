@@ -7275,8 +7275,28 @@ enum HistoryDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{save_anthropic_api_key, save_openai_api_key, MemoryCredentialStore};
+    use crate::credentials::{
+        save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
+        MemoryCredentialStore,
+    };
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+    #[derive(Debug)]
+    struct FailingCredentialStore;
+
+    impl CredentialStore for FailingCredentialStore {
+        fn get_secret(&self, _account: &str) -> CredentialResult<Option<String>> {
+            Err(CredentialError::StoreUnavailable("test failure".into()))
+        }
+
+        fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
+            unreachable!()
+        }
+
+        fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
+            unreachable!()
+        }
+    }
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -8514,6 +8534,32 @@ mod tests {
         assert!(rendered.contains("anthropic"), "{rendered}");
         assert!(!rendered.contains("api-key"), "{rendered}");
         assert!(!rendered.contains("> codex"), "{rendered}");
+    }
+
+    #[test]
+    fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
+        let store = MemoryCredentialStore::default();
+        save_openai_api_key(&store, "sk-test").unwrap();
+        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+
+        let picker = provider_picker::logout_provider_picker(&store).unwrap();
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["openai", "anthropic"]);
+    }
+
+    #[test]
+    fn logout_provider_picker_propagates_credential_store_errors() {
+        let error = provider_picker::logout_provider_picker(&FailingCredentialStore).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            CredentialError::StoreUnavailable("test failure".into()).to_string()
+        );
     }
 
     #[test]

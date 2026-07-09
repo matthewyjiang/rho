@@ -40,7 +40,7 @@ Use `/logout` to delete stored credentials from the device:
 /logout github-copilot
 ```
 
-`/logout` opens the same provider picker style as `/login`. Direct args support provider names only. If an environment override is still present, the provider remains available after deleting the stored credential.
+`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. Direct args support provider names only. If an environment override is still present, the provider remains available after deleting the stored credential.
 
 ## Environment overrides
 
