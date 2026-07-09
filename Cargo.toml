@@ -38,6 +38,11 @@ webbrowser = "1"
 libc = "0.2"
 unicode-width = "0.2"
 
+# Use unreleased Windows VT input support so bracketed paste produces Event::Paste.
+# Remove this override after crossterm-rs/crossterm#1030 is released.
+[patch.crates-io]
+crossterm = { git = "https://github.com/crossterm-rs/crossterm", rev = "03bb4f26610a5904b8e875fcb610d16bf7d00814" }
+
 [features]
 default = ["bundled-sqlite"]
 bundled-sqlite = ["rusqlite/bundled"]
