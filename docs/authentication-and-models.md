@@ -69,7 +69,7 @@ Rho's implemented providers are:
 | `anthropic` | `anthropic-api-key` | Anthropic API-key models |
 | `github-copilot` | `github-copilot` | GitHub Copilot models |
 
-OpenAI, Anthropic, and GitHub Copilot can refresh provider model lists with `/refresh-model-list [provider]`. GitHub Copilot falls back to a conservative static allowlist when a dynamic model cache is unavailable or refresh fails, so `/model github-copilot/<model>` and the picker can work before the first refresh.
+OpenAI, Anthropic, and GitHub Copilot can refresh provider model lists with `/refresh-model-list [provider]`. GitHub Copilot models come from the refreshed Copilot API model list.
 
 GitHub Copilot support uses GitHub Copilot endpoints, not GitHub Models endpoints.
 

@@ -444,6 +444,13 @@ pub fn with_provider_models_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce
 }
 
 #[cfg(test)]
+pub fn set_provider_models_cache_dir_for_tests(path: Option<PathBuf>) {
+    TEST_CACHE_DIR.with(|cache_dir| {
+        cache_dir.replace(path);
+    });
+}
+
+#[cfg(test)]
 pub fn replace_cached_provider_models_for_tests(
     provider: &str,
     models: &[ProviderModel],

@@ -25,7 +25,6 @@ pub enum ProviderRuntime {
 pub enum ProviderModelSource {
     StaticCatalog,
     CachedProviderModels,
-    CachedProviderModelsWithStaticFallback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,7 +136,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "GITHUB_COPILOT_TOKEN",
             account: "provider:github-copilot:tokens",
         },
-        model_source: ProviderModelSource::CachedProviderModelsWithStaticFallback,
+        model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         metadata_upstream: "github-copilot",
         runtime: ProviderRuntime::GithubCopilot,
