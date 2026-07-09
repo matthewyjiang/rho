@@ -136,7 +136,7 @@ pub(super) fn convert_content_blocks(
             AnthropicContentBlock::Text { text, .. } if !text.is_empty() => {
                 blocks.push(ContentBlock::Text(text));
             }
-            AnthropicContentBlock::Text { text: _, .. } => {}
+            AnthropicContentBlock::Text { .. } => {}
             AnthropicContentBlock::Image { .. } => {}
             AnthropicContentBlock::ToolUse { id, name, input } => {
                 blocks.push(ContentBlock::ToolCall(ToolCall {

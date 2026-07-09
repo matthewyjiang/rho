@@ -34,7 +34,7 @@ rho -R
 
 Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker.
 
-After you send at least one message, Rho prints a resume command on exit that you can paste later.
+After you send at least one message, Rho restores your shell view on exit and prints a short saved-session summary plus a resume command that you can paste later.
 
 ## Auto compaction and transcript history
 

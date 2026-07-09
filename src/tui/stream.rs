@@ -212,6 +212,7 @@ impl StreamFragment {
         self.text
     }
 
+    #[cfg(test)]
     pub(super) fn include_leading_blank(&self) -> bool {
         self.include_leading_blank
     }

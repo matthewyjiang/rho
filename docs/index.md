@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: Terminal-native
-    details: Run rho to open an inline terminal UI with streaming assistant output, reasoning deltas, compact tool blocks, and scrollback-friendly history.
+    details: Run rho to open a fullscreen terminal UI with streaming assistant output, reasoning deltas, compact tool blocks, and app-owned transcript scrolling.
   - title: Automation-ready
     details: Use rho run for one-shot prompts in scripts, hooks, aliases, and CI jobs.
   - title: Rust-first

@@ -17,7 +17,7 @@ cd path/to/project
 rho
 ```
 
-Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. Completed conversation output remains in your normal terminal scrollback, so you can use your terminal's usual scrolling and copy behavior.
+Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. The interactive UI owns the transcript viewport while it is open, so use the built-in transcript scrolling controls instead of terminal scrollback. When you exit, your previous shell view returns and Rho prints only a short saved-session summary when a session exists.
 
 For persisted history and resume behavior, see [sessions](/sessions).
 
@@ -110,6 +110,11 @@ Most editing keys work the way they do in a normal terminal input.
 | `enter` | Send a prompt, run a selected slash command, or queue a prompt while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
+| `pageup` / `pagedown` | Scroll the transcript viewport |
+| `ctrl-g` | Jump the transcript viewport back to the bottom |
+| mouse wheel | Scroll the transcript viewport |
 | `ctrl-c` | Clear input, then quit if pressed again |
+
+When the transcript is scrolled away from the bottom, Rho shows a `↓ jump to bottom  ctrl+g` button directly above the composer. Press `ctrl-g` or click the button to resume following live output.
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
