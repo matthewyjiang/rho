@@ -36,6 +36,10 @@ Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` ope
 
 After you send at least one message, Rho prints a resume command on exit that you can paste later.
 
+## Auto compaction and transcript history
+
+When [auto compaction](/configuration#auto-compaction) is enabled, Rho can append a replacement-history entry that summarizes older model context for future requests and resume. The original message entries remain in the session file for transcript reconstruction. Auto compaction is not a privacy or deletion feature.
+
 ## Resetting history
 
 Press `ctrl-r` in the [interactive TUI](/interactive-tui) to reset the conversation. The next message starts a new session file.

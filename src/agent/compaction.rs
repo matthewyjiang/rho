@@ -1,11 +1,17 @@
-use crate::model::{ContentBlock, Message};
-use crate::tool::ToolResult;
+use crate::model::{
+    context::{estimate_context_tokens, estimate_message_tokens},
+    ContentBlock, Message,
+};
+use crate::tool::{ToolResult, ToolSpec};
+
+const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
+const SUMMARY_RESERVE_MAX_TOKENS: u64 = 8_192;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompactionConfig {
     pub auto_compact: bool,
     pub threshold_percent: u8,
-    pub recent_messages: usize,
+    pub target_percent: u8,
 }
 
 impl Default for CompactionConfig {
@@ -13,8 +19,17 @@ impl Default for CompactionConfig {
         Self {
             auto_compact: false,
             threshold_percent: 85,
-            recent_messages: 8,
+            target_percent: 50,
         }
+    }
+}
+
+impl CompactionConfig {
+    pub fn target_tokens(&self, context_window: u64) -> u64 {
+        percent_tokens(
+            context_window,
+            normalized_target_percent(self.threshold_percent, self.target_percent),
+        )
     }
 }
 
@@ -23,6 +38,13 @@ pub struct CompactionPartition {
     pub leading_messages: Vec<Message>,
     pub compacted_messages: Vec<Message>,
     pub recent_messages: Vec<Message>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MessageGroup {
+    start: usize,
+    end: usize,
+    tokens: u64,
 }
 
 pub fn should_compact(
@@ -39,27 +61,26 @@ pub fn should_compact(
     let Some(window) = context_window.filter(|window| *window > 0) else {
         return false;
     };
-    let threshold = u64::from(config.threshold_percent.clamp(1, 100));
-    tokens.saturating_mul(100) >= window.saturating_mul(threshold)
+    tokens >= percent_tokens(window, normalized_percent(config.threshold_percent))
 }
 
 pub fn partition_messages_for_compaction(
     messages: &[Message],
-    recent_messages: usize,
+    tools: &[ToolSpec],
+    target_tokens: u64,
 ) -> Option<CompactionPartition> {
     let first_compactable = messages
         .iter()
         .position(|message| !matches!(message, Message::System(_)))
         .unwrap_or(messages.len());
-    let body_len = messages.len().saturating_sub(first_compactable);
-    if body_len <= recent_messages {
+    let groups = message_groups(messages, first_compactable);
+    if groups.len() <= 1 {
         return None;
     }
 
-    let desired_recent_start = messages.len().saturating_sub(recent_messages);
-    let recent_start = tool_group_start_containing(messages, desired_recent_start)
-        .unwrap_or(desired_recent_start)
-        .max(first_compactable);
+    let recent_token_budget =
+        recent_tail_token_budget(&messages[..first_compactable], tools, target_tokens);
+    let recent_start = recent_tail_start(&groups, recent_token_budget)?;
     if recent_start <= first_compactable {
         return None;
     }
@@ -74,7 +95,7 @@ pub fn partition_messages_for_compaction(
 pub fn build_summary_request_messages(compacted_messages: &[Message]) -> Vec<Message> {
     vec![
         Message::System(
-            "Summarize the conversation history for continuation. Preserve user goals, decisions, constraints, files changed, tool outcomes, and unresolved tasks. Be concise and factual."
+            "Summarize the compacted conversation history for continuation. The original transcript is still stored separately; this summary replaces only older model context. Preserve user goals, constraints, decisions, files changed, tool calls and results, test results, unresolved tasks, and continuation-critical details such as paths, commands, errors, IDs, and pending next steps. Be concise and factual."
                 .into(),
         ),
         Message::user_text(render_messages_for_summary(compacted_messages)),
@@ -87,31 +108,115 @@ pub fn replacement_history_from_summary(
 ) -> Vec<Message> {
     let mut replacement = partition.leading_messages;
     replacement.push(Message::user_text(format!(
-        "Summary of earlier conversation:\n\n{}",
+        "Automatic compaction summary of earlier conversation for model context only:\n\n{}",
         summary.trim()
     )));
     replacement.extend(partition.recent_messages);
     replacement
 }
 
-fn tool_group_start_containing(messages: &[Message], index: usize) -> Option<usize> {
-    for (candidate, message) in messages.iter().enumerate() {
-        let Message::Assistant(blocks) = message else {
-            continue;
-        };
-        let tool_call_count = blocks
-            .iter()
-            .filter(|block| matches!(block, ContentBlock::ToolCall(_)))
-            .count();
-        if tool_call_count == 0 {
-            continue;
+fn recent_tail_token_budget(
+    leading_messages: &[Message],
+    tools: &[ToolSpec],
+    target_tokens: u64,
+) -> u64 {
+    let fixed_tokens = estimate_context_tokens(leading_messages, tools);
+    target_tokens
+        .saturating_sub(fixed_tokens)
+        .saturating_sub(summary_reserve_tokens(target_tokens))
+}
+
+fn recent_tail_start(groups: &[MessageGroup], token_budget: u64) -> Option<usize> {
+    let mut tail_start = None;
+    let mut tail_tokens = 0_u64;
+    for group in groups.iter().rev() {
+        let next_tokens = tail_tokens.saturating_add(group.tokens);
+        if tail_start.is_some() && next_tokens > token_budget {
+            break;
         }
-        let group_end = candidate.saturating_add(1).saturating_add(tool_call_count);
-        if candidate < index && index < group_end {
-            return Some(candidate);
-        }
+        tail_tokens = next_tokens;
+        tail_start = Some(group.start);
     }
-    None
+    tail_start
+}
+
+fn message_groups(messages: &[Message], start: usize) -> Vec<MessageGroup> {
+    let mut groups = Vec::new();
+    let mut index = start;
+    while index < messages.len() {
+        let end = completed_tool_group_end(messages, index).unwrap_or(index + 1);
+        let tokens = messages[index..end]
+            .iter()
+            .map(estimate_message_tokens)
+            .sum();
+        groups.push(MessageGroup {
+            start: index,
+            end,
+            tokens,
+        });
+        index = end;
+    }
+    groups
+}
+
+fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize> {
+    let Message::Assistant(blocks) = &messages[index] else {
+        return None;
+    };
+    let tool_call_ids = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if tool_call_ids.is_empty() {
+        return None;
+    }
+
+    let results_start = index + 1;
+    let results_end = results_start + tool_call_ids.len();
+    if results_end > messages.len() {
+        return Some(messages.len());
+    }
+    let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
+        matches!(
+            &messages[results_start + offset],
+            Message::ToolResult(result) if result.id == *id
+        )
+    });
+    Some(if complete {
+        results_end
+    } else {
+        messages.len()
+    })
+}
+
+fn summary_reserve_tokens(target_tokens: u64) -> u64 {
+    if target_tokens == 0 {
+        return 0;
+    }
+    (target_tokens / 10)
+        .clamp(SUMMARY_RESERVE_MIN_TOKENS, SUMMARY_RESERVE_MAX_TOKENS)
+        .min(target_tokens)
+}
+
+fn percent_tokens(total: u64, percent: u8) -> u64 {
+    total.saturating_mul(u64::from(percent)).div_ceil(100)
+}
+
+fn normalized_percent(percent: u8) -> u8 {
+    percent.clamp(1, 100)
+}
+
+fn normalized_target_percent(threshold_percent: u8, target_percent: u8) -> u8 {
+    let threshold_percent = normalized_percent(threshold_percent);
+    let target_percent = normalized_percent(target_percent);
+    if threshold_percent == 1 {
+        1
+    } else {
+        target_percent.min(threshold_percent - 1)
+    }
 }
 
 fn render_messages_for_summary(messages: &[Message]) -> String {
@@ -159,7 +264,7 @@ mod tests {
         let config = CompactionConfig {
             auto_compact: true,
             threshold_percent: 80,
-            recent_messages: 4,
+            target_percent: 50,
         };
 
         assert!(should_compact(&config, Some(800), Some(1_000)));
@@ -176,16 +281,27 @@ mod tests {
     }
 
     #[test]
-    fn partitions_messages_around_recent_tail() {
+    fn target_percent_stays_below_threshold_when_possible() {
+        let config = CompactionConfig {
+            auto_compact: true,
+            threshold_percent: 85,
+            target_percent: 99,
+        };
+
+        assert_eq!(config.target_tokens(1_000), 840);
+    }
+
+    #[test]
+    fn partitions_messages_around_token_budgeted_recent_tail() {
         let messages = vec![
             Message::System("system".into()),
-            Message::user_text("old user"),
-            Message::assistant_text("old assistant"),
+            Message::user_text("x".repeat(1_000)),
+            Message::assistant_text("y".repeat(1_000)),
             Message::user_text("recent user"),
             Message::assistant_text("recent assistant"),
         ];
 
-        let partition = partition_messages_for_compaction(&messages, 2).unwrap();
+        let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
 
         assert_eq!(partition.leading_messages.len(), 1);
         assert!(matches!(
@@ -202,7 +318,7 @@ mod tests {
     fn partition_does_not_split_assistant_tool_call_group() {
         let messages = vec![
             Message::System("system".into()),
-            Message::user_text("old"),
+            Message::user_text("x".repeat(1_000)),
             Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
                 id: "call_1".into(),
                 name: "bash".into(),
@@ -216,7 +332,7 @@ mod tests {
             Message::user_text("new"),
         ];
 
-        let partition = partition_messages_for_compaction(&messages, 2).unwrap();
+        let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
 
         assert!(matches!(
             partition.compacted_messages.as_slice(),
@@ -230,6 +346,37 @@ mod tests {
                 Message::User(_)
             ]
         ));
+    }
+
+    #[test]
+    fn partition_keeps_last_group_even_when_it_exceeds_budget() {
+        let messages = vec![
+            Message::System("system".into()),
+            Message::user_text("old"),
+            Message::assistant_text("z".repeat(2_000)),
+        ];
+
+        let partition = partition_messages_for_compaction(&messages, &[], 1).unwrap();
+
+        assert!(matches!(
+            partition.compacted_messages.as_slice(),
+            [Message::User(_)]
+        ));
+        assert!(matches!(
+            partition.recent_messages.as_slice(),
+            [Message::Assistant(_)]
+        ));
+    }
+
+    #[test]
+    fn partition_skips_when_everything_fits_in_recent_tail() {
+        let messages = vec![
+            Message::System("system".into()),
+            Message::user_text("old user"),
+            Message::assistant_text("old assistant"),
+        ];
+
+        assert!(partition_messages_for_compaction(&messages, &[], 10_000).is_none());
     }
 
     #[test]

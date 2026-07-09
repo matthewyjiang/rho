@@ -13,7 +13,7 @@ show_reasoning_output = true
 check_for_updates = true
 auto_compact = false
 compact_threshold_percent = 85
-compact_recent_messages = 8
+compact_target_percent = 50
 title_provider = "openai"
 title_model = "gpt-5.5"
 title_auth = "api-key"
@@ -67,7 +67,7 @@ Optional `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `max_output_bytes` row opens a numeric input and saves for the next session.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
 [`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. GitHub Copilot uses `github-copilot/<model>` names and falls back to static entries when no dynamic cache exists.
 
@@ -93,4 +93,8 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 
 ## Auto compaction
 
-`auto_compact` enables summarizing older conversation history when the estimated current context approaches the model window. It is disabled by default. `compact_threshold_percent` controls the trigger point, and `compact_recent_messages` controls how many recent messages are kept verbatim after older history is summarized.
+`auto_compact` enables summarizing older conversation history when the estimated current context approaches the effective model window. It is disabled by default. `compact_threshold_percent` controls the trigger point. `compact_target_percent` controls the post-compaction target as a percent of the effective model window; it must stay below the threshold, so values at or above `compact_threshold_percent` are clamped to one below it when the config is loaded or saved. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count. Context estimates are anchored to the most recent provider-reported token usage when available.
+
+Auto compaction affects only future model context. Session files remain append-only and keep the original transcript entries, then append a replacement-history entry used for resume. It is not a privacy or deletion feature.
+
+Model metadata supplies the effective context window when available. Pricing-sensitive models such as `openai/gpt-5.5` and `openai-codex/gpt-5.5` use safer effective windows below the advertised maximum to avoid long-context pricing thresholds.

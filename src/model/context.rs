@@ -68,11 +68,15 @@ pub fn estimate_context_usage(
 
 pub fn estimate_context_tokens(messages: &[Message], tools: &[ToolSpec]) -> u64 {
     REQUEST_OVERHEAD_TOKENS
-        .saturating_add(messages.iter().map(message_tokens).sum::<u64>())
+        .saturating_add(estimate_messages_tokens(messages))
         .saturating_add(tools.iter().map(tool_spec_tokens).sum::<u64>())
 }
 
-fn message_tokens(message: &Message) -> u64 {
+pub fn estimate_messages_tokens(messages: &[Message]) -> u64 {
+    messages.iter().map(estimate_message_tokens).sum()
+}
+
+pub fn estimate_message_tokens(message: &Message) -> u64 {
     match message {
         Message::System(text) => MESSAGE_OVERHEAD_TOKENS.saturating_add(text_tokens(text)),
         Message::User(blocks) | Message::Assistant(blocks) => MESSAGE_OVERHEAD_TOKENS
@@ -190,6 +194,24 @@ mod tests {
         assert_eq!(
             ContextUsage::from_model_usage(&usage),
             Some(ContextUsage::provider_reported(3_000, Some(10_000)))
+        );
+    }
+
+    #[test]
+    fn estimates_message_slices_without_request_or_tool_overhead() {
+        let messages = vec![
+            Message::user_text("1234"),
+            Message::assistant_text("12345678"),
+        ];
+
+        assert_eq!(
+            estimate_messages_tokens(&messages),
+            MESSAGE_OVERHEAD_TOKENS
+                + CONTENT_BLOCK_OVERHEAD_TOKENS
+                + 1
+                + MESSAGE_OVERHEAD_TOKENS
+                + CONTENT_BLOCK_OVERHEAD_TOKENS
+                + 2
         );
     }
 }

@@ -3,6 +3,9 @@ use crate::config::Config;
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
+pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
+pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
+pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
@@ -66,6 +69,49 @@ pub(super) fn config_picker(
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: CHECK_FOR_UPDATES_VALUE.into(),
+            },
+            PickerItem {
+                label: "Auto compact".into(),
+                detail: Some(
+                    "Summarizes older model context before the effective context limit. Transcript history is preserved."
+                        .into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: if config.auto_compact {
+                        "on".into()
+                    } else {
+                        "off".into()
+                    },
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: AUTO_COMPACT_VALUE.into(),
+            },
+            PickerItem {
+                label: "Compact threshold".into(),
+                detail: Some(
+                    "Percent of the effective context window that triggers auto compaction."
+                        .into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: format!("{}%", config.compact_threshold_percent),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: COMPACT_THRESHOLD_PERCENT_VALUE.into(),
+            },
+            PickerItem {
+                label: "Compact target".into(),
+                detail: Some(
+                    "Post-compaction target percent. The recent verbatim tail is chosen by token budget."
+                        .into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: format!("{}%", config.compact_target_percent),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: COMPACT_TARGET_PERCENT_VALUE.into(),
             },
             PickerItem {
                 label: "Max output bytes".into(),

@@ -21,8 +21,9 @@ use compaction::{
 use context_tracker::ContextTracker;
 
 use crate::model::{
-    openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage, DynModelProvider,
-    Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
+    context::estimate_context_tokens, openai::prompt_cache_key_from_session_id, ContentBlock,
+    ContextUsage, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
+    ModelUsage,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -113,6 +114,7 @@ impl Agent {
     pub fn replace_history(&mut self, history: Vec<Message>) {
         self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
         self.messages.extend(history);
+        self.context_tracker.history_replaced();
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -242,6 +244,7 @@ impl Agent {
             {
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
+            let request_estimated_tokens = estimate_context_tokens(&self.messages, &specs);
             let response = match self
                 .provider
                 .send_turn_stream(
@@ -264,8 +267,9 @@ impl Agent {
                             display_lines: vec![format!("web search: {detail}")],
                         }),
                         ModelEvent::Usage(usage) => {
-                            if let Some(context_usage) =
-                                self.context_tracker.record_provider_usage(&usage)
+                            if let Some(context_usage) = self
+                                .context_tracker
+                                .record_provider_usage(&usage, request_estimated_tokens)
                             {
                                 on_event(AgentEvent::ContextUsage(context_usage))?;
                             }
@@ -558,13 +562,17 @@ impl Agent {
         if !should_compact(&self.compaction, estimate.tokens, estimate.context_window) {
             return Ok(());
         }
+        let Some(context_window) = estimate.context_window.filter(|window| *window > 0) else {
+            return Ok(());
+        };
+        let target_tokens = self.compaction.target_tokens(context_window);
         let Some(partition) =
-            partition_messages_for_compaction(&self.messages, self.compaction.recent_messages)
+            partition_messages_for_compaction(&self.messages, specs, target_tokens)
         else {
             return Ok(());
         };
 
-        let response = self
+        let response = match self
             .provider
             .send_turn_stream(
                 ModelRequest {
@@ -579,7 +587,15 @@ impl Agent {
                     ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
                 },
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
+            // A failed summary must not abort the turn: the threshold leaves
+            // headroom below the hard window, so the next request can proceed
+            // uncompacted and compaction retries before the following call.
+            Err(_) => return Ok(()),
+        };
         let ModelResponse::Assistant(blocks) = response;
         let summary = blocks
             .into_iter()
@@ -592,10 +608,7 @@ impl Agent {
             .trim()
             .to_string();
         if summary.is_empty() {
-            return Err(ModelError::InvalidResponse(
-                "compaction summary response did not include text".into(),
-            )
-            .into());
+            return Ok(());
         }
 
         self.messages = replacement_history_from_summary(partition, summary);

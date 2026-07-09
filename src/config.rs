@@ -15,7 +15,7 @@ pub struct Config {
     pub show_reasoning_output: bool,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
-    pub compact_recent_messages: usize,
+    pub compact_target_percent: u8,
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
@@ -39,7 +39,7 @@ impl Default for Config {
             show_reasoning_output: true,
             auto_compact: false,
             compact_threshold_percent: 85,
-            compact_recent_messages: 8,
+            compact_target_percent: 50,
             title_provider: None,
             title_model: None,
             title_auth: None,
@@ -94,10 +94,10 @@ impl Config {
             cfg.auto_compact = v;
         }
         if let Some(v) = file.compact_threshold_percent {
-            cfg.compact_threshold_percent = v.clamp(1, 100);
+            cfg.set_compact_threshold_percent(v);
         }
-        if let Some(v) = file.compact_recent_messages {
-            cfg.compact_recent_messages = v.max(1);
+        if let Some(v) = file.compact_target_percent {
+            cfg.set_compact_target_percent(v);
         }
         if let Some(v) = file.title_provider {
             cfg.title_provider = Some(v);
@@ -134,8 +134,28 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, toml::to_string_pretty(self)?)?;
+        let mut config = self.clone();
+        config.normalize_compaction_percentages();
+        fs::write(path, toml::to_string_pretty(&config)?)?;
         Ok(())
+    }
+
+    pub fn set_compact_threshold_percent(&mut self, value: u8) {
+        self.compact_threshold_percent = clamp_percent(value);
+        self.normalize_compaction_percentages();
+    }
+
+    pub fn set_compact_target_percent(&mut self, value: u8) {
+        self.compact_target_percent = clamp_percent(value);
+        self.normalize_compaction_percentages();
+    }
+
+    fn normalize_compaction_percentages(&mut self) {
+        self.compact_threshold_percent = clamp_percent(self.compact_threshold_percent);
+        self.compact_target_percent = normalized_compact_target_percent(
+            self.compact_threshold_percent,
+            self.compact_target_percent,
+        );
     }
 }
 
@@ -144,7 +164,7 @@ impl From<&Config> for CompactionConfig {
         Self {
             auto_compact: config.auto_compact,
             threshold_percent: config.compact_threshold_percent,
-            recent_messages: config.compact_recent_messages,
+            target_percent: config.compact_target_percent,
         }
     }
 }
@@ -161,6 +181,8 @@ struct PartialConfig {
     show_reasoning_output: Option<bool>,
     auto_compact: Option<bool>,
     compact_threshold_percent: Option<u8>,
+    compact_target_percent: Option<u8>,
+    #[allow(dead_code)]
     compact_recent_messages: Option<usize>,
     title_provider: Option<String>,
     title_model: Option<String>,
@@ -183,6 +205,20 @@ fn normalize_web_search_provider(provider: String) -> String {
 fn non_empty_secret(secret: String) -> Option<String> {
     let secret = secret.trim().to_string();
     (!secret.is_empty()).then_some(secret)
+}
+
+fn clamp_percent(value: u8) -> u8 {
+    value.clamp(1, 100)
+}
+
+fn normalized_compact_target_percent(threshold_percent: u8, target_percent: u8) -> u8 {
+    let threshold_percent = clamp_percent(threshold_percent);
+    let target_percent = clamp_percent(target_percent);
+    if threshold_percent == 1 {
+        1
+    } else {
+        target_percent.min(threshold_percent - 1)
+    }
 }
 
 #[cfg(test)]
@@ -214,6 +250,23 @@ mod tests {
         let config = Config::load(Some(path)).unwrap();
 
         assert!(!config.check_for_updates);
+    }
+
+    #[test]
+    fn loads_and_normalizes_compaction_percentages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "auto_compact = true\ncompact_threshold_percent = 80\ncompact_target_percent = 95\n",
+        )
+        .unwrap();
+
+        let config = Config::load(Some(path)).unwrap();
+
+        assert!(config.auto_compact);
+        assert_eq!(config.compact_threshold_percent, 80);
+        assert_eq!(config.compact_target_percent, 79);
     }
 
     #[test]

@@ -26,6 +26,12 @@ pub struct Session {
     workspace_key: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct SessionHistories {
+    pub model: Vec<Message>,
+    pub display: Vec<Message>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionSummary {
     pub id: String,
@@ -66,15 +72,29 @@ enum SessionEntry {
 }
 
 impl Session {
-    pub fn open_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<(Self, Vec<Message>)> {
-        Self::open_by_id_in_root(&session_root()?, cwd, id_prefix)
+    pub fn open_by_id_with_histories(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<(Self, SessionHistories)> {
+        Self::open_by_id_with_histories_in_root(&session_root()?, cwd, id_prefix)
     }
 
+    #[cfg(test)]
     fn open_by_id_in_root(
         session_root: &Path,
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<(Self, Vec<Message>)> {
+        let (session, histories) =
+            Self::open_by_id_with_histories_in_root(session_root, cwd, id_prefix)?;
+        Ok((session, histories.model))
+    }
+
+    fn open_by_id_with_histories_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<(Self, SessionHistories)> {
         let dir = ensure_session_dir(session_root, cwd)?;
         let matches = match index::sync_workspace(session_root, cwd)
             .and_then(|_| index::matching_session_paths(session_root, cwd, id_prefix))
@@ -88,10 +108,10 @@ impl Session {
                 let id = session_id_from_path(path).ok_or_else(|| {
                     anyhow::anyhow!("session file has invalid name: {}", path.display())
                 })?;
-                let messages = read_messages(path)?;
+                let histories = read_histories(path)?;
                 Ok((
                     Self::from_parts(session_root, cwd, id, path.clone()),
-                    messages,
+                    histories,
                 ))
             }
             _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
@@ -196,10 +216,12 @@ impl Session {
     }
 }
 
-fn read_messages(path: &Path) -> anyhow::Result<Vec<Message>> {
-    Ok(drop_incomplete_tool_turn_tail(messages_from_entries(
-        read_entries(path)?,
-    )))
+fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
+    let entries = read_entries(path)?;
+    Ok(SessionHistories {
+        model: drop_incomplete_tool_turn_tail(model_messages_from_entries(entries.clone())),
+        display: drop_incomplete_tool_turn_tail(display_messages_from_entries(entries)),
+    })
 }
 
 fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
@@ -225,7 +247,7 @@ fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
     Ok(entries)
 }
 
-fn messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
+fn model_messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
     let mut messages = Vec::new();
     for entry in entries {
         match entry {
@@ -235,6 +257,17 @@ fn messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
                 messages: replacement,
                 ..
             } => messages = replacement,
+        }
+    }
+    messages
+}
+
+fn display_messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
+    let mut messages = Vec::new();
+    for entry in entries {
+        match entry {
+            SessionEntry::Session { .. } | SessionEntry::ReplaceHistory { .. } => {}
+            SessionEntry::Message { message, .. } => messages.push(message),
         }
     }
     messages
@@ -590,6 +623,59 @@ mod tests {
         );
         assert!(
             matches!(&messages[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "recent answer"))
+        );
+    }
+
+    #[test]
+    fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("old user"))
+            .unwrap();
+        session
+            .append_message(&Message::assistant_text("old assistant"))
+            .unwrap();
+        session
+            .replace_history(&[
+                Message::user_text("summary"),
+                Message::assistant_text("recent answer"),
+            ])
+            .unwrap();
+        session
+            .append_message(&Message::user_text("after replacement"))
+            .unwrap();
+
+        let entries = read_entries(session.path()).unwrap();
+        assert!(entries.iter().any(|entry| {
+            matches!(entry, SessionEntry::Message { message, .. }
+                if matches!(message, Message::User(blocks)
+                    if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user")))
+        }));
+        assert!(entries
+            .iter()
+            .any(|entry| matches!(entry, SessionEntry::ReplaceHistory { .. })));
+
+        let (_session, histories) =
+            Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+
+        assert_eq!(histories.model.len(), 3);
+        assert!(
+            matches!(&histories.model[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
+        );
+        assert!(
+            matches!(&histories.model[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        );
+        assert_eq!(histories.display.len(), 3);
+        assert!(
+            matches!(&histories.display[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
+        );
+        assert!(
+            matches!(&histories.display[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
+        );
+        assert!(
+            matches!(&histories.display[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
         );
     }
 

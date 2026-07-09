@@ -126,11 +126,13 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             let mut open_resume_picker = false;
+            let mut recovered_messages = Vec::new();
             let session_id = match &cli.resume {
                 Some(Some(id)) => {
-                    let (session, history) = Session::open_by_id(&cwd, id)?;
+                    let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
                     let session_id = Some(session.id().to_string());
-                    agent = agent.with_history(history);
+                    recovered_messages = histories.display;
+                    agent = agent.with_history(histories.model);
                     agent.set_session_id(session_id.clone());
                     agent.set_history_sink(SessionHistorySink::new(session));
                     session_id
@@ -156,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
                     max_tool_output_lines: cfg.max_tool_output_lines,
                     questionnaire_enabled: !cli.no_tools,
                     session_id,
+                    recovered_messages,
                     open_resume_picker,
                     config_path,
                     auth_unavailable: missing_auth_error,

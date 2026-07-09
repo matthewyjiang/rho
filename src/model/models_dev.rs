@@ -45,6 +45,7 @@ pub struct ModelCost {
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata(provider, model)
         .map(|metadata| apply_overrides(provider, model, metadata))
+        .or_else(|| override_metadata(provider, model))
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -388,4 +389,20 @@ fn cost_micros_per_million(value: &Value) -> Option<u64> {
     dollars
         .is_finite()
         .then(|| (dollars.max(0.0) * 1_000_000.0).round() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_gpt_55_overrides_use_safer_effective_windows() {
+        let openai = apply_builtin_overrides("openai", "gpt-5.5", ModelMetadata::default());
+        let codex = apply_builtin_overrides("openai-codex", "gpt-5.5", ModelMetadata::default());
+
+        assert_eq!(openai.display_context_window(), Some(272_000));
+        assert_eq!(codex.display_context_window(), Some(272_000));
+        assert_eq!(codex.advertised_context_window, Some(1_050_000));
+        assert_eq!(codex.long_context_threshold, Some(272_000));
+    }
 }
