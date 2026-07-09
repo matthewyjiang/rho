@@ -4680,7 +4680,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        let reasoning = self.info.reasoning.next();
+        let reasoning = self
+            .info
+            .reasoning
+            .next_for_model(&self.info.provider, &self.info.model);
         if !agent.set_provider_reasoning(reasoning) {
             let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
                 Ok(provider) => provider,
@@ -4861,7 +4864,8 @@ impl App {
         let model = selection.model;
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
-        let new_provider = match build_provider(&provider, &model, self.info.reasoning) {
+        let reasoning = self.info.reasoning.for_model(&provider, &model);
+        let new_provider = match build_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(
@@ -4876,6 +4880,7 @@ impl App {
         agent.replace_provider(new_provider);
         self.info.provider = provider.clone();
         self.info.model = model.clone();
+        self.info.reasoning = reasoning;
         self.info.auth = auth.clone();
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
@@ -4883,6 +4888,7 @@ impl App {
         match Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.provider = provider.clone();
             config.model = model.clone();
+            config.reasoning = reasoning;
             config.auth = auth.clone();
             config.save(self.info.config_path.clone())
         }) {
@@ -4890,7 +4896,7 @@ impl App {
                 self.insert_entry(
                     terminal,
                     &Entry::Notice(format!(
-                        "model switched to {provider_model} and saved to config"
+                        "model switched to {provider_model} with reasoning {reasoning} and saved to config"
                     )),
                 )?;
                 self.status = format!("model: {provider_model}");
@@ -4899,7 +4905,7 @@ impl App {
                 self.insert_entry(
                     terminal,
                     &Entry::Error(format!(
-                        "model switched to {provider_model} for this session, but saving config failed: {err}"
+                        "model switched to {provider_model} with reasoning {reasoning} for this session, but saving config failed: {err}"
                     )),
                 )?;
                 self.status = "config save failed".into();

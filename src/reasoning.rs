@@ -13,10 +13,13 @@ pub enum ReasoningLevel {
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("invalid reasoning level '{0}'; expected one of: off, minimal, low, medium, high, xhigh")]
+#[error(
+    "invalid reasoning level '{0}'; expected one of: off, minimal, low, medium, high, xhigh, max"
+)]
 pub struct ParseReasoningLevelError(String);
 
 impl ReasoningLevel {
@@ -27,7 +30,36 @@ impl ReasoningLevel {
             Self::Low => Self::Medium,
             Self::Medium => Self::High,
             Self::High => Self::Xhigh,
-            Self::Xhigh => Self::Off,
+            Self::Xhigh => Self::Max,
+            Self::Max => Self::Off,
+        }
+    }
+
+    pub fn next_for_model(self, provider: &str, model: &str) -> Self {
+        let mut next = self.next();
+        while !next.is_supported_by(provider, model) {
+            next = next.next();
+        }
+        next
+    }
+
+    pub fn for_model(self, provider: &str, model: &str) -> Self {
+        if self.is_supported_by(provider, model) {
+            self
+        } else {
+            match self {
+                Self::Max => Self::Xhigh,
+                Self::Off | Self::Minimal | Self::Low | Self::Medium | Self::High | Self::Xhigh => {
+                    self
+                }
+            }
+        }
+    }
+
+    pub fn is_supported_by(self, provider: &str, model: &str) -> bool {
+        match self {
+            Self::Max => provider != "openai-codex" || codex_supports_max_effort(model),
+            Self::Off | Self::Minimal | Self::Low | Self::Medium | Self::High | Self::Xhigh => true,
         }
     }
 
@@ -39,12 +71,17 @@ impl ReasoningLevel {
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
             Self::Xhigh => Some("xhigh"),
+            Self::Max => Some("max"),
         }
     }
 
     pub fn summary(self) -> Option<&'static str> {
         self.effort().map(|_| "auto")
     }
+}
+
+fn codex_supports_max_effort(model: &str) -> bool {
+    matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna")
 }
 
 impl fmt::Display for ReasoningLevel {
@@ -56,6 +93,7 @@ impl fmt::Display for ReasoningLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
         };
         formatter.write_str(value)
     }
@@ -72,7 +110,12 @@ impl FromStr for ReasoningLevel {
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "xhigh" => Ok(Self::Xhigh),
+            "max" => Ok(Self::Max),
             other => Err(ParseReasoningLevelError(other.to_string())),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "reasoning_tests.rs"]
+mod tests;

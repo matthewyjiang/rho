@@ -284,6 +284,11 @@ fn apply_cli_overrides(cfg: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
         cfg.reasoning = reasoning;
         save_config = true;
     }
+    let reasoning = cfg.reasoning.for_model(&cfg.provider, &cfg.model);
+    if reasoning != cfg.reasoning {
+        cfg.reasoning = reasoning;
+        save_config = true;
+    }
     Ok(save_config)
 }
 
@@ -780,6 +785,56 @@ mod tests {
 
         assert!(save_config);
         assert_eq!(cfg.reasoning, crate::reasoning::ReasoningLevel::High);
+    }
+
+    #[test]
+    fn cli_reasoning_override_remaps_unsupported_codex_effort() {
+        let mut cfg = Config {
+            provider: "openai-codex".into(),
+            model: "gpt-5.5".into(),
+            ..Config::default()
+        };
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: Some(crate::reasoning::ReasoningLevel::Max),
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.reasoning, crate::reasoning::ReasoningLevel::Xhigh);
+    }
+
+    #[test]
+    fn cli_reasoning_override_keeps_supported_gpt_5_6_effort() {
+        let mut cfg = Config {
+            provider: "openai-codex".into(),
+            model: "gpt-5.6-sol".into(),
+            ..Config::default()
+        };
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            reasoning: Some(crate::reasoning::ReasoningLevel::Max),
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_cli_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.reasoning, crate::reasoning::ReasoningLevel::Max);
     }
 
     #[test]

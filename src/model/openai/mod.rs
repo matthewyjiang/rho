@@ -34,6 +34,7 @@ pub struct OpenAiProvider {
     auth: Auth,
     api_base: String,
     model: String,
+    provider: &'static str,
     reasoning_effort: Option<String>,
     reasoning_summary: Option<String>,
     codex_ws: CodexWsTransport,
@@ -48,9 +49,12 @@ impl OpenAiProvider {
         reasoning_effort: Option<String>,
         reasoning_summary: Option<String>,
     ) -> Self {
-        let api_base: String = match &auth {
-            Auth::Codex { .. } => "https://chatgpt.com/backend-api/codex".into(),
-            Auth::ApiKey(_) => "https://api.openai.com/v1".into(),
+        let (api_base, provider): (String, &'static str) = match &auth {
+            Auth::Codex { .. } => (
+                "https://chatgpt.com/backend-api/codex".into(),
+                "openai-codex",
+            ),
+            Auth::ApiKey(_) => ("https://api.openai.com/v1".into(), "openai"),
         };
         let codex_ws = CodexWsTransport::new(&api_base);
         Self {
@@ -58,6 +62,7 @@ impl OpenAiProvider {
             auth,
             api_base,
             model,
+            provider,
             reasoning_effort,
             reasoning_summary,
             codex_ws,
@@ -69,6 +74,7 @@ impl OpenAiProvider {
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for OpenAiProvider {
     fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        let reasoning = reasoning.for_model(self.provider, &self.model);
         self.reasoning_effort = reasoning.effort().map(str::to_string);
         self.reasoning_summary = reasoning.summary().map(str::to_string);
         true
@@ -416,6 +422,14 @@ mod tests {
             )
             .unwrap(),
             json!({"effort":"xhigh","summary":"auto"})
+        );
+        assert_eq!(
+            codex_reasoning_param(
+                crate::reasoning::ReasoningLevel::Max.effort(),
+                crate::reasoning::ReasoningLevel::Max.summary()
+            )
+            .unwrap(),
+            json!({"effort":"max","summary":"auto"})
         );
     }
 
