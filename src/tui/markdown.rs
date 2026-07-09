@@ -3,6 +3,12 @@ use ratatui::{
     text::{Line, Span},
 };
 
+mod table;
+
+#[cfg(test)]
+#[path = "markdown/table_tests.rs"]
+mod table_tests;
+
 use super::{
     render::{char_display_width, display_width, wrap_line_at_whitespace_ranges, wrap_line_hard},
     theme::Theme,
@@ -25,7 +31,10 @@ pub(super) fn markdown_lines(
     let width = width.max(1);
     let mut lines = Vec::new();
 
-    for raw_line in text.lines() {
+    let raw_lines = text.lines().collect::<Vec<_>>();
+    let mut line_index = 0;
+    while line_index < raw_lines.len() {
+        let raw_line = raw_lines[line_index];
         let code_fence = raw_line.trim_start().starts_with("```");
         if code_fence {
             lines.push(code_block_border(
@@ -33,16 +42,27 @@ pub(super) fn markdown_lines(
                 if *in_code_block { '╰' } else { '╭' },
             ));
             *in_code_block = !*in_code_block;
+            line_index += 1;
             continue;
         }
 
         if *in_code_block {
             lines.extend(code_block_content_lines(raw_line, width));
+            line_index += 1;
+            continue;
+        }
+
+        if let Some((table_lines, consumed_lines)) =
+            table::markdown_table_lines(&raw_lines[line_index..], width)
+        {
+            lines.extend(table_lines);
+            line_index += consumed_lines;
             continue;
         }
 
         if is_markdown_divider(raw_line) {
             lines.push(markdown_divider(width));
+            line_index += 1;
             continue;
         }
 
@@ -50,6 +70,7 @@ pub(super) fn markdown_lines(
             &markdown_inline_segments(raw_line),
             width,
         ));
+        line_index += 1;
     }
 
     if lines.is_empty() && text.is_empty() {
