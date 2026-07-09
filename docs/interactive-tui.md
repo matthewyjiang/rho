@@ -62,6 +62,8 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
 
+Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use `up` and `down` to select, then press `tab` or `enter` to insert the highlighted path into the message as an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
+
 ## Login and logout
 
 `/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
@@ -108,8 +110,9 @@ Most editing keys work the way they do in a normal terminal input.
 | --- | --- |
 | `esc` | Interrupt the current response, or hide the command palette when it is open |
 | `/` at start | Open the command palette |
-| `up` / `down` | Re-enter previous prompts, or select a command while the palette is open |
-| `tab` | Complete the selected command while the palette is open |
+| `@` | Open workspace file path autocomplete |
+| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
+| `tab` | Complete the selected command or file path |
 | `enter` | Send a prompt, run a selected slash command, or queue a prompt while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |

@@ -38,6 +38,7 @@ pub(super) enum PickerAction {
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
+    InsertFilePath,
     ResumeSession,
     Config,
 }
@@ -51,6 +52,7 @@ impl PickerAction {
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
+            | PickerAction::InsertFilePath
             | PickerAction::ResumeSession => false,
         }
     }
@@ -124,7 +126,18 @@ impl UiPicker {
     }
 
     pub(super) fn matching_indices(&self) -> Vec<usize> {
-        picker_matching_indices(&self.items, &self.filter)
+        match self.action {
+            PickerAction::InsertFilePath => {
+                fuzzy_picker_matching_indices(&self.items, &self.filter)
+            }
+            PickerAction::SelectModel
+            | PickerAction::SelectTitleModel
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession
+            | PickerAction::Config => picker_matching_indices(&self.items, &self.filter),
+        }
     }
 
     pub(super) fn selected_item(&self) -> Option<&PickerItem> {
@@ -148,19 +161,89 @@ pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec
     items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            let detail = item.detail.as_deref().unwrap_or_default();
-            let preview = item.preview.as_deref().unwrap_or_default();
-            let badge = item
-                .badge
-                .as_ref()
-                .map(|badge| badge.text.as_str())
-                .unwrap_or_default();
-            let haystack = format!(
-                "{} {} {} {} {}",
-                item.label, item.value, detail, preview, badge
-            );
-            regex.is_match(&haystack).then_some(index)
-        })
+        .filter_map(|(index, item)| regex.is_match(&picker_haystack(item)).then_some(index))
         .collect()
+}
+
+pub(super) fn fuzzy_picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return (0..items.len()).collect();
+    }
+
+    fuzzy_matching_indices(items, filter)
+}
+
+fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
+    let mut matches = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            fuzzy_match_score(&item.value, filter).map(|score| (index, score))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left_index.cmp(right_index))
+    });
+    matches.into_iter().map(|(index, _)| index).collect()
+}
+
+fn picker_haystack(item: &PickerItem) -> String {
+    let detail = item.detail.as_deref().unwrap_or_default();
+    let preview = item.preview.as_deref().unwrap_or_default();
+    let badge = item
+        .badge
+        .as_ref()
+        .map(|badge| badge.text.as_str())
+        .unwrap_or_default();
+    format!(
+        "{} {} {} {} {}",
+        item.label, item.value, detail, preview, badge
+    )
+}
+
+fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
+    let haystack = haystack.to_lowercase();
+    let needle = needle.to_lowercase();
+    let haystack_chars = haystack.chars().collect::<Vec<_>>();
+    let mut search_start = 0;
+    let mut first_match = None;
+    let mut previous_match = None;
+    let mut score = 0;
+
+    for needle_char in needle.chars() {
+        let candidate = haystack_chars[search_start..]
+            .iter()
+            .enumerate()
+            .filter(|(_, haystack_char)| **haystack_char == needle_char)
+            .map(|(offset, _)| search_start + offset)
+            .max_by_key(|index| fuzzy_character_bonus(&haystack_chars, *index, previous_match))?;
+        let index = candidate;
+        first_match.get_or_insert(index);
+        score += 10;
+        score += fuzzy_character_bonus(&haystack_chars, index, previous_match);
+        previous_match = Some(index);
+        search_start = index + 1;
+    }
+
+    let first_match = first_match.unwrap_or_default() as i64;
+    let span = previous_match.unwrap_or_default() as i64 - first_match;
+    Some(score - first_match - span)
+}
+
+fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option<usize>) -> i64 {
+    let mut bonus = 0;
+    if previous_match.is_some_and(|previous| previous + 1 == index) {
+        bonus += 12;
+    }
+    if index == 0 || is_word_boundary(haystack[index.saturating_sub(1)]) {
+        bonus += 20;
+    }
+    bonus
+}
+
+fn is_word_boundary(ch: char) -> bool {
+    matches!(ch, '/' | '\\' | '_' | '-' | '.' | ' ')
 }
