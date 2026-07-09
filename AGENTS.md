@@ -67,6 +67,9 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 
 - If you are the rho agent, (not other agents like claude/pi), you should report any issues you experience with using the agent harness so that the experience can be improved.
 
+## Documentation
+
+- When making a pull request, update documentation with important changes that users need to know.
 
 ## Pull requests
 
