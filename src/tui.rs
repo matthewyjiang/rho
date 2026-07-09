@@ -238,6 +238,7 @@ struct App {
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
@@ -1211,6 +1212,7 @@ impl App {
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_model_selection: None,
             pending_session_title: None,
             history_scroll: HistoryScroll::Bottom,
             history_scrollbar_drag: None,
@@ -3078,6 +3080,7 @@ impl App {
                 self.status = "error".into();
             }
         }
+        self.apply_pending_model_selection(terminal, agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
@@ -3403,6 +3406,79 @@ impl App {
         Ok(())
     }
 
+    fn execute_model_command_during_turn(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let model = invocation.args.trim();
+        if model.is_empty() {
+            self.refresh_available_auths();
+            let picker = model_picker::model_picker_during_run(
+                &self.info,
+                self.pending_model_selection.as_ref(),
+                &self.available_auths,
+            );
+            if picker.items.is_empty() {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(
+                        "no cached API models. run /refresh-model-list after the current run ends."
+                            .into(),
+                    ),
+                )?;
+                self.status = "running".into();
+            } else {
+                self.composer = ComposerMode::Picker(picker);
+                self.status = "select model for next turn".into();
+            }
+            return Ok(());
+        }
+
+        self.refresh_available_auths();
+        match catalog::resolve_model_selection_for_auths(
+            model,
+            &self.info.provider,
+            &self.info.auth,
+            &self.available_auths,
+        ) {
+            Ok(selection) => self.queue_model_selection(selection, terminal),
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "model switch failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn queue_model_selection(
+        &mut self,
+        selection: ModelSelection,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let provider_model = format!("{}/{}", selection.provider, selection.model);
+        self.pending_model_selection = Some(selection);
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
+            )),
+        )?;
+        self.status = format!("model queued: {provider_model}");
+        Ok(())
+    }
+
+    fn apply_pending_model_selection(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let Some(selection) = self.pending_model_selection.take() else {
+            return Ok(());
+        };
+        self.select_model(selection, terminal, agent)
+    }
+
     fn execute_command_during_turn(
         &mut self,
         invocation: CommandInvocation,
@@ -3413,9 +3489,9 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
+            CommandId::Model => self.execute_model_command_during_turn(invocation, terminal),
             CommandId::New
             | CommandId::Compact
-            | CommandId::Model
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
@@ -3587,8 +3663,22 @@ impl App {
                     }
                 }
             }
-            PickerAction::SelectModel
-            | PickerAction::LoginProvider
+            PickerAction::SelectModel => {
+                self.refresh_available_auths();
+                match catalog::resolve_model_selection_for_auths(
+                    &value,
+                    &self.info.provider,
+                    &self.info.auth,
+                    &self.available_auths,
+                ) {
+                    Ok(selection) => self.queue_model_selection(selection, terminal)?,
+                    Err(err) => {
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "model switch failed".into();
+                    }
+                }
+            }
+            PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::ResumeSession => {
                 self.insert_entry(
@@ -4689,6 +4779,11 @@ impl App {
 
         self.refresh_available_auths();
         let mut picker = match action {
+            PickerAction::SelectModel if self.running => model_picker::model_picker_during_run(
+                &self.info,
+                self.pending_model_selection.as_ref(),
+                &self.available_auths,
+            ),
             PickerAction::SelectModel => {
                 model_picker::model_picker(&self.info, &self.available_auths)
             }

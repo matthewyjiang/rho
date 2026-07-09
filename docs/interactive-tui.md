@@ -87,6 +87,8 @@ Use `/model provider/model` to switch explicitly, including to a provider outsid
 
 A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
+`/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. The queued model change is applied only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice.
+
 Use `/title-model` to choose the model used for session title generation. The title model picker follows the same model catalog and auth availability rules as `/model`, but saves optional `title_provider`, `title_model`, and `title_auth` settings instead of changing the active chat model.
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
