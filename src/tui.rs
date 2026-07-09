@@ -79,7 +79,7 @@ use crate::{
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
-        image_summary,
+        favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
         registry::{self, ProviderAuthKind},
@@ -110,6 +110,7 @@ pub struct TuiInfo {
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
+    pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
@@ -2313,6 +2314,10 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
+                self.toggle_selected_model_favorite(terminal)?;
+                Ok(true)
+            }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -3506,6 +3511,10 @@ impl App {
                 }
                 Ok(true)
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
+                self.toggle_selected_model_favorite(terminal)?;
+                Ok(true)
+            }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
                 self.submit_picker_selection_during_turn(terminal)?;
                 Ok(true)
@@ -4294,7 +4303,12 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
         self.refresh_available_auths();
         let (provider, model, _auth) = self.title_model_selection();
-        let picker = model_picker::title_model_picker(&provider, &model, &self.available_auths);
+        let picker = model_picker::title_model_picker(
+            &provider,
+            &model,
+            &self.info.favorite_models,
+            &self.available_auths,
+        );
 
         if picker.items.is_empty() {
             self.insert_entry(
@@ -4520,6 +4534,77 @@ impl App {
             self.status = if running { "running" } else { "ready" }.into();
             Ok(())
         }
+    }
+
+    fn model_picker_is_open(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker)
+                if matches!(
+                    picker.action,
+                    PickerAction::SelectModel | PickerAction::SelectTitleModel
+                )
+        )
+    }
+
+    fn toggle_selected_model_favorite(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let Some((action, value)) = self.active_picker_selection() else {
+            return Ok(());
+        };
+        if !matches!(
+            action,
+            PickerAction::SelectModel | PickerAction::SelectTitleModel
+        ) {
+            return Ok(());
+        }
+        let Some(favorite) = favorites::favorite_model_from_value(&value) else {
+            return Ok(());
+        };
+
+        let filter = match &self.composer {
+            ComposerMode::Picker(picker) => picker.filter.clone(),
+            _ => String::new(),
+        };
+        let pinned = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+            let pinned = favorites::toggle_favorite(
+                &mut config.favorite_models,
+                &favorite.provider,
+                &favorite.model,
+            );
+            config.save(self.info.config_path.clone())?;
+            self.info.favorite_models = config.favorite_models.clone();
+            Ok(pinned)
+        })?;
+
+        self.refresh_available_auths();
+        let mut picker = match action {
+            PickerAction::SelectModel => {
+                model_picker::model_picker(&self.info, &self.available_auths)
+            }
+            PickerAction::SelectTitleModel => {
+                let (provider, model, _auth) = self.title_model_selection();
+                model_picker::title_model_picker(
+                    &provider,
+                    &model,
+                    &self.info.favorite_models,
+                    &self.available_auths,
+                )
+            }
+            PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession
+            | PickerAction::Config => return Ok(()),
+        };
+        Self::restore_picker_position(&mut picker, &value, filter);
+        self.composer = ComposerMode::Picker(picker);
+        let action = if pinned { "pinned" } else { "unpinned" };
+        self.insert_entry(terminal, &Entry::Notice(format!("{action} {value}")))?;
+        self.status = format!("{action} model");
+        Ok(())
     }
 
     fn web_search_config_picker_is_open(&self) -> bool {
@@ -6978,6 +7063,7 @@ mod tests {
                 title_provider: None,
                 title_model: None,
                 title_auth: None,
+                favorite_models: Vec::new(),
                 questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),
@@ -8203,6 +8289,7 @@ mod tests {
                 title_provider: None,
                 title_model: None,
                 title_auth: None,
+                favorite_models: Vec::new(),
                 questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),

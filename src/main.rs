@@ -158,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
                     title_provider: cfg.title_provider,
                     title_model: cfg.title_model,
                     title_auth: cfg.title_auth,
+                    favorite_models: cfg.favorite_models,
                     max_tool_output_lines: cfg.max_tool_output_lines,
                     questionnaire_enabled: !cli.no_tools,
                     session_id,

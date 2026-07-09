@@ -2,7 +2,12 @@ use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{agent::CompactionConfig, paths, reasoning::ReasoningLevel};
+use crate::{
+    agent::CompactionConfig,
+    model::favorites::{favorite_model_values, normalized_favorite_models},
+    paths,
+    reasoning::ReasoningLevel,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -19,6 +24,7 @@ pub struct Config {
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
+    pub favorite_models: Vec<String>,
     pub web_search_provider: String,
     pub check_for_updates: bool,
     pub web_search_openai_api_key: Option<String>,
@@ -43,6 +49,7 @@ impl Default for Config {
             title_provider: None,
             title_model: None,
             title_auth: None,
+            favorite_models: Vec::new(),
             web_search_provider: "auto".into(),
             check_for_updates: true,
             web_search_openai_api_key: None,
@@ -108,6 +115,9 @@ impl Config {
         if let Some(v) = file.title_auth {
             cfg.title_auth = Some(v);
         }
+        if let Some(v) = file.favorite_models {
+            cfg.favorite_models = favorite_model_values(&normalized_favorite_models(&v));
+        }
         if let Some(v) = file.web_search_provider {
             cfg.web_search_provider = normalize_web_search_provider(v);
         }
@@ -136,6 +146,8 @@ impl Config {
         }
         let mut config = self.clone();
         config.normalize_compaction_percentages();
+        config.favorite_models =
+            favorite_model_values(&normalized_favorite_models(&config.favorite_models));
         fs::write(path, toml::to_string_pretty(&config)?)?;
         Ok(())
     }
@@ -187,6 +199,7 @@ struct PartialConfig {
     title_provider: Option<String>,
     title_model: Option<String>,
     title_auth: Option<String>,
+    favorite_models: Option<Vec<String>>,
     web_search_provider: Option<String>,
     check_for_updates: Option<bool>,
     web_search_openai_api_key: Option<String>,
@@ -278,6 +291,37 @@ mod tests {
         let config = Config::load(Some(path)).unwrap();
 
         assert!(!config.rtk);
+    }
+
+    #[test]
+    fn loads_and_saves_favorite_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+favorite_models = [
+  " openai/gpt-5.5 ",
+  "missing-separator",
+  "openai/gpt-5.5",
+  "anthropic/claude-sonnet-4-5",
+]
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load(Some(path.clone())).unwrap();
+
+        assert_eq!(
+            config.favorite_models,
+            vec!["openai/gpt-5.5", "anthropic/claude-sonnet-4-5"]
+        );
+
+        config.save(Some(path.clone())).unwrap();
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(saved.contains("favorite_models"), "{saved}");
+        assert!(saved.contains("openai/gpt-5.5"), "{saved}");
+        assert!(!saved.contains("missing-separator"), "{saved}");
     }
 
     #[test]
