@@ -4,8 +4,40 @@ use crate::model::{catalog, favorites};
 pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPicker {
     model_picker_for_current(
         "select model",
-        &info.provider,
-        &info.model,
+        "type regex filter, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
+        CurrentModel {
+            provider: &info.provider,
+            model: &info.model,
+            badge: "selected",
+        },
+        &info.favorite_models,
+        available_auths,
+        PickerAction::SelectModel,
+    )
+}
+
+pub(super) fn model_picker_during_run(
+    info: &TuiInfo,
+    pending: Option<&crate::model::catalog::ModelSelection>,
+    available_auths: &[String],
+) -> UiPicker {
+    let (provider, model, badge) = pending
+        .map(|selection| {
+            (
+                selection.provider.as_str(),
+                selection.model.as_str(),
+                "pending",
+            )
+        })
+        .unwrap_or((&info.provider, &info.model, "selected"));
+    model_picker_for_current(
+        "select model for next turn",
+        "current run keeps its model; selection applies after it fully ends, ctrl-p pin/unpin, enter confirm, esc cancel",
+        CurrentModel {
+            provider,
+            model,
+            badge,
+        },
         &info.favorite_models,
         available_auths,
         PickerAction::SelectModel,
@@ -20,22 +52,37 @@ pub(super) fn title_model_picker(
 ) -> UiPicker {
     model_picker_for_current(
         "select title model",
-        current_provider,
-        current_model,
+        "type regex filter, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
+        CurrentModel {
+            provider: current_provider,
+            model: current_model,
+            badge: "selected",
+        },
         favorite_models,
         available_auths,
         PickerAction::SelectTitleModel,
     )
 }
 
+struct CurrentModel<'a> {
+    provider: &'a str,
+    model: &'a str,
+    badge: &'a str,
+}
+
 fn model_picker_for_current(
     title: &str,
-    current_provider: &str,
-    current_model: &str,
+    help: &str,
+    current: CurrentModel<'_>,
     favorite_models: &[String],
     available_auths: &[String],
     action: PickerAction,
 ) -> UiPicker {
+    let CurrentModel {
+        provider: current_provider,
+        model: current_model,
+        badge: selected_badge,
+    } = current;
     let current = format!("{current_provider}/{current_model}");
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let items = favorites::reorder_models_by_favorites(
@@ -51,7 +98,7 @@ fn model_picker_for_current(
         let selected = entry.provider == current_provider && entry.model == current_model;
         let badge = match (pinned, selected) {
             (true, true) => Some(PickerBadge {
-                text: "pinned, selected".into(),
+                text: format!("pinned, {selected_badge}"),
                 tone: PickerBadgeTone::Selected,
             }),
             (true, false) => Some(PickerBadge {
@@ -59,7 +106,7 @@ fn model_picker_for_current(
                 tone: PickerBadgeTone::Favorite,
             }),
             (false, true) => Some(PickerBadge {
-                text: "selected".into(),
+                text: selected_badge.into(),
                 tone: PickerBadgeTone::Selected,
             }),
             (false, false) => None,
@@ -78,12 +125,7 @@ fn model_picker_for_current(
     })
     .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new(
-        title,
-        "type regex filter, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
-        items,
-        action,
-    );
+    let mut picker = UiPicker::new(title, help, items, action);
     if let Some(index) = picker.items.iter().position(|item| item.value == current) {
         picker.selected = index;
     }
@@ -139,5 +181,56 @@ mod tests {
             picker.selected_item().unwrap().value,
             "openai-codex/gpt-5.6-sol"
         );
+    }
+
+    #[test]
+    fn running_model_picker_marks_pending_model_and_explains_timing() {
+        let store = MemoryCredentialStore::default();
+        save_codex_tokens(
+            &store,
+            &crate::credentials::CodexTokens {
+                access_token: "access".into(),
+                refresh_token: Some("refresh".into()),
+                id_token: None,
+                account_id: None,
+            },
+        )
+        .unwrap();
+        let auths = available_auth_modes(&store);
+        let info = TuiInfo {
+            cwd: std::path::PathBuf::from("/tmp/project"),
+            provider: "openai-codex".into(),
+            model: "gpt-5.5".into(),
+            reasoning: crate::reasoning::ReasoningLevel::Low,
+            show_reasoning_output: true,
+            auth: "codex".into(),
+            title_provider: None,
+            title_model: None,
+            title_auth: None,
+            favorite_models: Vec::new(),
+            questionnaire_enabled: true,
+            session_id: None,
+            recovered_messages: Vec::new(),
+            open_resume_picker: false,
+            config_path: None,
+            auth_unavailable: None,
+            update_notice: None,
+            herdr: crate::herdr::HerdrReporter::default(),
+            max_tool_output_lines: 10,
+        };
+        let pending = crate::model::catalog::ModelSelection {
+            provider: "openai-codex".into(),
+            model: "gpt-5.4-mini".into(),
+            auth: "codex".into(),
+            from_catalog: true,
+        };
+
+        let picker = model_picker_during_run(&info, Some(&pending), &auths);
+
+        assert_eq!(picker.title, "select model for next turn");
+        assert!(picker.help.contains("after it fully ends"));
+        let selected = picker.selected_item().unwrap();
+        assert_eq!(selected.value, "openai-codex/gpt-5.4-mini");
+        assert_eq!(selected.badge.as_ref().unwrap().text, "pending");
     }
 }

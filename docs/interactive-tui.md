@@ -62,13 +62,15 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
 
+Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use `up` and `down` to select, then press `tab` or `enter` to insert the highlighted path into the message as an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
+
 ## Login and logout
 
 `/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
 
 `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
 
-`/logout` opens the same provider picker and deletes credentials from the device. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
+`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. `/logout openai` deletes the stored OpenAI API key. `/logout openai-codex` deletes stored Codex tokens. `/logout anthropic` deletes the stored Anthropic API key. `/logout github-copilot` deletes stored GitHub Copilot tokens. Environment overrides are CI/development hatches and can keep a provider available after logout.
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
 
@@ -86,6 +88,8 @@ Use `/model provider/model` to switch explicitly, including to a provider outsid
 ```
 
 A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
+
+`/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. The queued model change is applied only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice.
 
 Use `/title-model` to choose the model used for session title generation. The title model picker follows the same model catalog and auth availability rules as `/model`, but saves optional `title_provider`, `title_model`, and `title_auth` settings instead of changing the active chat model.
 
@@ -106,8 +110,9 @@ Most editing keys work the way they do in a normal terminal input.
 | --- | --- |
 | `esc` | Interrupt the current response, or hide the command palette when it is open |
 | `/` at start | Open the command palette |
-| `up` / `down` | Re-enter previous prompts, or select a command while the palette is open |
-| `tab` | Complete the selected command while the palette is open |
+| `@` | Open workspace file path autocomplete |
+| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
+| `tab` | Complete the selected command or file path |
 | `enter` | Send a prompt, run a selected slash command, or queue a prompt while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |

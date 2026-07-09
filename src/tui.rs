@@ -32,6 +32,7 @@ use ratatui::{
     DefaultTerminal, Frame, Terminal,
 };
 mod config_picker;
+mod file_picker;
 mod history_cache;
 mod login;
 mod markdown;
@@ -228,6 +229,7 @@ struct App {
     command_selection: usize,
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
+    file_picker_context: Option<FilePickerContext>,
     composer: ComposerMode,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
@@ -238,6 +240,7 @@ struct App {
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
@@ -831,6 +834,12 @@ struct InputDraft {
     paste_segments: Vec<PasteSegment>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FilePickerContext {
+    start: usize,
+    end: usize,
+}
+
 impl From<&str> for QueuedPrompt {
     fn from(prompt: &str) -> Self {
         Self {
@@ -1201,6 +1210,7 @@ impl App {
             command_selection: 0,
             command_prefix: None,
             command_palette_dismissed: false,
+            file_picker_context: None,
             composer: ComposerMode::Input,
             credential_store,
             available_auths,
@@ -1211,6 +1221,7 @@ impl App {
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_model_selection: None,
             pending_session_title: None,
             history_scroll: HistoryScroll::Bottom,
             history_scrollbar_drag: None,
@@ -1280,7 +1291,11 @@ impl App {
             Event::Paste(text) => {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
+                let opens_file_picker = text.contains('@');
                 self.insert_paste(&text);
+                if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
+                    self.open_file_picker();
+                }
                 self.paste_burst.clear();
             }
             Event::Resize(_, _) => {
@@ -1318,7 +1333,11 @@ impl App {
             return;
         };
         let text = normalize_paste(&text);
+        let opens_file_picker = text.contains('@');
         self.insert_paste(&text);
+        if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
+            self.open_file_picker();
+        }
     }
 
     fn handle_paste_burst_key(&mut self, key: KeyEvent) -> bool {
@@ -1373,6 +1392,14 @@ impl App {
     }
 
     fn paste_burst_key(&self, key: KeyEvent) -> Option<PasteBurstKey> {
+        if matches!(
+            (key.modifiers, key.code),
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char('@'))
+        ) && matches!(self.composer, ComposerMode::Input)
+        {
+            return None;
+        }
+
         match (key.modifiers, key.code) {
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
@@ -1592,6 +1619,9 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
+                if ch == '@' {
+                    self.open_file_picker();
+                }
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -2311,7 +2341,23 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
+                let selected_file = match &self.composer {
+                    ComposerMode::Picker(picker)
+                        if picker.action == PickerAction::InsertFilePath =>
+                    {
+                        picker.selected_item().map(|item| item.value.clone())
+                    }
+                    ComposerMode::Picker(_) => None,
+                    ComposerMode::Input
+                    | ComposerMode::SecretInput(_)
+                    | ComposerMode::ConfigNumberInput(_)
+                    | ComposerMode::ConfigTextInput(_)
+                    | ComposerMode::OAuthPending(_)
+                    | ComposerMode::Questionnaire(_) => None,
+                };
+                if let Some(path) = selected_file {
+                    self.insert_selected_file_path(&path, /*running*/ false);
+                } else if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.complete_filter();
                 }
                 self.paste_burst.clear();
@@ -2530,6 +2576,52 @@ impl App {
         self.reset_input_history_navigation();
         self.input_changed();
         true
+    }
+
+    fn open_file_picker(&mut self) {
+        let Some(mention) = file_picker::active_file_mention(&self.input, self.input_cursor) else {
+            return;
+        };
+        let picker = file_picker::file_path_picker(&self.info.cwd, &mention.query);
+        let has_items = !picker.items.is_empty();
+        self.file_picker_context = Some(FilePickerContext {
+            start: mention.start,
+            end: mention.end,
+        });
+        self.composer = ComposerMode::Picker(picker);
+        self.status = if has_items {
+            "select workspace file".into()
+        } else {
+            "no workspace files found".into()
+        };
+    }
+
+    fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
+        self.reset_input_history_navigation();
+        self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
+        let start_byte = self.input_byte_index(start);
+        let end_byte = self.input_byte_index(end);
+        self.input.replace_range(start_byte..end_byte, text);
+        self.input_cursor = start + text.chars().count();
+        self.input_changed();
+    }
+
+    fn insert_selected_file_path(&mut self, path: &str, running: bool) {
+        let Some(context) = self.file_picker_context.take() else {
+            self.composer = ComposerMode::Input;
+            self.status = if running { "running" } else { "ready" }.into();
+            return;
+        };
+        let mention = format!("@{path}");
+        self.composer = ComposerMode::Input;
+        self.replace_input_range(context.start, context.end, &mention);
+        self.status = "file path inserted".into();
+    }
+
+    fn cancel_file_picker(&mut self, running: bool) {
+        self.file_picker_context = None;
+        self.composer = ComposerMode::Input;
+        self.status = if running { "running" } else { "ready" }.into();
     }
 
     fn insert_input_char(&mut self, ch: char) {
@@ -3080,6 +3172,7 @@ impl App {
                 self.status = "error".into();
             }
         }
+        self.apply_pending_model_selection(terminal, agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
@@ -3292,6 +3385,9 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
+                if ch == '@' {
+                    self.open_file_picker();
+                }
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -3405,6 +3501,79 @@ impl App {
         Ok(())
     }
 
+    fn execute_model_command_during_turn(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let model = invocation.args.trim();
+        if model.is_empty() {
+            self.refresh_available_auths();
+            let picker = model_picker::model_picker_during_run(
+                &self.info,
+                self.pending_model_selection.as_ref(),
+                &self.available_auths,
+            );
+            if picker.items.is_empty() {
+                self.insert_entry(
+                    terminal,
+                    &Entry::Notice(
+                        "no cached API models. run /refresh-model-list after the current run ends."
+                            .into(),
+                    ),
+                )?;
+                self.status = "running".into();
+            } else {
+                self.composer = ComposerMode::Picker(picker);
+                self.status = "select model for next turn".into();
+            }
+            return Ok(());
+        }
+
+        self.refresh_available_auths();
+        match catalog::resolve_model_selection_for_auths(
+            model,
+            &self.info.provider,
+            &self.info.auth,
+            &self.available_auths,
+        ) {
+            Ok(selection) => self.queue_model_selection(selection, terminal),
+            Err(err) => {
+                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.status = "model switch failed".into();
+                Ok(())
+            }
+        }
+    }
+
+    fn queue_model_selection(
+        &mut self,
+        selection: ModelSelection,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let provider_model = format!("{}/{}", selection.provider, selection.model);
+        self.pending_model_selection = Some(selection);
+        self.insert_entry(
+            terminal,
+            &Entry::Notice(format!(
+                "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
+            )),
+        )?;
+        self.status = format!("model queued: {provider_model}");
+        Ok(())
+    }
+
+    fn apply_pending_model_selection(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut Agent,
+    ) -> anyhow::Result<()> {
+        let Some(selection) = self.pending_model_selection.take() else {
+            return Ok(());
+        };
+        self.select_model(selection, terminal, agent)
+    }
+
     fn execute_command_during_turn(
         &mut self,
         invocation: CommandInvocation,
@@ -3415,9 +3584,9 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(terminal),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
+            CommandId::Model => self.execute_model_command_during_turn(invocation, terminal),
             CommandId::New
             | CommandId::Compact
-            | CommandId::Model
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
@@ -3515,7 +3684,23 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
+                let selected_file = match &self.composer {
+                    ComposerMode::Picker(picker)
+                        if picker.action == PickerAction::InsertFilePath =>
+                    {
+                        picker.selected_item().map(|item| item.value.clone())
+                    }
+                    ComposerMode::Picker(_) => None,
+                    ComposerMode::Input
+                    | ComposerMode::SecretInput(_)
+                    | ComposerMode::ConfigNumberInput(_)
+                    | ComposerMode::ConfigTextInput(_)
+                    | ComposerMode::OAuthPending(_)
+                    | ComposerMode::Questionnaire(_) => None,
+                };
+                if let Some(path) = selected_file {
+                    self.insert_selected_file_path(&path, /*running*/ true);
+                } else if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.complete_filter();
                 }
                 Ok(true)
@@ -3557,12 +3742,19 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            self.composer = ComposerMode::Input;
-            self.status = "running".into();
+            if matches!(
+                &self.composer,
+                ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
+            ) {
+                self.cancel_file_picker(/*running*/ true);
+            } else {
+                self.composer = ComposerMode::Input;
+                self.status = "running".into();
+            }
             return Ok(());
         };
 
-        if !matches!(action, PickerAction::Config) {
+        if !matches!(action, PickerAction::Config | PickerAction::InsertFilePath) {
             self.composer = ComposerMode::Input;
         }
         match action {
@@ -3571,6 +3763,9 @@ impl App {
                 self.input_cursor = self.input_char_len();
                 self.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
+            }
+            PickerAction::InsertFilePath => {
+                self.insert_selected_file_path(&value, /*running*/ true);
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value, terminal)?,
             PickerAction::SelectTitleModel => {
@@ -3589,8 +3784,22 @@ impl App {
                     }
                 }
             }
-            PickerAction::SelectModel
-            | PickerAction::LoginProvider
+            PickerAction::SelectModel => {
+                self.refresh_available_auths();
+                match catalog::resolve_model_selection_for_auths(
+                    &value,
+                    &self.info.provider,
+                    &self.info.auth,
+                    &self.available_auths,
+                ) {
+                    Ok(selection) => self.queue_model_selection(selection, terminal)?,
+                    Err(err) => {
+                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.status = "model switch failed".into();
+                    }
+                }
+            }
+            PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::ResumeSession => {
                 self.insert_entry(
@@ -3792,8 +4001,12 @@ impl App {
                 }
                 Event::Paste(text) if input_mode == RunningInputMode::Turn => {
                     let text = normalize_paste(&text);
+                    let opens_file_picker = text.contains('@');
                     self.flush_pending_paste_burst();
                     self.insert_paste(&text);
+                    if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
+                        self.open_file_picker();
+                    }
                     self.paste_burst.clear();
                 }
                 Event::Resize(_, _) => {
@@ -4436,12 +4649,19 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            self.composer = ComposerMode::Input;
-            self.status = "ready".into();
+            if matches!(
+                &self.composer,
+                ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
+            ) {
+                self.cancel_file_picker(/*running*/ false);
+            } else {
+                self.composer = ComposerMode::Input;
+                self.status = "ready".into();
+            }
             return Ok(());
         };
 
-        if !matches!(action, PickerAction::Config) {
+        if !matches!(action, PickerAction::Config | PickerAction::InsertFilePath) {
             self.composer = ComposerMode::Input;
         }
         match action {
@@ -4487,6 +4707,10 @@ impl App {
                 self.input_cursor = self.input_char_len();
                 self.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
+                Ok(())
+            }
+            PickerAction::InsertFilePath => {
+                self.insert_selected_file_path(&value, /*running*/ false);
                 Ok(())
             }
             PickerAction::ResumeSession => {
@@ -4631,9 +4855,16 @@ impl App {
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
-        if self.web_search_config_picker_is_open() {
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
+        ) {
+            self.cancel_file_picker(running);
+            Ok(())
+        } else if self.web_search_config_picker_is_open() {
             self.open_main_config_picker_selected(config_picker::WEB_SEARCH_VALUE)
         } else {
+            self.file_picker_context = None;
             self.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
             Ok(())
@@ -4699,6 +4930,11 @@ impl App {
 
         self.refresh_available_auths();
         let mut picker = match action {
+            PickerAction::SelectModel if self.running => model_picker::model_picker_during_run(
+                &self.info,
+                self.pending_model_selection.as_ref(),
+                &self.available_auths,
+            ),
             PickerAction::SelectModel => {
                 model_picker::model_picker(&self.info, &self.available_auths)
             }
@@ -4714,6 +4950,7 @@ impl App {
             PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
+            | PickerAction::InsertFilePath
             | PickerAction::ResumeSession
             | PickerAction::Config => return Ok(()),
         };
@@ -7196,8 +7433,28 @@ enum HistoryDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{save_anthropic_api_key, save_openai_api_key, MemoryCredentialStore};
+    use crate::credentials::{
+        save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
+        MemoryCredentialStore,
+    };
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+    #[derive(Debug)]
+    struct FailingCredentialStore;
+
+    impl CredentialStore for FailingCredentialStore {
+        fn get_secret(&self, _account: &str) -> CredentialResult<Option<String>> {
+            Err(CredentialError::StoreUnavailable("test failure".into()))
+        }
+
+        fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
+            unreachable!()
+        }
+
+        fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
+            unreachable!()
+        }
+    }
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -8438,6 +8695,32 @@ mod tests {
     }
 
     #[test]
+    fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
+        let store = MemoryCredentialStore::default();
+        save_openai_api_key(&store, "sk-test").unwrap();
+        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+
+        let picker = provider_picker::logout_provider_picker(&store).unwrap();
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["openai", "anthropic"]);
+    }
+
+    #[test]
+    fn logout_provider_picker_propagates_credential_store_errors() {
+        let error = provider_picker::logout_provider_picker(&FailingCredentialStore).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            CredentialError::StoreUnavailable("test failure".into()).to_string()
+        );
+    }
+
+    #[test]
     fn model_picker_uses_all_available_auths() {
         let store = Arc::new(MemoryCredentialStore::default());
         save_openai_api_key(store.as_ref(), "sk-test").unwrap();
@@ -8523,6 +8806,35 @@ mod tests {
         );
         picker.complete_filter();
         assert_eq!(picker.filter, regex::escape("openai-codex/gpt-5.4-mini"));
+    }
+
+    #[test]
+    fn file_picker_fuzzy_matching_prefers_path_component_boundaries() {
+        let picker = UiPicker::new(
+            "workspace files",
+            "type fuzzy search",
+            vec![
+                PickerItem {
+                    label: "src/tui/model_picker.rs".into(),
+                    detail: None,
+                    preview: None,
+                    badge: None,
+                    value: "src/tui/model_picker.rs".into(),
+                },
+                PickerItem {
+                    label: "AGENTS.md".into(),
+                    detail: None,
+                    preview: None,
+                    badge: None,
+                    value: "AGENTS.md".into(),
+                },
+            ],
+            PickerAction::InsertFilePath,
+        );
+        let mut picker = picker;
+        picker.filter = "tmd".into();
+
+        assert_eq!(picker.matching_indices(), vec![0, 1]);
     }
 
     #[test]

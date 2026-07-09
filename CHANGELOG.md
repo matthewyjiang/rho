@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.19.0...rho-coding-agent-v0.20.0) (2026-07-09)
+
+
+### Features
+
+* **models:** add pinned model picker favorites ([#148](https://github.com/matthewyjiang/rho/issues/148)) ([ee8b5bc](https://github.com/matthewyjiang/rho/commit/ee8b5bc79abaaad8d443aea25c765ec694af8942))
+* **tui:** add manual compact command ([#151](https://github.com/matthewyjiang/rho/issues/151)) ([1c39dec](https://github.com/matthewyjiang/rho/commit/1c39decd88aeee721c7cb855d9b1d12b2adb0710))
+* **tui:** autocomplete file paths with @ ([#155](https://github.com/matthewyjiang/rho/issues/155)) ([beaaa9f](https://github.com/matthewyjiang/rho/commit/beaaa9fe84865a15fe9ffccc97362264b261ecb4))
+
+
+### Bug Fixes
+
+* **reasoning:** map codex effort by model ([#150](https://github.com/matthewyjiang/rho/issues/150)) ([e4a95e1](https://github.com/matthewyjiang/rho/commit/e4a95e14bc7faef48f431260680f36f06a0a7112))
+* **tui:** defer model changes until agent run ends ([#152](https://github.com/matthewyjiang/rho/issues/152)) ([78dfd33](https://github.com/matthewyjiang/rho/commit/78dfd33344d0f4c39767ecd601d642a1b5a64b8a))
+* **tui:** filter logout provider picker ([#153](https://github.com/matthewyjiang/rho/issues/153)) ([8a9e449](https://github.com/matthewyjiang/rho/commit/8a9e449df6e18c5833da6c19347eb74621799cdc))
+* **tui:** hide inactive history scrollbar ([#147](https://github.com/matthewyjiang/rho/issues/147)) ([8db9843](https://github.com/matthewyjiang/rho/commit/8db9843ddaac2dc3f246452d1e5c1a91886c7e06))
+* **tui:** restore multiline paste handling on Windows ([#157](https://github.com/matthewyjiang/rho/issues/157)) ([6d63adf](https://github.com/matthewyjiang/rho/commit/6d63adf4b0ea56d643fcb56ccf7034de9c3d1489))
+
 ## [0.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.18.1...rho-coding-agent-v0.19.0) (2026-07-09)
 
 

@@ -566,6 +566,20 @@ fn provider_has_env_override_from(
     env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
 
+pub fn provider_has_stored_credentials(
+    store: &dyn CredentialStore,
+    provider: &str,
+) -> CredentialResult<bool> {
+    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
+        Some(ProviderAuthKind::ApiKey { account, .. })
+        | Some(ProviderAuthKind::CodexOAuth { account, .. })
+        | Some(ProviderAuthKind::GithubCopilotDevice { account, .. }) => {
+            Ok(store.get_secret(account)?.is_some())
+        }
+        None => Ok(false),
+    }
+}
+
 pub fn provider_has_credentials(
     store: &dyn CredentialStore,
     provider: &str,
@@ -626,6 +640,20 @@ mod tests {
         save_anthropic_api_key(&store, "sk-ant-test").unwrap();
 
         assert!(available_auth_modes(&store).contains(&"anthropic-api-key".into()));
+    }
+
+    #[test]
+    fn malformed_oauth_tokens_are_not_available_auth() {
+        let store = MemoryCredentialStore::default();
+        store.set_secret(CODEX_TOKENS_ACCOUNT, "not-json").unwrap();
+        store
+            .set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, "not-json")
+            .unwrap();
+
+        assert!(provider_has_stored_credentials(&store, "openai-codex").unwrap());
+        assert!(provider_has_stored_credentials(&store, "github-copilot").unwrap());
+        assert!(provider_has_credentials(&store, "openai-codex").is_err());
+        assert!(provider_has_credentials(&store, "github-copilot").is_err());
     }
 
     #[test]

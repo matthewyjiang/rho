@@ -33,3 +33,4 @@ features:
 - [Tools and workspace](/tools-workspace)
 - [Sessions](/sessions)
 - [Development](/development)
+- [Changelog](/changelog)

@@ -1,6 +1,6 @@
 [package]
 name = "rho-coding-agent"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 description = "A lightweight agent harness inspired by Pi"
 license = "MIT"
@@ -28,6 +28,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 regex = "1"
+ignore = "0.4"
 rusqlite = { version = "0.32" }
 keyring = "4.1.2"
 rand = "0.8"
@@ -38,11 +39,17 @@ webbrowser = "1"
 libc = "0.2"
 unicode-width = "0.2"
 
+# Use unreleased Windows VT input support so bracketed paste produces Event::Paste.
+# Remove this override after crossterm-rs/crossterm#1030 is released.
+[patch.crates-io]
+crossterm = { git = "https://github.com/crossterm-rs/crossterm", rev = "03bb4f26610a5904b8e875fcb610d16bf7d00814" }
+
 [features]
 default = ["bundled-sqlite"]
 bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]
+pretty_assertions = "1"
 tempfile = "3"
 
 [build-dependencies]

@@ -142,6 +142,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     let max_label_width = match picker.action {
         super::PickerAction::SelectModel | super::PickerAction::SelectTitleModel => 60,
         super::PickerAction::ResumeSession => 36,
+        super::PickerAction::InsertFilePath => width.saturating_sub(2).max(1),
         super::PickerAction::Config
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
@@ -220,6 +221,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
+        | super::PickerAction::InsertFilePath
         | super::PickerAction::ResumeSession => "select",
     };
     let pin = if picker.help.contains("ctrl-p") {
@@ -227,7 +229,9 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     } else {
         ""
     };
-    let tab = if picker.help.contains("tab") {
+    let tab = if picker.action == super::PickerAction::InsertFilePath {
+        " · Tab to insert"
+    } else if picker.help.contains("tab") {
         " · Tab to complete"
     } else {
         ""
