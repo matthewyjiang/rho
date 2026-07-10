@@ -20,7 +20,37 @@ pub(super) fn push_wrapped_markdown(
     width: usize,
     in_code_block: &mut bool,
 ) {
-    lines.extend(markdown_lines(text, width, in_code_block));
+    lines.extend(render_markdown(text, width, in_code_block).lines);
+}
+
+pub(super) fn push_wrapped_markdown_without_copy_button(
+    lines: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    in_code_block: &mut bool,
+) {
+    lines.extend(
+        render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Hidden)
+            .lines,
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodeBlockCopyButton {
+    Visible,
+    Hidden,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct MarkdownCodeBlock {
+    pub(super) top_line: usize,
+    pub(super) copy_columns: std::ops::Range<usize>,
+    pub(super) text: String,
+}
+
+pub(super) struct RenderedMarkdown {
+    pub(super) lines: Vec<Line<'static>>,
+    pub(super) code_blocks: Vec<MarkdownCodeBlock>,
 }
 
 pub(super) fn markdown_lines(
@@ -28,8 +58,27 @@ pub(super) fn markdown_lines(
     width: usize,
     in_code_block: &mut bool,
 ) -> Vec<Line<'static>> {
+    render_markdown(text, width, in_code_block).lines
+}
+
+pub(super) fn render_markdown(
+    text: &str,
+    width: usize,
+    in_code_block: &mut bool,
+) -> RenderedMarkdown {
+    render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Visible)
+}
+
+fn render_markdown_with_copy_button(
+    text: &str,
+    width: usize,
+    in_code_block: &mut bool,
+    copy_button: CodeBlockCopyButton,
+) -> RenderedMarkdown {
     let width = width.max(1);
     let mut lines = Vec::new();
+    let mut code_blocks = Vec::new();
+    let mut active_code_block: Option<(usize, std::ops::Range<usize>, Vec<&str>)> = None;
 
     let raw_lines = text.lines().collect::<Vec<_>>();
     let mut line_index = 0;
@@ -37,16 +86,33 @@ pub(super) fn markdown_lines(
         let raw_line = raw_lines[line_index];
         let code_fence = raw_line.trim_start().starts_with("```");
         if code_fence {
-            lines.push(code_block_border(
-                width,
-                if *in_code_block { '╰' } else { '╭' },
-            ));
+            if *in_code_block {
+                lines.push(code_block_border(width, '╰', copy_button));
+                if let Some((top_line, copy_columns, content)) = active_code_block.take() {
+                    code_blocks.push(MarkdownCodeBlock {
+                        top_line,
+                        copy_columns,
+                        text: content.join("\n"),
+                    });
+                }
+            } else {
+                let top_line = lines.len();
+                lines.push(code_block_border(width, '╭', copy_button));
+                if copy_button == CodeBlockCopyButton::Visible {
+                    if let Some(copy_columns) = code_block_copy_columns(width) {
+                        active_code_block = Some((top_line, copy_columns, Vec::new()));
+                    }
+                }
+            }
             *in_code_block = !*in_code_block;
             line_index += 1;
             continue;
         }
 
         if *in_code_block {
+            if let Some((_, _, content)) = &mut active_code_block {
+                content.push(raw_line);
+            }
             lines.extend(code_block_content_lines(raw_line, width));
             line_index += 1;
             continue;
@@ -73,11 +139,19 @@ pub(super) fn markdown_lines(
         line_index += 1;
     }
 
+    if let Some((top_line, copy_columns, content)) = active_code_block {
+        code_blocks.push(MarkdownCodeBlock {
+            top_line,
+            copy_columns,
+            text: content.join("\n"),
+        });
+    }
+
     if lines.is_empty() && text.is_empty() {
         lines.push(Line::from(Span::styled(String::new(), Theme::text())));
     }
 
-    lines
+    RenderedMarkdown { lines, code_blocks }
 }
 
 pub(super) fn markdown_preview_width(text: &str, width: usize, in_code_block: bool) -> usize {
@@ -301,7 +375,11 @@ fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
 }
 
-fn code_block_border(width: usize, corner: char) -> Line<'static> {
+fn code_block_border(
+    width: usize,
+    corner: char,
+    copy_button: CodeBlockCopyButton,
+) -> Line<'static> {
     let width = width.max(1);
     let style = Theme::markdown_code_block();
     if width == 1 {
@@ -309,13 +387,46 @@ fn code_block_border(width: usize, corner: char) -> Line<'static> {
     }
 
     let closing_corner = if corner == '╭' { '╮' } else { '╯' };
-    Line::from(Span::styled(
-        format!(
-            "{corner}{}{closing_corner}",
-            "─".repeat(width.saturating_sub(2))
+    let Some(copy_columns) = (corner == '╭' && copy_button == CodeBlockCopyButton::Visible)
+        .then(|| code_block_copy_columns(width))
+        .flatten()
+    else {
+        return Line::from(Span::styled(
+            format!(
+                "{corner}{}{closing_corner}",
+                "─".repeat(width.saturating_sub(2))
+            ),
+            style,
+        ));
+    };
+    let label = code_block_copy_label(width).unwrap_or_default();
+    Line::from(vec![
+        Span::styled(
+            format!(
+                "{corner}{}",
+                "─".repeat(copy_columns.start.saturating_sub(1))
+            ),
+            style,
         ),
-        style,
-    ))
+        Span::styled(label, Theme::markdown_code_copy_button(/*hovered*/ false)),
+        Span::styled(closing_corner.to_string(), style),
+    ])
+}
+
+fn code_block_copy_label(width: usize) -> Option<&'static str> {
+    if width >= 9 {
+        Some(" COPY ")
+    } else if width >= 6 {
+        Some("COPY")
+    } else {
+        None
+    }
+}
+
+fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
+    let label_width = display_width(code_block_copy_label(width)?);
+    let start = width.saturating_sub(label_width + 1);
+    Some(start..start + label_width)
 }
 
 fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
@@ -798,13 +909,34 @@ mod tests {
     }
 
     #[test]
+    fn stream_preview_renderer_can_hide_inactive_copy_buttons() {
+        let mut lines = Vec::new();
+        let mut in_code_block = false;
+        push_wrapped_markdown_without_copy_button(
+            &mut lines,
+            "```rust\nlet x = 1;",
+            40,
+            &mut in_code_block,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("let x = 1;"), "{rendered}");
+        assert!(!rendered.contains("COPY"), "{rendered}");
+    }
+
+    #[test]
     fn renders_code_blocks_with_closed_borders() {
         let mut in_code_block = false;
         let lines = markdown_lines("```rust\nlet x = 1;\n```", 20, &mut in_code_block);
 
-        assert_eq!(line_text(&lines[0]), "╭──────────────────╮");
+        assert_eq!(line_text(&lines[0]), "╭──────────── COPY ╮");
         assert_eq!(line_text(&lines[1]), "│ let x = 1;       │");
         assert_eq!(line_text(&lines[2]), "╰──────────────────╯");
+        assert_eq!(lines[0].spans[1].content.as_ref(), " COPY ");
+        assert_eq!(
+            lines[0].spans[1].style,
+            Theme::markdown_code_copy_button(/*hovered*/ false)
+        );
         assert_eq!(lines[1].spans[0].style, Theme::markdown_code_block());
     }
 

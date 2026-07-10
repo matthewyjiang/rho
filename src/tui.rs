@@ -12,14 +12,14 @@ use std::{
 };
 
 use futures_util::{task::noop_waker_ref, FutureExt};
-use history_cache::HistoryLineCache;
+use history_cache::{CachedCodeBlock, HistoryLineCache};
 use tokio::sync::{mpsc, oneshot};
 
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-        MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -33,11 +33,13 @@ use ratatui::{
 };
 mod config_editor;
 mod config_picker;
+mod copy_interaction;
 mod file_picker;
 mod history_cache;
 mod login;
 mod markdown;
 mod model_picker;
+mod mouse;
 mod paste_burst;
 mod picker;
 mod provider_picker;
@@ -48,6 +50,7 @@ mod session_picker;
 mod skill_picker;
 mod statusline;
 mod stream;
+mod text_selection;
 mod theme;
 
 use config_editor::{
@@ -55,7 +58,8 @@ use config_editor::{
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
     ConfigTextKey, ConfigToggle,
 };
-use markdown::push_wrapped_markdown;
+use copy_interaction::CodeBlockCopyTarget;
+use markdown::{push_wrapped_markdown, push_wrapped_markdown_without_copy_button};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use questionnaire::{
@@ -70,6 +74,10 @@ use render::{
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
+use text_selection::{
+    highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
+    TextSelection,
+};
 use theme::Theme;
 
 use crate::{
@@ -254,6 +262,10 @@ struct App {
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
     history_scrollbar_visible_until: Option<Instant>,
     history_scrollbar_hovered: bool,
+    hovered_code_block_copy: Option<usize>,
+    text_selection: Option<TextSelection>,
+    copy_notice: Option<CopyNotice>,
+    clipboard: Box<dyn ClipboardWriter + Send>,
 }
 
 #[derive(Debug)]
@@ -597,6 +609,10 @@ impl App {
             history_scrollbar_drag: None,
             history_scrollbar_visible_until: None,
             history_scrollbar_hovered: false,
+            hovered_code_block_copy: None,
+            text_selection: None,
+            copy_notice: None,
+            clipboard: Box::new(TerminalClipboard),
         }
     }
 
@@ -655,6 +671,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                self.text_selection = None;
                 self.handle_key(key, terminal, agent).await?;
             }
             Event::Paste(text) => {
@@ -669,6 +686,8 @@ impl App {
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
+                self.text_selection = None;
+                self.hovered_code_block_copy = None;
                 self.hide_history_scrollbar();
                 self.clamp_history_scroll_for_terminal(terminal)?;
             }
@@ -683,6 +702,11 @@ impl App {
     fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
         let now = Instant::now();
         let timeout = self.paste_burst.poll_timeout(now, idle_timeout);
+        let timeout = self
+            .copy_notice
+            .as_ref()
+            .and_then(|notice| notice.visible_until().checked_duration_since(now))
+            .map_or(timeout, |remaining| remaining.min(timeout));
         if self.history_scrollbar_hovered || self.history_scrollbar_drag.is_some() {
             return timeout;
         }
@@ -3191,6 +3215,7 @@ impl App {
         while event::poll(Duration::from_millis(0))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    self.text_selection = None;
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
@@ -3219,6 +3244,8 @@ impl App {
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
+                    self.text_selection = None;
+                    self.hovered_code_block_copy = None;
                     self.hide_history_scrollbar();
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     self.drain_streams(terminal)?;
@@ -3451,7 +3478,7 @@ impl App {
         let mut text_lines = Vec::new();
         if matches!(preview.kind, StreamKind::Assistant) {
             let mut in_code_block = self.assistant_stream_in_code_block;
-            push_wrapped_markdown(
+            push_wrapped_markdown_without_copy_button(
                 &mut text_lines,
                 &preview.text,
                 padded_content_width(width),
@@ -4708,11 +4735,34 @@ impl App {
         let history_start = self.visible_history_start(history_len, layout.history.height as usize);
         let history_visible =
             self.visible_history_lines(width, now, history_start, layout.history.height as usize);
+        let code_block_copy_targets = self.code_block_copy_targets(width);
 
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history,
         );
+        if let Some(selection) = self.text_selection {
+            highlight_selection(frame.buffer_mut(), layout.history, history_start, selection);
+        }
+        if let Some(hovered_line) = self.hovered_code_block_copy {
+            if let Some(target) = code_block_copy_targets
+                .iter()
+                .find(|target| target.line == hovered_line)
+                .filter(|target| {
+                    (history_start..history_start + layout.history.height as usize)
+                        .contains(&target.line)
+                })
+            {
+                let row = layout
+                    .history
+                    .y
+                    .saturating_add(target.line.saturating_sub(history_start) as u16);
+                for column in target.columns.clone().take(layout.history.width as usize) {
+                    frame.buffer_mut()[(layout.history.x.saturating_add(column as u16), row)]
+                        .set_style(Theme::markdown_code_copy_button(/*hovered*/ true));
+                }
+            }
+        }
         if let Some(scrollbar) = layout
             .history_scrollbar
             .filter(|_| self.should_render_history_scrollbar(now))
@@ -4768,6 +4818,9 @@ impl App {
             .style(Style::default()),
             layout.commands,
         );
+        if let Some(notice) = &self.copy_notice {
+            render_copy_notice(frame, area, notice, now);
+        }
 
         let full_cursor = self.composer_cursor_position(width);
         let max_cursor_x = width.max(1).saturating_sub(1) as u16;
@@ -5009,6 +5062,19 @@ impl App {
             .line_count(&self.transcript, width, self.info.max_tool_output_lines)
     }
 
+    fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
+        let header_len = session_header_lines(&self.info, width).len();
+        self.history_lines
+            .code_blocks(&self.transcript, width, self.info.max_tool_output_lines)
+            .iter()
+            .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
+                line: header_len.saturating_add(block.line),
+                columns: block.copy_columns.clone(),
+                text: Arc::clone(&block.text),
+            })
+            .collect()
+    }
+
     fn history_live_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(pending) = &self.pending_tool_call {
@@ -5232,78 +5298,6 @@ impl App {
             }
             _ => Ok(false),
         }
-    }
-
-    fn handle_mouse_event<B: Backend>(
-        &mut self,
-        kind: MouseEventKind,
-        column: u16,
-        row: u16,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
-        let size = terminal.size()?;
-        let width = size.width as usize;
-        let height = size.height as usize;
-        let now = Instant::now();
-        match kind {
-            MouseEventKind::ScrollUp => {
-                self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
-                self.scroll_history_lines(width, height, now, -3);
-            }
-            MouseEventKind::ScrollDown => {
-                self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
-                self.scroll_history_lines(width, height, now, 3);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                let scrollbar = layout
-                    .history_scrollbar
-                    .filter(|scrollbar| scrollbar.contains(column, row))
-                    .filter(|_| self.should_render_history_scrollbar(now));
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                if let Some(scrollbar) = scrollbar {
-                    self.reveal_history_scrollbar(now);
-                    let drag = scrollbar.begin_drag(row);
-                    self.history_scrollbar_drag = Some(drag);
-                    self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                } else if layout
-                    .jump_to_bottom
-                    .is_some_and(|rect| rect.contains(Position { x: column, y: row }))
-                {
-                    self.history_scrollbar_drag = None;
-                    self.scroll_history_to_bottom();
-                }
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(drag) = self.history_scrollbar_drag {
-                    let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                    self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                    if let Some(scrollbar) = layout.history_scrollbar {
-                        self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                    }
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.history_scrollbar_drag = None;
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-            }
-            MouseEventKind::Moved => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-            }
-            MouseEventKind::Down(MouseButton::Right)
-            | MouseEventKind::Down(MouseButton::Middle)
-            | MouseEventKind::Up(MouseButton::Right)
-            | MouseEventKind::Up(MouseButton::Middle)
-            | MouseEventKind::Drag(MouseButton::Right)
-            | MouseEventKind::Drag(MouseButton::Middle)
-            | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight => {}
-        }
-        Ok(())
     }
 
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -5998,7 +5992,11 @@ mod tests {
         save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
         MemoryCredentialStore,
     };
+    use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+    #[path = "mouse_tests.rs"]
+    mod mouse_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;

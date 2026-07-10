@@ -533,6 +533,7 @@ name = "crossterm"
 version = "0.29.0"
 source = "git+https://github.com/crossterm-rs/crossterm?rev=03bb4f26610a5904b8e875fcb610d16bf7d00814#03bb4f26610a5904b8e875fcb610d16bf7d00814"
 dependencies = [
+ "base64",
  "bitflags",
  "crossterm_winapi",
  "derive_more",
@@ -2142,6 +2143,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "toml 0.8.23",
+ "unicode-segmentation",
  "unicode-width",
  "url",
  "uuid",
