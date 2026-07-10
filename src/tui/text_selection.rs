@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::{clipboard::CopyToClipboard, execute};
+use super::text_clipboard;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -33,8 +33,7 @@ pub(super) struct TerminalClipboard;
 
 impl ClipboardWriter for TerminalClipboard {
     fn copy(&mut self, text: &str) -> io::Result<()> {
-        let mut stdout = io::stdout();
-        execute!(stdout, CopyToClipboard::to_clipboard_from(text))
+        text_clipboard::copy_text(text)
     }
 }
 

@@ -123,7 +123,7 @@ Most editing keys work the way they do in a normal terminal input.
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
 
-Copied text is sent to the terminal clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
+Copied text is sent to the system clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
 
 When the transcript is scrolled away from the bottom, Rho shows a `↓ jump to bottom  ctrl+g` button directly above the composer. Press `ctrl-g` or click the button to resume following live output.
 

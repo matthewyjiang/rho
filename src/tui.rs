@@ -50,6 +50,7 @@ mod session_picker;
 mod skill_picker;
 mod statusline;
 mod stream;
+mod text_clipboard;
 mod text_selection;
 mod theme;
 mod tool_diff;
