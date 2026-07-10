@@ -82,14 +82,16 @@ impl Tool for Bash {
                 raw_args["command"] = serde_json::Value::String(args.command.clone());
             }
         }
-        let mut child = Command::new("bash")
+        let mut command = Command::new("bash");
+        command
             .arg("-lc")
             .arg(&args.command)
             .current_dir(&ctx.cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .spawn()?;
+            .process_group(0);
+        let mut child = command.spawn()?;
 
         let start = Instant::now();
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -125,6 +127,7 @@ impl Tool for Bash {
             }
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
+                kill_process_group(child.id());
                 let _ = child.start_kill();
                 drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
@@ -165,6 +168,15 @@ impl Tool for Bash {
             content,
         })
     }
+}
+
+#[cfg(unix)]
+fn kill_process_group(pid: Option<u32>) {
+    let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) else {
+        return;
+    };
+    // A negative PID targets the process group created with `process_group(0)`.
+    let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
 async fn read_stream<R>(
@@ -302,5 +314,30 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("timed out after 2s"));
         assert!(message.contains("started"));
+    }
+
+    #[tokio::test]
+    async fn timeout_terminates_background_processes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            cwd: dir.path().to_path_buf(),
+            max_output_bytes: 12000,
+        };
+        let marker = ctx.cwd.join("background-process-survived");
+
+        Bash::new(false)
+            .call(
+                json!({
+                    "command": "sh -c 'sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait",
+                    "timeout_seconds": 1
+                }),
+                ctx,
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert!(!marker.exists(), "background process survived the timeout");
     }
 }
