@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.22.0...rho-coding-agent-v0.22.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **codex:** validate websocket continuation state ([#177](https://github.com/matthewyjiang/rho/issues/177)) ([41479d2](https://github.com/matthewyjiang/rho/commit/41479d26c04cbf06336fbe6b9d333acd397809c3))
+* **tui:** capture mouse wheel events on windows ([#174](https://github.com/matthewyjiang/rho/issues/174)) ([cba1488](https://github.com/matthewyjiang/rho/commit/cba14886e1e46b374779bc271c53e9640a489c91))
+
 ## [0.22.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.21.1...rho-coding-agent-v0.22.0) (2026-07-10)
 
 
