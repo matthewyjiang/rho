@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::model::{
-    provider_models,
-    registry::{self, ProviderModelSource},
+use crate::{
+    model::provider_models,
+    provider::{self, ProviderModelSource},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,7 +55,7 @@ const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
 static MODEL_CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
 pub fn implemented_providers() -> Vec<&'static str> {
-    registry::providers()
+    provider::providers()
         .iter()
         .map(|provider| provider.name)
         .collect()
@@ -70,7 +70,7 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 }
 
 pub fn login_targets() -> Vec<LoginTarget> {
-    registry::providers()
+    provider::providers()
         .iter()
         .map(|provider| LoginTarget {
             provider: provider.name.into(),
@@ -87,7 +87,7 @@ pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
 }
 
 pub fn default_model_for_provider(provider: &str) -> Option<String> {
-    match registry::provider_descriptor(provider)?.model_source {
+    match provider::provider_descriptor(provider)?.model_source {
         ProviderModelSource::CachedProviderModels => {
             provider_models::cached_provider_models(provider)
                 .into_iter()
@@ -162,7 +162,7 @@ fn available_models_for_auths_from(
         })
         .cloned()
         .collect::<Vec<_>>();
-    for provider in registry::providers()
+    for provider in provider::providers()
         .iter()
         .filter(|provider| provider_uses_cached_models(provider.name))
         .filter(|provider| auths.iter().any(|auth| auth == provider.auth))
@@ -190,17 +190,17 @@ fn cached_provider_entries(provider: &str, auth: &str) -> Vec<ModelCatalogEntry>
 }
 
 fn provider_default_auth(provider: &str) -> Option<&'static str> {
-    registry::provider_descriptor(provider).map(|descriptor| descriptor.auth)
+    provider::provider_descriptor(provider).map(|descriptor| descriptor.auth)
 }
 
 fn provider_uses_cached_models(provider: &str) -> bool {
-    registry::provider_descriptor(provider)
+    provider::provider_descriptor(provider)
         .map(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
         .unwrap_or(false)
 }
 
 fn provider_uses_static_catalog(provider: &str) -> bool {
-    registry::provider_descriptor(provider)
+    provider::provider_descriptor(provider)
         .map(|descriptor| descriptor.model_source == ProviderModelSource::StaticCatalog)
         .unwrap_or(false)
 }

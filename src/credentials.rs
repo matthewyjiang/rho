@@ -6,15 +6,15 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::registry::{self, ProviderAuthKind};
+use crate::provider::{self, ProviderAuthKind};
 
 const SERVICE: &str = "rho";
 #[cfg(test)]
-const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
+const OPENAI_API_KEY_ACCOUNT: &str = provider::OPENAI_API_KEY_ACCOUNT;
 #[cfg(test)]
-const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
-const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
-const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
+const ANTHROPIC_API_KEY_ACCOUNT: &str = provider::ANTHROPIC_API_KEY_ACCOUNT;
+const CODEX_TOKENS_ACCOUNT: &str = provider::CODEX_TOKENS_ACCOUNT;
+const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = provider::GITHUB_COPILOT_TOKENS_ACCOUNT;
 const CHUNK_MANIFEST_SUFFIX: &str = ":chunks";
 const CHUNK_ACCOUNT_INFIX: &str = ":chunk:";
 
@@ -434,12 +434,12 @@ pub fn load_provider_api_key(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<Option<String>> {
-    let Some(ProviderAuthKind::ApiKey { account, .. }) =
-        registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    let Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) =
+        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
     else {
         return Ok(None);
     };
-    store.get_secret(account)
+    store.get_secret(auth_kind.account())
 }
 
 pub fn save_provider_api_key(
@@ -447,26 +447,26 @@ pub fn save_provider_api_key(
     provider: &str,
     key: &str,
 ) -> CredentialResult<()> {
-    let Some(ProviderAuthKind::ApiKey { account, .. }) =
-        registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    let Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) =
+        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
     else {
         return Err(CredentialError::InvalidData(format!(
             "provider '{provider}' does not use API key credentials"
         )));
     };
-    store.set_secret(account, key)
+    store.set_secret(auth_kind.account(), key)
 }
 
 pub fn delete_provider_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(ProviderAuthKind::ApiKey { account, .. }) => store.delete_secret(account),
-        Some(ProviderAuthKind::CodexOAuth { account, .. }) => store.delete_secret(account),
-        Some(ProviderAuthKind::GithubCopilotDevice { account, .. }) => store.delete_secret(account),
-        None => Ok(false),
-    }
+    let Some(auth_kind) =
+        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    else {
+        return Ok(false);
+    };
+    store.delete_secret(auth_kind.account())
 }
 
 #[allow(dead_code)]
@@ -555,29 +555,22 @@ fn provider_has_env_override_from(
     provider: &str,
     env_value: impl FnOnce(&str) -> Option<String>,
 ) -> bool {
-    let Some(descriptor) = registry::provider_descriptor(provider) else {
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
         return false;
     };
-    let env_var = match descriptor.auth_kind {
-        ProviderAuthKind::ApiKey { env_var, .. }
-        | ProviderAuthKind::CodexOAuth { env_var, .. }
-        | ProviderAuthKind::GithubCopilotDevice { env_var, .. } => env_var,
-    };
-    env_value(env_var).is_some_and(|value| !value.trim().is_empty())
+    env_value(descriptor.auth_kind.env_var()).is_some_and(|value| !value.trim().is_empty())
 }
 
 pub fn provider_has_stored_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(ProviderAuthKind::ApiKey { account, .. })
-        | Some(ProviderAuthKind::CodexOAuth { account, .. })
-        | Some(ProviderAuthKind::GithubCopilotDevice { account, .. }) => {
-            Ok(store.get_secret(account)?.is_some())
-        }
-        None => Ok(false),
-    }
+    let Some(auth_kind) =
+        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    else {
+        return Ok(false);
+    };
+    Ok(store.get_secret(auth_kind.account())?.is_some())
 }
 
 pub fn provider_has_credentials(
@@ -587,8 +580,10 @@ pub fn provider_has_credentials(
     if provider_has_env_override(provider) {
         return Ok(true);
     }
-    match registry::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(ProviderAuthKind::ApiKey { account, .. }) => Ok(store.get_secret(account)?.is_some()),
+    match provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
+        Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) => {
+            Ok(store.get_secret(auth_kind.account())?.is_some())
+        }
         Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
             Ok(load_github_copilot_tokens(store)?.is_some())
@@ -598,7 +593,7 @@ pub fn provider_has_credentials(
 }
 
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
-    registry::providers()
+    provider::providers()
         .iter()
         .filter(|provider| provider_has_credentials(store, provider.name).unwrap_or(false))
         .map(|provider| provider.auth.to_string())

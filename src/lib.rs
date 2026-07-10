@@ -10,6 +10,7 @@ mod herdr;
 mod model;
 mod paths;
 mod prompt;
+mod provider;
 mod provider_backend;
 mod reasoning;
 mod session;
