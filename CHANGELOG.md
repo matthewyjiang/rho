@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.21.1...rho-coding-agent-v0.22.0) (2026-07-10)
+
+
+### Features
+
+* **tools:** display colored file diffs ([#169](https://github.com/matthewyjiang/rho/issues/169)) ([b73e0fb](https://github.com/matthewyjiang/rho/commit/b73e0fb83fd88eae159d82a37a62281eba28afb0))
+
+
+### Bug Fixes
+
+* **model:** recover from stalled provider streams ([#171](https://github.com/matthewyjiang/rho/issues/171)) ([7232799](https://github.com/matthewyjiang/rho/commit/7232799e83efd97d9cd25ba18087a71ffed3f899))
+* **tui:** restore transcript copy support ([#168](https://github.com/matthewyjiang/rho/issues/168)) ([8b9da7e](https://github.com/matthewyjiang/rho/commit/8b9da7ea37739934080a621e068d99ebf2ea8a09))
+
 ## [0.21.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.21.0...rho-coding-agent-v0.21.1) (2026-07-10)
 
 
