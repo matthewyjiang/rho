@@ -362,6 +362,10 @@ impl OpenAiProvider {
 }
 
 #[cfg(test)]
+#[path = "stream_tests.rs"]
+mod stream_tests;
+
+#[cfg(test)]
 mod tests {
     use super::convert::{codex_input_items, codex_reasoning_param, to_openai_message};
     use super::stream::{
