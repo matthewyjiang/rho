@@ -12,33 +12,31 @@ use super::convert::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CodexRequestMode {
     Standard,
-    StandardFullHistory,
     ResponsesLite,
 }
 
 impl CodexRequestMode {
     pub(super) fn for_model(model: &str) -> Self {
         match model {
-            "gpt-5.6-sol" => Self::StandardFullHistory,
-            "gpt-5.6-terra" | "gpt-5.6-luna" => Self::ResponsesLite,
+            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => Self::ResponsesLite,
             _ => Self::Standard,
         }
     }
 
     pub(super) fn uses_responses_lite(self) -> bool {
         match self {
-            Self::Standard | Self::StandardFullHistory => false,
+            Self::Standard => false,
             Self::ResponsesLite => true,
         }
     }
 
     /// Rho does not yet retain server output items in its continuation baseline.
-    /// Models that duplicate those output items when they are sent again in the
-    /// next delta must therefore use full request bodies.
+    /// Responses Lite tool turns therefore use full request bodies so the
+    /// model's previous function call is not duplicated in the next delta.
     pub(super) fn supports_incremental_websocket(self) -> bool {
         match self {
             Self::Standard => true,
-            Self::StandardFullHistory | Self::ResponsesLite => false,
+            Self::ResponsesLite => false,
         }
     }
 }
@@ -65,7 +63,7 @@ pub(super) fn build_codex_responses_body(
     });
 
     match mode {
-        CodexRequestMode::Standard | CodexRequestMode::StandardFullHistory => {
+        CodexRequestMode::Standard => {
             body["instructions"] = json!(instructions);
             body["input"] = json!(input);
             if !tools.is_empty() {
@@ -116,9 +114,7 @@ pub(super) fn build_codex_responses_body(
 
 fn responses_tool(mode: CodexRequestMode, tool: ToolSpec) -> Value {
     match mode {
-        CodexRequestMode::Standard | CodexRequestMode::StandardFullHistory => {
-            to_responses_tool(tool)
-        }
+        CodexRequestMode::Standard => to_responses_tool(tool),
         CodexRequestMode::ResponsesLite => to_responses_lite_tool(tool),
     }
 }
@@ -129,29 +125,35 @@ mod tests {
     use crate::model::Message;
 
     #[test]
-    fn sol_uses_standard_layout_without_incremental_websocket_continuation() {
-        let mode = CodexRequestMode::for_model("gpt-5.6-sol");
-        let body = build_codex_responses_body(
-            "gpt-5.6-sol",
-            ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: vec![ToolSpec {
-                    name: "read_file".into(),
-                    description: "read a file".into(),
-                    input_schema: json!({"type": "object"}),
-                }],
-                prompt_cache_key: None,
-            },
-            None,
-            None,
-        )
-        .unwrap();
+    fn gpt_5_6_models_use_responses_lite_without_incremental_websocket_continuation() {
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let mode = CodexRequestMode::for_model(model);
+            let body = build_codex_responses_body(
+                model,
+                ModelRequest {
+                    messages: vec![Message::user_text("hello")],
+                    tools: vec![ToolSpec {
+                        name: "read_file".into(),
+                        description: "read a file".into(),
+                        input_schema: json!({"type": "object"}),
+                    }],
+                    prompt_cache_key: None,
+                },
+                Some("medium"),
+                Some("auto"),
+            )
+            .unwrap();
 
-        assert_eq!(mode, CodexRequestMode::StandardFullHistory);
-        assert!(!mode.uses_responses_lite());
-        assert!(!mode.supports_incremental_websocket());
-        assert_eq!(body["tools"][0]["name"], "read_file");
-        assert!(body["input"][0].get("type").is_none());
+            assert_eq!(mode, CodexRequestMode::ResponsesLite, "{model}");
+            assert!(mode.uses_responses_lite(), "{model}");
+            assert!(!mode.supports_incremental_websocket(), "{model}");
+            assert_eq!(body["input"][0]["type"], "additional_tools", "{model}");
+            assert_eq!(
+                body["reasoning"],
+                json!({"effort": "medium", "summary": "auto", "context": "all_turns"}),
+                "{model}"
+            );
+        }
     }
 
     #[test]
