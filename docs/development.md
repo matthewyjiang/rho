@@ -38,7 +38,7 @@ Current legacy file budgets are:
 
 | File | Maximum lines |
 | --- | ---: |
-| `src/tui.rs` | 9,416 |
+| `src/tui.rs` | 7,753 |
 | `src/model/openai/codex_ws.rs` | 1,036 |
 
 Do not raise a budget just to make a check pass. Prefer extracting a cohesive module and reducing the recorded ceiling. If a generated file must be added, list its exact repository-relative path with a non-empty reason so the exclusion remains reviewable. When changing the scanner or policy, update its self-tests and this documentation together.
