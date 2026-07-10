@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub(crate) mod stream_timeout;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -133,6 +134,8 @@ pub enum ModelError {
     Io(#[from] std::io::Error),
     #[error("provider stream interrupted")]
     Interrupted,
+    #[error("provider stream received no data for {timeout:?}; the connection may be stale")]
+    StreamIdleTimeout { timeout: std::time::Duration },
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
     #[error("unsupported provider '{0}'")]

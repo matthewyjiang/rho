@@ -74,7 +74,11 @@ pub(super) async fn collect_anthropic_sse_response(
     let mut state = AnthropicSseState::default();
     let mut buffer = Vec::new();
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    let mut idle_deadline = crate::provider_backend::stream_timeout::StreamIdleDeadline::new();
+    loop {
+        let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
+            break;
+        };
         buffer.extend_from_slice(&chunk?);
         while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
             let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
@@ -84,7 +88,9 @@ pub(super) async fn collect_anthropic_sse_response(
                     "streamed response contained invalid utf-8: {err}"
                 ))
             })?;
-            handle_anthropic_stream_line(line, &mut state, on_event)?;
+            if handle_anthropic_stream_line(line, &mut state, on_event)? {
+                idle_deadline.record_activity();
+            }
         }
     }
     if !buffer.is_empty() {
@@ -106,16 +112,19 @@ pub(super) fn handle_anthropic_stream_line(
     line: &str,
     state: &mut AnthropicSseState,
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
-) -> Result<(), ModelError> {
+) -> Result<bool, ModelError> {
     let Some(data) = sse_data(line) else {
-        return Ok(());
+        return Ok(false);
     };
     if data == "[DONE]" {
-        return Ok(());
+        return Ok(true);
     }
     let value = serde_json::from_str::<serde_json::Value>(data).map_err(|err| {
         ModelError::InvalidResponse(format!("invalid Anthropic stream JSON: {err}"))
     })?;
+    if value.get("type").and_then(|value| value.as_str()) == Some("ping") {
+        return Ok(false);
+    }
     match value.get("type").and_then(|value| value.as_str()) {
         Some("message_start") => {
             if let Some(mut usage) = value
@@ -201,7 +210,7 @@ pub(super) fn handle_anthropic_stream_line(
         Some("content_block_stop") | Some("message_stop") | Some("ping") | None => {}
         Some(_) => {}
     }
-    Ok(())
+    Ok(true)
 }
 
 fn content_index(value: &serde_json::Value) -> Result<usize, ModelError> {
@@ -222,6 +231,17 @@ mod tests {
 
     use super::*;
     use crate::provider_backend::ContentBlock;
+
+    #[test]
+    fn ping_is_not_meaningful_stream_activity() {
+        let mut state = AnthropicSseState::default();
+
+        let activity =
+            handle_anthropic_stream_line(r#"data: {"type":"ping"}"#, &mut state, &mut |_| Ok(()))
+                .unwrap();
+
+        assert!(!activity);
+    }
 
     #[test]
     fn streams_text_deltas_and_usage() {

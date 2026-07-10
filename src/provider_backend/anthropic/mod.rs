@@ -2,7 +2,10 @@ mod convert;
 mod stream;
 mod types;
 
-use crate::provider_backend::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse};
+use crate::provider_backend::{
+    stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
+    ModelResponse,
+};
 
 use convert::{convert_anthropic_response, split_system_and_messages, to_anthropic_tool};
 use stream::collect_anthropic_sse_response;
@@ -26,7 +29,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
             model,
@@ -170,7 +173,7 @@ mod tests {
 
     fn test_provider() -> AnthropicProvider {
         AnthropicProvider {
-            client: reqwest::Client::new(),
+            client: provider_client(),
             api_key: "test-key".into(),
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),
