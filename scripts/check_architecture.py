@@ -17,7 +17,7 @@ DEFAULT_PRODUCTION_RUST_LINE_BUDGET = 1_000
 # be avoided in favor of extracting focused modules.
 LEGACY_FILE_LINE_BUDGETS = {
     "src/model/openai/codex_ws.rs": 1_036,
-    "src/tui.rs": 9_416,
+    "src/tui.rs": 8_001,
 }
 
 # Generated Rust files must be listed by exact repository-relative path with a
