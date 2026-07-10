@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use ratatui::layout::{Position, Rect};
 
@@ -8,7 +8,7 @@ use super::text_selection::SelectionPosition;
 pub(super) struct CodeBlockCopyTarget {
     pub(super) line: usize,
     pub(super) columns: Range<usize>,
-    pub(super) text: String,
+    pub(super) text: Arc<str>,
 }
 
 pub(super) fn code_block_copy_target_at(

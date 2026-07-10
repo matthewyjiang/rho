@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use ratatui::text::Line;
 
@@ -8,7 +8,7 @@ use super::{entry_lines, is_tool_entry, markdown::render_markdown, Entry};
 pub(super) struct CachedCodeBlock {
     pub(super) line: usize,
     pub(super) copy_columns: Range<usize>,
-    pub(super) text: String,
+    pub(super) text: Arc<str>,
 }
 
 #[derive(Default)]
@@ -139,7 +139,7 @@ impl HistoryLineCache {
                     // entry_lines also pads rendered markdown by one column on each side.
                     copy_columns: block.copy_columns.start.saturating_add(1)
                         ..block.copy_columns.end.saturating_add(1),
-                    text: block.text,
+                    text: Arc::from(block.text),
                 }),
         );
     }

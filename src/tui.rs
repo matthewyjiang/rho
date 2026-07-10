@@ -59,7 +59,7 @@ use config_editor::{
     ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
-use markdown::push_wrapped_markdown;
+use markdown::{push_wrapped_markdown, push_wrapped_markdown_without_copy_button};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use questionnaire::{
@@ -3478,7 +3478,7 @@ impl App {
         let mut text_lines = Vec::new();
         if matches!(preview.kind, StreamKind::Assistant) {
             let mut in_code_block = self.assistant_stream_in_code_block;
-            push_wrapped_markdown(
+            push_wrapped_markdown_without_copy_button(
                 &mut text_lines,
                 &preview.text,
                 padded_content_width(width),
@@ -5070,7 +5070,7 @@ impl App {
             .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
                 line: header_len.saturating_add(block.line),
                 columns: block.copy_columns.clone(),
-                text: block.text.clone(),
+                text: Arc::clone(&block.text),
             })
             .collect()
     }
@@ -7561,6 +7561,26 @@ mod tests {
         assert!(rendered.contains("bash"), "{rendered}");
         assert!(rendered.contains("partial answer"), "{rendered}");
         assert!(rendered.contains("working"), "{rendered}");
+    }
+
+    #[test]
+    fn stream_preview_code_blocks_do_not_render_inactive_copy_buttons() {
+        let mut app = test_app();
+        app.live_stream_preview = Some(LiveStreamPreview {
+            kind: StreamKind::Assistant,
+            text: "```rust\nlet x = 1;".into(),
+            include_leading_blank: false,
+        });
+
+        let rendered = app
+            .history_live_lines(40, Instant::now())
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("let x = 1;"), "{rendered}");
+        assert!(!rendered.contains("COPY"), "{rendered}");
     }
 
     #[test]

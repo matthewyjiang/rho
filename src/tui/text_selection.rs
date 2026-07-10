@@ -20,6 +20,10 @@ use super::theme::Theme;
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(2);
 
+/// Writes transcript text to a clipboard synchronously.
+///
+/// Implementors must preserve the supplied text exactly and return any clipboard or terminal
+/// error to the caller so the TUI can report copy failures.
 pub(super) trait ClipboardWriter {
     fn copy(&mut self, text: &str) -> io::Result<()>;
 }
@@ -71,7 +75,6 @@ impl TextSelection {
         let mut selected = Vec::with_capacity(end.line.saturating_sub(start.line) + 1);
         for line_index in start.line..=end.line {
             let line = lines.get(line_index.checked_sub(first_line)?)?;
-            let text = rendered_line_text(line);
             let start_column = if line_index == start.line {
                 start.column
             } else {
@@ -83,7 +86,7 @@ impl TextSelection {
                 usize::MAX
             };
             selected.push(
-                text_for_display_columns(&text, start_column..end_column)
+                selectable_text_for_display_columns(line, start_column..end_column)
                     .trim_end_matches(' ')
                     .to_string(),
             );
@@ -241,12 +244,33 @@ pub(super) fn render_copy_notice(
     }
 }
 
-fn rendered_line_text(line: &Line<'_>) -> String {
-    line.spans
-        .iter()
-        .flat_map(|span| span.content.chars())
-        .filter(|character| !character.is_control())
-        .collect()
+fn selectable_text_for_display_columns(line: &Line<'_>, columns: Range<usize>) -> String {
+    let mut column: usize = 0;
+    let mut selected = String::new();
+    for span in &line.spans {
+        let text: String = span
+            .content
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect();
+        let width = UnicodeWidthStr::width(text.as_str());
+        let span_columns = column..column.saturating_add(width);
+        if !is_code_block_copy_span(span) {
+            let relative_columns =
+                columns.start.saturating_sub(column)..columns.end.saturating_sub(column);
+            selected.push_str(&text_for_display_columns(&text, relative_columns));
+        }
+        column = span_columns.end;
+        if column >= columns.end {
+            break;
+        }
+    }
+    selected
+}
+
+fn is_code_block_copy_span(span: &ratatui::text::Span<'_>) -> bool {
+    matches!(span.content.as_ref(), " COPY " | "COPY")
+        && span.style == Theme::markdown_code_copy_button(/*hovered*/ false)
 }
 
 fn text_for_display_columns(text: &str, columns: Range<usize>) -> String {
