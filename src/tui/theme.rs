@@ -276,11 +276,6 @@ impl Theme {
         base.fg(Palette::current().error)
     }
 
-    pub(super) fn diff_header(base: Style) -> Style {
-        base.fg(Palette::current().accent)
-            .add_modifier(Modifier::BOLD)
-    }
-
     pub(super) fn tool_default() -> ToolStyle {
         let palette = Palette::current();
         ToolStyle::new(

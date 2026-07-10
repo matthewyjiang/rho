@@ -1,4 +1,7 @@
-use crate::{tool::*, tools::diff::unified_diff};
+use crate::{
+    tool::*,
+    tools::diff::{unified_diff, UNREADABLE_FILE_DIFF_MESSAGE},
+};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -63,28 +66,32 @@ impl Tool for WriteFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
-        let old_content = match std::fs::read_to_string(&path) {
-            Ok(content) => Some(content),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => return Err(err.into()),
+        let (old_content, existing_file_is_unreadable) = match std::fs::read_to_string(&path) {
+            Ok(content) => (Some(content), false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, false),
+            Err(_) => (None, true),
         };
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let diff = unified_diff(
-            old_content.as_deref().unwrap_or(""),
-            &args.content,
-            &compact_display_path(&ctx.cwd, &args.path),
-            old_content.is_none(),
-        );
+        let diff = if existing_file_is_unreadable {
+            UNREADABLE_FILE_DIFF_MESSAGE.into()
+        } else {
+            unified_diff(
+                old_content.as_deref().unwrap_or(""),
+                &args.content,
+                &compact_display_path(&ctx.cwd, &args.path),
+                old_content.is_none(),
+            )
+        };
         std::fs::write(&path, args.content)?;
 
-        let action = if old_content.is_none() {
-            "created"
-        } else {
+        let action = if old_content.is_some() || existing_file_is_unreadable {
             "wrote"
+        } else {
+            "created"
         };
         Ok(ToolResult {
             id,
@@ -133,6 +140,26 @@ mod tests {
         assert!(result.content.contains("--- /dev/null"));
         assert!(result.content.contains("+++ b/nested/hello.txt"));
         assert!(result.content.contains("+hello"));
+    }
+
+    #[tokio::test]
+    async fn overwrites_unreadable_file_without_diff() {
+        let (root, ctx) = test_context();
+        let path = root.path().join("binary.bin");
+        std::fs::write(&path, [0xFF]).unwrap();
+
+        let result = WriteFile
+            .call(
+                json!({"path":"binary.bin","content":"replacement"}),
+                ctx,
+                "test".into(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "replacement");
+        assert!(result.content.contains("wrote "));
+        assert!(result.content.contains(UNREADABLE_FILE_DIFF_MESSAGE));
     }
 
     #[tokio::test]

@@ -49,6 +49,7 @@ mod skill_picker;
 mod statusline;
 mod stream;
 mod theme;
+mod tool_diff;
 
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -6449,33 +6450,6 @@ mod tests {
         assert!(rendered.contains("bash"));
         assert!(rendered.contains("cargo test"));
         assert!(!rendered.contains("tool:"));
-    }
-
-    #[test]
-    fn diff_tool_block_colors_added_and_removed_lines() {
-        let lines = entry_lines(
-            &Entry::Tool(ToolEntry {
-                state: ToolEntryState::Finished {
-                    ok: true,
-                    display_style: ToolDisplayStyle::file_diff(),
-                },
-                display_lines: vec!["-old\n+new".into()],
-                expanded: false,
-            }),
-            80,
-            20,
-        );
-        let removed = lines
-            .iter()
-            .find(|line| line_text(line).trim() == "-old")
-            .unwrap();
-        let added = lines
-            .iter()
-            .find(|line| line_text(line).trim() == "+new")
-            .unwrap();
-
-        assert_eq!(removed.spans[0].style.fg, Some(Color::Red));
-        assert_eq!(added.spans[0].style.fg, Some(Color::Green));
     }
 
     #[test]

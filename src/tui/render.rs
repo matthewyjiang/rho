@@ -1,7 +1,8 @@
 use super::{
     markdown::push_wrapped_markdown,
     theme::{Theme, ToolStyle},
-    Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker, DEFAULT_TUI_HEIGHT,
+    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
+    DEFAULT_TUI_HEIGHT,
 };
 use crate::tool::ToolDisplayStyle;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -487,7 +488,7 @@ fn push_tool_block_with_style(
     style: Style,
     color_diff: bool,
 ) {
-    let logical_lines = tool_logical_lines(display_lines);
+    let logical_lines = tool_diff::logical_lines(display_lines);
     let max_tool_output_lines = max_tool_output_lines.max(1);
     let truncated = logical_lines.len() > max_tool_output_lines;
     let visible_count = if truncated && !expanded {
@@ -498,7 +499,7 @@ fn push_tool_block_with_style(
 
     for line in logical_lines.iter().take(visible_count) {
         let line_style = if color_diff {
-            diff_line_style(line, style)
+            tool_diff::line_style(line, style)
         } else {
             style
         };
@@ -516,32 +517,6 @@ fn push_tool_block_with_style(
         };
         push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
     }
-}
-
-fn diff_line_style(line: &str, base: Style) -> Style {
-    if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
-        Theme::diff_header(base)
-    } else if line.starts_with('+') {
-        Theme::diff_addition(base)
-    } else if line.starts_with('-') {
-        Theme::diff_removal(base)
-    } else {
-        base
-    }
-}
-
-fn tool_logical_lines(display_lines: &[String]) -> Vec<String> {
-    display_lines
-        .iter()
-        .flat_map(|line| {
-            let lines = line.lines().map(str::to_string).collect::<Vec<_>>();
-            if lines.is_empty() {
-                vec![String::new()]
-            } else {
-                lines
-            }
-        })
-        .collect()
 }
 
 fn tool_style(style: ToolDisplayStyle) -> ToolStyle {

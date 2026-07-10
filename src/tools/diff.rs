@@ -1,8 +1,16 @@
 use similar::TextDiff;
 
+const MAX_DIFF_INPUT_BYTES: usize = 128 * 1024;
+const LARGE_DIFF_MESSAGE: &str = "Diff omitted: file is too large.";
+pub(super) const UNREADABLE_FILE_DIFF_MESSAGE: &str =
+    "Diff omitted: existing file could not be read.";
+
 pub(super) fn unified_diff(old: &str, new: &str, display_path: &str, created: bool) -> String {
     if old == new {
         return "No changes.".into();
+    }
+    if old.len().saturating_add(new.len()) > MAX_DIFF_INPUT_BYTES {
+        return LARGE_DIFF_MESSAGE.into();
     }
 
     let old_header = if created {
@@ -75,9 +83,20 @@ mod tests {
     }
 
     #[test]
+    fn omits_diff_for_large_files() {
+        let large = "x".repeat(MAX_DIFF_INPUT_BYTES);
+
+        assert_eq!(
+            unified_diff(&large, "updated", "large.txt", false),
+            LARGE_DIFF_MESSAGE
+        );
+    }
+
+    #[test]
     fn compact_diff_returns_none_for_empty_diff() {
         assert_eq!(compact_diff_for_display(""), None);
     }
+
     #[test]
     fn formats_created_file() {
         let diff = unified_diff("", "hello\n", "nested/hello.txt", true);
