@@ -17,9 +17,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -40,6 +40,7 @@ mod login;
 mod markdown;
 mod model_picker;
 mod mouse;
+mod mouse_capture;
 mod paste_burst;
 mod picker;
 mod provider_picker;
@@ -151,7 +152,7 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
     let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
-    let mouse_capture_enabled = enable_mouse_capture().is_ok();
+    let mouse_capture_enabled = mouse_capture::enable().is_ok();
     let modified_keys_enabled = enable_modified_keys().is_ok();
     let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
     let herdr = info.herdr.clone();
@@ -176,7 +177,7 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
         let _ = disable_modified_keys();
     }
     if mouse_capture_enabled {
-        let _ = disable_mouse_capture();
+        let _ = mouse_capture::disable();
     }
     if bracketed_paste_enabled {
         let _ = disable_bracketed_paste();
@@ -5826,14 +5827,6 @@ fn enable_bracketed_paste() -> std::io::Result<()> {
 
 fn disable_bracketed_paste() -> std::io::Result<()> {
     execute!(std::io::stdout(), DisableBracketedPaste)
-}
-
-fn enable_mouse_capture() -> std::io::Result<()> {
-    execute!(std::io::stdout(), EnableMouseCapture)
-}
-
-fn disable_mouse_capture() -> std::io::Result<()> {
-    execute!(std::io::stdout(), DisableMouseCapture)
 }
 
 fn enable_keyboard_enhancements() -> std::io::Result<()> {
