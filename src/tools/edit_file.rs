@@ -1,4 +1,4 @@
-use crate::tool::*;
+use crate::{tool::*, tools::diff::unified_diff};
 use serde::Deserialize;
 use serde_json::json;
 use std::ops::Range;
@@ -24,7 +24,7 @@ impl Tool for EditFile {
     }
 
     fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_or_command()
+        ToolDisplayStyle::file_diff()
     }
 
     fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
@@ -39,11 +39,14 @@ impl Tool for EditFile {
         ctx: &ToolContext,
         result: &ToolResult,
     ) -> Vec<String> {
-        vec![format!(
-            "edit_file {}",
-            self.display_content(args, ctx)
-                .unwrap_or_else(|| result.content.clone())
-        )]
+        let path = self
+            .display_content(args, ctx)
+            .unwrap_or_else(|| result.content.clone());
+        let mut lines = vec![format!("edit_file {path}")];
+        if result.ok {
+            lines.push(result.content.clone());
+        }
+        lines
     }
 
     async fn call(
@@ -75,14 +78,23 @@ impl Tool for EditFile {
         }
         let new_string = match_file_eol(&content, &args.new_string);
         let new_content = replace_spans(&content, &spans, &new_string, args.replace_all);
+        let diff = unified_diff(
+            &content,
+            &new_content,
+            &compact_display_path(&ctx.cwd, &args.path),
+            false,
+        );
         std::fs::write(&path, new_content)?;
         Ok(ToolResult {
             id,
             ok: true,
-            content: format!(
-                "edited {}; replaced {} occurrence(s)",
-                path.display(),
-                count
+            content: truncate(
+                format!(
+                    "edited {}; replaced {} occurrence(s)\n\n{diff}",
+                    path.display(),
+                    if args.replace_all { count } else { 1 }
+                ),
+                ctx.max_output_bytes,
             ),
         })
     }
@@ -202,6 +214,27 @@ mod tests {
             std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
             "alpha delta gamma"
         );
+        assert!(result.content.contains("--- a/sample.txt"));
+        assert!(result.content.contains("+++ b/sample.txt"));
+        assert!(result.content.contains("-alpha beta gamma"));
+        assert!(result.content.contains("+alpha delta gamma"));
+    }
+
+    #[tokio::test]
+    async fn replace_all_reports_all_replacements() {
+        let (_dir, ctx) = test_context();
+        std::fs::write(ctx.cwd.join("sample.txt"), "old old").unwrap();
+
+        let result = EditFile
+            .call(
+                json!({"path": "sample.txt", "old_string": "old", "new_string": "new", "replace_all": true}),
+                ctx,
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.content.contains("replaced 2 occurrence(s)"));
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::tool::*;
+use crate::{tool::*, tools::diff::unified_diff};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -20,7 +20,7 @@ impl Tool for WriteFile {
     }
 
     fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_or_command()
+        ToolDisplayStyle::file_diff()
     }
 
     fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
@@ -35,11 +35,14 @@ impl Tool for WriteFile {
         ctx: &ToolContext,
         result: &ToolResult,
     ) -> Vec<String> {
-        vec![format!(
-            "write_file {}",
-            self.display_content(args, ctx)
-                .unwrap_or_else(|| result.content.clone())
-        )]
+        let path = self
+            .display_content(args, ctx)
+            .unwrap_or_else(|| result.content.clone());
+        let mut lines = vec![format!("write_file {path}")];
+        if result.ok {
+            lines.push(result.content.clone());
+        }
+        lines
     }
 
     async fn call(
@@ -50,19 +53,36 @@ impl Tool for WriteFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
-        let created = !path.exists();
+        let old_content = match std::fs::read_to_string(&path) {
+            Ok(content) => Some(content),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err.into()),
+        };
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
+        let diff = unified_diff(
+            old_content.as_deref().unwrap_or(""),
+            &args.content,
+            &compact_display_path(&ctx.cwd, &args.path),
+            old_content.is_none(),
+        );
         std::fs::write(&path, args.content)?;
 
-        let action = if created { "created" } else { "wrote" };
+        let action = if old_content.is_none() {
+            "created"
+        } else {
+            "wrote"
+        };
         Ok(ToolResult {
             id,
             ok: true,
-            content: truncate(format!("{action} {}", path.display()), ctx.max_output_bytes),
+            content: truncate(
+                format!("{action} {}\n\n{diff}", path.display()),
+                ctx.max_output_bytes,
+            ),
         })
     }
 }
@@ -100,6 +120,9 @@ mod tests {
             "hello"
         );
         assert!(result.content.contains("created "));
+        assert!(result.content.contains("--- /dev/null"));
+        assert!(result.content.contains("+++ b/nested/hello.txt"));
+        assert!(result.content.contains("+hello"));
     }
 
     #[tokio::test]
@@ -118,5 +141,9 @@ mod tests {
 
         assert!(result.ok);
         assert!(result.content.contains("wrote "));
+        assert!(result.content.contains("--- a/hello.txt"));
+        assert!(result.content.contains("+++ b/hello.txt"));
+        assert!(result.content.contains("-old"));
+        assert!(result.content.contains("+new"));
     }
 }

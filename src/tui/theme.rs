@@ -268,6 +268,19 @@ impl Theme {
             .add_modifier(Modifier::UNDERLINED)
     }
 
+    pub(super) fn diff_addition(base: Style) -> Style {
+        Self::dim_block(Palette::current().success_tool_background).add_modifier(base.add_modifier)
+    }
+
+    pub(super) fn diff_removal(base: Style) -> Style {
+        Self::dim_block(Palette::current().failure_tool_background).add_modifier(base.add_modifier)
+    }
+
+    pub(super) fn diff_header(base: Style) -> Style {
+        base.fg(Palette::current().accent)
+            .add_modifier(Modifier::BOLD)
+    }
+
     pub(super) fn tool_default() -> ToolStyle {
         let palette = Palette::current();
         ToolStyle::new(

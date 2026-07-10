@@ -468,6 +468,13 @@ fn push_tool_block(
         max_tool_output_lines,
         expanded,
         style,
+        matches!(
+            state,
+            ToolEntryState::Finished {
+                display_style: ToolDisplayStyle::FileDiff,
+                ..
+            }
+        ),
     );
 }
 
@@ -478,6 +485,7 @@ fn push_tool_block_with_style(
     max_tool_output_lines: usize,
     expanded: bool,
     style: Style,
+    color_diff: bool,
 ) {
     let logical_lines = tool_logical_lines(display_lines);
     let max_tool_output_lines = max_tool_output_lines.max(1);
@@ -489,7 +497,12 @@ fn push_tool_block_with_style(
     };
 
     for line in logical_lines.iter().take(visible_count) {
-        push_hard_wrapped_text(lines, line, width, style, LineFill::PadToWidth);
+        let line_style = if color_diff {
+            diff_line_style(line, style)
+        } else {
+            style
+        };
+        push_hard_wrapped_text(lines, line, width, line_style, LineFill::PadToWidth);
     }
 
     if truncated {
@@ -502,6 +515,18 @@ fn push_tool_block_with_style(
             )
         };
         push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
+    }
+}
+
+fn diff_line_style(line: &str, base: Style) -> Style {
+    if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+        Theme::diff_header(base)
+    } else if line.starts_with('+') {
+        Theme::diff_addition(base)
+    } else if line.starts_with('-') {
+        Theme::diff_removal(base)
+    } else {
+        base
     }
 }
 
@@ -522,7 +547,9 @@ fn tool_logical_lines(display_lines: &[String]) -> Vec<String> {
 fn tool_style(style: ToolDisplayStyle) -> ToolStyle {
     match style {
         ToolDisplayStyle::DefaultTool => Theme::tool_default(),
-        ToolDisplayStyle::FileOrCommand => Theme::tool_file_or_command(),
+        ToolDisplayStyle::FileOrCommand | ToolDisplayStyle::FileDiff => {
+            Theme::tool_file_or_command()
+        }
         ToolDisplayStyle::Skill => Theme::tool_skill(),
     }
 }
@@ -739,6 +766,7 @@ mod tests {
             10,
             false,
             Style::default().bg(Color::Green),
+            false,
         );
 
         assert!(lines

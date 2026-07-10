@@ -6452,6 +6452,42 @@ mod tests {
     }
 
     #[test]
+    fn diff_tool_block_colors_added_and_removed_lines() {
+        let lines = entry_lines(
+            &Entry::Tool(ToolEntry {
+                state: ToolEntryState::Finished {
+                    ok: true,
+                    display_style: ToolDisplayStyle::file_diff(),
+                },
+                display_lines: vec![
+                    "edit_file sample.txt".into(),
+                    "edited sample.txt\n\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new"
+                        .into(),
+                ],
+                expanded: false,
+            }),
+            80,
+            20,
+        );
+        let removed = lines
+            .iter()
+            .find(|line| line_text(line).trim() == "-old")
+            .unwrap();
+        let added = lines
+            .iter()
+            .find(|line| line_text(line).trim() == "+new")
+            .unwrap();
+        let header = lines
+            .iter()
+            .find(|line| line_text(line).trim().starts_with("@@"))
+            .unwrap();
+
+        assert_eq!(removed.spans[0].style.bg, Some(Color::Red));
+        assert_eq!(added.spans[0].style.bg, Some(Color::Green));
+        assert_eq!(header.spans[0].style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
     fn read_file_tool_block_shows_file_name_only() {
         let lines = entry_lines(
             &test_tool_entry(true, &["read_file", "src/main.rs"]),

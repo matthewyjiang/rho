@@ -29,7 +29,7 @@ These tools can read and modify files, run shell commands in the working directo
 
 ## File writes and diffs
 
-File write results include a unified diff so the model and transcript can inspect what changed. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+File write results include a unified diff so the model and transcript can inspect what changed. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
 
 ## Sandbox and approvals
 
