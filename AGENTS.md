@@ -37,7 +37,7 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 - For async traits, avoid `#[async_trait]` and `#[allow(async_fn_in_trait)]`. Prefer returning an explicit future with a `Send` bound, for example `fn run(&self) -> impl std::future::Future<Output = Result<()>> + Send;`.
 - Do not create small helper methods that are only used once unless they materially improve readability or isolate a clear invariant.
 - Follow common Clippy/rustfmt style: collapse nested `if` statements when possible, inline `format!` arguments (`format!("hello {name}")`), and prefer method references over redundant closures.
-- After Rust code changes, run `cargo fmt`. Run the narrowest relevant tests for the changed crate or module before finalizing when practical.
+- After Rust code changes, run `cargo fmt` and `python3 scripts/check_architecture.py` as part of the local lint flow. Run the narrowest relevant tests for the changed crate or module before finalizing when practical.
 
 ## Abstraction and module boundaries
 
