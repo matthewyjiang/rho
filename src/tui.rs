@@ -2,7 +2,6 @@ use std::{
     collections::VecDeque,
     future::Future,
     io::Write,
-    ops::Range,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -20,7 +19,7 @@ use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-        MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -34,11 +33,13 @@ use ratatui::{
 };
 mod config_editor;
 mod config_picker;
+mod copy_interaction;
 mod file_picker;
 mod history_cache;
 mod login;
 mod markdown;
 mod model_picker;
+mod mouse;
 mod paste_burst;
 mod picker;
 mod provider_picker;
@@ -57,6 +58,7 @@ use config_editor::{
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
     ConfigTextKey, ConfigToggle,
 };
+use copy_interaction::CodeBlockCopyTarget;
 use markdown::push_wrapped_markdown;
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -73,8 +75,8 @@ use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDra
 use statusline::{statusline_lines, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
 use text_selection::{
-    highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, SelectionPosition,
-    TerminalClipboard, TextSelection,
+    highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
+    TextSelection,
 };
 use theme::Theme;
 
@@ -201,13 +203,6 @@ struct ScreenLayout {
     statusline: Rect,
     commands: Rect,
     composer_start: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CodeBlockCopyTarget {
-    line: usize,
-    columns: Range<usize>,
-    text: String,
 }
 
 struct LiveStreamPreview {
@@ -5305,164 +5300,6 @@ impl App {
         }
     }
 
-    fn handle_mouse_event<B: Backend>(
-        &mut self,
-        kind: MouseEventKind,
-        column: u16,
-        row: u16,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
-        let size = terminal.size()?;
-        let width = size.width as usize;
-        let height = size.height as usize;
-        let now = Instant::now();
-        match kind {
-            MouseEventKind::ScrollUp => {
-                self.text_selection = None;
-                self.hovered_code_block_copy = None;
-                self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
-                self.scroll_history_lines(width, height, now, -3);
-            }
-            MouseEventKind::ScrollDown => {
-                self.text_selection = None;
-                self.hovered_code_block_copy = None;
-                self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
-                self.scroll_history_lines(width, height, now, 3);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                let history_len = self.history_len(width, now);
-                let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
-                let targets = self.code_block_copy_targets(width);
-                let code_target =
-                    code_block_copy_target_at(&targets, layout.history, history_start, column, row);
-                let scrollbar = layout
-                    .history_scrollbar
-                    .filter(|scrollbar| scrollbar.contains(column, row))
-                    .filter(|_| self.should_render_history_scrollbar(now));
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                self.hovered_code_block_copy = code_target.as_ref().map(|target| target.line);
-                if let Some(scrollbar) = scrollbar {
-                    self.text_selection = None;
-                    self.reveal_history_scrollbar(now);
-                    let drag = scrollbar.begin_drag(row);
-                    self.history_scrollbar_drag = Some(drag);
-                    self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                } else if layout
-                    .jump_to_bottom
-                    .is_some_and(|rect| rect.contains(Position { x: column, y: row }))
-                {
-                    self.text_selection = None;
-                    self.history_scrollbar_drag = None;
-                    self.scroll_history_to_bottom();
-                } else if let Some(target) = code_target {
-                    self.text_selection = None;
-                    self.copy_text(&target.text, now);
-                } else if let Some(position) =
-                    selection_position(layout.history, history_start, column, row)
-                {
-                    self.history_scrollbar_drag = None;
-                    self.text_selection = Some(TextSelection::new(position));
-                } else {
-                    self.text_selection = None;
-                }
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                if let Some(drag) = self.history_scrollbar_drag {
-                    self.text_selection = None;
-                    self.hovered_code_block_copy = None;
-                    if let Some(scrollbar) = layout.history_scrollbar {
-                        self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                    }
-                } else {
-                    let history_len = self.history_len(width, now);
-                    let history_start =
-                        self.visible_history_start(history_len, layout.history.height as usize);
-                    let targets = self.code_block_copy_targets(width);
-                    self.hovered_code_block_copy = code_block_copy_target_at(
-                        &targets,
-                        layout.history,
-                        history_start,
-                        column,
-                        row,
-                    )
-                    .map(|target| target.line);
-                    if let (Some(selection), Some(position)) = (
-                        &mut self.text_selection,
-                        selection_position_clamped(layout.history, history_start, column, row),
-                    ) {
-                        selection.update(position);
-                    }
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                let was_scrollbar_drag = self.history_scrollbar_drag.take().is_some();
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let history_len = self.history_len(width, now);
-                let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
-                let targets = self.code_block_copy_targets(width);
-                self.hovered_code_block_copy =
-                    code_block_copy_target_at(&targets, layout.history, history_start, column, row)
-                        .map(|target| target.line);
-                if was_scrollbar_drag {
-                    self.text_selection = None;
-                } else if let Some(mut selection) = self.text_selection.take() {
-                    if let Some(position) =
-                        selection_position_clamped(layout.history, history_start, column, row)
-                    {
-                        selection.update(position);
-                    }
-                    if selection.has_moved() {
-                        let visible_lines = self.visible_history_lines(
-                            width,
-                            now,
-                            history_start,
-                            layout.history.height as usize,
-                        );
-                        if let Some(text) = selection.selected_text(&visible_lines, history_start) {
-                            self.copy_text(&text, now);
-                            self.text_selection = Some(selection);
-                        }
-                    }
-                }
-            }
-            MouseEventKind::Moved => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let history_len = self.history_len(width, now);
-                let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
-                let targets = self.code_block_copy_targets(width);
-                self.hovered_code_block_copy =
-                    code_block_copy_target_at(&targets, layout.history, history_start, column, row)
-                        .map(|target| target.line);
-            }
-            MouseEventKind::Down(MouseButton::Right)
-            | MouseEventKind::Down(MouseButton::Middle)
-            | MouseEventKind::Up(MouseButton::Right)
-            | MouseEventKind::Up(MouseButton::Middle)
-            | MouseEventKind::Drag(MouseButton::Right)
-            | MouseEventKind::Drag(MouseButton::Middle)
-            | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight => {}
-        }
-        Ok(())
-    }
-
-    fn copy_text(&mut self, text: &str, now: Instant) {
-        self.copy_notice = Some(match self.clipboard.copy(text) {
-            Ok(()) => CopyNotice::copied(text.chars().count(), now),
-            Err(error) => CopyNotice::failed(&error, now),
-        });
-    }
-
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
         match &self.composer {
             ComposerMode::Input => {
@@ -5932,61 +5769,6 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
     )]
 }
 
-fn code_block_copy_target_at(
-    targets: &[CodeBlockCopyTarget],
-    history: Rect,
-    history_start: usize,
-    column: u16,
-    row: u16,
-) -> Option<CodeBlockCopyTarget> {
-    if !history.contains(Position { x: column, y: row }) {
-        return None;
-    }
-    let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
-    let relative_column = column.saturating_sub(history.x) as usize;
-    targets
-        .iter()
-        .find(|target| target.line == line && target.columns.contains(&relative_column))
-        .cloned()
-}
-
-fn selection_position(
-    history: Rect,
-    history_start: usize,
-    column: u16,
-    row: u16,
-) -> Option<SelectionPosition> {
-    history
-        .contains(Position { x: column, y: row })
-        .then(|| SelectionPosition {
-            line: history_start.saturating_add(row.saturating_sub(history.y) as usize),
-            column: column.saturating_sub(history.x) as usize,
-        })
-}
-
-fn selection_position_clamped(
-    history: Rect,
-    history_start: usize,
-    column: u16,
-    row: u16,
-) -> Option<SelectionPosition> {
-    if history.width == 0 || history.height == 0 {
-        return None;
-    }
-    let column = column.clamp(
-        history.x,
-        history.x.saturating_add(history.width.saturating_sub(1)),
-    );
-    let row = row.clamp(
-        history.y,
-        history.y.saturating_add(history.height.saturating_sub(1)),
-    );
-    Some(SelectionPosition {
-        line: history_start.saturating_add(row.saturating_sub(history.y) as usize),
-        column: column.saturating_sub(history.x) as usize,
-    })
-}
-
 fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
@@ -6210,7 +5992,11 @@ mod tests {
         save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
         MemoryCredentialStore,
     };
+    use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+    #[path = "mouse_tests.rs"]
+    mod mouse_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;
@@ -8200,109 +7986,5 @@ mod tests {
     #[test]
     fn paste_normalization_converts_crlf_and_cr() {
         assert_eq!(normalize_paste("a\r\nb\rc"), "a\nb\nc");
-    }
-
-    #[derive(Clone)]
-    struct RecordingClipboard {
-        copied: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl ClipboardWriter for RecordingClipboard {
-        fn copy(&mut self, text: &str) -> std::io::Result<()> {
-            self.copied.lock().unwrap().push(text.to_string());
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn dragging_transcript_text_copies_on_mouse_release() {
-        let copied = Arc::new(Mutex::new(Vec::new()));
-        let mut app = test_app();
-        app.clipboard = Box::new(RecordingClipboard {
-            copied: copied.clone(),
-        });
-        app.record_inserted_entry(Entry::Assistant("hello world".into()));
-        let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
-        let now = Instant::now();
-        let history_len = app.history_len(40, now);
-        let layout = app.screen_layout_for_history_len(Rect::new(0, 0, 40, 18), now, history_len);
-        let history_start = app.visible_history_start(history_len, layout.history.height as usize);
-        let full_lines = app.history_lines(40, now);
-        let text_line = full_lines
-            .iter()
-            .position(|line| line_text(line).contains("hello world"))
-            .unwrap();
-        let row = layout.history.y + text_line.saturating_sub(history_start) as u16;
-
-        app.handle_mouse_event(
-            MouseEventKind::Down(MouseButton::Left),
-            1,
-            row,
-            &mut terminal,
-        )
-        .unwrap();
-        app.handle_mouse_event(
-            MouseEventKind::Drag(MouseButton::Left),
-            5,
-            row,
-            &mut terminal,
-        )
-        .unwrap();
-        app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), 5, row, &mut terminal)
-            .unwrap();
-
-        assert_eq!(*copied.lock().unwrap(), vec!["hello".to_string()]);
-        assert_eq!(
-            app.copy_notice.as_ref().unwrap().message(),
-            "5 chars copied"
-        );
-        assert!(app.text_selection.is_some());
-    }
-
-    #[test]
-    fn code_block_copy_button_hovers_and_copies_raw_contents() {
-        let copied = Arc::new(Mutex::new(Vec::new()));
-        let mut app = test_app();
-        app.clipboard = Box::new(RecordingClipboard {
-            copied: copied.clone(),
-        });
-        app.record_inserted_entry(Entry::Assistant(
-            "```rust\nlet x = 1;\nprintln!(\"{x}\");\n```".into(),
-        ));
-        let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
-        let now = Instant::now();
-        let history_len = app.history_len(40, now);
-        let layout = app.screen_layout_for_history_len(Rect::new(0, 0, 40, 18), now, history_len);
-        let history_start = app.visible_history_start(history_len, layout.history.height as usize);
-        let target = app.code_block_copy_targets(40).into_iter().next().unwrap();
-        let column = target.columns.start as u16;
-        let row = layout.history.y + target.line.saturating_sub(history_start) as u16;
-
-        app.handle_mouse_event(MouseEventKind::Moved, column, row, &mut terminal)
-            .unwrap();
-        assert_eq!(app.hovered_code_block_copy, Some(target.line));
-        terminal.draw(|frame| app.draw(frame)).unwrap();
-        let hovered_style = terminal.backend().buffer()[(column, row)].style();
-        let expected_hovered_style = Theme::markdown_code_copy_button(/*hovered*/ true);
-        assert_eq!(hovered_style.fg, expected_hovered_style.fg);
-        assert_eq!(hovered_style.bg, expected_hovered_style.bg);
-
-        app.handle_mouse_event(
-            MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            &mut terminal,
-        )
-        .unwrap();
-
-        assert_eq!(
-            *copied.lock().unwrap(),
-            vec!["let x = 1;\nprintln!(\"{x}\");".to_string()]
-        );
-        assert_eq!(
-            app.copy_notice.as_ref().unwrap().message(),
-            "27 chars copied"
-        );
-        assert!(app.text_selection.is_none());
     }
 }
