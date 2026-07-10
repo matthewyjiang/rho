@@ -7564,26 +7564,6 @@ mod tests {
     }
 
     #[test]
-    fn stream_preview_code_blocks_do_not_render_inactive_copy_buttons() {
-        let mut app = test_app();
-        app.live_stream_preview = Some(LiveStreamPreview {
-            kind: StreamKind::Assistant,
-            text: "```rust\nlet x = 1;".into(),
-            include_leading_blank: false,
-        });
-
-        let rendered = app
-            .history_live_lines(40, Instant::now())
-            .iter()
-            .map(line_text)
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(rendered.contains("let x = 1;"), "{rendered}");
-        assert!(!rendered.contains("COPY"), "{rendered}");
-    }
-
-    #[test]
     fn fullscreen_history_starts_at_bottom() {
         let mut app = test_app();
         for index in 0..20 {

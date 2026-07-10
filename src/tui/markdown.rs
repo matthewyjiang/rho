@@ -909,6 +909,22 @@ mod tests {
     }
 
     #[test]
+    fn stream_preview_renderer_can_hide_inactive_copy_buttons() {
+        let mut lines = Vec::new();
+        let mut in_code_block = false;
+        push_wrapped_markdown_without_copy_button(
+            &mut lines,
+            "```rust\nlet x = 1;",
+            40,
+            &mut in_code_block,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(rendered.contains("let x = 1;"), "{rendered}");
+        assert!(!rendered.contains("COPY"), "{rendered}");
+    }
+
+    #[test]
     fn renders_code_blocks_with_closed_borders() {
         let mut in_code_block = false;
         let lines = markdown_lines("```rust\nlet x = 1;\n```", 20, &mut in_code_block);
