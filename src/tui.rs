@@ -31,6 +31,7 @@ use ratatui::{
     widgets::Paragraph,
     DefaultTerminal, Frame, Terminal,
 };
+mod config_editor;
 mod config_picker;
 mod file_picker;
 mod history_cache;
@@ -40,6 +41,7 @@ mod model_picker;
 mod paste_burst;
 mod picker;
 mod provider_picker;
+mod questionnaire;
 mod render;
 mod scrollbar;
 mod session_picker;
@@ -48,13 +50,21 @@ mod statusline;
 mod stream;
 mod theme;
 
+use config_editor::{
+    config_number_input_lines, config_text_input_lines, ConfigMutation, ConfigNumberInput,
+    ConfigNumberKey, ConfigNumberSave, ConfigTextInput, ConfigTextKey, ConfigToggle,
+};
 use markdown::push_wrapped_markdown;
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use questionnaire::{
+    questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
+    QuestionAnswerRequest, QuestionnaireCancelReason, QuestionnaireComposer, QuestionnaireReply,
+    QuestionnaireResponseChannel,
+};
 use render::{
     display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, push_wrapped_text_with, session_header_lines, styled_line,
-    truncate_one_line, wrap_line_at_whitespace, LineFill,
+    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{statusline_lines, StatusLineState};
@@ -62,10 +72,7 @@ use stream::{AppendOnlyStream, StreamFragment};
 use theme::Theme;
 
 use crate::{
-    agent::{
-        Agent, AgentEvent, QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind,
-        QuestionnaireRequest, QuestionnaireResponse, SessionHistorySink,
-    },
+    agent::{Agent, AgentEvent, QuestionnaireRequest, SessionHistorySink},
     auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
@@ -257,556 +264,6 @@ enum ComposerMode {
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
     Questionnaire(QuestionnaireComposer),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum QuestionnaireCancelReason {
-    UserCancelled,
-    UiUnavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum QuestionnaireReply {
-    Answer(QuestionnaireResponse),
-    Cancelled(QuestionnaireCancelReason),
-}
-
-struct QuestionnaireResponseChannel {
-    reply_tx: Option<oneshot::Sender<QuestionnaireReply>>,
-}
-
-impl std::fmt::Debug for QuestionnaireResponseChannel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QuestionnaireResponseChannel")
-            .field("reply_pending", &self.reply_tx.is_some())
-            .finish()
-    }
-}
-
-impl QuestionnaireResponseChannel {
-    fn new(reply_tx: oneshot::Sender<QuestionnaireReply>) -> Self {
-        Self {
-            reply_tx: Some(reply_tx),
-        }
-    }
-
-    fn send_response(&mut self, response: QuestionnaireResponse) {
-        if let Some(reply_tx) = self.reply_tx.take() {
-            let _ = reply_tx.send(QuestionnaireReply::Answer(response));
-        }
-    }
-
-    fn cancel(&mut self, reason: QuestionnaireCancelReason) {
-        if let Some(reply_tx) = self.reply_tx.take() {
-            let _ = reply_tx.send(QuestionnaireReply::Cancelled(reason));
-        }
-    }
-}
-
-impl Drop for QuestionnaireResponseChannel {
-    fn drop(&mut self) {
-        self.cancel(QuestionnaireCancelReason::UiUnavailable);
-    }
-}
-
-#[derive(Debug)]
-struct QuestionAnswerRequest {
-    request: QuestionnaireRequest,
-    response: QuestionnaireResponseChannel,
-}
-
-#[derive(Debug)]
-struct QuestionnaireComposer {
-    request: QuestionnaireRequest,
-    response: QuestionnaireResponseChannel,
-    fields: Vec<QuestionnaireFieldState>,
-    active_index: usize,
-}
-
-#[derive(Debug)]
-struct QuestionnaireFieldState {
-    selection: FieldSelection,
-    choice_cursor: usize,
-    other_value: String,
-    other_cursor: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum FieldSelection {
-    Text,
-    None,
-    Single(usize),
-    Multi { selected: Vec<usize>, other: bool },
-    Other,
-}
-
-impl QuestionnaireComposer {
-    fn new(request: QuestionnaireRequest, response: QuestionnaireResponseChannel) -> Self {
-        let fields = request
-            .questions
-            .iter()
-            .map(QuestionnaireFieldState::new)
-            .collect::<Vec<_>>();
-        Self {
-            request,
-            response,
-            fields,
-            active_index: 0,
-        }
-    }
-
-    fn active_question(&self) -> &QuestionnaireQuestion {
-        &self.request.questions[self.active_index]
-    }
-
-    fn active_field(&self) -> &QuestionnaireFieldState {
-        &self.fields[self.active_index]
-    }
-
-    fn active_field_mut(&mut self) -> &mut QuestionnaireFieldState {
-        &mut self.fields[self.active_index]
-    }
-
-    fn active_char_len(&self) -> usize {
-        self.active_field().char_len()
-    }
-
-    fn move_to_previous_field(&mut self) {
-        self.active_index = self.active_index.saturating_sub(1);
-    }
-
-    fn move_to_next_field(&mut self) {
-        self.active_index = (self.active_index + 1).min(self.fields.len().saturating_sub(1));
-    }
-
-    fn move_active_choice_previous(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().move_choice_previous(&question);
-    }
-
-    fn move_active_choice_next(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().move_choice_next(&question);
-    }
-
-    fn toggle_active_choice(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().toggle_highlighted(&question);
-    }
-
-    fn clear_active_answer(&mut self) {
-        let question = self.active_question().clone();
-        *self.active_field_mut() = QuestionnaireFieldState::empty(&question);
-    }
-
-    fn active_text_entry_active(&self) -> bool {
-        self.active_field()
-            .text_entry_active(self.active_question())
-    }
-
-    fn insert_char(&mut self, ch: char) -> bool {
-        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
-            return false;
-        }
-        self.active_field_mut().insert_char(ch);
-        true
-    }
-
-    fn insert_text(&mut self, text: &str) -> bool {
-        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
-            return false;
-        }
-        self.active_field_mut().insert_text(text);
-        true
-    }
-
-    fn backspace(&mut self) {
-        if self.active_text_entry_active() {
-            self.active_field_mut().backspace();
-        }
-    }
-
-    fn delete(&mut self) {
-        if self.active_text_entry_active() {
-            self.active_field_mut().delete();
-        }
-    }
-
-    fn activate_other_for_typing(&mut self) -> bool {
-        let question = self.active_question().clone();
-        if !question.allow_other {
-            return false;
-        }
-        match &mut self.active_field_mut().selection {
-            FieldSelection::Text | FieldSelection::Other => true,
-            FieldSelection::None | FieldSelection::Single(_) => {
-                let field = self.active_field_mut();
-                field.selection = FieldSelection::Other;
-                field.choice_cursor = question.choices.len();
-                true
-            }
-            FieldSelection::Multi { .. } => {
-                let field = self.active_field_mut();
-                if let FieldSelection::Multi { other, .. } = &mut field.selection {
-                    *other = true;
-                }
-                field.choice_cursor = question.choices.len();
-                true
-            }
-        }
-    }
-}
-
-impl QuestionnaireFieldState {
-    fn empty(question: &QuestionnaireQuestion) -> Self {
-        let selection = match question.kind {
-            QuestionnaireQuestionKind::Text => FieldSelection::Text,
-            QuestionnaireQuestionKind::Choice => FieldSelection::None,
-            QuestionnaireQuestionKind::MultiSelect => FieldSelection::Multi {
-                selected: Vec::new(),
-                other: false,
-            },
-            QuestionnaireQuestionKind::Confirm => FieldSelection::None,
-        };
-        Self {
-            selection,
-            choice_cursor: 0,
-            other_value: String::new(),
-            other_cursor: 0,
-        }
-    }
-
-    fn new(question: &QuestionnaireQuestion) -> Self {
-        let (selection, choice_cursor, other_value) = match question.kind {
-            QuestionnaireQuestionKind::Text => (
-                FieldSelection::Text,
-                0,
-                question
-                    .default
-                    .as_ref()
-                    .map(questionnaire_default_string)
-                    .unwrap_or_default(),
-            ),
-            QuestionnaireQuestionKind::Choice => default_choice_selection(question),
-            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question),
-            QuestionnaireQuestionKind::Confirm => default_confirm_selection(question),
-        };
-        let other_cursor = other_value.chars().count();
-        Self {
-            selection,
-            choice_cursor,
-            other_value,
-            other_cursor,
-        }
-    }
-
-    fn char_len(&self) -> usize {
-        self.other_value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.other_value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.other_value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        let byte_index = self.byte_index(self.other_cursor);
-        self.other_value.insert(byte_index, ch);
-        self.other_cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        let byte_index = self.byte_index(self.other_cursor);
-        self.other_value.insert_str(byte_index, text);
-        self.other_cursor += text.chars().count();
-    }
-
-    fn backspace(&mut self) {
-        if self.other_cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.other_cursor - 1);
-        let end = self.byte_index(self.other_cursor);
-        self.other_value.replace_range(start..end, "");
-        self.other_cursor -= 1;
-    }
-
-    fn delete(&mut self) {
-        if self.other_cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.other_cursor);
-        let end = self.byte_index(self.other_cursor + 1);
-        self.other_value.replace_range(start..end, "");
-    }
-
-    fn text_entry_active(&self, question: &QuestionnaireQuestion) -> bool {
-        match &self.selection {
-            FieldSelection::Text | FieldSelection::Other => true,
-            FieldSelection::None | FieldSelection::Single(_) => false,
-            FieldSelection::Multi { other, .. } => {
-                *other && self.choice_cursor == question.choices.len()
-            }
-        }
-    }
-
-    fn move_choice_previous(&mut self, question: &QuestionnaireQuestion) {
-        let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
-            return;
-        }
-        self.choice_cursor = self.choice_cursor.saturating_sub(1);
-        self.select_highlighted_for_single(question);
-    }
-
-    fn move_choice_next(&mut self, question: &QuestionnaireQuestion) {
-        let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
-            return;
-        }
-        self.choice_cursor = (self.choice_cursor + 1).min(count.saturating_sub(1));
-        self.select_highlighted_for_single(question);
-    }
-
-    fn toggle_highlighted(&mut self, question: &QuestionnaireQuestion) {
-        match &mut self.selection {
-            FieldSelection::Text => {}
-            FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    self.selection = FieldSelection::Other;
-                } else {
-                    self.selection = FieldSelection::Single(
-                        self.choice_cursor
-                            .min(choice_count(question).saturating_sub(1)),
-                    );
-                }
-            }
-            FieldSelection::Multi { selected, other } => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    *other = !*other;
-                } else {
-                    let cursor = self
-                        .choice_cursor
-                        .min(question.choices.len().saturating_sub(1));
-                    if selected.contains(&cursor) {
-                        selected.retain(|index| *index != cursor);
-                    } else {
-                        selected.push(cursor);
-                        selected.sort_unstable();
-                        selected.dedup();
-                    }
-                }
-            }
-            FieldSelection::Other => {
-                if self.choice_cursor < question.choices.len() {
-                    self.selection = FieldSelection::Single(self.choice_cursor);
-                }
-            }
-        }
-    }
-
-    fn select_highlighted_for_single(&mut self, question: &QuestionnaireQuestion) {
-        match &mut self.selection {
-            FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    self.selection = FieldSelection::Other;
-                } else {
-                    self.selection = FieldSelection::Single(
-                        self.choice_cursor
-                            .min(choice_count(question).saturating_sub(1)),
-                    );
-                }
-            }
-            FieldSelection::Other if self.choice_cursor < question.choices.len() => {
-                self.selection = FieldSelection::Single(self.choice_cursor);
-            }
-            FieldSelection::Text | FieldSelection::Multi { .. } | FieldSelection::Other => {}
-        }
-    }
-}
-
-fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    let Some(default) = question.default.as_ref().map(questionnaire_default_string) else {
-        return (FieldSelection::None, 0, String::new());
-    };
-    if let Some(index) = question
-        .choices
-        .iter()
-        .position(|choice| choice.eq_ignore_ascii_case(&default))
-    {
-        return (FieldSelection::Single(index), index, String::new());
-    }
-    if question.allow_other {
-        return (FieldSelection::Other, question.choices.len(), default);
-    }
-    (FieldSelection::None, 0, String::new())
-}
-
-fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    let mut selected = Vec::new();
-    let mut other_values = Vec::new();
-    for value in question
-        .default
-        .as_ref()
-        .map(questionnaire_default_strings)
-        .unwrap_or_default()
-    {
-        if let Some(index) = question
-            .choices
-            .iter()
-            .position(|choice| choice.eq_ignore_ascii_case(&value))
-        {
-            selected.push(index);
-        } else if question.allow_other {
-            other_values.push(value);
-        }
-    }
-    selected.sort_unstable();
-    selected.dedup();
-    let other = !other_values.is_empty();
-    let choice_cursor = selected
-        .first()
-        .copied()
-        .or_else(|| other.then_some(question.choices.len()))
-        .unwrap_or(0);
-    (
-        FieldSelection::Multi { selected, other },
-        choice_cursor,
-        other_values.join(", "),
-    )
-}
-
-fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    match question
-        .default
-        .as_ref()
-        .map(questionnaire_default_string)
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "yes" | "y" | "true" => (FieldSelection::Single(0), 0, String::new()),
-        "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
-        _ => (FieldSelection::None, 0, String::new()),
-    }
-}
-
-fn questionnaire_default_strings(default: &serde_json::Value) -> Vec<String> {
-    match default {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_default_string)
-            .filter(|value| !value.is_empty())
-            .collect(),
-        value => {
-            let value = questionnaire_default_string(value);
-            if value.is_empty() {
-                Vec::new()
-            } else {
-                vec![value]
-            }
-        }
-    }
-}
-
-fn questionnaire_default_string(default: &serde_json::Value) -> String {
-    match default {
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => default.to_string(),
-    }
-}
-
-fn questionnaire_default_display(default: &serde_json::Value) -> String {
-    match default {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_default_display)
-            .collect::<Vec<_>>()
-            .join(", "),
-        value => questionnaire_default_string(value),
-    }
-}
-
-fn choice_count(question: &QuestionnaireQuestion) -> usize {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => 0,
-        QuestionnaireQuestionKind::Confirm => 2,
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
-            question.choices.len() + usize::from(question.allow_other)
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ConfigNumberInput {
-    key: ConfigNumberKey,
-    value: String,
-    cursor: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConfigNumberKey {
-    MaxOutputBytes,
-    MaxToolOutputLines,
-    CompactThresholdPercent,
-    CompactTargetPercent,
-}
-
-#[derive(Clone, Debug)]
-struct ConfigTextInput {
-    key: ConfigTextKey,
-    value: String,
-    cursor: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConfigTextKey {
-    OpenAiSearch,
-    Exa,
-    Brave,
-}
-
-impl ConfigNumberKey {
-    fn label(self) -> &'static str {
-        match self {
-            ConfigNumberKey::MaxOutputBytes => "max output bytes",
-            ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
-            ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
-            ConfigNumberKey::CompactTargetPercent => "compact target percent",
-        }
-    }
-}
-
-impl ConfigTextKey {
-    fn label(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
-            ConfigTextKey::Exa => "Exa API key",
-            ConfigTextKey::Brave => "Brave Search API key",
-        }
-    }
-
-    fn picker_value(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
-            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
-            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
-        }
-    }
-
-    fn web_search_credential(self) -> WebSearchCredential {
-        match self {
-            ConfigTextKey::OpenAiSearch => WebSearchCredential::OpenAi,
-            ConfigTextKey::Exa => WebSearchCredential::Exa,
-            ConfigTextKey::Brave => WebSearchCredential::Brave,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1015,102 +472,6 @@ impl StreamKind {
             Self::Assistant => Entry::Assistant(text),
             Self::Reasoning => Entry::Reasoning(text),
         }
-    }
-}
-
-impl ConfigNumberInput {
-    fn new(key: ConfigNumberKey, value: usize) -> Self {
-        let value = value.to_string();
-        let cursor = value.chars().count();
-        Self { key, value, cursor }
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        if !ch.is_ascii_digit() {
-            return;
-        }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        for ch in text.chars().filter(|ch| ch.is_ascii_digit()) {
-            self.insert_char(ch);
-        }
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-}
-
-impl ConfigTextInput {
-    fn new(key: ConfigTextKey, value: Option<String>) -> Self {
-        let value = value.unwrap_or_default();
-        let cursor = value.chars().count();
-        Self { key, value, cursor }
-    }
-
-    fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        if ch == '\n' || ch == '\r' {
-            return;
-        }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        let sanitized = text.replace(['\n', '\r'], "");
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, &sanitized);
-        self.cursor += sanitized.chars().count();
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
     }
 }
 
@@ -1425,8 +786,7 @@ impl App {
         match &self.composer {
             ComposerMode::Input => true,
             ComposerMode::Questionnaire(questionnaire) => {
-                questionnaire.active_text_entry_active()
-                    || (ch != ' ' && questionnaire.active_question().allow_other)
+                questionnaire.accepts_paste_burst_char(ch)
             }
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -1442,7 +802,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.active_text_entry_active()
                     || (self.paste_burst.has_pending()
-                        && questionnaire.active_question().allow_other)
+                        && questionnaire.accepts_pending_paste_burst_enter())
             }
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -1755,15 +1115,7 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        let new_cursor =
-                            previous_word_boundary(&field.other_value, field.other_cursor);
-                        let start = field.byte_index(new_cursor);
-                        let end = field.byte_index(field.other_cursor);
-                        field.other_value.replace_range(start..end, "");
-                        field.other_cursor = new_cursor;
-                    }
+                    questionnaire.delete_previous_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1814,11 +1166,7 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor =
-                            previous_word_boundary(&field.other_value, field.other_cursor);
-                    }
+                    questionnaire.move_text_cursor_previous_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1826,11 +1174,7 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor =
-                            next_word_boundary(&field.other_value, field.other_cursor);
-                    }
+                    questionnaire.move_text_cursor_next_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1838,12 +1182,7 @@ impl App {
             }
             (_, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor = field.other_cursor.saturating_sub(1);
-                    } else {
-                        questionnaire.move_active_choice_previous();
-                    }
+                    questionnaire.move_cursor_left();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1851,13 +1190,7 @@ impl App {
             }
             (_, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let char_len = questionnaire.active_char_len();
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor = (field.other_cursor + 1).min(char_len);
-                    } else {
-                        questionnaire.move_active_choice_next();
-                    }
+                    questionnaire.move_cursor_right();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1865,9 +1198,7 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        questionnaire.active_field_mut().other_cursor = 0;
-                    }
+                    questionnaire.move_cursor_home();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1875,10 +1206,7 @@ impl App {
             }
             (_, KeyCode::End) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let char_len = questionnaire.active_char_len();
-                        questionnaire.active_field_mut().other_cursor = char_len;
-                    }
+                    questionnaire.move_cursor_end();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1942,11 +1270,9 @@ impl App {
         else {
             return Ok(None);
         };
-        match questionnaire_answers(&questionnaire) {
-            Ok(answers) => {
-                let response = QuestionnaireResponse { answers };
-                let display = submitted_questionnaire_entry(&questionnaire.request, &response);
-                questionnaire.response.send_response(response);
+        match questionnaire.submit() {
+            Ok(submitted) => {
+                let display = submitted.display;
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1969,9 +1295,7 @@ impl App {
         else {
             return;
         };
-        questionnaire
-            .response
-            .cancel(QuestionnaireCancelReason::UserCancelled);
+        questionnaire.cancel_by_user();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
@@ -2089,21 +1413,16 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                let Ok(mut value) = input.value.parse::<usize>() else {
-                    self.insert_entry(&Entry::Error(format!(
-                        "{} must be a positive whole number",
-                        input.key.label()
-                    )));
-                    self.status = "config save failed".into();
-                    return Ok(true);
+                let saved = match input.save(self.info.config_path.clone()) {
+                    Ok(saved) => saved,
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err.to_string()));
+                        self.status = "config save failed".into();
+                        return Ok(true);
+                    }
                 };
-                value = value.max(1);
-                match input.key {
-                    ConfigNumberKey::MaxOutputBytes => {
-                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                            config.max_output_bytes = value;
-                            config.save(self.info.config_path.clone())
-                        })?;
+                match saved {
+                    ConfigNumberSave::MaxOutputBytes(value) => {
                         self.composer = ComposerMode::Picker(config_picker::config_picker(
                             &self.info,
                             value,
@@ -2112,62 +1431,38 @@ impl App {
                         self.insert_entry(&Entry::Notice(format!(
                             "max output bytes set to {value}; applies next session"
                         )));
-                        self.status = "config saved".into();
                     }
-                    ConfigNumberKey::MaxToolOutputLines => {
-                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                            config.max_tool_output_lines = value;
-                            config.save(self.info.config_path.clone())
-                        })?;
+                    ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.max_tool_output_lines = value;
+                        let config = Config::load(self.info.config_path.clone())?;
                         self.composer = ComposerMode::Picker(config_picker::config_picker(
                             &self.info,
-                            Config::load(self.info.config_path.clone())?.max_output_bytes,
+                            config.max_output_bytes,
                             value,
                         ));
                         self.clamp_history_scroll_for_terminal(terminal)?;
                         self.insert_entry(&Entry::Notice(format!(
                             "max tool output lines set to {value}"
                         )));
-                        self.status = "config saved".into();
                     }
-                    ConfigNumberKey::CompactThresholdPercent => {
-                        let value = value.clamp(1, 100) as u8;
-                        let config = Config::load(self.info.config_path.clone()).and_then(
-                            |mut config| {
-                                config.set_compact_threshold_percent(value);
-                                config.save(self.info.config_path.clone())?;
-                                Ok(config)
-                            },
-                        )?;
+                    ConfigNumberSave::CompactThresholdPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
                         )?;
                         self.insert_entry(&Entry::Notice(format!(
-                            "compact threshold set to {}%",
-                            config.compact_threshold_percent
+                            "compact threshold set to {value}%"
                         )));
-                        self.status = "config saved".into();
                     }
-                    ConfigNumberKey::CompactTargetPercent => {
-                        let value = value.clamp(1, 100) as u8;
-                        let config = Config::load(self.info.config_path.clone()).and_then(
-                            |mut config| {
-                                config.set_compact_target_percent(value);
-                                config.save(self.info.config_path.clone())?;
-                                Ok(config)
-                            },
-                        )?;
+                    ConfigNumberSave::CompactTargetPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
                         self.insert_entry(&Entry::Notice(format!(
-                            "compact target set to {}%",
-                            config.compact_target_percent
+                            "compact target set to {value}%"
                         )));
-                        self.status = "config saved".into();
                     }
                 }
+                self.status = "config saved".into();
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -2179,6 +1474,30 @@ impl App {
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
                     input.insert_char(ch);
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Left) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_left();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_right();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_home();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_end();
                 }
                 Ok(true)
             }
@@ -2249,6 +1568,30 @@ impl App {
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
                 if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
                     input.insert_char(ch);
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Left) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_left();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_right();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_home();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_end();
                 }
                 Ok(true)
             }
@@ -4909,13 +4252,8 @@ impl App {
     }
 
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.check_for_updates = !config.check_for_updates;
-            config.save(self.info.config_path.clone())?;
-            Ok(config.check_for_updates)
-        });
-        match save_result {
-            Ok(check_for_updates) => {
+        match config_editor::toggle(self.info.config_path.clone(), ConfigToggle::CheckForUpdates) {
+            Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
                 if !check_for_updates {
                     self.info.update_notice = None;
                 }
@@ -4931,6 +4269,11 @@ impl App {
                 )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
@@ -4942,13 +4285,8 @@ impl App {
     }
 
     fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.auto_compact = !config.auto_compact;
-            config.save(self.info.config_path.clone())?;
-            Ok(config.auto_compact)
-        });
-        match save_result {
-            Ok(auto_compact) => {
+        match config_editor::toggle(self.info.config_path.clone(), ConfigToggle::AutoCompact) {
+            Ok(ConfigMutation::AutoCompact(auto_compact)) => {
                 self.status = if auto_compact {
                     "auto compact: on".into()
                 } else {
@@ -4961,6 +4299,11 @@ impl App {
                 )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
@@ -4972,13 +4315,11 @@ impl App {
     }
 
     fn toggle_reasoning_output(&mut self) -> anyhow::Result<()> {
-        let show_reasoning_output = !self.info.show_reasoning_output;
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.show_reasoning_output = show_reasoning_output;
-            config.save(self.info.config_path.clone())
-        });
-        match save_result {
-            Ok(()) => {
+        match config_editor::toggle(
+            self.info.config_path.clone(),
+            ConfigToggle::ShowReasoningOutput,
+        ) {
+            Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.show_reasoning_output = show_reasoning_output;
                 self.status = if show_reasoning_output {
                     "reasoning output: shown".into()
@@ -4992,6 +4333,11 @@ impl App {
                 )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
@@ -5005,10 +4351,11 @@ impl App {
     }
 
     fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
-        let mut config = Config::load(self.info.config_path.clone())?;
-        config.web_search_provider = config.web_search_provider.next_configurable();
-        let provider = config.web_search_provider.to_string();
-        config.save(self.info.config_path.clone())?;
+        let ConfigMutation::WebSearchProvider(provider) =
+            config_editor::cycle_web_search_provider(self.info.config_path.clone())?
+        else {
+            unreachable!("provider cycle returned a mismatched config mutation");
+        };
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
         self.status = format!("web search: {provider}");
         Ok(())
@@ -6452,45 +5799,6 @@ fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Line<'static>> {
-    let label = input.key.label();
-    vec![
-        styled_line(
-            truncate_one_line(&format!("edit {label}  enter save, esc cancel"), width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&input.value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
-}
-
-fn config_text_input_lines(input: &ConfigTextInput, width: usize) -> Vec<Line<'static>> {
-    let masked = "•".repeat(input.value.chars().count());
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!("edit {}  enter save, esc cancel", input.key.label()),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&masked, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
-}
-
 fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>> {
     vec![styled_line(
         truncate_one_line(
@@ -6501,509 +5809,6 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
         Theme::dim(),
         LineFill::Natural,
     )]
-}
-
-fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> Vec<Line<'static>> {
-    questionnaire_frame(questionnaire, width).0
-}
-
-fn questionnaire_frame(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> (Vec<Line<'static>>, Position) {
-    let mut lines = Vec::new();
-    if let Some(title) = &questionnaire.request.title {
-        push_wrapped_text(
-            &mut lines,
-            title,
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
-    } else {
-        push_wrapped_text(
-            &mut lines,
-            &format!(
-                "answer {} question(s)",
-                questionnaire.request.questions.len()
-            ),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
-    }
-    if let Some(reason) = &questionnaire.request.reason {
-        push_wrapped_text(
-            &mut lines,
-            &format!("reason: {reason}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-    lines.push(styled_line(
-        truncate_one_line(
-            "enter submit · up/down choose · space toggle · tab next · type only for other",
-            width,
-        ),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
-
-    let mut cursor = Position { x: 0, y: 0 };
-    for (index, (question, field)) in questionnaire
-        .request
-        .questions
-        .iter()
-        .zip(questionnaire.fields.iter())
-        .enumerate()
-    {
-        let active = questionnaire.active_index == index;
-        let before = lines.len();
-        questionnaire_push_question_lines(&mut lines, question, field, index, active, width);
-        if active {
-            cursor = questionnaire_question_cursor(question, field, before, width);
-        }
-    }
-    (lines, cursor)
-}
-
-fn questionnaire_push_question_lines(
-    lines: &mut Vec<Line<'static>>,
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    index: usize,
-    active: bool,
-    width: usize,
-) {
-    let marker = if active { ">" } else { " " };
-    let required = if question.required { "" } else { " optional" };
-    push_wrapped_text(
-        lines,
-        &format!("{marker} {}. {}{required}", index + 1, question.question),
-        width,
-        if active {
-            Theme::input_prompt()
-        } else {
-            Theme::dim()
-        },
-        LineFill::Natural,
-    );
-    if let Some(help) = &question.help {
-        push_wrapped_text(
-            lines,
-            &format!("  help: {help}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        push_wrapped_text(
-            lines,
-            &format!("  {answer_hint}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-
-    match question.kind {
-        QuestionnaireQuestionKind::Text => {
-            push_prefixed_input_lines(lines, "  ", &field.other_value, width, Theme::text());
-        }
-        QuestionnaireQuestionKind::Choice
-        | QuestionnaireQuestionKind::MultiSelect
-        | QuestionnaireQuestionKind::Confirm => {
-            for choice_index in 0..choice_count(question) {
-                let highlighted = active && field.choice_cursor == choice_index;
-                let line_marker = if highlighted { " >" } else { "  " };
-                let selection_marker =
-                    questionnaire_selection_marker(question, field, choice_index);
-                let label = questionnaire_choice_label(question, choice_index);
-                push_wrapped_text(
-                    lines,
-                    &format!("{line_marker} {selection_marker} {label}"),
-                    width,
-                    if highlighted {
-                        Theme::input_prompt()
-                    } else {
-                        Theme::text()
-                    },
-                    LineFill::Natural,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    push_prefixed_input_lines(
-                        lines,
-                        "      other: ",
-                        &field.other_value,
-                        width,
-                        Theme::text(),
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
-    let mut hints = Vec::new();
-    match question.kind {
-        QuestionnaireQuestionKind::Text => hints.push("free text only when needed".into()),
-        QuestionnaireQuestionKind::Choice => hints.push("select one".into()),
-        QuestionnaireQuestionKind::MultiSelect => hints.push("select one or more".into()),
-        QuestionnaireQuestionKind::Confirm => hints.push("select yes or no".into()),
-    }
-    if !question.choices.is_empty() && question.allow_other {
-        hints.push("other available".into());
-    }
-    if let Some(default) = &question.default {
-        hints.push(format!(
-            "default: {}",
-            questionnaire_default_display(default)
-        ));
-    }
-    hints.join(" · ")
-}
-
-fn questionnaire_selection_marker(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    choice_index: usize,
-) -> &'static str {
-    match (&question.kind, &field.selection) {
-        (QuestionnaireQuestionKind::MultiSelect, FieldSelection::Multi { selected, other }) => {
-            if choice_index < question.choices.len() {
-                if selected.contains(&choice_index) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                }
-            } else if *other {
-                "[x]"
-            } else {
-                "[ ]"
-            }
-        }
-        (_, FieldSelection::Single(index)) if *index == choice_index => "(x)",
-        (_, FieldSelection::Other)
-            if question.allow_other && choice_index == question.choices.len() =>
-        {
-            "(x)"
-        }
-        (_, FieldSelection::None) => "( )",
-        _ => "( )",
-    }
-}
-
-fn questionnaire_choice_label(question: &QuestionnaireQuestion, choice_index: usize) -> String {
-    match question.kind {
-        QuestionnaireQuestionKind::Confirm => {
-            if choice_index == 0 {
-                "yes".into()
-            } else {
-                "no".into()
-            }
-        }
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => question
-            .choices
-            .get(choice_index)
-            .cloned()
-            .unwrap_or_else(|| "Other".into()),
-        QuestionnaireQuestionKind::Text => String::new(),
-    }
-}
-
-fn questionnaire_other_selected(field: &QuestionnaireFieldState) -> bool {
-    match &field.selection {
-        FieldSelection::Other => true,
-        FieldSelection::Multi { other, .. } => *other,
-        FieldSelection::Text | FieldSelection::None | FieldSelection::Single(_) => false,
-    }
-}
-
-fn push_prefixed_input_lines(
-    lines: &mut Vec<Line<'static>>,
-    prefix: &str,
-    value: &str,
-    width: usize,
-    style: Style,
-) {
-    let prefix_width = display_width(prefix);
-    let input_width = width.saturating_sub(prefix_width).max(1);
-    let continuation = " ".repeat(prefix_width);
-    for (index, line) in input_visual_lines(value, input_width)
-        .into_iter()
-        .enumerate()
-    {
-        let prefix = if index == 0 { prefix } else { &continuation };
-        lines.push(styled_line(
-            format!("{prefix}{line}"),
-            width,
-            style,
-            LineFill::Natural,
-        ));
-    }
-}
-
-fn questionnaire_cursor_position(questionnaire: &QuestionnaireComposer, width: usize) -> Position {
-    questionnaire_frame(questionnaire, width).1
-}
-
-fn questionnaire_question_cursor(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    start_y: usize,
-    width: usize,
-) -> Position {
-    let prefix_height = questionnaire_question_prefix_line_count(question, width);
-    match question.kind {
-        QuestionnaireQuestionKind::Text => prefixed_input_cursor(
-            &field.other_value,
-            field.other_cursor,
-            "  ",
-            start_y + prefix_height,
-            width,
-        ),
-        QuestionnaireQuestionKind::Choice
-        | QuestionnaireQuestionKind::MultiSelect
-        | QuestionnaireQuestionKind::Confirm => {
-            let mut y = start_y + prefix_height;
-            for choice_index in 0..choice_count(question) {
-                if field.choice_cursor == choice_index {
-                    if question.allow_other
-                        && choice_index == question.choices.len()
-                        && field.text_entry_active(question)
-                    {
-                        let option_lines = wrapped_line_count(
-                            format!(
-                                " > {} {}",
-                                questionnaire_selection_marker(question, field, choice_index),
-                                questionnaire_choice_label(question, choice_index)
-                            ),
-                            width,
-                        );
-                        return prefixed_input_cursor(
-                            &field.other_value,
-                            field.other_cursor,
-                            "      other: ",
-                            y + option_lines,
-                            width,
-                        );
-                    }
-                    return Position { x: 1, y: y as u16 };
-                }
-                y += wrapped_line_count(
-                    format!(
-                        "   {} {}",
-                        questionnaire_selection_marker(question, field, choice_index),
-                        questionnaire_choice_label(question, choice_index)
-                    ),
-                    width,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    y += input_visual_lines(
-                        &field.other_value,
-                        width.saturating_sub(display_width("      other: ")).max(1),
-                    )
-                    .len();
-                }
-            }
-            Position { x: 1, y: y as u16 }
-        }
-    }
-}
-
-fn prefixed_input_cursor(
-    value: &str,
-    cursor: usize,
-    prefix: &str,
-    start_y: usize,
-    width: usize,
-) -> Position {
-    let prefix_width = display_width(prefix);
-    let mut position =
-        input_cursor_position(value, cursor, width.saturating_sub(prefix_width).max(1));
-    position.x = position.x.saturating_add(prefix_width as u16);
-    position.y = position.y.saturating_add(start_y as u16);
-    position
-}
-
-fn questionnaire_question_prefix_line_count(
-    question: &QuestionnaireQuestion,
-    width: usize,
-) -> usize {
-    let required = if question.required { "" } else { " optional" };
-    let mut count = wrapped_line_count(format!("> 1. {}{required}", question.question), width);
-    if let Some(help) = &question.help {
-        count += wrapped_line_count(format!("  help: {help}"), width);
-    }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        count += wrapped_line_count(format!("  {answer_hint}"), width);
-    }
-    count
-}
-
-fn wrapped_line_count(text: String, width: usize) -> usize {
-    let mut lines = Vec::new();
-    push_wrapped_text_with(
-        &mut lines,
-        &text,
-        width,
-        Theme::text(),
-        LineFill::Natural,
-        wrap_line_at_whitespace,
-    );
-    lines.len()
-}
-
-fn questionnaire_answers(
-    questionnaire: &QuestionnaireComposer,
-) -> Result<Vec<QuestionnaireAnswer>, String> {
-    questionnaire
-        .request
-        .questions
-        .iter()
-        .zip(questionnaire.fields.iter())
-        .enumerate()
-        .map(|(index, (question, field))| {
-            let answer = normalize_questionnaire_answer(question, field)
-                .map_err(|error| format!("question {}: {error}", index + 1))?;
-            Ok(QuestionnaireAnswer {
-                id: question.id.clone(),
-                answer,
-            })
-        })
-        .collect()
-}
-
-fn normalize_questionnaire_answer(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-) -> Result<serde_json::Value, String> {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => {
-            normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-        }
-        QuestionnaireQuestionKind::Choice => match &field.selection {
-            FieldSelection::Single(index) => question
-                .choices
-                .get(*index)
-                .cloned()
-                .map(serde_json::Value::String)
-                .ok_or_else(|| "answer is not selected".into()),
-            FieldSelection::Other => {
-                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-            }
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text | FieldSelection::None | FieldSelection::Multi { .. } => {
-                Err("answer is not selected".into())
-            }
-        },
-        QuestionnaireQuestionKind::MultiSelect => match &field.selection {
-            FieldSelection::Multi { selected, other } => {
-                let mut answers = selected
-                    .iter()
-                    .filter_map(|index| question.choices.get(*index).cloned())
-                    .collect::<Vec<_>>();
-                if *other {
-                    let other_answer = normalize_text_answer(question, &field.other_value)?;
-                    if !other_answer.is_empty() {
-                        answers.push(other_answer);
-                    }
-                }
-                if answers.is_empty() && question.required {
-                    return Err("select at least one answer".into());
-                }
-                Ok(serde_json::Value::Array(
-                    answers.into_iter().map(serde_json::Value::String).collect(),
-                ))
-            }
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Other => Err("answer is not selected".into()),
-        },
-        QuestionnaireQuestionKind::Confirm => match field.selection {
-            FieldSelection::Single(0) => Ok(serde_json::json!("yes")),
-            FieldSelection::Single(1) => Ok(serde_json::json!("no")),
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Multi { .. }
-            | FieldSelection::Other => Err("answer is not selected".into()),
-        },
-    }
-}
-
-fn normalize_text_answer(question: &QuestionnaireQuestion, value: &str) -> Result<String, String> {
-    let answer = value.trim().to_string();
-    if answer.is_empty() && question.required {
-        Err("answer cannot be empty".into())
-    } else {
-        Ok(answer)
-    }
-}
-
-fn submitted_questionnaire_entry(
-    request: &QuestionnaireRequest,
-    response: &QuestionnaireResponse,
-) -> String {
-    if response.answers.len() == 1 {
-        return questionnaire_answer_display(&response.answers[0].answer);
-    }
-    let mut lines = Vec::new();
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
-    } else {
-        lines.push("questionnaire answers".into());
-    }
-    for answer in &response.answers {
-        let label = request
-            .questions
-            .iter()
-            .find(|question| question.id == answer.id)
-            .map(|question| question.question.as_str())
-            .unwrap_or(answer.id.as_str());
-        lines.push(format!(
-            "{label}: {}",
-            questionnaire_answer_display(&answer.answer)
-        ));
-    }
-    lines.join("\n")
-}
-
-fn questionnaire_answer_display(answer: &serde_json::Value) -> String {
-    match answer {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_answer_display)
-            .collect::<Vec<_>>()
-            .join(", "),
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::Object(_) => answer.to_string(),
-    }
-}
-
-fn questionnaire_notice_text(request: &QuestionnaireRequest) -> String {
-    match (&request.title, request.questions.as_slice()) {
-        (Some(title), _) => format!("agent asks: {title}"),
-        (None, [question]) => format!("agent asks: {}", question.question),
-        (None, questions) => format!("agent asks {} questions", questions.len()),
-    }
 }
 
 fn padded_content_width(width: usize) -> usize {
@@ -7468,209 +6273,6 @@ mod tests {
             Entry::User(b),
             Entry::User(c),
         ] if a == "message 7" && b == "message 8" && c == "message 9"));
-    }
-
-    #[test]
-    fn questionnaire_cancel_sends_user_cancelled_reply() {
-        let mut app = test_app();
-        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            QuestionnaireRequest {
-                title: None,
-                reason: None,
-                questions: vec![QuestionnaireQuestion {
-                    id: "file".into(),
-                    question: "Which file?".into(),
-                    help: None,
-                    default: None,
-                    kind: QuestionnaireQuestionKind::Text,
-                    required: true,
-                    choices: Vec::new(),
-                    allow_other: false,
-                }],
-            },
-            QuestionnaireResponseChannel::new(reply_tx),
-        ));
-        app.input = "draft".into();
-        app.input_cursor = app.input_char_len();
-
-        app.cancel_questionnaire_answer();
-
-        assert!(matches!(app.composer, ComposerMode::Input));
-        assert_eq!(app.input, "");
-        assert_eq!(app.input_cursor, 0);
-        assert_eq!(app.status, "answer cancelled");
-        assert!(matches!(
-            reply_rx.try_recv(),
-            Ok(QuestionnaireReply::Cancelled(
-                QuestionnaireCancelReason::UserCancelled
-            ))
-        ));
-    }
-
-    #[test]
-    fn questionnaire_submit_sends_selection_answers() {
-        let mut app = test_app();
-        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            QuestionnaireRequest {
-                title: Some("PR details".into()),
-                reason: Some("Need missing preferences".into()),
-                questions: vec![
-                    QuestionnaireQuestion {
-                        id: "branch".into(),
-                        question: "Which branch?".into(),
-                        help: None,
-                        default: Some(serde_json::json!("main")),
-                        kind: QuestionnaireQuestionKind::Choice,
-                        required: true,
-                        choices: vec!["main".into(), "develop".into()],
-                        allow_other: true,
-                    },
-                    QuestionnaireQuestion {
-                        id: "test_suites".into(),
-                        question: "Which test suites should I run?".into(),
-                        help: None,
-                        default: Some(serde_json::json!(["unit"])),
-                        kind: QuestionnaireQuestionKind::MultiSelect,
-                        required: true,
-                        choices: vec!["unit".into(), "e2e".into(), "lint".into()],
-                        allow_other: false,
-                    },
-                    QuestionnaireQuestion {
-                        id: "apply".into(),
-                        question: "Apply changes?".into(),
-                        help: None,
-                        default: Some(serde_json::json!("yes")),
-                        kind: QuestionnaireQuestionKind::Confirm,
-                        required: true,
-                        choices: Vec::new(),
-                        allow_other: false,
-                    },
-                ],
-            },
-            QuestionnaireResponseChannel::new(reply_tx),
-        ));
-        if let ComposerMode::Questionnaire(questionnaire) = &mut app.composer {
-            questionnaire.fields[0].selection = FieldSelection::Other;
-            questionnaire.fields[0].choice_cursor = 2;
-            questionnaire.fields[0].other_value = "release".into();
-            questionnaire.fields[0].other_cursor = "release".chars().count();
-            questionnaire.fields[1].selection = FieldSelection::Multi {
-                selected: vec![0, 1],
-                other: false,
-            };
-            questionnaire.fields[2].selection = FieldSelection::Single(1);
-        }
-        let display = app.prepare_questionnaire_answer().unwrap().unwrap();
-
-        assert!(display.contains("Which branch?: release"), "{display}");
-        assert!(
-            display.contains("Which test suites should I run?: unit, e2e"),
-            "{display}"
-        );
-        assert!(display.contains("Apply changes?: no"), "{display}");
-
-        assert!(matches!(app.composer, ComposerMode::Input));
-        assert_eq!(app.status, "answers submitted");
-        assert!(matches!(
-            reply_rx.try_recv(),
-            Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers }))
-                if answers == vec![
-                    QuestionnaireAnswer { id: "branch".into(), answer: serde_json::json!("release") },
-                    QuestionnaireAnswer { id: "test_suites".into(), answer: serde_json::json!(["unit", "e2e"]) },
-                    QuestionnaireAnswer { id: "apply".into(), answer: serde_json::json!("no") },
-                ]
-        ));
-    }
-
-    #[test]
-    fn required_confirm_without_default_requires_explicit_choice() {
-        let question = QuestionnaireQuestion {
-            id: "apply".into(),
-            question: "Apply changes?".into(),
-            help: None,
-            default: None,
-            kind: QuestionnaireQuestionKind::Confirm,
-            required: true,
-            choices: Vec::new(),
-            allow_other: false,
-        };
-        let field = QuestionnaireFieldState::new(&question);
-
-        assert_eq!(field.selection, FieldSelection::None);
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Err("answer is not selected".into())
-        );
-
-        let mut field = field;
-        field.toggle_highlighted(&question);
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Ok(serde_json::json!("yes"))
-        );
-    }
-
-    #[test]
-    fn multi_select_default_preserves_commas() {
-        let question = QuestionnaireQuestion {
-            id: "targets".into(),
-            question: "Targets?".into(),
-            help: None,
-            default: Some(serde_json::json!(["New York, NY", "Los Angeles, CA"])),
-            kind: QuestionnaireQuestionKind::MultiSelect,
-            required: true,
-            choices: vec!["New York, NY".into(), "Boston, MA".into()],
-            allow_other: true,
-        };
-
-        let field = QuestionnaireFieldState::new(&question);
-
-        assert_eq!(
-            field.selection,
-            FieldSelection::Multi {
-                selected: vec![0],
-                other: true
-            }
-        );
-        assert_eq!(field.other_value, "Los Angeles, CA");
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Ok(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
-        );
-    }
-
-    #[test]
-    fn questionnaire_cursor_counts_whitespace_wrapped_question_lines() {
-        let question = QuestionnaireQuestion {
-            id: "style".into(),
-            question: "hello wide world".into(),
-            help: None,
-            default: None,
-            kind: QuestionnaireQuestionKind::Choice,
-            required: true,
-            choices: vec!["brief".into(), "detailed".into()],
-            allow_other: false,
-        };
-        let field = QuestionnaireFieldState::new(&question);
-        let expected_cursor = questionnaire_question_cursor(&question, &field, 3, 14);
-        let rendered = questionnaire_frame(
-            &QuestionnaireComposer {
-                request: QuestionnaireRequest {
-                    title: None,
-                    reason: None,
-                    questions: vec![question.clone()],
-                },
-                response: QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
-                fields: vec![field],
-                active_index: 0,
-            },
-            14,
-        );
-
-        assert_eq!(expected_cursor, rendered.1);
-        assert_eq!(expected_cursor.y, 6);
     }
 
     #[test]
