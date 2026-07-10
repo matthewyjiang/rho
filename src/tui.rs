@@ -1119,7 +1119,6 @@ impl App {
                     self.ctrl_c_streak = 1;
                 } else {
                     self.cancel_questionnaire_answer();
-                    self.should_quit = true;
                 }
                 self.paste_burst.clear();
                 Ok(true)
@@ -1323,6 +1322,7 @@ impl App {
             return;
         };
         questionnaire.cancel_by_user();
+        self.ctrl_c_streak = 0;
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
@@ -5991,6 +5991,8 @@ mod tests {
 
     #[path = "mouse_tests.rs"]
     mod mouse_tests;
+    #[path = "questionnaire_interaction_tests.rs"]
+    mod questionnaire_interaction_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;
