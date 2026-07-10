@@ -121,6 +121,21 @@ async fn ws_server_stalls_after_request() -> String {
     format!("ws://{addr}/responses")
 }
 
+async fn ws_server_sends_keep_alive_frames() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let _request = socket.next().await.unwrap().unwrap();
+        loop {
+            socket.send(Message::Ping(Vec::new().into())).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    });
+    format!("ws://{addr}/responses")
+}
+
 #[test]
 fn builds_delta_body_when_next_input_extends_previous_input() {
     let first = candidate(vec![json!({"role":"user","content":"one"})]);
@@ -420,6 +435,26 @@ fn assert_reset_reason_for_body_change(
 #[tokio::test]
 async fn stalled_websocket_falls_back_instead_of_blocking_the_turn() {
     let url = ws_server_stalls_after_request().await;
+    let mut transport = CodexWsTransport::new_with_url(url);
+    transport.idle_timeout = std::time::Duration::from_millis(10);
+    let mut on_event = None;
+
+    let outcome = transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, CodexWsTurn::FullSseFallback));
+}
+
+#[tokio::test]
+async fn websocket_keep_alive_frames_do_not_reset_the_idle_timeout() {
+    let url = ws_server_sends_keep_alive_frames().await;
     let mut transport = CodexWsTransport::new_with_url(url);
     transport.idle_timeout = std::time::Duration::from_millis(10);
     let mut on_event = None;

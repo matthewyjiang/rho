@@ -26,15 +26,15 @@ pub(crate) fn handle_openai_stream_line(
     text: &mut String,
     tool_calls: &mut Vec<StreamedToolCall>,
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
-) -> Result<(), ModelError> {
+) -> Result<bool, ModelError> {
     let Some(data) = line.strip_prefix("data: ") else {
-        return Ok(());
+        return Ok(false);
     };
     if data == "[DONE]" {
-        return Ok(());
+        return Ok(true);
     }
     let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
-        return Ok(());
+        return Ok(false);
     };
     if let Some(usage) = extract_usage(&value) {
         on_event(ModelEvent::Usage(usage))?;
@@ -44,7 +44,7 @@ pub(crate) fn handle_openai_stream_line(
         .and_then(|v| v.as_array())
         .and_then(|choices| choices.first())
     else {
-        return Ok(());
+        return Ok(true);
     };
     let delta = choice.get("delta");
     if let Some(reasoning_delta) = delta
@@ -70,7 +70,7 @@ pub(crate) fn handle_openai_stream_line(
         .and_then(|v| v.get("tool_calls"))
         .and_then(|v| v.as_array())
     else {
-        return Ok(());
+        return Ok(true);
     };
 
     for delta in delta_tool_calls {
@@ -100,7 +100,7 @@ pub(crate) fn handle_openai_stream_line(
             call.arguments.push_str(arguments);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) fn convert_streamed_response(
@@ -148,11 +148,9 @@ pub(crate) async fn collect_codex_sse_response(
     let mut state = CodexSseState::default();
     let mut buffer = Vec::new();
     let mut stream = response.bytes_stream();
+    let mut idle_deadline = crate::provider_backend::stream_timeout::StreamIdleDeadline::new();
     loop {
-        let Some(chunk) =
-            crate::provider_backend::stream_timeout::wait_for_stream_activity(stream.next())
-                .await?
-        else {
+        let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
             break;
         };
         buffer.extend_from_slice(&chunk?);
@@ -164,7 +162,9 @@ pub(crate) async fn collect_codex_sse_response(
                     "streamed response contained invalid utf-8: {err}"
                 ))
             })?;
-            handle_codex_sse_line(line, &mut state, on_event)?;
+            if handle_codex_sse_line(line, &mut state, on_event)? {
+                idle_deadline.record_activity();
+            }
         }
     }
     if !buffer.is_empty() {
@@ -333,15 +333,15 @@ pub(crate) fn handle_codex_sse_line(
     line: &str,
     state: &mut CodexSseState,
     on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-) -> Result<(), ModelError> {
+) -> Result<bool, ModelError> {
     let Some(data) = sse_data(line) else {
-        return Ok(());
+        return Ok(false);
     };
     if data == "[DONE]" {
-        return Ok(());
+        return Ok(true);
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
-        return Ok(());
+        return Ok(false);
     };
     let event_type = value
         .get("type")
@@ -389,7 +389,7 @@ pub(crate) fn handle_codex_sse_line(
             }
         }
         if !state.text.is_empty() || !state.tool_calls.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         if let Some(output) = value
             .get("response")
@@ -415,7 +415,7 @@ pub(crate) fn handle_codex_sse_line(
             }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {

@@ -10,7 +10,7 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::credentials::CodexTokens;
 use crate::model::{ModelError, ModelEvent, ModelResponse};
-use crate::provider_backend::stream_timeout::wait_for_stream_activity_for;
+use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, StreamIdleDeadline};
 
 use super::codex_request::CodexRequestMode;
 use super::stream::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
@@ -205,8 +205,10 @@ async fn collect_codex_ws_response(
 ) -> Result<CodexWsCompleted, CodexWsFailure> {
     let mut state = CodexSseState::default();
     let mut events = Vec::new();
+    let mut idle_deadline = StreamIdleDeadline::with_timeout(idle_timeout);
     loop {
-        let Some(message) = wait_for_stream_activity_for(socket.next(), idle_timeout)
+        let Some(message) = idle_deadline
+            .wait_for(socket.next())
             .await
             .map_err(|err| CodexWsFailure::Transport(err.to_string()))?
         else {
@@ -216,9 +218,14 @@ async fn collect_codex_ws_response(
             .map_err(|err| CodexWsFailure::Transport(format!("websocket receive failed: {err}")))?
         {
             Message::Text(text) => {
-                if handle_codex_ws_payload(&text, &mut state, &mut events)? {
+                let (completed, activity) =
+                    handle_codex_ws_payload(&text, &mut state, &mut events)?;
+                if completed {
                     let response = state.into_response().map_err(CodexWsFailure::Model)?;
                     return Ok(CodexWsCompleted { response, events });
+                }
+                if activity {
+                    idle_deadline.record_activity();
                 }
             }
             Message::Binary(bytes) => {
@@ -227,9 +234,13 @@ async fn collect_codex_ws_response(
                         "websocket binary frame contained invalid utf-8: {err}"
                     ))
                 })?;
-                if handle_codex_ws_payload(text, &mut state, &mut events)? {
+                let (completed, activity) = handle_codex_ws_payload(text, &mut state, &mut events)?;
+                if completed {
                     let response = state.into_response().map_err(CodexWsFailure::Model)?;
                     return Ok(CodexWsCompleted { response, events });
+                }
+                if activity {
+                    idle_deadline.record_activity();
                 }
             }
             Message::Ping(_) | Message::Pong(_) => {}
@@ -250,7 +261,7 @@ fn handle_codex_ws_payload(
     payload: &str,
     state: &mut CodexSseState,
     events: &mut Vec<ModelEvent>,
-) -> Result<bool, CodexWsFailure> {
+) -> Result<(bool, bool), CodexWsFailure> {
     let value = serde_json::from_str::<Value>(payload).map_err(|err| {
         CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
     })?;
@@ -264,7 +275,11 @@ fn handle_codex_ws_payload(
         &mut Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>),
     )
     .map_err(CodexWsFailure::Model)?;
-    Ok(value.get("type").and_then(Value::as_str) == Some("response.completed"))
+    let event_type = value.get("type").and_then(Value::as_str);
+    Ok((
+        event_type == Some("response.completed"),
+        event_type.is_some_and(|event_type| event_type.starts_with("response.")),
+    ))
 }
 
 impl CodexWsCompleted {

@@ -3,7 +3,7 @@ mod stream;
 mod types;
 
 use crate::provider_backend::{
-    stream_timeout::streaming_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
+    stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
     ModelResponse,
 };
 
@@ -29,7 +29,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
         Self {
-            client: streaming_client(),
+            client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
             model,
@@ -173,7 +173,7 @@ mod tests {
 
     fn test_provider() -> AnthropicProvider {
         AnthropicProvider {
-            client: streaming_client(),
+            client: provider_client(),
             api_key: "test-key".into(),
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),

@@ -26,7 +26,7 @@ use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 use crate::{
     credentials::{CodexTokens, CredentialStore},
     model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
-    provider_backend::stream_timeout::streaming_client,
+    provider_backend::stream_timeout::{provider_client, StreamIdleDeadline},
 };
 
 pub struct OpenAiProvider {
@@ -58,7 +58,7 @@ impl OpenAiProvider {
         };
         let codex_ws = CodexWsTransport::new(&api_base);
         Self {
-            client: streaming_client(),
+            client: provider_client(),
             auth,
             api_base,
             model,
@@ -190,11 +190,9 @@ impl OpenAiProvider {
         let mut tool_calls = Vec::new();
         let mut buffer = Vec::new();
         let mut stream = response.bytes_stream();
+        let mut idle_deadline = StreamIdleDeadline::new();
         loop {
-            let Some(chunk) =
-                crate::provider_backend::stream_timeout::wait_for_stream_activity(stream.next())
-                    .await?
-            else {
+            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
                 break;
             };
             buffer.extend_from_slice(&chunk?);
@@ -206,7 +204,9 @@ impl OpenAiProvider {
                         "streamed response contained invalid utf-8: {err}"
                     ))
                 })?;
-                handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
+                if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
+                    idle_deadline.record_activity();
+                }
             }
         }
         if !buffer.is_empty() {

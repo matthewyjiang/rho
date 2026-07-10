@@ -11,7 +11,7 @@ use crate::{
         },
         ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
     },
-    provider_backend::stream_timeout::streaming_client,
+    provider_backend::stream_timeout::{provider_client, StreamIdleDeadline},
 };
 
 const DEFAULT_COPILOT_CHAT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
@@ -30,7 +30,7 @@ impl GitHubCopilotProvider {
     pub fn new(model: String, auth: GitHubCopilotAuthManager) -> Result<Self, ModelError> {
         auth.ensure_auth_available()?;
         Ok(Self {
-            client: streaming_client(),
+            client: provider_client(),
             auth,
             model,
         })
@@ -149,11 +149,9 @@ impl ModelProvider for GitHubCopilotProvider {
         let mut tool_calls = Vec::new();
         let mut buffer = Vec::new();
         let mut stream = response.bytes_stream();
+        let mut idle_deadline = StreamIdleDeadline::new();
         loop {
-            let Some(chunk) =
-                crate::provider_backend::stream_timeout::wait_for_stream_activity(stream.next())
-                    .await?
-            else {
+            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
                 break;
             };
             buffer.extend_from_slice(&chunk?);
@@ -165,7 +163,9 @@ impl ModelProvider for GitHubCopilotProvider {
                         "streamed response contained invalid utf-8: {err}"
                     ))
                 })?;
-                handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
+                if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
+                    idle_deadline.record_activity();
+                }
             }
         }
         if !buffer.is_empty() {
