@@ -81,7 +81,7 @@ use crate::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
         save_github_copilot_tokens, save_provider_api_key, save_web_search_api_key, CodexTokens,
-        CredentialStore, GitHubCopilotTokens, OsCredentialStore, WebSearchCredential,
+        CredentialStore, GitHubCopilotTokens, OsCredentialStore,
     },
     herdr::{HerdrReporter, HerdrState},
     model::{
@@ -3120,25 +3120,13 @@ impl App {
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::OpenAiSearch,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::OpenAi)?,
-                ));
-                self.status = "edit OpenAI web search API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)?;
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Exa,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Exa)?,
-                ));
-                self.status = "edit Exa API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::Exa)?;
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Brave,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Brave)?,
-                ));
-                self.status = "edit Brave Search API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::Brave)?;
             }
             _ => {}
         }
@@ -3984,31 +3972,37 @@ impl App {
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::OpenAiSearch,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::OpenAi)?,
-                ));
-                self.status = "edit OpenAI web search API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Exa,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Exa)?,
-                ));
-                self.status = "edit Exa API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::Exa)
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Brave,
-                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Brave)?,
-                ));
-                self.status = "edit Brave Search API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::Brave)
             }
             _ => Ok(()),
         }
+    }
+
+    fn open_web_search_api_key_editor(&mut self, key: ConfigTextKey) -> anyhow::Result<()> {
+        let credential = key.web_search_credential();
+        let value = match load_web_search_api_key(&OsCredentialStore, credential) {
+            Ok(value) => value,
+            Err(err) => {
+                let config = self.info.config_repository.load()?;
+                let legacy_value = config
+                    .legacy_web_search_api_key(credential)
+                    .map(str::to_string);
+                self.insert_entry(&Entry::Error(format!(
+                    "could not access {}: {err}",
+                    key.label()
+                )));
+                legacy_value
+            }
+        };
+        self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(key, value));
+        self.status = format!("edit {}", key.label());
+        Ok(())
     }
 
     fn refresh_main_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {

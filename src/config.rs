@@ -31,7 +31,7 @@ pub struct Config {
     pub favorite_models: Vec<String>,
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
-    #[serde(skip)]
+    #[serde(flatten)]
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
 }
@@ -91,7 +91,14 @@ impl SearchProvider {
     }
 
     pub fn from_config_value(value: &str) -> Self {
-        value.parse().unwrap_or_default()
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Self::Auto,
+            "openai" => Self::OpenAi,
+            "exa" => Self::Exa,
+            "brave" => Self::Brave,
+            "disabled" => Self::Disabled,
+            _ => Self::Auto,
+        }
     }
 
     pub const fn next_configurable(self) -> Self {
@@ -151,10 +158,25 @@ impl<'de> Deserialize<'de> for SearchProvider {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct LegacyWebSearchCredentials {
+    #[serde(
+        default,
+        rename = "web_search_openai_api_key",
+        skip_serializing_if = "Option::is_none"
+    )]
     openai: Option<String>,
+    #[serde(
+        default,
+        rename = "web_search_exa_api_key",
+        skip_serializing_if = "Option::is_none"
+    )]
     exa: Option<String>,
+    #[serde(
+        default,
+        rename = "web_search_brave_api_key",
+        skip_serializing_if = "Option::is_none"
+    )]
     brave: Option<String>,
 }
 
@@ -262,6 +284,10 @@ impl Config {
 
     pub fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
+        self.save_with_store(path, &OsCredentialStore)
+    }
+
+    fn save_with_store(&self, path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -269,8 +295,7 @@ impl Config {
         config.normalize_compaction_percentages();
         config.favorite_models =
             favorite_model_values(&normalized_favorite_models(&config.favorite_models));
-        let store = OsCredentialStore;
-        config.migrate_legacy_web_search_credentials(&store)?;
+        let _migration_result = config.migrate_legacy_web_search_credentials(store);
         write_config(&path, &config)?;
         Ok(())
     }
@@ -467,6 +492,79 @@ favorite_models = [
         assert!(saved.contains("favorite_models"), "{saved}");
         assert!(saved.contains("openai/gpt-5.5"), "{saved}");
         assert!(!saved.contains("missing-separator"), "{saved}");
+    }
+
+    #[test]
+    fn unsupported_web_search_config_providers_fall_back_to_auto() {
+        for provider in ["parallel", "tavily", "perplexity", "gemini", "unknown"] {
+            assert_eq!(
+                super::SearchProvider::from_config_value(provider),
+                super::SearchProvider::Auto
+            );
+        }
+    }
+
+    #[test]
+    fn supported_web_search_config_provider_is_preserved() {
+        assert_eq!(
+            super::SearchProvider::from_config_value(" brave "),
+            super::SearchProvider::Brave
+        );
+    }
+
+    #[test]
+    fn save_preserves_legacy_web_search_keys_when_credentials_are_unavailable() {
+        struct UnavailableCredentialStore;
+
+        impl crate::credentials::CredentialStore for UnavailableCredentialStore {
+            fn get_secret(
+                &self,
+                _account: &str,
+            ) -> crate::credentials::CredentialResult<Option<String>> {
+                Err(crate::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ))
+            }
+
+            fn set_secret(
+                &self,
+                _account: &str,
+                _secret: &str,
+            ) -> crate::credentials::CredentialResult<()> {
+                Err(crate::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ))
+            }
+
+            fn delete_secret(&self, _account: &str) -> crate::credentials::CredentialResult<bool> {
+                Err(crate::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let config = Config {
+            rtk: false,
+            legacy_web_search_credentials: super::LegacyWebSearchCredentials {
+                openai: Some("sk-test".into()),
+                exa: None,
+                brave: None,
+            },
+            ..Config::default()
+        };
+
+        config
+            .save_with_store(path.clone(), &UnavailableCredentialStore)
+            .unwrap();
+
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(
+            saved.contains("web_search_openai_api_key = \"sk-test\""),
+            "{saved}"
+        );
+        assert!(saved.contains("rtk = false"), "{saved}");
     }
 
     #[test]
