@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.20.0...rho-coding-agent-v0.21.0) (2026-07-09)
+
+
+### Features
+
+* **tui:** render markdown tables ([#160](https://github.com/matthewyjiang/rho/issues/160)) ([2c2b83c](https://github.com/matthewyjiang/rho/commit/2c2b83cb4c3961ac07441fa0505170915721f6b2))
+
+
+### Bug Fixes
+
+* **codex:** align responses lite transport ([#162](https://github.com/matthewyjiang/rho/issues/162)) ([0791033](https://github.com/matthewyjiang/rho/commit/0791033d7c4796a328fa79254e2fbd3d6b8d3993))
+* **tui:** fill tool rows containing control characters ([#159](https://github.com/matthewyjiang/rho/issues/159)) ([cd37440](https://github.com/matthewyjiang/rho/commit/cd37440837a22cec57ad6c2d2795eb052c4092e6))
+
 ## [0.20.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.19.0...rho-coding-agent-v0.20.0) (2026-07-09)
 
 
