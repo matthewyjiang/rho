@@ -18,7 +18,7 @@ pub(super) enum CodexRequestMode {
 impl CodexRequestMode {
     pub(super) fn for_model(model: &str) -> Self {
         match model {
-            "gpt-5.6-terra" | "gpt-5.6-luna" => Self::ResponsesLite,
+            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => Self::ResponsesLite,
             _ => Self::Standard,
         }
     }
@@ -123,6 +123,38 @@ fn responses_tool(mode: CodexRequestMode, tool: ToolSpec) -> Value {
 mod tests {
     use super::*;
     use crate::model::Message;
+
+    #[test]
+    fn gpt_5_6_models_use_responses_lite_without_incremental_websocket_continuation() {
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let mode = CodexRequestMode::for_model(model);
+            let body = build_codex_responses_body(
+                model,
+                ModelRequest {
+                    messages: vec![Message::user_text("hello")],
+                    tools: vec![ToolSpec {
+                        name: "read_file".into(),
+                        description: "read a file".into(),
+                        input_schema: json!({"type": "object"}),
+                    }],
+                    prompt_cache_key: None,
+                },
+                Some("medium"),
+                Some("auto"),
+            )
+            .unwrap();
+
+            assert_eq!(mode, CodexRequestMode::ResponsesLite, "{model}");
+            assert!(mode.uses_responses_lite(), "{model}");
+            assert!(!mode.supports_incremental_websocket(), "{model}");
+            assert_eq!(body["input"][0]["type"], "additional_tools", "{model}");
+            assert_eq!(
+                body["reasoning"],
+                json!({"effort": "medium", "summary": "auto", "context": "all_turns"}),
+                "{model}"
+            );
+        }
+    }
 
     #[test]
     fn responses_lite_sets_all_turns_reasoning_context() {
