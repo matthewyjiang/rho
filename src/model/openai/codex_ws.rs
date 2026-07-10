@@ -12,6 +12,9 @@ use crate::credentials::CodexTokens;
 use crate::model::{ModelError, ModelEvent, ModelResponse};
 use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, StreamIdleDeadline};
 
+use super::codex_continuation::{
+    CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
+};
 use super::codex_request::CodexRequestMode;
 use super::stream::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
 
@@ -49,6 +52,7 @@ pub(super) enum CodexWsTurn {
 struct CodexWsCompleted {
     response: CodexSseResponse,
     events: Vec<ModelEvent>,
+    server_output_items: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -82,25 +86,37 @@ impl CodexWsTransport {
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
-        let plan = if mode.supports_incremental_websocket() {
-            state.continuation.plan_request(&candidate, body)
+        let body = if mode.supports_incremental_websocket() {
+            state.continuation.continuation_body(&candidate, body)
         } else {
             state.continuation.reset();
-            CodexRequestPlan {
-                planned_delta: false,
-                reset_reason: None,
-                body,
-            }
+            body
         };
-        let frame = response_create_frame(plan.body.clone(), mode);
+        let frame = response_create_frame(body, mode);
 
         match state
             .send_frame(&self.ws_url, tokens, frame, self.idle_timeout)
             .await
         {
             Ok(output) => {
-                let output = match output.emit_events(on_event) {
-                    Ok(output) => output,
+                let CodexWsCompleted {
+                    response,
+                    events,
+                    server_output_items,
+                } = output;
+                let continuation_response = CodexContinuationResponse::from_response(
+                    &response.response,
+                    response.response_id.clone(),
+                    server_output_items,
+                );
+                let response = match (CodexWsCompleted {
+                    response,
+                    events,
+                    server_output_items: Vec::new(),
+                }
+                .emit_events(on_event))
+                {
+                    Ok(response) => response,
                     Err(err) => {
                         state.connection = None;
                         state.continuation.reset();
@@ -109,8 +125,8 @@ impl CodexWsTransport {
                 };
                 state
                     .continuation
-                    .record_success(&candidate, output.response_id);
-                Ok(CodexWsTurn::Completed(output.response))
+                    .record_success(&candidate, continuation_response);
+                Ok(CodexWsTurn::Completed(response.response))
             }
             Err(CodexWsFailure::Transport(_error)) => {
                 state.connection = None;
@@ -128,11 +144,18 @@ impl CodexWsTransport {
     pub(super) async fn record_full_request_success(
         &self,
         body: &Value,
-        response_id: Option<String>,
+        response: &CodexSseResponse,
     ) -> Result<(), ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(body)?;
+        let continuation_response = CodexContinuationResponse::from_response(
+            &response.response,
+            response.response_id.clone(),
+            Vec::new(),
+        );
         let mut state = self.state.lock().await;
-        state.continuation.record_success(&candidate, response_id);
+        state
+            .continuation
+            .record_success(&candidate, continuation_response);
         Ok(())
     }
 
@@ -205,6 +228,7 @@ async fn collect_codex_ws_response(
 ) -> Result<CodexWsCompleted, CodexWsFailure> {
     let mut state = CodexSseState::default();
     let mut events = Vec::new();
+    let mut server_output_items = Vec::new();
     let mut idle_deadline = StreamIdleDeadline::with_timeout(idle_timeout);
     loop {
         let Some(message) = idle_deadline
@@ -218,11 +242,19 @@ async fn collect_codex_ws_response(
             .map_err(|err| CodexWsFailure::Transport(format!("websocket receive failed: {err}")))?
         {
             Message::Text(text) => {
+                let payload = serde_json::from_str::<Value>(&text).map_err(|err| {
+                    CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
+                })?;
+                collect_server_output_item(&payload, &mut server_output_items);
                 let (completed, activity) =
-                    handle_codex_ws_payload(&text, &mut state, &mut events)?;
+                    handle_codex_ws_value(&payload, &mut state, &mut events)?;
                 if completed {
                     let response = state.into_response().map_err(CodexWsFailure::Model)?;
-                    return Ok(CodexWsCompleted { response, events });
+                    return Ok(CodexWsCompleted {
+                        response,
+                        events,
+                        server_output_items,
+                    });
                 }
                 if activity {
                     idle_deadline.record_activity();
@@ -234,10 +266,19 @@ async fn collect_codex_ws_response(
                         "websocket binary frame contained invalid utf-8: {err}"
                     ))
                 })?;
-                let (completed, activity) = handle_codex_ws_payload(text, &mut state, &mut events)?;
+                let payload = serde_json::from_str::<Value>(text).map_err(|err| {
+                    CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
+                })?;
+                collect_server_output_item(&payload, &mut server_output_items);
+                let (completed, activity) =
+                    handle_codex_ws_value(&payload, &mut state, &mut events)?;
                 if completed {
                     let response = state.into_response().map_err(CodexWsFailure::Model)?;
-                    return Ok(CodexWsCompleted { response, events });
+                    return Ok(CodexWsCompleted {
+                        response,
+                        events,
+                        server_output_items,
+                    });
                 }
                 if activity {
                     idle_deadline.record_activity();
@@ -257,14 +298,11 @@ async fn collect_codex_ws_response(
     ))
 }
 
-fn handle_codex_ws_payload(
-    payload: &str,
+fn handle_codex_ws_value(
+    value: &Value,
     state: &mut CodexSseState,
     events: &mut Vec<ModelEvent>,
 ) -> Result<(bool, bool), CodexWsFailure> {
-    let value = serde_json::from_str::<Value>(payload).map_err(|err| {
-        CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
-    })?;
     let mut collect_event = |event| {
         events.push(event);
         Ok(())
@@ -280,6 +318,14 @@ fn handle_codex_ws_payload(
         event_type == Some("response.completed"),
         event_type.is_some_and(|event_type| event_type.starts_with("response.")),
     ))
+}
+
+fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
+    if payload.get("type").and_then(Value::as_str) == Some("response.output_item.done") {
+        if let Some(item) = payload.get("item") {
+            output_items.push(item.clone());
+        }
+    }
 }
 
 impl CodexWsCompleted {
@@ -316,255 +362,6 @@ fn codex_ws_url(api_base: &str) -> String {
         trimmed.to_string()
     };
     format!("{websocket_base}/responses")
-}
-
-#[derive(Debug, Default)]
-struct CodexContinuationState {
-    snapshot: Option<CodexContinuationSnapshot>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct CodexContinuationSnapshot {
-    response_id: String,
-    key: CodexContinuationKey,
-    input: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct CodexContinuationCandidate {
-    key: CodexContinuationKey,
-    input: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct CodexContinuationKey {
-    model: String,
-    instructions: String,
-    tools: Vec<Value>,
-    tool_choice: Option<Value>,
-    reasoning: Option<Value>,
-    prompt_cache_key: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct CodexRequestPlan {
-    planned_delta: bool,
-    reset_reason: Option<CodexContinuationResetReason>,
-    body: Value,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum CodexContinuationPlan {
-    Full {
-        reason: CodexContinuationFullReason,
-    },
-    Delta {
-        previous_response_id: String,
-        input: Vec<Value>,
-        body: Value,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum CodexContinuationFullReason {
-    MissingPreviousResponse,
-    EmptyDelta,
-    Incompatible(CodexContinuationResetReason),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum CodexContinuationResetReason {
-    ModelChanged,
-    InstructionsChanged,
-    ToolsChanged,
-    ToolChoiceChanged,
-    ReasoningChanged,
-    PromptCacheKeyChanged,
-    HistoryRewritten,
-}
-
-impl CodexContinuationCandidate {
-    fn from_responses_body(body: &Value) -> Result<Self, ModelError> {
-        let model = body
-            .get("model")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ModelError::InvalidResponse("Codex body missing model".into()))?
-            .to_string();
-        let instructions = body
-            .get("instructions")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let input = body
-            .get("input")
-            .and_then(Value::as_array)
-            .ok_or_else(|| ModelError::InvalidResponse("Codex body missing input".into()))?
-            .clone();
-        let tools = body
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let tool_choice = body.get("tool_choice").cloned();
-        let reasoning = body.get("reasoning").cloned();
-        let prompt_cache_key = body
-            .get("prompt_cache_key")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-
-        Ok(Self {
-            key: CodexContinuationKey {
-                model,
-                instructions,
-                tools,
-                tool_choice,
-                reasoning,
-                prompt_cache_key,
-            },
-            input,
-        })
-    }
-
-    fn delta_body(&self, previous_response_id: &str, input: Vec<Value>) -> Value {
-        let mut body = json!({
-            "model": self.key.model,
-            "instructions": self.key.instructions,
-            "input": input,
-            "previous_response_id": previous_response_id,
-            "store": false,
-            "stream": true,
-        });
-
-        if let Some(prompt_cache_key) = &self.key.prompt_cache_key {
-            body["prompt_cache_key"] = json!(prompt_cache_key);
-        }
-        if !self.key.tools.is_empty() {
-            body["tools"] = json!(self.key.tools);
-        }
-        if let Some(tool_choice) = &self.key.tool_choice {
-            body["tool_choice"] = tool_choice.clone();
-        }
-        if let Some(reasoning) = &self.key.reasoning {
-            body["reasoning"] = reasoning.clone();
-        }
-
-        body
-    }
-}
-
-impl CodexContinuationState {
-    fn plan_request(
-        &mut self,
-        candidate: &CodexContinuationCandidate,
-        full_body: Value,
-    ) -> CodexRequestPlan {
-        match self.plan_delta(candidate) {
-            CodexContinuationPlan::Delta { body, .. } => CodexRequestPlan {
-                planned_delta: true,
-                reset_reason: None,
-                body,
-            },
-            CodexContinuationPlan::Full { reason } => {
-                let reset_reason = match reason {
-                    CodexContinuationFullReason::Incompatible(reason) => {
-                        self.reset();
-                        Some(reason)
-                    }
-                    CodexContinuationFullReason::MissingPreviousResponse
-                    | CodexContinuationFullReason::EmptyDelta => None,
-                };
-                CodexRequestPlan {
-                    planned_delta: false,
-                    reset_reason,
-                    body: full_body,
-                }
-            }
-        }
-    }
-
-    fn plan_delta(&self, candidate: &CodexContinuationCandidate) -> CodexContinuationPlan {
-        let Some(snapshot) = &self.snapshot else {
-            return CodexContinuationPlan::Full {
-                reason: CodexContinuationFullReason::MissingPreviousResponse,
-            };
-        };
-        if let Some(reason) = incompatible_reason(&snapshot.key, &candidate.key) {
-            return CodexContinuationPlan::Full {
-                reason: CodexContinuationFullReason::Incompatible(reason),
-            };
-        }
-        if !input_has_prefix(&candidate.input, &snapshot.input) {
-            return CodexContinuationPlan::Full {
-                reason: CodexContinuationFullReason::Incompatible(
-                    CodexContinuationResetReason::HistoryRewritten,
-                ),
-            };
-        }
-        let delta = candidate.input[snapshot.input.len()..].to_vec();
-        if delta.is_empty() {
-            return CodexContinuationPlan::Full {
-                reason: CodexContinuationFullReason::EmptyDelta,
-            };
-        }
-        CodexContinuationPlan::Delta {
-            previous_response_id: snapshot.response_id.clone(),
-            input: delta.clone(),
-            body: candidate.delta_body(&snapshot.response_id, delta),
-        }
-    }
-
-    fn record_success(
-        &mut self,
-        candidate: &CodexContinuationCandidate,
-        response_id: Option<String>,
-    ) {
-        let Some(response_id) = response_id.filter(|id| !id.is_empty()) else {
-            self.reset();
-            return;
-        };
-        self.snapshot = Some(CodexContinuationSnapshot {
-            response_id,
-            key: candidate.key.clone(),
-            input: candidate.input.clone(),
-        });
-    }
-
-    fn reset(&mut self) {
-        self.snapshot = None;
-    }
-}
-
-fn incompatible_reason(
-    previous: &CodexContinuationKey,
-    next: &CodexContinuationKey,
-) -> Option<CodexContinuationResetReason> {
-    if previous.model != next.model {
-        return Some(CodexContinuationResetReason::ModelChanged);
-    }
-    if previous.instructions != next.instructions {
-        return Some(CodexContinuationResetReason::InstructionsChanged);
-    }
-    if previous.tools != next.tools {
-        return Some(CodexContinuationResetReason::ToolsChanged);
-    }
-    if previous.tool_choice != next.tool_choice {
-        return Some(CodexContinuationResetReason::ToolChoiceChanged);
-    }
-    if previous.reasoning != next.reasoning {
-        return Some(CodexContinuationResetReason::ReasoningChanged);
-    }
-    if previous.prompt_cache_key != next.prompt_cache_key {
-        return Some(CodexContinuationResetReason::PromptCacheKeyChanged);
-    }
-    None
-}
-
-fn input_has_prefix(input: &[Value], prefix: &[Value]) -> bool {
-    input.len() >= prefix.len()
-        && input
-            .iter()
-            .zip(prefix.iter())
-            .all(|(input, prefix)| input == prefix)
 }
 
 #[cfg(test)]
