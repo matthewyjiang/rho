@@ -29,18 +29,28 @@ impl Tool for WriteFile {
             .map(|path| compact_display_path(&ctx.cwd, path))
     }
 
+    fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
+        vec![format!(
+            "write_file {}",
+            self.display_content(args, ctx).unwrap_or_default()
+        )]
+    }
+
     fn display_lines(
         &self,
         args: &serde_json::Value,
         ctx: &ToolContext,
         result: &ToolResult,
     ) -> Vec<String> {
-        let path = self
-            .display_content(args, ctx)
-            .unwrap_or_else(|| result.content.clone());
-        let mut lines = vec![format!("write_file {path}")];
+        let mut lines = vec![format!(
+            "write_file {}",
+            self.display_content(args, ctx)
+                .unwrap_or_else(|| result.content.clone())
+        )];
         if result.ok {
-            lines.push(result.content.clone());
+            if let Some(diff) = super::diff::compact_diff_for_display(&result.content) {
+                lines.push(diff);
+            }
         }
         lines
     }

@@ -269,11 +269,11 @@ impl Theme {
     }
 
     pub(super) fn diff_addition(base: Style) -> Style {
-        Self::dim_block(Palette::current().success_tool_background).add_modifier(base.add_modifier)
+        base.fg(Palette::current().success)
     }
 
     pub(super) fn diff_removal(base: Style) -> Style {
-        Self::dim_block(Palette::current().failure_tool_background).add_modifier(base.add_modifier)
+        base.fg(Palette::current().error)
     }
 
     pub(super) fn diff_header(base: Style) -> Style {

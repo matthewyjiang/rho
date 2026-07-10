@@ -13,14 +13,71 @@ pub(super) fn unified_diff(old: &str, new: &str, display_path: &str, created: bo
     let new_header = format!("b/{display_path}");
     TextDiff::from_lines(old, new)
         .unified_diff()
+        .context_radius(1)
         .header(&old_header, &new_header)
         .to_string()
+}
+
+/// Converts a unified diff into the compact form rendered for file tools.
+///
+/// File names, hunk metadata, and diff markers for unchanged lines are omitted
+/// because the tool entry already identifies the operation and file.
+pub(super) fn compact_diff_for_display(diff: &str) -> Option<String> {
+    let mut in_hunk = false;
+    let mut lines = Vec::new();
+
+    for line in diff.lines() {
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk || line.starts_with('\\') {
+            continue;
+        }
+
+        let Some(content) = line.get(1..) else {
+            continue;
+        };
+        match &line[..1] {
+            "+" | "-" => lines.push(line.to_string()),
+            " " => lines.push(content.to_string()),
+            _ => {}
+        }
+    }
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn compacts_diff_to_one_context_line_without_metadata() {
+        let diff = unified_diff(
+            "before\nkeep\nold\nafter\nfar away\n",
+            "before\nkeep\nnew\nafter\nfar away\n",
+            "hello.txt",
+            false,
+        );
+
+        assert_eq!(
+            compact_diff_for_display(&diff).unwrap(),
+            "keep\n-old\n+new\nafter"
+        );
+    }
+
+    #[test]
+    fn compact_diff_omits_metadata_for_created_files() {
+        let diff = unified_diff("", "hello\n", "hello.txt", true);
+
+        assert_eq!(compact_diff_for_display(&diff).unwrap(), "+hello");
+    }
+
+    #[test]
+    fn compact_diff_returns_none_for_empty_diff() {
+        assert_eq!(compact_diff_for_display(""), None);
+    }
     #[test]
     fn formats_created_file() {
         let diff = unified_diff("", "hello\n", "nested/hello.txt", true);

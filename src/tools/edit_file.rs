@@ -33,18 +33,28 @@ impl Tool for EditFile {
             .map(|path| compact_display_path(&ctx.cwd, path))
     }
 
+    fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
+        vec![format!(
+            "edit_file {}",
+            self.display_content(args, ctx).unwrap_or_default()
+        )]
+    }
+
     fn display_lines(
         &self,
         args: &serde_json::Value,
         ctx: &ToolContext,
         result: &ToolResult,
     ) -> Vec<String> {
-        let path = self
-            .display_content(args, ctx)
-            .unwrap_or_else(|| result.content.clone());
-        let mut lines = vec![format!("edit_file {path}")];
+        let mut lines = vec![format!(
+            "edit_file {}",
+            self.display_content(args, ctx)
+                .unwrap_or_else(|| result.content.clone())
+        )];
         if result.ok {
-            lines.push(result.content.clone());
+            if let Some(diff) = super::diff::compact_diff_for_display(&result.content) {
+                lines.push(diff);
+            }
         }
         lines
     }
@@ -218,6 +228,27 @@ mod tests {
         assert!(result.content.contains("+++ b/sample.txt"));
         assert!(result.content.contains("-alpha beta gamma"));
         assert!(result.content.contains("+alpha delta gamma"));
+    }
+
+    #[tokio::test]
+    async fn display_lines_keep_the_first_context_line() {
+        let (_dir, ctx) = test_context();
+        std::fs::write(ctx.cwd.join("sample.txt"), "first\nold\nlast\n").unwrap();
+
+        let args = json!({
+            "path": "sample.txt",
+            "old_string": "old",
+            "new_string": "new"
+        });
+        let result = EditFile
+            .call(args.clone(), ctx.clone(), "call_1".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            EditFile.display_lines(&args, &ctx, &result),
+            vec!["edit_file sample.txt", "first\n-old\n+new\nlast"]
+        );
     }
 
     #[tokio::test]
