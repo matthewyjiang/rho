@@ -23,7 +23,7 @@ toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
-crossterm = "0.29.0"
+crossterm = { version = "0.29.0", features = ["osc52"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
@@ -37,6 +37,7 @@ base64 = "0.22"
 url = "2"
 webbrowser = "1"
 libc = "0.2"
+unicode-segmentation = "1"
 unicode-width = "0.2"
 
 # Use unreleased Windows VT input support so bracketed paste produces Event::Paste.

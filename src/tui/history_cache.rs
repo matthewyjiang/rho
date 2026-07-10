@@ -2,13 +2,21 @@ use std::ops::Range;
 
 use ratatui::text::Line;
 
-use super::{entry_lines, is_tool_entry, Entry};
+use super::{entry_lines, is_tool_entry, markdown::render_markdown, Entry};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CachedCodeBlock {
+    pub(super) line: usize,
+    pub(super) copy_columns: Range<usize>,
+    pub(super) text: String,
+}
 
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
     settings: Option<HistoryLineCacheSettings>,
     lines: Vec<Line<'static>>,
     entry_ranges: Vec<Range<usize>>,
+    code_blocks: Vec<CachedCodeBlock>,
     dirty_from: Option<usize>,
 }
 
@@ -31,6 +39,16 @@ impl HistoryLineCache {
     ) -> usize {
         self.ensure_current(entries, width, max_tool_output_lines);
         self.lines.len()
+    }
+
+    pub(super) fn code_blocks(
+        &mut self,
+        entries: &[Entry],
+        width: usize,
+        max_tool_output_lines: usize,
+    ) -> &[CachedCodeBlock] {
+        self.ensure_current(entries, width, max_tool_output_lines);
+        &self.code_blocks
     }
 
     pub(super) fn extend_visible_lines(
@@ -63,6 +81,7 @@ impl HistoryLineCache {
             self.settings = Some(settings);
             self.lines.clear();
             self.entry_ranges.clear();
+            self.code_blocks.clear();
             self.dirty_from = Some(0);
         }
 
@@ -83,20 +102,49 @@ impl HistoryLineCache {
         };
         self.lines.truncate(line_start);
         self.entry_ranges.truncate(rebuild_from);
+        self.code_blocks.retain(|block| block.line < line_start);
 
         let mut previous_was_tool = rebuild_from
             .checked_sub(1)
             .and_then(|index| entries.get(index))
             .is_some_and(is_tool_entry);
         for entry in entries.iter().skip(rebuild_from) {
-            let start = self.lines.len();
+            let range_start = self.lines.len();
             if previous_was_tool && is_tool_entry(entry) {
                 self.lines.push(Line::raw(""));
             }
+            let entry_start = self.lines.len();
+            self.cache_code_blocks(entry, width, entry_start);
             self.lines
                 .extend(entry_lines(entry, width, max_tool_output_lines));
-            self.entry_ranges.push(start..self.lines.len());
+            self.entry_ranges.push(range_start..self.lines.len());
             previous_was_tool = is_tool_entry(entry);
         }
     }
+
+    fn cache_code_blocks(&mut self, entry: &Entry, width: usize, entry_start: usize) {
+        let Entry::Assistant(text) = entry else {
+            return;
+        };
+        let inner_width = width.saturating_sub(2).max(1);
+        let mut in_code_block = false;
+        let rendered = render_markdown(text, inner_width, &mut in_code_block);
+        self.code_blocks.extend(
+            rendered
+                .code_blocks
+                .into_iter()
+                .map(|block| CachedCodeBlock {
+                    // entry_lines adds a blank row before the rendered markdown.
+                    line: entry_start.saturating_add(1 + block.top_line),
+                    // entry_lines also pads rendered markdown by one column on each side.
+                    copy_columns: block.copy_columns.start.saturating_add(1)
+                        ..block.copy_columns.end.saturating_add(1),
+                    text: block.text,
+                }),
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "history_cache_tests.rs"]
+mod tests;

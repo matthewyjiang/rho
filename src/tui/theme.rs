@@ -250,6 +250,18 @@ impl Theme {
             .remove_modifier(Modifier::UNDERLINED)
     }
 
+    pub(super) fn markdown_code_copy_button(hovered: bool) -> Style {
+        let palette = Palette::current();
+        if hovered {
+            Style::default()
+                .fg(Color::Black)
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Self::dim_block(palette.neutral_tool_background).add_modifier(Modifier::BOLD)
+        }
+    }
+
     pub(super) fn markdown_bold() -> Style {
         Style::default()
             .add_modifier(Modifier::BOLD)
