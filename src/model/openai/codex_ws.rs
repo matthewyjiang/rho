@@ -501,6 +501,7 @@ impl CodexContinuationState {
             };
         }
         let delta = candidate.input[snapshot.input.len()..].to_vec();
+        let delta = skip_previous_response_items(delta);
         if delta.is_empty() {
             return CodexContinuationPlan::Full {
                 reason: CodexContinuationFullReason::EmptyDelta,
@@ -557,6 +558,23 @@ fn incompatible_reason(
         return Some(CodexContinuationResetReason::PromptCacheKeyChanged);
     }
     None
+}
+
+fn skip_previous_response_items(input: Vec<Value>) -> Vec<Value> {
+    input
+        .into_iter()
+        .skip_while(is_previous_response_item)
+        .collect()
+}
+
+fn is_previous_response_item(item: &Value) -> bool {
+    item.get("role")
+        .and_then(Value::as_str)
+        .is_some_and(|role| role == "assistant")
+        || item
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind == "function_call")
 }
 
 fn input_has_prefix(input: &[Value], prefix: &[Value]) -> bool {

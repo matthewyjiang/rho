@@ -137,7 +137,7 @@ async fn ws_server_sends_keep_alive_frames() -> String {
 }
 
 #[test]
-fn builds_delta_body_when_next_input_extends_previous_input() {
+fn builds_delta_body_without_replaying_previous_response_output() {
     let first = candidate(vec![json!({"role":"user","content":"one"})]);
     let second = candidate(vec![
         json!({"role":"user","content":"one"}),
@@ -158,13 +158,7 @@ fn builds_delta_body_when_next_input_extends_previous_input() {
         panic!("expected delta plan");
     };
     assert_eq!(previous_response_id, "resp_1");
-    assert_eq!(
-        input,
-        vec![
-            json!({"role":"assistant","content":"two"}),
-            json!({"role":"user","content":"three"}),
-        ]
-    );
+    assert_eq!(input, vec![json!({"role":"user","content":"three"})]);
     assert_eq!(body["previous_response_id"], "resp_1");
     assert_eq!(body["input"], json!(input));
     assert_eq!(body["model"], "gpt-5-codex");
@@ -173,6 +167,44 @@ fn builds_delta_body_when_next_input_extends_previous_input() {
     assert_eq!(body["reasoning"], json!({"effort":"low","summary":"auto"}));
     assert_eq!(body["store"], false);
     assert_eq!(body["stream"], true);
+}
+
+#[test]
+fn delta_omits_previous_response_function_calls_but_keeps_tool_outputs() {
+    let first = candidate(vec![json!({"role":"user","content":"one"})]);
+    let second = candidate(vec![
+        json!({"role":"user","content":"one"}),
+        json!({
+            "type":"function_call",
+            "call_id":"call_1",
+            "name":"read_file",
+            "arguments":"{\"path\":\"README.md\"}",
+        }),
+        json!({
+            "type":"function_call_output",
+            "call_id":"call_1",
+            "output":"contents",
+        }),
+        json!({"role":"user","content":"three"}),
+    ]);
+    let mut state = CodexContinuationState::default();
+    state.record_success(&first, Some("resp_1".into()));
+
+    let CodexContinuationPlan::Delta { input, .. } = state.plan_delta(&second) else {
+        panic!("expected delta plan");
+    };
+
+    assert_eq!(
+        input,
+        vec![
+            json!({
+                "type":"function_call_output",
+                "call_id":"call_1",
+                "output":"contents",
+            }),
+            json!({"role":"user","content":"three"}),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -305,10 +337,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
     assert_eq!(frames[1]["previous_response_id"], "resp_1");
     assert_eq!(
         frames[1]["input"],
-        json!([
-            {"role":"assistant","content":"two"},
-            {"role":"user","content":"three"}
-        ])
+        json!([{"role":"user","content":"three"}])
     );
 }
 
