@@ -1,46 +1,72 @@
 #!/usr/bin/env python3
-"""Enforce lightweight architecture budgets for the rho source tree."""
+"""Enforce lightweight architecture budgets for a Rust source tree.
+
+The checker itself is repository-agnostic: every repository-specific policy
+(size budgets, generated-file exemptions, thin-binary limits, and forbidden
+crate dependencies) lives in a JSON config file discovered next to the source
+tree. A repository with no config file is checked against the built-in default
+line budget only.
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import tempfile
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+# Applied to every production Rust file that does not have a more specific
+# budget. Repositories may override this in their config file.
 DEFAULT_PRODUCTION_RUST_LINE_BUDGET = 1_000
 
-# Legacy production files that already exceed the default budget. Keep these
-# ceilings explicit and lower them as files are split up. New exceptions should
-# be avoided in favor of extracting focused modules.
-LEGACY_FILE_LINE_BUDGETS = {
-    "src/model/openai/codex_ws.rs": 1_036,
-    "src/tui.rs": 8_001,
-}
+# Default filename conventions for dedicated test files, which are excluded
+# from production file-size budgets. Inline `#[cfg(test)]` modules remain part
+# of their production file's budget because separating them reliably requires
+# Rust-aware parsing.
+DEFAULT_TEST_FILE_NAMES = ("tests.rs",)
+DEFAULT_TEST_FILE_SUFFIXES = ("_test.rs", "_tests.rs")
 
-# Generated Rust files must be listed by exact repository-relative path with a
-# short reason. An explicit list avoids accidentally exempting hand-written
-# files that merely mention generated content.
-GENERATED_RUST_FILES: dict[str, str] = {}
+# Config file discovered relative to the checked source tree, unless overridden
+# on the command line.
+DEFAULT_CONFIG_RELATIVE_PATH = "scripts/architecture.json"
 
-# Dedicated test files are excluded from production file-size budgets. Inline
-# tests remain part of their production file's budget because separating them
-# reliably requires Rust-aware parsing.
-TEST_FILE_NAMES = {"tests.rs"}
-TEST_FILE_SUFFIXES = ("_test.rs", "_tests.rs")
 
-THIN_BINARY_LINE_BUDGETS = {
-    "src/main.rs": 50,
-}
+@dataclass(frozen=True)
+class ForbiddenDependency:
+    """A source file forbidden from importing certain crate-root modules."""
 
-# Source modules may not depend on the listed crate-root modules. This scanner
-# recognizes direct crate paths and first-level branches in `use crate::{...}`
-# trees after removing comments and literals.
-FORBIDDEN_CRATE_MODULE_DEPENDENCIES = {
-    "src/credentials.rs": {"model"},
-}
+    path: str
+    modules: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class ArchitectureConfig:
+    """Repository-specific architecture policy loaded from a config file."""
+
+    default_production_line_budget: int = DEFAULT_PRODUCTION_RUST_LINE_BUDGET
+    # Legacy production files that already exceed the default budget. Keep these
+    # ceilings explicit and lower them as files are split up. New exceptions
+    # should be avoided in favor of extracting focused modules.
+    legacy_file_budgets: dict[str, int] = field(default_factory=dict)
+    # Generated Rust files listed by exact repository-relative path with a short
+    # reason. An explicit list avoids accidentally exempting hand-written files
+    # that merely mention generated content.
+    generated_files: dict[str, str] = field(default_factory=dict)
+    # Thin entrypoints (binaries) that should stay small and delegate to the
+    # library crate.
+    thin_binary_budgets: dict[str, int] = field(default_factory=dict)
+    # Source files that may not depend on the listed crate-root modules.
+    forbidden_dependencies: tuple[ForbiddenDependency, ...] = ()
+    test_file_names: tuple[str, ...] = DEFAULT_TEST_FILE_NAMES
+    test_file_suffixes: tuple[str, ...] = DEFAULT_TEST_FILE_SUFFIXES
+
+
+class ConfigError(ValueError):
+    """Raised when a config file is malformed."""
 
 
 @dataclass(frozen=True)
@@ -59,12 +85,105 @@ def relative_path(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def is_dedicated_test_file(relative: str) -> bool:
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ConfigError(message)
+
+
+def _string_int_map(raw: object, name: str) -> dict[str, int]:
+    _require(isinstance(raw, dict), f"{name} must be an object")
+    result: dict[str, int] = {}
+    for key, value in raw.items():  # type: ignore[union-attr]
+        _require(isinstance(key, str), f"{name} keys must be strings")
+        _require(
+            isinstance(value, int) and not isinstance(value, bool),
+            f"{name}[{key!r}] must be an integer",
+        )
+        result[key] = value
+    return result
+
+
+def _string_string_map(raw: object, name: str) -> dict[str, str]:
+    _require(isinstance(raw, dict), f"{name} must be an object")
+    result: dict[str, str] = {}
+    for key, value in raw.items():  # type: ignore[union-attr]
+        _require(isinstance(key, str), f"{name} keys must be strings")
+        _require(isinstance(value, str), f"{name}[{key!r}] must be a string")
+        result[key] = value
+    return result
+
+
+def _string_tuple(raw: object, name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    if raw is None:
+        return default
+    _require(isinstance(raw, list), f"{name} must be an array")
+    for value in raw:  # type: ignore[union-attr]
+        _require(isinstance(value, str), f"{name} entries must be strings")
+    return tuple(raw)  # type: ignore[arg-type]
+
+
+def _forbidden_dependencies(raw: object) -> tuple[ForbiddenDependency, ...]:
+    if raw is None:
+        return ()
+    _require(isinstance(raw, list), "forbidden_dependencies must be an array")
+    entries: list[ForbiddenDependency] = []
+    for index, item in enumerate(raw):  # type: ignore[union-attr]
+        label = f"forbidden_dependencies[{index}]"
+        _require(isinstance(item, dict), f"{label} must be an object")
+        path = item.get("path")
+        modules = item.get("modules")
+        reason = item.get("reason", "")
+        _require(isinstance(path, str) and path, f"{label}.path must be a non-empty string")
+        _require(isinstance(modules, list) and modules, f"{label}.modules must be a non-empty array")
+        for module in modules:
+            _require(isinstance(module, str) and module, f"{label}.modules entries must be non-empty strings")
+        _require(isinstance(reason, str), f"{label}.reason must be a string")
+        entries.append(ForbiddenDependency(path=path, modules=tuple(modules), reason=reason))
+    return tuple(entries)
+
+
+def parse_config(data: object) -> ArchitectureConfig:
+    _require(isinstance(data, dict), "config root must be an object")
+    default_budget = data.get("default_production_line_budget", DEFAULT_PRODUCTION_RUST_LINE_BUDGET)
+    _require(
+        isinstance(default_budget, int) and not isinstance(default_budget, bool),
+        "default_production_line_budget must be an integer",
+    )
+    return ArchitectureConfig(
+        default_production_line_budget=default_budget,
+        legacy_file_budgets=_string_int_map(data.get("legacy_file_budgets", {}), "legacy_file_budgets"),
+        generated_files=_string_string_map(data.get("generated_files", {}), "generated_files"),
+        thin_binary_budgets=_string_int_map(data.get("thin_binary_budgets", {}), "thin_binary_budgets"),
+        forbidden_dependencies=_forbidden_dependencies(data.get("forbidden_dependencies")),
+        test_file_names=_string_tuple(data.get("test_file_names"), "test_file_names", DEFAULT_TEST_FILE_NAMES),
+        test_file_suffixes=_string_tuple(
+            data.get("test_file_suffixes"), "test_file_suffixes", DEFAULT_TEST_FILE_SUFFIXES
+        ),
+    )
+
+
+def load_config(path: Path) -> ArchitectureConfig:
+    """Load policy from ``path``; return built-in defaults if it does not exist."""
+    if not path.is_file():
+        return ArchitectureConfig()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ConfigError(f"{path}: invalid JSON: {error}") from error
+    return parse_config(data)
+
+
+def is_dedicated_test_file(
+    relative: str,
+    *,
+    names: Iterable[str] = DEFAULT_TEST_FILE_NAMES,
+    suffixes: Iterable[str] = DEFAULT_TEST_FILE_SUFFIXES,
+) -> bool:
     path = Path(relative)
     return (
         "tests" in path.parts
-        or path.name in TEST_FILE_NAMES
-        or path.name.endswith(TEST_FILE_SUFFIXES)
+        or path.name in set(names)
+        or path.name.endswith(tuple(suffixes))
     )
 
 
@@ -83,12 +202,12 @@ def production_rust_files(root: Path) -> list[Path]:
 def check_file_size_budgets(
     root: Path,
     *,
-    legacy_budgets: dict[str, int] | None = None,
-    generated_files: dict[str, str] | None = None,
+    legacy_budgets: dict[str, int],
+    generated_files: dict[str, str],
     default_budget: int = DEFAULT_PRODUCTION_RUST_LINE_BUDGET,
+    test_file_names: Iterable[str] = DEFAULT_TEST_FILE_NAMES,
+    test_file_suffixes: Iterable[str] = DEFAULT_TEST_FILE_SUFFIXES,
 ) -> SizeCheckResult:
-    legacy_budgets = LEGACY_FILE_LINE_BUDGETS if legacy_budgets is None else legacy_budgets
-    generated_files = GENERATED_RUST_FILES if generated_files is None else generated_files
     discovered = production_rust_files(root)
     discovered_paths = {relative_path(path, root) for path in discovered}
     errors: list[str] = []
@@ -113,7 +232,7 @@ def check_file_size_budgets(
     excluded_generated_files = 0
     for path in discovered:
         relative = relative_path(path, root)
-        if is_dedicated_test_file(relative):
+        if is_dedicated_test_file(relative, names=test_file_names, suffixes=test_file_suffixes):
             excluded_test_files += 1
             continue
         if relative in generated_files:
@@ -263,26 +382,28 @@ def references_crate_module(source: str, module: str) -> bool:
     return False
 
 
-def check_dependency_boundaries(root: Path) -> list[str]:
+def check_dependency_boundaries(
+    root: Path, forbidden_dependencies: Iterable[ForbiddenDependency]
+) -> list[str]:
     errors: list[str] = []
-    for relative, forbidden_modules in sorted(FORBIDDEN_CRATE_MODULE_DEPENDENCIES.items()):
-        path = root / relative
+    for dependency in sorted(forbidden_dependencies, key=lambda entry: entry.path):
+        path = root / dependency.path
         if not path.is_file():
-            errors.append(f"dependency-boundary source does not exist: {relative}")
+            errors.append(f"dependency-boundary source does not exist: {dependency.path}")
             continue
         source = path.read_text(encoding="utf-8")
-        for module in sorted(forbidden_modules):
+        for module in sorted(dependency.modules):
             if references_crate_module(source, module):
-                errors.append(
-                    f"{relative}: must not depend on crate::{module}; keep credentials "
-                    "independent from model runtime metadata"
-                )
+                message = f"{dependency.path}: must not depend on crate::{module}"
+                if dependency.reason:
+                    message += f"; {dependency.reason}"
+                errors.append(message)
     return errors
 
 
-def check_thin_binaries(root: Path) -> list[str]:
+def check_thin_binaries(root: Path, thin_binary_budgets: dict[str, int]) -> list[str]:
     errors: list[str] = []
-    for relative, budget in sorted(THIN_BINARY_LINE_BUDGETS.items()):
+    for relative, budget in sorted(thin_binary_budgets.items()):
         path = root / relative
         if not path.is_file():
             errors.append(f"thin-binary entry does not exist: {relative}")
@@ -298,11 +419,18 @@ def print_errors(errors: Iterable[str]) -> None:
         print(f"ERROR: {error}")
 
 
-def run_checks(root: Path) -> int:
-    size_result = check_file_size_budgets(root)
+def run_checks(root: Path, config: ArchitectureConfig) -> int:
+    size_result = check_file_size_budgets(
+        root,
+        legacy_budgets=config.legacy_file_budgets,
+        generated_files=config.generated_files,
+        default_budget=config.default_production_line_budget,
+        test_file_names=config.test_file_names,
+        test_file_suffixes=config.test_file_suffixes,
+    )
     errors = list(size_result.errors)
-    errors.extend(check_dependency_boundaries(root))
-    errors.extend(check_thin_binaries(root))
+    errors.extend(check_dependency_boundaries(root, config.forbidden_dependencies))
+    errors.extend(check_thin_binaries(root, config.thin_binary_budgets))
 
     if errors:
         print_errors(errors)
@@ -313,9 +441,9 @@ def run_checks(root: Path) -> int:
     print(f"  production Rust files checked: {size_result.checked_files}")
     print(f"  dedicated test files excluded: {size_result.excluded_test_files}")
     print(f"  generated Rust files excluded: {size_result.excluded_generated_files}")
-    print(f"  legacy file-size budgets: {len(LEGACY_FILE_LINE_BUDGETS)}")
-    print(f"  dependency boundaries: {len(FORBIDDEN_CRATE_MODULE_DEPENDENCIES)}")
-    print(f"  thin binary budgets: {len(THIN_BINARY_LINE_BUDGETS)}")
+    print(f"  legacy file-size budgets: {len(config.legacy_file_budgets)}")
+    print(f"  dependency boundaries: {len(config.forbidden_dependencies)}")
+    print(f"  thin binary budgets: {len(config.thin_binary_budgets)}")
     return 0
 
 
@@ -360,6 +488,55 @@ class ArchitectureCheckTests(unittest.TestCase):
                 ("src/large.rs: 6 lines exceeds legacy budget of 5",),
             )
 
+    def test_load_config_returns_defaults_when_file_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = load_config(Path(directory) / "missing.json")
+            self.assertEqual(config, ArchitectureConfig())
+
+    def test_parse_config_reads_policy_and_forbidden_dependencies(self) -> None:
+        config = parse_config(
+            {
+                "default_production_line_budget": 800,
+                "legacy_file_budgets": {"src/big.rs": 900},
+                "generated_files": {"src/gen.rs": "protobuf output"},
+                "thin_binary_budgets": {"src/main.rs": 40},
+                "forbidden_dependencies": [
+                    {"path": "src/a.rs", "modules": ["model", "web"], "reason": "keep it clean"}
+                ],
+            }
+        )
+        self.assertEqual(config.default_production_line_budget, 800)
+        self.assertEqual(config.legacy_file_budgets, {"src/big.rs": 900})
+        self.assertEqual(config.thin_binary_budgets, {"src/main.rs": 40})
+        self.assertEqual(
+            config.forbidden_dependencies,
+            (ForbiddenDependency(path="src/a.rs", modules=("model", "web"), reason="keep it clean"),),
+        )
+
+    def test_parse_config_rejects_malformed_entries(self) -> None:
+        with self.assertRaises(ConfigError):
+            parse_config({"legacy_file_budgets": {"src/a.rs": "nope"}})
+        with self.assertRaises(ConfigError):
+            parse_config({"forbidden_dependencies": [{"modules": ["model"]}]})
+
+    def test_dependency_boundary_message_includes_optional_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/a.rs").write_text("use crate::model::Thing;\n", encoding="utf-8")
+
+            with_reason = check_dependency_boundaries(
+                root, [ForbiddenDependency("src/a.rs", ("model",), "because layering")]
+            )
+            without_reason = check_dependency_boundaries(
+                root, [ForbiddenDependency("src/a.rs", ("model",), "")]
+            )
+
+            self.assertEqual(
+                with_reason, ["src/a.rs: must not depend on crate::model; because layering"]
+            )
+            self.assertEqual(without_reason, ["src/a.rs: must not depend on crate::model"])
+
 
 def run_self_tests() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ArchitectureCheckTests)
@@ -376,9 +553,19 @@ def parse_args() -> argparse.Namespace:
         help="repository root to check (defaults to the script's repository)",
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "path to the architecture policy config "
+            f"(defaults to <root>/{DEFAULT_CONFIG_RELATIVE_PATH}; "
+            "built-in defaults are used when it is absent)"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
-        help="run deterministic scanner and file-budget self-tests",
+        help="run deterministic scanner, config, and file-budget self-tests",
     )
     return parser.parse_args()
 
@@ -387,7 +574,14 @@ def main() -> int:
     args = parse_args()
     if args.self_test:
         return run_self_tests()
-    return run_checks(args.root.resolve())
+    root = args.root.resolve()
+    config_path = args.config if args.config is not None else root / DEFAULT_CONFIG_RELATIVE_PATH
+    try:
+        config = load_config(config_path)
+    except ConfigError as error:
+        print(f"ERROR: {error}")
+        return 1
+    return run_checks(root, config)
 
 
 if __name__ == "__main__":
