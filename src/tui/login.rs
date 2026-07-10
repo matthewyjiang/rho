@@ -18,7 +18,6 @@ impl App {
     pub(super) async fn execute_logout_command(
         &mut self,
         invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
@@ -28,14 +27,13 @@ impl App {
                     self.status = "select provider to logout".into();
                 }
                 Err(err) => {
-                    self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                    self.insert_entry(&Entry::Error(err.to_string()));
                     self.status = "logout failed".into();
                 }
             }
             return Ok(());
         }
-        self.logout_provider(&invocation.args, terminal, agent)
-            .await
+        self.logout_provider(&invocation.args, agent).await
     }
 
     pub(super) fn open_provider_picker(&mut self, verb: &str, action: PickerAction) {
@@ -51,13 +49,10 @@ impl App {
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
-            self.insert_entry(
-                terminal,
-                &Entry::Error(format!(
-                    "unsupported login provider '{provider}'. Use /login {}",
-                    catalog::implemented_providers().join(", /login ")
-                )),
-            )?;
+            self.insert_entry(&Entry::Error(format!(
+                "unsupported login provider '{provider}'. Use /login {}",
+                catalog::implemented_providers().join(", /login ")
+            )));
             self.status = "login failed".into();
             return Ok(());
         };
@@ -89,7 +84,7 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if key.trim().is_empty() {
-            self.insert_entry(terminal, &Entry::Error("API key cannot be empty".into()))?;
+            self.insert_entry(&Entry::Error("API key cannot be empty".into()));
             self.status = "login failed".into();
             return Ok(());
         }
@@ -97,7 +92,7 @@ impl App {
         match saved {
             Ok(()) => self.finish_login(target, terminal, agent).await,
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -111,10 +106,9 @@ impl App {
         _agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if self.pending_oauth_login.is_some() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice("OAuth login is already in progress. Press esc to cancel.".into()),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "OAuth login is already in progress. Press esc to cancel.".into(),
+            ));
             return Ok(());
         }
 
@@ -135,10 +129,9 @@ impl App {
                         .map_err(|err| err.to_string())
                 }),
             });
-            self.insert_entry(
-                terminal,
-                &Entry::Notice("opening browser for Codex login. Press esc to cancel.".into()),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "opening browser for Codex login. Press esc to cancel.".into(),
+            ));
             Ok(())
         }
     }
@@ -153,19 +146,16 @@ impl App {
         let login = match codex_oauth::start_codex_device_login().await {
             Ok(login) => login,
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "login failed".into();
                 return Ok(());
             }
         };
 
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "Codex login: visit {} and enter code {}",
-                login.verification_uri, login.user_code
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "Codex login: visit {} and enter code {}",
+            login.verification_uri, login.user_code
+        )));
 
         self.status = "waiting for Codex device login; press esc to cancel".into();
         self.composer = ComposerMode::OAuthPending(target.clone());
@@ -188,10 +178,9 @@ impl App {
         _agent: &mut Agent,
     ) -> anyhow::Result<()> {
         if self.pending_oauth_login.is_some() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice("OAuth login is already in progress. Press esc to cancel.".into()),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "OAuth login is already in progress. Press esc to cancel.".into(),
+            ));
             return Ok(());
         }
 
@@ -200,24 +189,20 @@ impl App {
         let login = match github_copilot_device::start_github_copilot_device_login().await {
             Ok(login) => login,
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "login failed".into();
                 return Ok(());
             }
         };
 
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "GitHub Copilot login: visit {} and enter code {}",
-                login.verification_uri, login.user_code
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "GitHub Copilot login: visit {} and enter code {}",
+            login.verification_uri, login.user_code
+        )));
         if let Some(uri) = &login.verification_uri_complete {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(format!("Or open this URL to continue: {uri}")),
-            )?;
+            self.insert_entry(&Entry::Notice(format!(
+                "Or open this URL to continue: {uri}"
+            )));
         }
 
         self.status = "waiting for GitHub Copilot device login; press esc to cancel".into();
@@ -265,7 +250,7 @@ impl App {
                     }
                     Err(err) => {
                         self.composer = ComposerMode::Input;
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "login failed".into();
                         Ok(())
                     }
@@ -273,7 +258,7 @@ impl App {
             }
             Ok(Err(err)) => {
                 self.composer = ComposerMode::Input;
-                self.insert_entry(terminal, &Entry::Error(err))?;
+                self.insert_entry(&Entry::Error(err));
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -284,10 +269,7 @@ impl App {
             }
             Err(err) => {
                 self.composer = ComposerMode::Input;
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("OAuth login task failed: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!("OAuth login task failed: {err}")));
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -304,32 +286,24 @@ impl App {
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
         if self.using_unavailable_provider {
-            if self.activate_provider_after_login(&target, terminal, agent)? {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "stored credentials for {} and selected {}/{}",
-                        target.provider, self.info.provider, self.info.model
-                    )),
-                )?;
+            if self.activate_provider_after_login(&target, agent)? {
+                self.insert_entry(&Entry::Notice(format!(
+                    "stored credentials for {} and selected {}/{}",
+                    target.provider, self.info.provider, self.info.model
+                )));
             }
         } else if target.provider == self.info.provider {
-            self.reload_active_provider_after_login(&target, terminal, agent)?;
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(format!(
+            self.reload_active_provider_after_login(&target, agent)?;
+            self.insert_entry(&Entry::Notice(format!(
                     "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
                     target.provider
                 )),
-            )?;
+            );
         } else {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(format!(
-                    "stored credentials for {}. Switch models with /model when you want to use it.",
-                    target.provider
-                )),
-            )?;
+            self.insert_entry(&Entry::Notice(format!(
+                "stored credentials for {}. Switch models with /model when you want to use it.",
+                target.provider
+            )));
             self.status = "login saved".into();
         }
         self.report_resting_herdr_state().await;
@@ -354,23 +328,17 @@ impl App {
             .await
         {
             Ok(refresh) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "refreshed {} model list: {} models",
-                        refresh.provider,
-                        refresh.models.len()
-                    )),
-                )?;
+                self.insert_entry(&Entry::Notice(format!(
+                    "refreshed {} model list: {} models",
+                    refresh.provider,
+                    refresh.models.len()
+                )));
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "stored credentials for {}, but failed to refresh its model list: {err}",
-                        target.provider
-                    )),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials for {}, but failed to refresh its model list: {err}",
+                    target.provider
+                )));
             }
         }
         Ok(())
@@ -379,20 +347,16 @@ impl App {
     fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let new_provider =
             match build_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
                 Ok(provider) => provider,
                 Err(err) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!(
-                            "stored credentials, but could not refresh {}: {err}",
-                            target.provider
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "stored credentials, but could not refresh {}: {err}",
+                        target.provider
+                    )));
                     self.status = "login saved".into();
                     return Ok(());
                 }
@@ -408,30 +372,24 @@ impl App {
     fn activate_provider_after_login(
         &mut self,
         target: &LoginTarget,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(format!(
+            self.insert_entry(&Entry::Notice(format!(
                     "stored credentials for {}, but no cached models are available. Run /refresh-model-list {} before switching to it.",
                     target.provider, target.provider
                 )),
-            )?;
+            );
             self.status = "login saved".into();
             return Ok(false);
         };
         let new_provider = match build_provider(&target.provider, &model, self.info.reasoning) {
             Ok(provider) => provider,
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "stored credentials, but could not activate {}: {err}",
-                        target.provider
-                    )),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but could not activate {}: {err}",
+                    target.provider
+                )));
                 self.status = "login saved".into();
                 return Ok(false);
             }
@@ -448,13 +406,10 @@ impl App {
                 self.status = format!("model: {}/{}", self.info.provider, self.info.model);
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "selected {}/{}, but saving config failed: {err}",
-                        self.info.provider, self.info.model
-                    )),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "selected {}/{}, but saving config failed: {err}",
+                    self.info.provider, self.info.model
+                )));
                 self.status = "config save failed".into();
             }
         }
@@ -464,18 +419,14 @@ impl App {
     pub(super) async fn logout_provider(
         &mut self,
         provider: &str,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
-            self.insert_entry(
-                terminal,
-                &Entry::Error(format!(
-                    "unsupported logout provider '{provider}'. Use /logout {}",
-                    catalog::implemented_providers().join(", /logout ")
-                )),
-            )?;
+            self.insert_entry(&Entry::Error(format!(
+                "unsupported logout provider '{provider}'. Use /logout {}",
+                catalog::implemented_providers().join(", /logout ")
+            )));
             self.status = "logout failed".into();
             return Ok(());
         };
@@ -496,21 +447,19 @@ impl App {
                 } else {
                     format!("no stored credentials for {} were present", target.provider)
                 };
-                self.insert_entry(terminal, &Entry::Notice(message))?;
+                self.insert_entry(&Entry::Notice(message));
                 if self.invalidate_active_provider_if_needed(&target, agent) {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Notice(
+                    self.insert_entry(&Entry::Notice(
                             "the active provider no longer has credentials. Run /login or switch with /model."
                                 .into(),
                         ),
-                    )?;
+                    );
                 }
                 self.report_resting_herdr_state().await;
                 Ok(())
             }
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "logout failed".into();
                 Ok(())
             }

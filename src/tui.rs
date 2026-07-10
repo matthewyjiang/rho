@@ -1247,17 +1247,16 @@ impl App {
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
         if self.info.open_resume_picker {
-            self.open_resume_picker(terminal)?;
+            self.open_resume_picker()?;
         }
         if self.info.auth_unavailable.is_some() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice("no providers configured. run /login to sign in.".into()),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no providers configured. run /login to sign in.".into(),
+            ));
         }
         while !self.should_quit {
             self.poll_model_metadata_fetch(agent);
-            self.poll_pending_session_title(terminal)?;
+            self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             if !event::poll(Duration::from_millis(0))? {
                 self.flush_due_paste_burst();
@@ -1467,11 +1466,11 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_oauth_pending_key(key, terminal)? {
+        if self.handle_oauth_pending_key(key)? {
             return Ok(());
         }
 
-        if self.handle_questionnaire_key(key, terminal)? {
+        if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
 
@@ -1483,11 +1482,11 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_config_text_key(key, terminal)? {
+        if self.handle_config_text_key(key)? {
             return Ok(());
         }
 
-        if self.handle_reasoning_cycle_key(key, terminal, agent)? {
+        if self.handle_reasoning_cycle_key(key, agent)? {
             return Ok(());
         }
 
@@ -1510,7 +1509,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.notify_status(terminal, "input cleared; press ctrl-c again to quit")?;
+                    self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -1521,7 +1520,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image(terminal)?;
+                self.paste_clipboard_image();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -1538,10 +1537,9 @@ impl App {
                 self.cumulative_usage = None;
                 self.latest_usage = None;
                 self.current_context = None;
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("conversation reset; next message starts a new session".into()),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "conversation reset; next message starts a new session".into(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -1574,13 +1572,10 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.notify_status(
-                        terminal,
-                        format!(
-                            "editing queued message; {} queued message(s) remain",
-                            self.queued_prompts.len()
-                        ),
-                    )?;
+                    self.notify_status(format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    ));
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -1675,7 +1670,7 @@ impl App {
         }
     }
 
-    fn poll_pending_session_title(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn poll_pending_session_title(&mut self) -> anyhow::Result<()> {
         let Some(future) = self.pending_session_title.as_mut() else {
             return Ok(());
         };
@@ -1692,16 +1687,12 @@ impl App {
             return Ok(());
         }
         if self.info.session_id.as_deref() == Some(result.session_id.as_str()) {
-            self.insert_entry(terminal, &Entry::Notice(format!("session titled: {title}")))?;
+            self.insert_entry(&Entry::Notice(format!("session titled: {title}")));
         }
         Ok(())
     }
 
-    fn handle_oauth_pending_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::OAuthPending(_)) {
             return Ok(false);
         }
@@ -1717,10 +1708,7 @@ impl App {
                 };
                 self.composer = ComposerMode::Input;
                 self.status = "login cancelled".into();
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!("{provider} login cancelled")),
-                )?;
+                self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -1729,11 +1717,7 @@ impl App {
         }
     }
 
-    fn handle_questionnaire_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_questionnaire_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Questionnaire(_)) {
             return Ok(false);
         }
@@ -1786,7 +1770,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_questionnaire_answer(terminal)?;
+                self.submit_questionnaire_answer()?;
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -1945,12 +1929,9 @@ impl App {
         }
     }
 
-    fn submit_questionnaire_answer(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_questionnaire_answer(&mut self) -> anyhow::Result<()> {
         if let Some(display) = self.prepare_questionnaire_answer()? {
-            self.insert_entry(terminal, &Entry::User(display))?;
+            self.insert_entry(&Entry::User(display));
         }
         Ok(())
     }
@@ -2010,10 +1991,7 @@ impl App {
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(questionnaire_notice_text(&request.request)),
-        )?;
+        self.insert_entry(&Entry::Notice(questionnaire_notice_text(&request.request)));
         self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             request.request,
             request.response,
@@ -2112,13 +2090,10 @@ impl App {
                     return Ok(true);
                 };
                 let Ok(mut value) = input.value.parse::<usize>() else {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!(
-                            "{} must be a positive whole number",
-                            input.key.label()
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "{} must be a positive whole number",
+                        input.key.label()
+                    )));
                     self.status = "config save failed".into();
                     return Ok(true);
                 };
@@ -2134,12 +2109,9 @@ impl App {
                             value,
                             self.info.max_tool_output_lines,
                         ));
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "max output bytes set to {value}; applies next session"
-                            )),
-                        )?;
+                        self.insert_entry(&Entry::Notice(format!(
+                            "max output bytes set to {value}; applies next session"
+                        )));
                         self.status = "config saved".into();
                     }
                     ConfigNumberKey::MaxToolOutputLines => {
@@ -2154,10 +2126,9 @@ impl App {
                             value,
                         ));
                         self.clamp_history_scroll_for_terminal(terminal)?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!("max tool output lines set to {value}")),
-                        )?;
+                        self.insert_entry(&Entry::Notice(format!(
+                            "max tool output lines set to {value}"
+                        )));
                         self.status = "config saved".into();
                     }
                     ConfigNumberKey::CompactThresholdPercent => {
@@ -2172,13 +2143,10 @@ impl App {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "compact threshold set to {}%",
-                                config.compact_threshold_percent
-                            )),
-                        )?;
+                        self.insert_entry(&Entry::Notice(format!(
+                            "compact threshold set to {}%",
+                            config.compact_threshold_percent
+                        )));
                         self.status = "config saved".into();
                     }
                     ConfigNumberKey::CompactTargetPercent => {
@@ -2193,13 +2161,10 @@ impl App {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "compact target set to {}%",
-                                config.compact_target_percent
-                            )),
-                        )?;
+                        self.insert_entry(&Entry::Notice(format!(
+                            "compact target set to {}%",
+                            config.compact_target_percent
+                        )));
                         self.status = "config saved".into();
                     }
                 }
@@ -2232,11 +2197,7 @@ impl App {
         }
     }
 
-    fn handle_config_text_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
@@ -2264,10 +2225,10 @@ impl App {
                         self.status = format!("{} saved", key.label());
                     }
                     Err(err) => {
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Error(format!("could not save {}: {err}", key.label())),
-                        )?;
+                        self.insert_entry(&Entry::Error(format!(
+                            "could not save {}: {err}",
+                            key.label()
+                        )));
                         self.status = "config save failed".into();
                     }
                 }
@@ -2306,7 +2267,6 @@ impl App {
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         let is_shift_tab = matches!(key.code, KeyCode::BackTab)
@@ -2315,7 +2275,7 @@ impl App {
             return Ok(false);
         }
 
-        self.cycle_reasoning(terminal, agent)?;
+        self.cycle_reasoning(agent)?;
         self.paste_burst.clear();
         self.ctrl_c_streak = 0;
         Ok(true)
@@ -2381,7 +2341,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite(terminal)?;
+                self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
@@ -2906,24 +2866,21 @@ impl App {
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                if self.execute_skill_command(&name, terminal, agent)? {
+                if self.execute_skill_command(&name, agent)? {
                     if trailing_prompt.is_empty() {
                         return Ok(());
                     }
                     prompt = trailing_prompt;
                     display_prompt = trailing_display_prompt;
                 } else {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!(
-                            "unknown command '/{name}'. Type / to choose one of: {}",
-                            commands::COMMANDS
-                                .iter()
-                                .map(|command| command.usage)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "unknown command '/{name}'. Type / to choose one of: {}",
+                        commands::COMMANDS
+                            .iter()
+                            .map(|command| command.usage)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
                     self.status = "unknown command".into();
                     return Ok(());
                 }
@@ -2977,10 +2934,7 @@ impl App {
         {
             self.start_session_title_generation(prompt.clone());
         }
-        self.insert_entry(
-            terminal,
-            &Entry::User(render_user_entry(&display_prompt, &images)),
-        )?;
+        self.insert_entry(&Entry::User(render_user_entry(&display_prompt, &images)));
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
@@ -3166,7 +3120,7 @@ impl App {
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
-                self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
+                self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.status = "interrupted".into();
@@ -3176,11 +3130,11 @@ impl App {
                 self.current_turn_start = None;
                 self.running = false;
                 self.loading_spinner.stop();
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "error".into();
             }
         }
-        self.apply_pending_model_selection(terminal, agent)?;
+        self.apply_pending_model_selection(agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
@@ -3210,35 +3164,28 @@ impl App {
         target.extend(self.steering_prompts.drain(..));
     }
 
-    fn paste_clipboard_image<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
+    fn paste_clipboard_image(&mut self) {
         if self.running {
-            self.notify_status(
-                terminal,
-                "image paste is unavailable while a model turn is running",
-            )?;
-            return Ok(());
+            self.notify_status("image paste is unavailable while a model turn is running");
+            return;
         }
         if !matches!(self.composer, ComposerMode::Input) {
-            self.notify_status(terminal, "image paste is only available in the message box")?;
-            return Ok(());
+            self.notify_status("image paste is only available in the message box");
+            return;
         }
         match read_clipboard_image() {
             Ok(image) => {
                 let summary = image_summary(&image);
                 self.pending_images.push(image);
-                self.notify_status(
-                    terminal,
-                    format!("attached image {} ({summary})", self.pending_images.len()),
-                )?;
+                self.notify_status(format!(
+                    "attached image {} ({summary})",
+                    self.pending_images.len()
+                ));
             }
             Err(err) => {
-                self.notify_status(terminal, format!("image paste failed: {err}"))?;
+                self.notify_status(format!("image paste failed: {err}"));
             }
         }
-        Ok(())
     }
 
     fn insert_paste(&mut self, text: &str) {
@@ -3267,16 +3214,16 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_questionnaire_key(key, terminal)? {
+        if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
         if self.handle_running_config_number_key(key, terminal)? {
             return Ok(());
         }
-        if self.handle_running_config_text_key(key, terminal)? {
+        if self.handle_running_config_text_key(key)? {
             return Ok(());
         }
-        if self.handle_running_picker_key(key, terminal)? {
+        if self.handle_running_picker_key(key)? {
             return Ok(());
         }
         if self.handle_running_command_palette_key(key, terminal)? {
@@ -3291,7 +3238,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.notify_status(terminal, "input cleared; press esc to interrupt model")?;
+                    self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -3299,7 +3246,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image(terminal)?;
+                self.paste_clipboard_image();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -3309,10 +3256,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                self.notify_status(
-                    terminal,
-                    "reset is unavailable while a model turn is running",
-                )?;
+                self.notify_status("reset is unavailable while a model turn is running");
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -3345,13 +3289,10 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.notify_status(
-                        terminal,
-                        format!(
-                            "editing queued message; {} queued message(s) remain",
-                            self.queued_prompts.len()
-                        ),
-                    )?;
+                    self.notify_status(format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    ));
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -3376,7 +3317,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.queue_prompt_after_turn(terminal)?;
+                self.queue_prompt_after_turn()?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -3426,48 +3367,38 @@ impl App {
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
-                self.queue_steering_prompt(prompt, terminal)?;
+                self.queue_steering_prompt(prompt)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "unknown or unavailable command '/{name}' while a model turn is running"
-                    )),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "unknown or unavailable command '/{name}' while a model turn is running"
+                )));
                 self.status = "command unavailable while running".into();
             }
         }
         Ok(())
     }
 
-    fn queue_steering_prompt(
-        &mut self,
-        prompt: String,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn queue_steering_prompt(&mut self, prompt: String) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
         self.steering_prompts.push_back(prompt);
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "queued steer {} for after the current output or tool call",
-                self.steering_prompts.len()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "queued steer {} for after the current output or tool call",
+            self.steering_prompts.len()
+        )));
         self.status = format!("queued {} steer(s)", self.steering_prompts.len());
         Ok(())
     }
 
-    fn queue_prompt_after_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn queue_prompt_after_turn(&mut self) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
         let display_prompt = self.input.clone();
         let paste_segments = self.paste_segments.clone();
@@ -3478,7 +3409,7 @@ impl App {
             self.clamp_command_selection();
             return Ok(());
         }
-        self.queue_prompt(prompt, display_prompt, paste_segments, terminal)
+        self.queue_prompt(prompt, display_prompt, paste_segments)
     }
 
     fn queue_prompt(
@@ -3486,7 +3417,6 @@ impl App {
         prompt: String,
         display_prompt: String,
         paste_segments: Vec<PasteSegment>,
-        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
@@ -3498,13 +3428,10 @@ impl App {
             display_prompt,
             paste_segments,
         });
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "queued message {} for after the current turn",
-                self.queued_prompts.len()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "queued message {} for after the current turn",
+            self.queued_prompts.len()
+        )));
         self.status = format!("queued {} message(s)", self.queued_prompts.len());
         Ok(())
     }
@@ -3512,7 +3439,6 @@ impl App {
     fn execute_model_command_during_turn(
         &mut self,
         invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let model = invocation.args.trim();
         if model.is_empty() {
@@ -3523,13 +3449,10 @@ impl App {
                 &self.available_auths,
             );
             if picker.items.is_empty() {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "no cached API models. run /refresh-model-list after the current run ends."
-                            .into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "no cached API models. run /refresh-model-list after the current run ends."
+                        .into(),
+                ));
                 self.status = "running".into();
             } else {
                 self.composer = ComposerMode::Picker(picker);
@@ -3545,41 +3468,31 @@ impl App {
             &self.info.auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.queue_model_selection(selection, terminal),
+            Ok(selection) => self.queue_model_selection(selection),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "model switch failed".into();
                 Ok(())
             }
         }
     }
 
-    fn queue_model_selection(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn queue_model_selection(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
         let provider_model = format!("{}/{}", selection.provider, selection.model);
         self.pending_model_selection = Some(selection);
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
+        self.insert_entry(&Entry::Notice(format!(
                 "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
             )),
-        )?;
+        );
         self.status = format!("model queued: {provider_model}");
         Ok(())
     }
 
-    fn apply_pending_model_selection(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn apply_pending_model_selection(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         let Some(selection) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        self.select_model(selection, terminal, agent)
+        self.select_model(selection, agent)
     }
 
     fn execute_command_during_turn(
@@ -3588,24 +3501,21 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         match invocation.id {
-            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Skills => self.execute_skills_command(terminal),
+            CommandId::Skills => self.execute_skills_command(),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::Model => self.execute_model_command_during_turn(invocation, terminal),
+            CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::New
             | CommandId::Compact
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
             | CommandId::Resume => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "/{} is unavailable while a model turn is running",
-                        invocation.name
-                    )),
-                )?;
+                self.insert_entry(&Entry::Notice(format!(
+                    "/{} is unavailable while a model turn is running",
+                    invocation.name
+                )));
                 self.status = "command unavailable while running".into();
                 Ok(())
             }
@@ -3669,11 +3579,7 @@ impl App {
         }
     }
 
-    fn handle_running_picker_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_running_picker_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Picker(_)) {
             return Ok(false);
         }
@@ -3720,11 +3626,11 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite(terminal)?;
+                self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
-                self.submit_picker_selection_during_turn(terminal)?;
+                self.submit_picker_selection_during_turn()?;
                 Ok(true)
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
@@ -3734,7 +3640,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_picker_selection_during_turn(terminal)?;
+                self.submit_picker_selection_during_turn()?;
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
@@ -3745,10 +3651,7 @@ impl App {
         }
     }
 
-    fn submit_picker_selection_during_turn(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             if matches!(
                 &self.composer,
@@ -3775,7 +3678,7 @@ impl App {
             PickerAction::InsertFilePath => {
                 self.insert_selected_file_path(&value, /*running*/ true);
             }
-            PickerAction::Config => self.submit_config_selection_during_turn(&value, terminal)?,
+            PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::SelectTitleModel => {
                 self.refresh_available_auths();
                 let (provider, _model, auth) = self.title_model_selection();
@@ -3785,9 +3688,9 @@ impl App {
                     &auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_title_model(selection, terminal)?,
+                    Ok(selection) => self.select_title_model(selection)?,
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "title model switch failed".into();
                     }
                 }
@@ -3800,9 +3703,9 @@ impl App {
                     &self.info.auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.queue_model_selection(selection, terminal)?,
+                    Ok(selection) => self.queue_model_selection(selection)?,
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "model switch failed".into();
                     }
                 }
@@ -3810,23 +3713,16 @@ impl App {
             PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::ResumeSession => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "that picker action is unavailable while a model turn is running".into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "that picker action is unavailable while a model turn is running".into(),
+                ));
                 self.status = "picker action unavailable while running".into();
             }
         }
         Ok(())
     }
 
-    fn submit_config_selection_during_turn(
-        &mut self,
-        value: &str,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
@@ -3845,22 +3741,19 @@ impl App {
                 self.status = "edit max tool output lines".into();
             }
             config_picker::REASONING_VALUE => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "reasoning changes are unavailable while a model turn is running".into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "reasoning changes are unavailable while a model turn is running".into(),
+                ));
                 self.status = "config action unavailable while running".into();
             }
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
-                self.toggle_reasoning_output(terminal)?;
+                self.toggle_reasoning_output()?;
             }
             config_picker::CHECK_FOR_UPDATES_VALUE => {
-                self.toggle_check_for_updates(terminal)?;
+                self.toggle_check_for_updates()?;
             }
             config_picker::AUTO_COMPACT_VALUE => {
-                self.toggle_auto_compact(terminal)?;
+                self.toggle_auto_compact()?;
             }
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
@@ -3892,7 +3785,7 @@ impl App {
                 ));
                 self.status = "config".into();
             }
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal)?,
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::OpenAiSearch,
@@ -3930,15 +3823,11 @@ impl App {
         self.handle_config_number_key(key, terminal)
     }
 
-    fn handle_running_config_text_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_running_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
-        self.handle_config_text_key(key, terminal)
+        self.handle_config_text_key(key)
     }
 
     fn reset_streams(&mut self) {
@@ -4082,7 +3971,7 @@ impl App {
                     self.finish_streams(terminal)?;
                 }
                 if let Some(entry) = self.record_agent_event(other) {
-                    self.insert_entry(terminal, &entry)?;
+                    self.insert_entry(&entry);
                 }
                 self.drain_streams(terminal)?;
                 Ok(true)
@@ -4323,7 +4212,7 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         match invocation.id {
-            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal, agent),
             CommandId::Model => {
                 self.execute_model_command(invocation, terminal, agent)
@@ -4338,17 +4227,14 @@ impl App {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::Logout => {
-                self.execute_logout_command(invocation, terminal, agent)
-                    .await
-            }
+            CommandId::Logout => self.execute_logout_command(invocation, agent).await,
             CommandId::Resume => {
                 self.execute_resume_command(invocation, terminal, agent)
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
-            CommandId::Skills => self.execute_skills_command(terminal),
+            CommandId::Skills => self.execute_skills_command(),
         }
     }
 
@@ -4410,35 +4296,29 @@ impl App {
 
         match compacted {
             Ok(true) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("compacted conversation context".into()),
-                )?;
+                self.insert_entry(&Entry::Notice("compacted conversation context".into()));
                 self.status = "context compacted".into();
             }
             Ok(false) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
+                self.insert_entry(&Entry::Notice(
                         "not enough conversation history to compact, or the model context window is unknown"
                             .into(),
                     ),
-                )?;
+                );
                 self.status = "context not compacted".into();
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("failed to compact conversation context: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "failed to compact conversation context: {err}"
+                )));
                 self.status = "context compaction failed".into();
             }
         }
         Ok(())
     }
 
-    fn execute_exit_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        self.insert_entry(terminal, &Entry::Notice("exiting rho".into()))?;
+    fn execute_exit_command(&mut self) -> anyhow::Result<()> {
+        self.insert_entry(&Entry::Notice("exiting rho".into()));
         self.should_quit = true;
         self.status = "exiting".into();
         Ok(())
@@ -4500,13 +4380,11 @@ impl App {
         };
 
         if providers.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
+            self.insert_entry(&Entry::Notice(
                     "no refreshable providers are configured. run /login for a provider with model list support."
                         .into(),
                 ),
-            )?;
+            );
             self.status = "model refresh skipped".into();
             return Ok(());
         }
@@ -4518,20 +4396,16 @@ impl App {
                 .await
             {
                 Ok(refresh) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Notice(format!(
-                            "refreshed {} model list: {} models",
-                            refresh.provider,
-                            refresh.models.len()
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Notice(format!(
+                        "refreshed {} model list: {} models",
+                        refresh.provider,
+                        refresh.models.len()
+                    )));
                 }
                 Err(err) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!("failed to refresh {provider} model list: {err}")),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "failed to refresh {provider} model list: {err}"
+                    )));
                 }
             }
         }
@@ -4558,9 +4432,9 @@ impl App {
             &self.info.auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.select_model(selection, terminal, agent),
+            Ok(selection) => self.select_model(selection, agent),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "model switch failed".into();
                 Ok(())
             }
@@ -4578,12 +4452,9 @@ impl App {
         let picker = model_picker::model_picker(&self.info, &self.available_auths);
 
         if picker.items.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
-                    "no cached API models. run /refresh-model-list after signing in.".into(),
-                ),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. run /refresh-model-list after signing in.".into(),
+            ));
             self.status = "ready".into();
             return Ok(());
         }
@@ -4611,9 +4482,9 @@ impl App {
             &auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.select_title_model(selection, terminal),
+            Ok(selection) => self.select_title_model(selection),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "title model switch failed".into();
                 Ok(())
             }
@@ -4633,12 +4504,9 @@ impl App {
         );
 
         if picker.items.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
-                    "no cached API models. run /refresh-model-list after signing in.".into(),
-                ),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. run /refresh-model-list after signing in.".into(),
+            ));
             self.status = "ready".into();
             return Ok(());
         }
@@ -4678,9 +4546,9 @@ impl App {
                     &self.info.auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_model(selection, terminal, agent),
+                    Ok(selection) => self.select_model(selection, agent),
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "model switch failed".into();
                         Ok(())
                     }
@@ -4695,9 +4563,9 @@ impl App {
                     &auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_title_model(selection, terminal),
+                    Ok(selection) => self.select_title_model(selection),
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "title model switch failed".into();
                         Ok(())
                     }
@@ -4706,7 +4574,7 @@ impl App {
             PickerAction::LoginProvider => {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
-            PickerAction::LogoutProvider => self.logout_provider(&value, terminal, agent).await,
+            PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::InsertSkillCommand => {
                 self.input = format!("/skill:{value}");
                 self.input_cursor = self.input_char_len();
@@ -4721,21 +4589,16 @@ impl App {
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
-            PickerAction::Config => self.submit_config_selection(&value, terminal, agent),
+            PickerAction::Config => self.submit_config_selection(&value, agent),
         }
     }
 
-    fn submit_config_selection(
-        &mut self,
-        value: &str,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
         match value {
-            config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
-            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(terminal),
-            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(terminal),
-            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(terminal),
+            config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
+            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
+            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
+            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -4788,7 +4651,7 @@ impl App {
                 self.status = "config".into();
                 Ok(())
             }
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal),
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::OpenAiSearch,
@@ -4884,13 +4747,7 @@ impl App {
         )
     }
 
-    fn toggle_selected_model_favorite<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> anyhow::Result<()>
-    where
-        B::Error: Send + Sync + 'static,
-    {
+    fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             return Ok(());
         };
@@ -4920,10 +4777,9 @@ impl App {
         let (pinned, favorite_models) = match save_result {
             Ok(saved) => saved,
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save pinned models: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save pinned models: {err}"
+                )));
                 self.status = "config save failed".into();
                 return Ok(());
             }
@@ -4959,7 +4815,7 @@ impl App {
         Self::restore_picker_position(&mut picker, &value, filter);
         self.composer = ComposerMode::Picker(picker);
         let action = if pinned { "pinned" } else { "unpinned" };
-        self.insert_entry(terminal, &Entry::Notice(format!("{action} {value}")))?;
+        self.insert_entry(&Entry::Notice(format!("{action} {value}")));
         self.status = format!("{action} model");
         Ok(())
     }
@@ -5006,11 +4862,7 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         let reasoning = self
             .info
             .reasoning
@@ -5019,10 +4871,9 @@ impl App {
             let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
                 Ok(provider) => provider,
                 Err(err) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not update reasoning to {reasoning}: {err}"
+                    )));
                     self.status = "reasoning change failed".into();
                     return Ok(());
                 }
@@ -5047,19 +4898,17 @@ impl App {
                 self.status = format!("reasoning: {reasoning}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "reasoning set to {reasoning} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
         Ok(())
     }
 
-    fn toggle_check_for_updates(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
         let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.check_for_updates = !config.check_for_updates;
             config.save(self.info.config_path.clone())?;
@@ -5077,10 +4926,9 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save update check setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save update check setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
         }
@@ -5093,7 +4941,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_auto_compact(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
         let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.auto_compact = !config.auto_compact;
             config.save(self.info.config_path.clone())?;
@@ -5108,10 +4956,9 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save auto compact setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save auto compact setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
         }
@@ -5124,7 +4971,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_reasoning_output(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn toggle_reasoning_output(&mut self) -> anyhow::Result<()> {
         let show_reasoning_output = !self.info.show_reasoning_output;
         let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
             config.show_reasoning_output = show_reasoning_output;
@@ -5140,10 +4987,9 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save reasoning output setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save reasoning output setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
         }
@@ -5158,7 +5004,7 @@ impl App {
         Ok(())
     }
 
-    fn cycle_web_search_provider(&mut self, _terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
         let mut config = Config::load(self.info.config_path.clone())?;
         config.web_search_provider = config.web_search_provider.next_configurable();
         let provider = config.web_search_provider.to_string();
@@ -5177,12 +5023,7 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    fn select_model(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn select_model(&mut self, selection: ModelSelection, agent: &mut Agent) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -5191,10 +5032,9 @@ impl App {
         let new_provider = match build_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not switch to {provider_model}: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {provider_model}: {err}"
+                )));
                 self.status = "model switch failed".into();
                 return Ok(());
             }
@@ -5216,32 +5056,24 @@ impl App {
             config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
+                self.insert_entry(&Entry::Notice(format!(
                         "model switched to {provider_model} with reasoning {reasoning} and saved to config"
                     )),
-                )?;
+                );
                 self.status = format!("model: {provider_model}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "model switched to {provider_model} with reasoning {reasoning} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
         Ok(())
     }
 
-    fn select_title_model(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn select_title_model(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -5256,21 +5088,16 @@ impl App {
             config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "session title model switched to {provider_model} and saved to config"
-                    )),
-                )?;
+                self.insert_entry(&Entry::Notice(format!(
+                    "session title model switched to {provider_model} and saved to config"
+                )));
                 self.status = format!("title model: {provider_model}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "session title model switched to {provider_model} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
@@ -5303,26 +5130,24 @@ impl App {
                 .await;
         }
 
-        self.open_resume_picker(terminal)
+        self.open_resume_picker()
     }
 
-    fn open_resume_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn open_resume_picker(&mut self) -> anyhow::Result<()> {
         match Session::list(&self.info.cwd) {
             Ok(sessions) if sessions.is_empty() => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("no saved sessions for this workspace".into()),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "no saved sessions for this workspace".into(),
+                ));
                 self.status = "no sessions".into();
             }
             Ok(sessions) => {
                 let picker =
                     session_picker::session_picker(sessions, self.info.session_id.as_deref());
                 if picker.items.is_empty() {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Notice("no other saved sessions for this workspace".into()),
-                    )?;
+                    self.insert_entry(&Entry::Notice(
+                        "no other saved sessions for this workspace".into(),
+                    ));
                     self.status = "no sessions".into();
                     return Ok(());
                 }
@@ -5330,10 +5155,7 @@ impl App {
                 self.status = "select session".into();
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not list sessions: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!("could not list sessions: {err}")));
                 self.status = "resume failed".into();
             }
         }
@@ -5356,10 +5178,7 @@ impl App {
             }
             Err(err) => {
                 self.composer = ComposerMode::Input;
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not resume session: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!("could not resume session: {err}")));
                 self.status = "resume failed".into();
                 Ok(())
             }
@@ -5406,10 +5225,7 @@ impl App {
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!("resumed session {short_id}")),
-        )?;
+        self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
         self.status = format!("resumed {short_id}");
         Ok(())
     }
@@ -5428,10 +5244,10 @@ impl App {
         Ok(())
     }
 
-    fn execute_skills_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn execute_skills_command(&mut self) -> anyhow::Result<()> {
         let picker = skill_picker::skill_picker(crate::skills::discover(&self.info.cwd));
         if picker.items.is_empty() {
-            self.insert_entry(terminal, &Entry::Notice("no skills loaded".into()))?;
+            self.insert_entry(&Entry::Notice("no skills loaded".into()));
             self.status = "skills".into();
             return Ok(());
         }
@@ -5441,12 +5257,7 @@ impl App {
         Ok(())
     }
 
-    fn execute_skill_command(
-        &mut self,
-        name: &str,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<bool> {
+    fn execute_skill_command(&mut self, name: &str, agent: &mut Agent) -> anyhow::Result<bool> {
         let Some(name) = name.strip_prefix("skill:") else {
             return Ok(false);
         };
@@ -5459,14 +5270,11 @@ impl App {
 
         self.ensure_session(agent)?;
         agent.load_skill(&skill)?;
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "loaded skill {} from {}",
-                skill.name,
-                skill.path.display()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "loaded skill {} from {}",
+            skill.name,
+            skill.path.display()
+        )));
         self.status = format!("loaded skill {}", skill.name);
         Ok(true)
     }
@@ -6329,27 +6137,17 @@ impl App {
             .map(|session_id| format!("rho session saved: {session_id}"))
     }
 
-    fn insert_entry<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        entry: &Entry,
-    ) -> Result<(), B::Error> {
-        let _ = terminal.size()?;
+    fn insert_entry(&mut self, entry: &Entry) {
         self.record_inserted_entry(entry.clone());
-        Ok(())
     }
 
-    fn notify_status<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        status: impl Into<String>,
-    ) -> Result<(), B::Error> {
+    fn notify_status(&mut self, status: impl Into<String>) {
         let status = status.into();
         self.status = status.clone();
         if self.last_status_notice.as_deref() == Some(status.as_str()) {
-            return Ok(());
+            return;
         }
-        self.insert_entry(terminal, &Entry::Notice(status))
+        self.insert_entry(&Entry::Notice(status));
     }
 
     fn record_inserted_entry(&mut self, entry: Entry) {
@@ -7612,6 +7410,23 @@ mod tests {
                 ..ModelUsage::default()
             })
         );
+    }
+
+    #[test]
+    fn transcript_and_status_mutations_do_not_require_a_terminal() {
+        let mut app = test_app();
+
+        app.insert_entry(&Entry::Assistant("hello".into()));
+        app.insert_entry(&Entry::Assistant(" world".into()));
+        app.notify_status("ready");
+        app.notify_status("ready");
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::Assistant(answer), Entry::Notice(status)]
+                if answer == "hello world" && status == "ready"
+        ));
+        assert_eq!(app.status, "ready");
     }
 
     #[test]
@@ -8937,9 +8752,7 @@ mod tests {
             }],
             PickerAction::SelectModel,
         ));
-        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
-
-        app.toggle_selected_model_favorite(&mut terminal).unwrap();
+        app.toggle_selected_model_favorite().unwrap();
 
         assert!(matches!(app.composer, ComposerMode::Picker(_)));
         assert_eq!(app.active_picker_selection().unwrap().1, selected_value);
@@ -9570,12 +9383,8 @@ mod tests {
     #[test]
     fn status_notice_suppresses_consecutive_duplicates() {
         let mut app = test_app();
-        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
-
-        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
-            .unwrap();
-        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
-            .unwrap();
+        app.notify_status("input cleared; press ctrl-c again to quit");
+        app.notify_status("input cleared; press ctrl-c again to quit");
 
         assert_eq!(
             app.transcript
@@ -9591,8 +9400,7 @@ mod tests {
         let mut app = test_app();
         app.running = true;
 
-        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
-        app.paste_clipboard_image(&mut terminal).unwrap();
+        app.paste_clipboard_image();
 
         assert!(app.pending_images.is_empty());
         assert_eq!(
