@@ -5,6 +5,7 @@ use serde_json::Value;
 
 pub(crate) mod auth;
 pub mod cache;
+mod codex_continuation;
 mod codex_request;
 mod codex_ws;
 pub(crate) mod convert;
@@ -348,7 +349,7 @@ impl OpenAiProvider {
         match collect_codex_sse_response(response, on_event).await {
             Ok(output) => {
                 self.codex_ws
-                    .record_full_request_success(body, output.response_id)
+                    .record_full_request_success(body, &output)
                     .await?;
                 Ok(output.response)
             }

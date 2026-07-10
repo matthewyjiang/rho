@@ -19,10 +19,6 @@ fn body(input: Vec<Value>) -> Value {
     })
 }
 
-fn candidate(input: Vec<Value>) -> CodexContinuationCandidate {
-    CodexContinuationCandidate::from_responses_body(&body(input)).unwrap()
-}
-
 fn tokens() -> CodexTokens {
     CodexTokens {
         access_token: "token".into(),
@@ -60,6 +56,22 @@ async fn ws_server_connections(
                         json!({"type":"response.output_text.delta","delta":format!("ok{response_index}")})
                             .to_string()
                             .into(),
+                    ))
+                    .await
+                    .unwrap();
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type":"response.output_item.done",
+                            "item":{
+                                "id": format!("msg_{response_index}"),
+                                "type":"message",
+                                "role":"assistant",
+                                "content":[{"type":"output_text","text":format!("ok{response_index}")}]
+                            }
+                        })
+                        .to_string()
+                        .into(),
                     ))
                     .await
                     .unwrap();
@@ -136,45 +148,6 @@ async fn ws_server_sends_keep_alive_frames() -> String {
     format!("ws://{addr}/responses")
 }
 
-#[test]
-fn builds_delta_body_when_next_input_extends_previous_input() {
-    let first = candidate(vec![json!({"role":"user","content":"one"})]);
-    let second = candidate(vec![
-        json!({"role":"user","content":"one"}),
-        json!({"role":"assistant","content":"two"}),
-        json!({"role":"user","content":"three"}),
-    ]);
-    let mut state = CodexContinuationState::default();
-    state.record_success(&first, Some("resp_1".into()));
-
-    let plan = state.plan_delta(&second);
-
-    let CodexContinuationPlan::Delta {
-        previous_response_id,
-        input,
-        body,
-    } = plan
-    else {
-        panic!("expected delta plan");
-    };
-    assert_eq!(previous_response_id, "resp_1");
-    assert_eq!(
-        input,
-        vec![
-            json!({"role":"assistant","content":"two"}),
-            json!({"role":"user","content":"three"}),
-        ]
-    );
-    assert_eq!(body["previous_response_id"], "resp_1");
-    assert_eq!(body["input"], json!(input));
-    assert_eq!(body["model"], "gpt-5-codex");
-    assert_eq!(body["prompt_cache_key"], "rho:session");
-    assert_eq!(body["tools"][0]["name"], "read");
-    assert_eq!(body["reasoning"], json!({"effort":"low","summary":"auto"}));
-    assert_eq!(body["store"], false);
-    assert_eq!(body["stream"], true);
-}
-
 #[tokio::test]
 async fn responses_lite_websocket_request_sets_lite_client_metadata() {
     let (url, frames) = ws_server(1).await;
@@ -217,7 +190,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
         .send_responses_turn(
             body(vec![
                 json!({"role":"user","content":"one"}),
-                json!({"role":"assistant","content":"two"}),
+                json!({"role":"assistant","content":"ok1"}),
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
@@ -234,7 +207,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
         frames[1]["input"],
         json!([
             {"role":"user","content":"one"},
-            {"role":"assistant","content":"two"},
+            {"role":"assistant","content":"ok1"},
             {"role":"user","content":"three"}
         ])
     );
@@ -283,7 +256,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
         .send_responses_turn(
             body(vec![
                 json!({"role":"user","content":"one"}),
-                json!({"role":"assistant","content":"two"}),
+                json!({"role":"assistant","content":"ok1"}),
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
@@ -305,131 +278,8 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
     assert_eq!(frames[1]["previous_response_id"], "resp_1");
     assert_eq!(
         frames[1]["input"],
-        json!([
-            {"role":"assistant","content":"two"},
-            {"role":"user","content":"three"}
-        ])
+        json!([{"role":"user","content":"three"}])
     );
-}
-
-#[test]
-fn falls_back_to_full_request_without_previous_response_id() {
-    let state = CodexContinuationState::default();
-    let plan = state.plan_delta(&candidate(vec![json!({"role":"user","content":"one"})]));
-
-    assert_eq!(
-        plan,
-        CodexContinuationPlan::Full {
-            reason: CodexContinuationFullReason::MissingPreviousResponse
-        }
-    );
-}
-
-#[test]
-fn resets_when_history_is_rewritten_by_compaction() {
-    let first = candidate(vec![
-        json!({"role":"user","content":"old"}),
-        json!({"role":"assistant","content":"answer"}),
-    ]);
-    let compacted_body = body(vec![
-        json!({"role":"user","content":"summary of old conversation"}),
-        json!({"role":"user","content":"new"}),
-    ]);
-    let compacted = CodexContinuationCandidate::from_responses_body(&compacted_body).unwrap();
-    let mut state = CodexContinuationState::default();
-    state.record_success(&first, Some("resp_1".into()));
-
-    let plan = state.plan_request(&compacted, compacted_body.clone());
-
-    assert!(!plan.planned_delta);
-    assert_eq!(
-        plan.reset_reason,
-        Some(CodexContinuationResetReason::HistoryRewritten)
-    );
-    assert_eq!(plan.body, compacted_body);
-    assert_eq!(
-        state.plan_delta(&compacted),
-        CodexContinuationPlan::Full {
-            reason: CodexContinuationFullReason::MissingPreviousResponse
-        }
-    );
-}
-
-#[test]
-fn resets_when_tools_change() {
-    let first = candidate(vec![json!({"role":"user","content":"one"})]);
-    let mut changed_body = body(vec![
-        json!({"role":"user","content":"one"}),
-        json!({"role":"user","content":"two"}),
-    ]);
-    changed_body["tools"] = json!([{ "type":"function", "name":"write" }]);
-    let changed = CodexContinuationCandidate::from_responses_body(&changed_body).unwrap();
-    let mut state = CodexContinuationState::default();
-    state.record_success(&first, Some("resp_1".into()));
-
-    let plan = state.plan_request(&changed, changed_body);
-
-    assert_eq!(
-        plan.reset_reason,
-        Some(CodexContinuationResetReason::ToolsChanged)
-    );
-    assert_eq!(
-        state.plan_delta(&changed),
-        CodexContinuationPlan::Full {
-            reason: CodexContinuationFullReason::MissingPreviousResponse
-        }
-    );
-}
-
-#[test]
-fn resets_when_model_changes() {
-    assert_reset_reason_for_body_change(
-        |body| body["model"] = json!("gpt-5-codex-alt"),
-        CodexContinuationResetReason::ModelChanged,
-    );
-}
-
-#[test]
-fn resets_when_reasoning_changes() {
-    assert_reset_reason_for_body_change(
-        |body| body["reasoning"] = json!({"effort":"high","summary":"auto"}),
-        CodexContinuationResetReason::ReasoningChanged,
-    );
-}
-
-#[test]
-fn resets_when_prompt_cache_key_changes() {
-    assert_reset_reason_for_body_change(
-        |body| body["prompt_cache_key"] = json!("rho:other"),
-        CodexContinuationResetReason::PromptCacheKeyChanged,
-    );
-}
-
-#[test]
-fn resets_when_tool_choice_changes() {
-    assert_reset_reason_for_body_change(
-        |body| body["tool_choice"] = json!("none"),
-        CodexContinuationResetReason::ToolChoiceChanged,
-    );
-}
-
-fn assert_reset_reason_for_body_change(
-    mutate: impl FnOnce(&mut Value),
-    expected: CodexContinuationResetReason,
-) {
-    let first = candidate(vec![json!({"role":"user","content":"one"})]);
-    let mut changed_body = body(vec![
-        json!({"role":"user","content":"one"}),
-        json!({"role":"user","content":"two"}),
-    ]);
-    mutate(&mut changed_body);
-    let changed = CodexContinuationCandidate::from_responses_body(&changed_body).unwrap();
-    let mut state = CodexContinuationState::default();
-    state.record_success(&first, Some("resp_1".into()));
-
-    let plan = state.plan_request(&changed, changed_body);
-
-    assert_eq!(plan.reset_reason, Some(expected));
 }
 
 #[tokio::test]
