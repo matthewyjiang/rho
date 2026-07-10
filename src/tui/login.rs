@@ -1,4 +1,5 @@
 use super::*;
+use crate::{model::registry, provider};
 
 impl App {
     pub(super) async fn execute_login_command(

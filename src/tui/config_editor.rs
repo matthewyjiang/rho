@@ -1,6 +1,6 @@
 use ratatui::text::Line;
 
-use crate::{config::Config, credentials::WebSearchCredential};
+use crate::{app::config_repository::ConfigRepository, credentials::WebSearchCredential};
 
 use super::{
     config_picker,
@@ -53,11 +53,10 @@ pub(super) enum ConfigMutation {
 }
 
 pub(super) fn toggle(
-    config_path: Option<std::path::PathBuf>,
+    config_repository: &ConfigRepository,
     setting: ConfigToggle,
 ) -> anyhow::Result<ConfigMutation> {
-    let mut config = Config::load(config_path.clone())?;
-    let mutation = match setting {
+    config_repository.update(|config| match setting {
         ConfigToggle::CheckForUpdates => {
             config.check_for_updates = !config.check_for_updates;
             ConfigMutation::CheckForUpdates(config.check_for_updates)
@@ -70,19 +69,16 @@ pub(super) fn toggle(
             config.show_reasoning_output = !config.show_reasoning_output;
             ConfigMutation::ShowReasoningOutput(config.show_reasoning_output)
         }
-    };
-    config.save(config_path)?;
-    Ok(mutation)
+    })
 }
 
 pub(super) fn cycle_web_search_provider(
-    config_path: Option<std::path::PathBuf>,
+    config_repository: &ConfigRepository,
 ) -> anyhow::Result<ConfigMutation> {
-    let mut config = Config::load(config_path.clone())?;
-    config.web_search_provider = config.web_search_provider.next_configurable();
-    let provider = config.web_search_provider.to_string();
-    config.save(config_path)?;
-    Ok(ConfigMutation::WebSearchProvider(provider))
+    config_repository.update(|config| {
+        config.web_search_provider = config.web_search_provider.next_configurable();
+        ConfigMutation::WebSearchProvider(config.web_search_provider.to_string())
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,14 +92,13 @@ pub(super) enum ConfigNumberSave {
 impl ConfigNumberInput {
     pub(super) fn save(
         &self,
-        config_path: Option<std::path::PathBuf>,
+        config_repository: &ConfigRepository,
     ) -> anyhow::Result<ConfigNumberSave> {
         let Ok(mut value) = self.value.parse::<usize>() else {
             anyhow::bail!("{} must be a positive whole number", self.key.label());
         };
         value = value.max(1);
-        let mut config = Config::load(config_path.clone())?;
-        let saved = match self.key {
+        config_repository.update(|config| match self.key {
             ConfigNumberKey::MaxOutputBytes => {
                 config.max_output_bytes = value;
                 ConfigNumberSave::MaxOutputBytes(value)
@@ -120,9 +115,7 @@ impl ConfigNumberInput {
                 config.set_compact_target_percent(value.clamp(1, 100) as u8);
                 ConfigNumberSave::CompactTargetPercent(config.compact_target_percent)
             }
-        };
-        config.save(config_path)?;
-        Ok(saved)
+        })
     }
 }
 

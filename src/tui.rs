@@ -73,10 +73,10 @@ use theme::Theme;
 
 use crate::{
     agent::{Agent, AgentEvent, QuestionnaireRequest, SessionHistorySink},
+    app::config_repository::ConfigRepository,
     auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
-    config::Config,
     credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
@@ -90,10 +90,10 @@ use crate::{
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
-        registry::{self, ProviderAuthKind},
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
         ModelResponse, ModelUsage, UnavailableProvider,
     },
+    provider::{self, ProviderAuthKind},
     reasoning::ReasoningLevel,
     session::Session,
     tool::ToolDisplayStyle,
@@ -125,7 +125,7 @@ pub struct TuiInfo {
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
-    pub config_path: Option<PathBuf>,
+    pub(crate) config_repository: ConfigRepository,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub herdr: HerdrReporter,
@@ -1413,7 +1413,7 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                let saved = match input.save(self.info.config_path.clone()) {
+                let saved = match input.save(&self.info.config_repository) {
                     Ok(saved) => saved,
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
@@ -1423,23 +1423,18 @@ impl App {
                 };
                 match saved {
                     ConfigNumberSave::MaxOutputBytes(value) => {
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info,
-                            value,
-                            self.info.max_tool_output_lines,
-                        ));
+                        let config = self.info.config_repository.load()?;
+                        self.composer =
+                            ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                         self.insert_entry(&Entry::Notice(format!(
                             "max output bytes set to {value}; applies next session"
                         )));
                     }
                     ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.max_tool_output_lines = value;
-                        let config = Config::load(self.info.config_path.clone())?;
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info,
-                            config.max_output_bytes,
-                            value,
-                        ));
+                        let config = self.info.config_repository.load()?;
+                        self.composer =
+                            ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                         self.clamp_history_scroll_for_terminal(terminal)?;
                         self.insert_entry(&Entry::Notice(format!(
                             "max tool output lines set to {value}"
@@ -1502,13 +1497,10 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.info.show_reasoning_output = config.show_reasoning_output;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
                 Ok(true)
             }
@@ -1540,7 +1532,7 @@ impl App {
                 })();
                 match save_result {
                     Ok(()) => {
-                        self.refresh_web_search_config_picker(key.picker_value());
+                        self.refresh_web_search_config_picker(key.picker_value())?;
                         self.status = format!("{} saved", key.label());
                     }
                     Err(err) => {
@@ -1599,7 +1591,7 @@ impl App {
                 let ComposerMode::ConfigTextInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                self.refresh_web_search_config_picker(input.key.picker_value());
+                self.refresh_web_search_config_picker(input.key.picker_value())?;
                 self.status = "web search config".into();
                 Ok(true)
             }
@@ -2291,7 +2283,7 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+        if let Ok(config) = self.info.config_repository.load() {
             agent.set_compaction_config((&config).into());
         }
         self.active_tool_call = false;
@@ -3068,7 +3060,7 @@ impl App {
     fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxOutputBytes,
                     config.max_output_bytes,
@@ -3076,7 +3068,7 @@ impl App {
                 self.status = "edit max output bytes".into();
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxToolOutputLines,
                     config.max_tool_output_lines,
@@ -3099,7 +3091,7 @@ impl App {
                 self.toggle_auto_compact()?;
             }
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactThresholdPercent,
                     config.compact_threshold_percent as usize,
@@ -3107,7 +3099,7 @@ impl App {
                 self.status = "edit compact threshold percent".into();
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactTargetPercent,
                     config.compact_target_percent as usize,
@@ -3115,17 +3107,15 @@ impl App {
                 self.status = "edit compact target percent".into();
             }
             config_picker::WEB_SEARCH_VALUE => {
+                let config = self.info.config_repository.load()?;
                 self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&config));
                 self.status = "web search config".into();
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                let config = self.info.config_repository.load()?;
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
@@ -3586,7 +3576,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+        if let Ok(config) = self.info.config_repository.load() {
             agent.set_compaction_config((&config).into());
         }
         self.steering_prompts.clear();
@@ -3708,7 +3698,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let providers = if invocation.args.trim().is_empty() {
             self.refresh_available_auths();
-            registry::providers()
+            provider::providers()
                 .iter()
                 .filter(|provider| provider.model_refresh.is_some())
                 .filter(|provider| {
@@ -3943,7 +3933,7 @@ impl App {
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactThresholdPercent,
                     config.compact_threshold_percent as usize,
@@ -3952,7 +3942,7 @@ impl App {
                 Ok(())
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactTargetPercent,
                     config.compact_target_percent as usize,
@@ -3961,7 +3951,7 @@ impl App {
                 Ok(())
             }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxOutputBytes,
                     config.max_output_bytes,
@@ -3970,7 +3960,7 @@ impl App {
                 Ok(())
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxToolOutputLines,
                     config.max_tool_output_lines,
@@ -3979,18 +3969,16 @@ impl App {
                 Ok(())
             }
             config_picker::WEB_SEARCH_VALUE => {
+                let config = self.info.config_repository.load()?;
                 self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                    ComposerMode::Picker(config_picker::web_search_config_picker(&config));
                 self.status = "web search config".into();
                 Ok(())
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                let config = self.info.config_repository.load()?;
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
                 Ok(())
             }
@@ -4040,26 +4028,24 @@ impl App {
         selected_value: &str,
         filter: String,
     ) -> anyhow::Result<()> {
-        let config = Config::load(self.info.config_path.clone())?;
-        let mut picker = config_picker::config_picker(
-            &self.info,
-            config.max_output_bytes,
-            config.max_tool_output_lines,
-        );
+        let config = self.info.config_repository.load()?;
+        let mut picker = config_picker::config_picker(&self.info, &config);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
         self.status = "config".into();
         Ok(())
     }
 
-    fn refresh_web_search_config_picker(&mut self, selected_value: &str) {
+    fn refresh_web_search_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
         let filter = match &self.composer {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
-        let mut picker = config_picker::web_search_config_picker(&self.info);
+        let config = self.info.config_repository.load()?;
+        let mut picker = config_picker::web_search_config_picker(&config);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
+        Ok(())
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
@@ -4108,14 +4094,13 @@ impl App {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        let save_result = self.info.config_repository.update(|config| {
             let pinned = favorites::toggle_favorite(
                 &mut config.favorite_models,
                 &favorite.provider,
                 &favorite.model,
             );
-            config.save(self.info.config_path.clone())?;
-            Ok((pinned, config.favorite_models))
+            (pinned, config.favorite_models.clone())
         });
         let (pinned, favorite_models) = match save_result {
             Ok(saved) => saved,
@@ -4224,15 +4209,14 @@ impl App {
             agent.replace_provider(provider);
         }
         self.info.reasoning = reasoning;
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        let save_result = self.info.config_repository.update(|config| {
             config.reasoning = reasoning;
-            config.save(self.info.config_path.clone())
         });
         if matches!(
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            let config = self.info.config_repository.load().unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
@@ -4252,7 +4236,7 @@ impl App {
     }
 
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(self.info.config_path.clone(), ConfigToggle::CheckForUpdates) {
+        match config_editor::toggle(&self.info.config_repository, ConfigToggle::CheckForUpdates) {
             Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
                 if !check_for_updates {
                     self.info.update_notice = None;
@@ -4285,7 +4269,7 @@ impl App {
     }
 
     fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(self.info.config_path.clone(), ConfigToggle::AutoCompact) {
+        match config_editor::toggle(&self.info.config_repository, ConfigToggle::AutoCompact) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
                 self.status = if auto_compact {
                     "auto compact: on".into()
@@ -4316,7 +4300,7 @@ impl App {
 
     fn toggle_reasoning_output(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(
-            self.info.config_path.clone(),
+            &self.info.config_repository,
             ConfigToggle::ShowReasoningOutput,
         ) {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
@@ -4343,7 +4327,7 @@ impl App {
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            let config = self.info.config_repository.load().unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
             self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
         }
@@ -4352,11 +4336,11 @@ impl App {
 
     fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
         let ConfigMutation::WebSearchProvider(provider) =
-            config_editor::cycle_web_search_provider(self.info.config_path.clone())?
+            config_editor::cycle_web_search_provider(&self.info.config_repository)?
         else {
             unreachable!("provider cycle returned a mismatched config mutation");
         };
-        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
+        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.status = format!("web search: {provider}");
         Ok(())
     }
@@ -4395,12 +4379,11 @@ impl App {
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
-        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        match self.info.config_repository.update(|config| {
             config.provider = provider.clone();
             config.model = model.clone();
             config.reasoning = reasoning;
             config.auth = auth.clone();
-            config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
                 self.insert_entry(&Entry::Notice(format!(
@@ -4428,11 +4411,10 @@ impl App {
         self.info.title_provider = Some(provider.clone());
         self.info.title_model = Some(model.clone());
         self.info.title_auth = Some(auth.clone());
-        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        match self.info.config_repository.update(|config| {
             config.title_provider = Some(provider.clone());
             config.title_model = Some(model.clone());
             config.title_auth = Some(auth.clone());
-            config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
                 self.insert_entry(&Entry::Notice(format!(
@@ -4456,11 +4438,10 @@ impl App {
     }
 
     fn save_current_config(&self) -> anyhow::Result<()> {
-        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        self.info.config_repository.update(|config| {
             config.provider = self.info.provider.clone();
             config.model = self.info.model.clone();
             config.auth = self.info.auth.clone();
-            config.save(self.info.config_path.clone())
         })
     }
 
@@ -4578,14 +4559,10 @@ impl App {
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let config = Config::load(self.info.config_path.clone())?;
+        let config = self.info.config_repository.load()?;
         self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.info.show_reasoning_output = config.show_reasoning_output;
-        self.composer = ComposerMode::Picker(config_picker::config_picker(
-            &self.info,
-            config.max_output_bytes,
-            self.info.max_tool_output_lines,
-        ));
+        self.composer = ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
@@ -6096,7 +6073,7 @@ mod tests {
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
-                config_path: None,
+                config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
                 herdr: HerdrReporter::default(),
@@ -7162,7 +7139,7 @@ mod tests {
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
-                config_path: None,
+                config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
                 herdr: HerdrReporter::default(),
@@ -7340,7 +7317,7 @@ mod tests {
     fn favorite_save_failure_keeps_model_picker_open() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().to_path_buf());
+        app.info.config_repository = ConfigRepository::new(Some(config_dir.path().to_path_buf()));
         let selected_value = "openai/gpt-5.5";
         app.composer = ComposerMode::Picker(UiPicker::new(
             "select model",
@@ -7370,8 +7347,10 @@ mod tests {
     fn web_search_config_restore_keeps_api_key_row_selected() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        let mut picker = config_picker::web_search_config_picker(&app.info);
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        let mut picker = config_picker::web_search_config_picker(&config);
 
         App::restore_picker_position(
             &mut picker,
@@ -7389,8 +7368,10 @@ mod tests {
     fn esc_from_nested_web_search_config_returns_to_main_config() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&app.info));
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&config));
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
@@ -7409,8 +7390,10 @@ mod tests {
     fn esc_from_main_config_still_closes_picker() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, 12000, 10));
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, &config));
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
