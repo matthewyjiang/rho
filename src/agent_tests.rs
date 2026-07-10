@@ -356,6 +356,41 @@ impl Tool for FailingTool {
     }
 }
 
+struct BlockingTool {
+    started: Arc<tokio::sync::Notify>,
+    cancelled: Arc<tokio::sync::Notify>,
+}
+
+struct NotifyOnDrop(Arc<tokio::sync::Notify>);
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+#[async_trait]
+impl Tool for BlockingTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "blocking_tool".into(),
+            description: "test blocking tool".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        _ctx: ToolContext,
+        _id: String,
+    ) -> Result<ToolResult, ToolError> {
+        let _notify_on_drop = NotifyOnDrop(Arc::clone(&self.cancelled));
+        self.started.notify_one();
+        std::future::pending().await
+    }
+}
+
 #[tokio::test]
 async fn does_not_retry_non_recoverable_provider_errors() {
     let requests = Arc::new(Mutex::new(0));
@@ -855,6 +890,40 @@ async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
     assert!(persisted
         .iter()
         .all(|message| !matches!(message, Message::Assistant(_) | Message::ToolResult(_))));
+}
+
+#[tokio::test]
+async fn dropping_run_cancels_active_tool_task() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call_1".into(),
+        name: "blocking_tool".into(),
+        arguments: serde_json::json!({}),
+    })]);
+    let provider = RecordingProvider {
+        requests: Arc::default(),
+        tools: Arc::default(),
+        prompt_cache_keys: Arc::default(),
+        response: Some(response),
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(BlockingTool {
+        started: Arc::clone(&started),
+        cancelled: Arc::clone(&cancelled),
+    });
+    let mut agent = test_agent_with_tools(provider, tools);
+
+    let mut run = Box::pin(agent.run("run tool".into()));
+    tokio::select! {
+        () = started.notified() => {}
+        result = &mut run => panic!("tool completed unexpectedly: {result:?}"),
+    }
+    drop(run);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), cancelled.notified())
+        .await
+        .expect("active tool task was not cancelled");
 }
 
 #[tokio::test]

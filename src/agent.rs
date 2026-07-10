@@ -79,6 +79,14 @@ enum CompactionTrigger {
 
 const MAX_INVALID_RESPONSE_RETRIES: usize = 1;
 
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
@@ -492,6 +500,7 @@ impl Agent {
                                                 .call_with_updates(args, ctx, id, &mut on_update)
                                                 .await
                                         });
+                                        let _abort_on_drop = AbortOnDrop(task.abort_handle());
                                         let result = loop {
                                             tokio::select! {
                                                 Some(display_lines) = progress_rx.recv() => {

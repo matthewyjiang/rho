@@ -97,7 +97,7 @@ For provider and auth details, see [authentication and models](/authentication-a
 
 ## Interrupt, reset, or quit
 
-- Press `esc` to interrupt the current response without closing Rho.
+- Press `esc` to interrupt the current response without closing Rho. If a tool command is running, Rho terminates it and ends the turn immediately.
 - Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
 - Press `ctrl-c` to clear the current input line.
 - Press `ctrl-c` twice to quit.
