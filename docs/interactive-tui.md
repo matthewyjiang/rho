@@ -56,6 +56,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
+| `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
+| `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/exit` | Quit the TUI. |
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.

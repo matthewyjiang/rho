@@ -56,9 +56,13 @@ impl HerdrReporter {
         Self { config }
     }
 
-    #[cfg(test)]
     pub fn is_enabled(&self) -> bool {
         self.config.is_some()
+    }
+
+    pub fn socket_is_reachable(&self) -> Option<bool> {
+        let config = self.config.as_ref()?;
+        Some(config.socket_path.exists())
     }
 
     pub async fn report_state(

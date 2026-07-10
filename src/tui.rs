@@ -34,8 +34,11 @@ use ratatui::{
 mod config_editor;
 mod config_picker;
 mod copy_interaction;
+mod doctor;
 mod file_picker;
 mod history_cache;
+mod local_commands;
+mod local_diff;
 mod login;
 mod markdown;
 mod model_picker;
@@ -110,7 +113,6 @@ use crate::{
     session::Session,
     tool::ToolDisplayStyle,
 };
-
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
@@ -120,7 +122,6 @@ const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
 const HISTORY_SCROLLBAR_REVEAL_DURATION: Duration = Duration::from_millis(1200);
-
 pub struct TuiInfo {
     pub cwd: PathBuf,
     pub provider: String,
@@ -142,12 +143,10 @@ pub struct TuiInfo {
     pub update_notice: Option<String>,
     pub herdr: HerdrReporter,
 }
-
 pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-
 pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
     agent.set_session_id(info.session_id.clone());
     let mut terminal = ratatui::init();
@@ -194,7 +193,6 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
 struct ActiveFrame {
     lines: Vec<Line<'static>>,
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScreenLayout {
     history: Rect,
@@ -207,13 +205,11 @@ struct ScreenLayout {
     commands: Rect,
     composer_start: usize,
 }
-
 struct LiveStreamPreview {
     kind: StreamKind,
     text: String,
     include_leading_blank: bool,
 }
-
 struct App {
     info: TuiInfo,
     input: String,
@@ -2612,6 +2608,8 @@ impl App {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Skills => self.execute_skills_command(),
+            CommandId::Diff => self.execute_diff_command(),
+            CommandId::Doctor => self.execute_doctor_command(),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::New
@@ -3332,6 +3330,8 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(),
+            CommandId::Diff => self.execute_diff_command(),
+            CommandId::Doctor => self.execute_doctor_command(),
         }
     }
 
