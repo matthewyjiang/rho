@@ -27,7 +27,7 @@ pub(crate) fn handle_openai_stream_line(
     tool_calls: &mut Vec<StreamedToolCall>,
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
 ) -> Result<bool, ModelError> {
-    let Some(data) = line.strip_prefix("data: ") else {
+    let Some(data) = sse_data(line) else {
         return Ok(false);
     };
     if data == "[DONE]" {
