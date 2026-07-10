@@ -39,6 +39,7 @@ webbrowser = "1"
 libc = "0.2"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+similar = "2"
 
 # Use unreleased Windows VT input support so bracketed paste produces Event::Paste.
 # Remove this override after crossterm-rs/crossterm#1030 is released.

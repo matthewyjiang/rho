@@ -1,5 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
+mod diff;
 pub mod edit_file;
 pub mod list_dir;
 #[cfg(windows)]

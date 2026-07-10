@@ -280,6 +280,14 @@ impl Theme {
             .add_modifier(Modifier::UNDERLINED)
     }
 
+    pub(super) fn diff_addition(base: Style) -> Style {
+        base.fg(Palette::current().success)
+    }
+
+    pub(super) fn diff_removal(base: Style) -> Style {
+        base.fg(Palette::current().error)
+    }
+
     pub(super) fn tool_default() -> ToolStyle {
         let palette = Palette::current();
         ToolStyle::new(

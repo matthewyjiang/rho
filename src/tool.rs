@@ -13,6 +13,7 @@ pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 pub enum ToolDisplayStyle {
     DefaultTool,
     FileOrCommand,
+    FileDiff,
     Skill,
 }
 
@@ -25,15 +26,18 @@ impl ToolDisplayStyle {
         Self::FileOrCommand
     }
 
+    pub const fn file_diff() -> Self {
+        Self::FileDiff
+    }
+
     pub const fn skill() -> Self {
         Self::Skill
     }
 
     pub fn for_tool_name(name: &str) -> Self {
         match name {
-            "bash" | "powershell" | "edit_file" | "list_dir" | "read_file" | "write_file" => {
-                Self::file_or_command()
-            }
+            "edit_file" | "write_file" => Self::file_diff(),
+            "bash" | "powershell" | "list_dir" | "read_file" => Self::file_or_command(),
             "skill" => Self::skill(),
             _ => Self::default_tool(),
         }
@@ -231,6 +235,14 @@ mod tests {
         assert_eq!(
             ToolDisplayStyle::for_tool_name("powershell"),
             ToolDisplayStyle::FileOrCommand
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("write_file"),
+            ToolDisplayStyle::FileDiff
+        );
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("edit_file"),
+            ToolDisplayStyle::FileDiff
         );
         assert_eq!(
             ToolDisplayStyle::for_tool_name("skill"),

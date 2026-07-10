@@ -52,6 +52,7 @@ mod statusline;
 mod stream;
 mod text_selection;
 mod theme;
+mod tool_diff;
 
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
