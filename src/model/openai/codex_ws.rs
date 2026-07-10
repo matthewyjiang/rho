@@ -752,6 +752,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn standard_full_history_requests_do_not_resend_server_output_as_a_delta() {
+        let (url, frames) = ws_server(2).await;
+        let transport = CodexWsTransport::new_with_url(url);
+        let mut on_event = None;
+
+        transport
+            .send_responses_turn(
+                body(vec![json!({"role":"user","content":"one"})]),
+                &tokens(),
+                CodexRequestMode::StandardFullHistory,
+                &mut on_event,
+            )
+            .await
+            .unwrap();
+        transport
+            .send_responses_turn(
+                body(vec![
+                    json!({"role":"user","content":"one"}),
+                    json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}),
+                    json!({"type":"function_call_output","call_id":"call_1","output":"done"}),
+                ]),
+                &tokens(),
+                CodexRequestMode::StandardFullHistory,
+                &mut on_event,
+            )
+            .await
+            .unwrap();
+
+        let frames = frames.lock().unwrap();
+        assert_eq!(frames.len(), 2);
+        assert!(frames[1].get("previous_response_id").is_none());
+        assert_eq!(
+            frames[1]["input"],
+            json!([
+                {"role":"user","content":"one"},
+                {"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},
+                {"type":"function_call_output","call_id":"call_1","output":"done"},
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn first_websocket_request_sends_full_input_without_previous_response_id() {
         let (url, frames) = ws_server(1).await;
         let transport = CodexWsTransport::new_with_url(url);
