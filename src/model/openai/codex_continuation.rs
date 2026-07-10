@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use crate::model::{Message, ModelError, ModelResponse};
@@ -106,7 +108,7 @@ fn canonical_server_output_items(items: &[Value]) -> Option<Vec<Value>> {
             Some("function_call") => {
                 let call_id = item.get("call_id")?.as_str()?;
                 let name = item.get("name")?.as_str()?;
-                let arguments = item.get("arguments")?.as_str()?;
+                let arguments = canonical_json_string(item.get("arguments")?.as_str()?)?;
                 canonical.push(serde_json::json!({
                     "type": "function_call",
                     "call_id": call_id,
@@ -118,6 +120,28 @@ fn canonical_server_output_items(items: &[Value]) -> Option<Vec<Value>> {
         }
     }
     (!canonical.is_empty()).then_some(canonical)
+}
+
+fn canonical_json_string(input: &str) -> Option<String> {
+    let value = serde_json::from_str(input).ok()?;
+    serde_json::to_string(&canonical_json_value(value)).ok()
+}
+
+fn canonical_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(canonical_json_value).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, canonical_json_value(value)))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .collect(),
+        ),
+        primitive => primitive,
+    }
 }
 
 impl CodexContinuationState {

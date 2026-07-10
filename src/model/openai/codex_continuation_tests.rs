@@ -87,6 +87,46 @@ fn continuation_retains_tool_result_after_server_function_call() {
 }
 
 #[test]
+fn continuation_accepts_semantically_equivalent_function_call_arguments() {
+    let first = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"read it"}]}),
+    ]);
+    let next = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"read it"}]}),
+        json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{\"line_end\":10,\"path\":\"README.md\"}"}),
+        json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
+    ]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+        id: "call_1".into(),
+        name: "read".into(),
+        arguments: json!({"line_end": 10, "path": "README.md"}),
+    })]);
+    let mut state = CodexContinuationState::default();
+    state.record_success(
+        &first,
+        CodexContinuationResponse::from_response(
+            &response,
+            Some("resp_1".into()),
+            vec![json!({
+                "id":"fc_1",
+                "type":"function_call",
+                "call_id":"call_1",
+                "name":"read",
+                "arguments":"{ \"path\" : \"README.md\", \"line_end\" : 10 }",
+            })],
+        ),
+    );
+
+    let plan = state.continuation_body(&next, body(next.input.clone()));
+
+    assert_eq!(plan["previous_response_id"], "resp_1");
+    assert_eq!(
+        plan["input"],
+        json!([{"type":"function_call_output","call_id":"call_1","output":"contents"}])
+    );
+}
+
+#[test]
 fn continuation_falls_back_to_full_request_when_server_output_is_unavailable() {
     let first = candidate(vec![
         json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
