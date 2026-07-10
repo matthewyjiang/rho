@@ -26,6 +26,7 @@ use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 use crate::{
     credentials::{CodexTokens, CredentialStore},
     model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    provider_backend::stream_timeout::streaming_client,
 };
 
 pub struct OpenAiProvider {
@@ -57,7 +58,7 @@ impl OpenAiProvider {
         };
         let codex_ws = CodexWsTransport::new(&api_base);
         Self {
-            client: reqwest::Client::new(),
+            client: streaming_client(),
             auth,
             api_base,
             model,
@@ -189,7 +190,13 @@ impl OpenAiProvider {
         let mut tool_calls = Vec::new();
         let mut buffer = Vec::new();
         let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let Some(chunk) =
+                crate::provider_backend::stream_timeout::wait_for_stream_activity(stream.next())
+                    .await?
+            else {
+                break;
+            };
             buffer.extend_from_slice(&chunk?);
             while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
                 let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
