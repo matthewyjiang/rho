@@ -135,8 +135,8 @@ fn model_picker_for_current(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::available_auth_modes;
-    use crate::credentials::{save_codex_tokens, MemoryCredentialStore};
+    use crate::app::config_repository::ConfigRepository;
+    use crate::credentials::{available_auth_modes, save_codex_tokens, MemoryCredentialStore};
 
     #[test]
     fn model_picker_orders_pinned_models_before_selected_model() {
@@ -167,7 +167,7 @@ mod tests {
             session_id: None,
             recovered_messages: Vec::new(),
             open_resume_picker: false,
-            config_path: None,
+            config_repository: ConfigRepository::new(None),
             auth_unavailable: None,
             update_notice: None,
             herdr: crate::herdr::HerdrReporter::default(),
@@ -212,7 +212,7 @@ mod tests {
             session_id: None,
             recovered_messages: Vec::new(),
             open_resume_picker: false,
-            config_path: None,
+            config_repository: ConfigRepository::new(None),
             auth_unavailable: None,
             update_notice: None,
             herdr: crate::herdr::HerdrReporter::default(),

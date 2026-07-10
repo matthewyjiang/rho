@@ -1,4 +1,4 @@
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiPicker};
+use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use crate::{
     config::Config,
     credentials::{load_web_search_api_key, OsCredentialStore, WebSearchCredential},
@@ -18,12 +18,7 @@ pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key"
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 
-pub(super) fn config_picker(
-    info: &TuiInfo,
-    max_output_bytes: usize,
-    max_tool_output_lines: usize,
-) -> UiPicker {
-    let config = Config::load(info.config_path.clone()).unwrap_or_default();
+pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker {
     UiPicker::new(
         "Config",
         "type regex filter, enter change, esc cancel",
@@ -123,7 +118,7 @@ pub(super) fn config_picker(
                 ),
                 preview: None,
                 badge: Some(PickerBadge {
-                    text: max_output_bytes.to_string(),
+                    text: config.max_output_bytes.to_string(),
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: MAX_OUTPUT_BYTES_VALUE.into(),
@@ -133,7 +128,7 @@ pub(super) fn config_picker(
                 detail: Some("Maximum collapsed tool output lines shown in the TUI.".into()),
                 preview: None,
                 badge: Some(PickerBadge {
-                    text: max_tool_output_lines.to_string(),
+                    text: config.max_tool_output_lines.to_string(),
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: MAX_TOOL_OUTPUT_LINES_VALUE.into(),
@@ -153,8 +148,7 @@ pub(super) fn config_picker(
     )
 }
 
-pub(super) fn web_search_config_picker(info: &TuiInfo) -> UiPicker {
-    let config = Config::load(info.config_path.clone()).unwrap_or_default();
+pub(super) fn web_search_config_picker(config: &Config) -> UiPicker {
     UiPicker::new(
         "Web search config",
         "type regex filter, enter change, esc back",

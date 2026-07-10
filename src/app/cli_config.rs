@@ -2,7 +2,8 @@ use crate::{
     cli::Cli,
     config::Config,
     credentials::{self, CredentialStore},
-    model::{catalog, provider_models::refresh_provider_models_with_store, registry},
+    model::{catalog, provider_models::refresh_provider_models_with_store},
+    provider::{self, ProviderModelSource},
 };
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
@@ -97,7 +98,7 @@ async fn refresh_model_list_for_provider(
     provider: &str,
     store: &dyn credentials::CredentialStore,
 ) -> anyhow::Result<()> {
-    let Some(descriptor) = registry::provider_descriptor(provider) else {
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(());
     };
     if descriptor.model_refresh.is_none() || catalog::default_model_for_provider(provider).is_some()
@@ -112,10 +113,8 @@ async fn refresh_model_list_for_provider(
 }
 
 fn provider_requires_cached_models(provider: &str) -> bool {
-    registry::provider_descriptor(provider)
-        .map(|descriptor| {
-            descriptor.model_source == registry::ProviderModelSource::CachedProviderModels
-        })
+    provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
         .unwrap_or(false)
 }
 

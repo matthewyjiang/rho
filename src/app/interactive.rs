@@ -9,10 +9,12 @@ use crate::{
     tui::{self, TuiInfo},
 };
 
+use super::config_repository::ConfigRepository;
+
 pub(super) struct Startup<'a> {
     pub(super) cli: &'a Cli,
     pub(super) config: Config,
-    pub(super) config_path: Option<PathBuf>,
+    pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
     pub(super) update_notice: Option<String>,
@@ -23,7 +25,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
     let Startup {
         cli,
         config,
-        config_path,
+        config_repository,
         cwd,
         missing_auth_error,
         update_notice,
@@ -65,7 +67,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
             session_id,
             recovered_messages,
             open_resume_picker,
-            config_path,
+            config_repository,
             auth_unavailable: missing_auth_error,
             update_notice,
             herdr,

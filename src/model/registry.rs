@@ -1,12 +1,6 @@
-#[allow(unused_imports)]
-pub use crate::provider::{
-    provider_descriptor, providers, ProviderAuthKind, ProviderDescriptor, ProviderId,
-    ProviderModelRefreshKind, ProviderModelSource,
-};
-
 use crate::{
     model::ModelError,
-    provider::{self, MissingCredential},
+    provider::{self, MissingCredential, ProviderAuthKind},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -3,7 +3,6 @@ use std::io::{self, IsTerminal};
 use crate::{
     agent::Agent,
     cli::{Cli, Command},
-    config::Config,
     credentials::OsCredentialStore,
     herdr::HerdrReporter,
     model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider},
@@ -11,7 +10,7 @@ use crate::{
     tools, update,
 };
 
-use super::{automation, cli_config, interactive, login};
+use super::{automation, cli_config, config_repository::ConfigRepository, interactive, login};
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
@@ -27,11 +26,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     }
 
     let config_path = cli.config.clone();
-    let mut config = Config::load(config_path.clone())?;
+    let config_repository = ConfigRepository::new(config_path.clone());
+    let mut config = config_repository.load()?;
     let store = OsCredentialStore;
     cli_config::refresh_model_cache(&cli, &store).await?;
     if cli_config::apply_overrides(&mut config, &cli)? {
-        config.save(config_path.clone())?;
+        config_repository.save(&config)?;
     }
 
     validate_terminal_mode(&cli)?;
@@ -93,7 +93,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 interactive::Startup {
                     cli: &cli,
                     config,
-                    config_path,
+                    config_repository,
                     cwd,
                     missing_auth_error,
                     update_notice,

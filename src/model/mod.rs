@@ -8,9 +8,6 @@ pub mod openai;
 pub mod provider;
 pub mod provider_models;
 
-/// Temporary compatibility surface for callers still importing provider metadata from
-/// `model::registry`. New code should use `crate::provider`; this module retains only runtime
-/// policy and `ModelError` mapping.
 pub mod registry;
 
 pub use crate::provider_backend::{

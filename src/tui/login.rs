@@ -57,7 +57,7 @@ impl App {
             return Ok(());
         };
 
-        let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+        let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
             unreachable!("catalog returned unsupported login provider")
         };
         match descriptor.auth_kind {
@@ -315,7 +315,7 @@ impl App {
         target: &LoginTarget,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+        let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
             return Ok(());
         };
         if descriptor.model_refresh.is_none() {

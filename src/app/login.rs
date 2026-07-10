@@ -1,7 +1,8 @@
 use crate::{
     auth::{codex_oauth, github_copilot_device},
     credentials::{save_codex_tokens, save_github_copilot_tokens, OsCredentialStore},
-    model::{catalog, registry},
+    model::catalog,
+    provider::{self, ProviderAuthKind},
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
@@ -11,13 +12,13 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             catalog::implemented_providers().join(", ")
         );
     };
-    let Some(descriptor) = registry::provider_descriptor(&target.provider) else {
+    let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
         anyhow::bail!("unsupported login provider '{}'", target.provider);
     };
     let store = OsCredentialStore;
 
     match descriptor.auth_kind {
-        registry::ProviderAuthKind::CodexOAuth { .. } => {
+        ProviderAuthKind::CodexOAuth { .. } => {
             let tokens = if device_auth {
                 let login = codex_oauth::start_codex_device_login().await?;
                 eprintln!(
@@ -31,7 +32,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             };
             save_codex_tokens(&store, &tokens)?;
         }
-        registry::ProviderAuthKind::GithubCopilotDevice { .. } => {
+        ProviderAuthKind::GithubCopilotDevice { .. } => {
             let login = github_copilot_device::start_github_copilot_device_login().await?;
             eprintln!(
                 "GitHub Copilot login: visit {} and enter code {}",
@@ -43,7 +44,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             let tokens = github_copilot_device::complete_github_copilot_device_login(login).await?;
             save_github_copilot_tokens(&store, &tokens)?;
         }
-        registry::ProviderAuthKind::ApiKey { entry_label, .. } => {
+        ProviderAuthKind::ApiKey { entry_label, .. } => {
             anyhow::bail!(
                 "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
             );
