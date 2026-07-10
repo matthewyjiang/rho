@@ -11,6 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check architecture guardrails
+        run: python3 scripts/check_architecture.py
+      - name: Test architecture guardrails
+        run: python3 scripts/check_architecture.py --self-test
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
