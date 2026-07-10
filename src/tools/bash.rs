@@ -92,6 +92,7 @@ impl Tool for Bash {
             .kill_on_drop(true)
             .process_group(0);
         let mut child = command.spawn()?;
+        let mut process_group = ProcessGroupGuard::new(child.id());
 
         let start = Instant::now();
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -127,7 +128,7 @@ impl Tool for Bash {
             }
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
-                kill_process_group(child.id());
+                process_group.kill();
                 let _ = child.start_kill();
                 drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
@@ -142,6 +143,7 @@ impl Tool for Bash {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
+        process_group.disarm();
         while let Ok((kind, bytes)) = chunk_rx.try_recv() {
             match kind {
                 StreamKind::Stdout => stdout.extend(bytes),
@@ -167,6 +169,30 @@ impl Tool for Bash {
             ok: status.success(),
             content,
         })
+    }
+}
+
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    const fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+
+    fn kill(&mut self) {
+        kill_process_group(self.pid.take());
+    }
+
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -314,6 +340,38 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("timed out after 2s"));
         assert!(message.contains("started"));
+    }
+
+    #[tokio::test]
+    async fn dropping_call_terminates_background_processes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            cwd: dir.path().to_path_buf(),
+            max_output_bytes: 12000,
+        };
+        let started = ctx.cwd.join("started");
+        let marker = ctx.cwd.join("background-process-survived");
+
+        let bash = Bash::new(false);
+        let mut call = Box::pin(bash.call(
+            json!({
+                "command": "touch started; sh -c 'sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait"
+            }),
+            ctx,
+            "call_1".into(),
+        ));
+        tokio::select! {
+            result = &mut call => panic!("command completed unexpectedly: {result:?}"),
+            _ = async {
+                while !started.exists() {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+            } => {}
+        }
+        drop(call);
+
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        assert!(!marker.exists(), "background process survived cancellation");
     }
 
     #[tokio::test]

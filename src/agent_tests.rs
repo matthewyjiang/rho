@@ -356,6 +356,41 @@ impl Tool for FailingTool {
     }
 }
 
+struct BlockingTool {
+    started: Arc<tokio::sync::Notify>,
+    cancelled: Arc<tokio::sync::Notify>,
+}
+
+struct NotifyOnDrop(Arc<tokio::sync::Notify>);
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+#[async_trait]
+impl Tool for BlockingTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "blocking_tool".into(),
+            description: "test blocking tool".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        _ctx: ToolContext,
+        _id: String,
+    ) -> Result<ToolResult, ToolError> {
+        let _notify_on_drop = NotifyOnDrop(Arc::clone(&self.cancelled));
+        self.started.notify_one();
+        std::future::pending().await
+    }
+}
+
 #[tokio::test]
 async fn does_not_retry_non_recoverable_provider_errors() {
     let requests = Arc::new(Mutex::new(0));
@@ -858,6 +893,96 @@ async fn interrupting_before_tools_leaves_no_unmatched_tool_call() {
 }
 
 #[tokio::test]
+async fn dropping_run_cancels_active_tool_task() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call_1".into(),
+        name: "blocking_tool".into(),
+        arguments: serde_json::json!({}),
+    })]);
+    let provider = RecordingProvider {
+        requests: Arc::default(),
+        tools: Arc::default(),
+        prompt_cache_keys: Arc::default(),
+        response: Some(response),
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(BlockingTool {
+        started: Arc::clone(&started),
+        cancelled: Arc::clone(&cancelled),
+    });
+    let mut agent = test_agent_with_tools(provider, tools);
+
+    let mut run = Box::pin(agent.run("run tool".into()));
+    tokio::select! {
+        () = started.notified() => {}
+        result = &mut run => panic!("tool completed unexpectedly: {result:?}"),
+    }
+    drop(run);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), cancelled.notified())
+        .await
+        .expect("active tool task was not cancelled");
+}
+
+#[tokio::test]
+async fn interrupting_active_tool_persists_failed_result() {
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let interrupt_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call_1".into(),
+        name: "blocking_tool".into(),
+        arguments: serde_json::json!({}),
+    })]);
+    let provider = RecordingProvider {
+        requests: Arc::default(),
+        tools: Arc::default(),
+        prompt_cache_keys: Arc::default(),
+        response: Some(response),
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(BlockingTool {
+        started: Arc::clone(&started),
+        cancelled: Arc::clone(&cancelled),
+    });
+    let mut agent = test_agent_with_tools(provider, tools);
+    agent.set_history_sink(RecordingHistorySink::append_target(persisted.clone()));
+    let run_interrupt_requested = Arc::clone(&interrupt_requested);
+
+    let run = agent.run_with_content_and_events_questionnaire_and_steering(
+        vec![ContentBlock::Text("run tool".into())],
+        |_| Ok(()),
+        None,
+        move || run_interrupt_requested.load(std::sync::atomic::Ordering::SeqCst),
+        || Ok(None),
+    );
+    tokio::pin!(run);
+    tokio::select! {
+        () = started.notified() => {}
+        result = &mut run => panic!("tool completed unexpectedly: {result:?}"),
+    }
+    interrupt_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let err = tokio::time::timeout(std::time::Duration::from_secs(1), &mut run)
+        .await
+        .expect("agent did not finish interrupting tool")
+        .unwrap_err();
+
+    assert!(matches!(err, AgentError::Provider(ModelError::Interrupted)));
+    tokio::time::timeout(std::time::Duration::from_secs(1), cancelled.notified())
+        .await
+        .expect("active tool task was not cancelled");
+    assert!(matches!(
+        persisted.lock().unwrap().last(),
+        Some(Message::ToolResult(ToolResult { id, ok: false, content }))
+            if id == "call_1" && content == "tool interrupted"
+    ));
+}
+
+#[tokio::test]
 async fn persists_all_tool_results_before_interrupting_tool_finished_events() {
     let persisted = Arc::new(Mutex::new(Vec::new()));
     let response = ModelResponse::Assistant(vec![
@@ -1084,6 +1209,7 @@ async fn questionnaire_tool_is_only_advertised_when_handler_is_available() {
             vec![ContentBlock::Text("hello".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            || false,
             || Ok(None),
         )
         .await
@@ -1137,6 +1263,7 @@ async fn questionnaire_tool_answer_is_returned_to_model() {
                 Ok(())
             },
             Some(&mut ask_questionnaire),
+            || false,
             || Ok(None),
         )
         .await
@@ -1240,6 +1367,7 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
             vec![ContentBlock::Text("prep release".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            || false,
             || Ok(None),
         )
         .await
@@ -1284,6 +1412,7 @@ async fn invalid_questionnaire_arguments_return_failed_tool_result() {
             vec![ContentBlock::Text("ask".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            || false,
             || Ok(None),
         )
         .await

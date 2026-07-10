@@ -2311,6 +2311,7 @@ impl App {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let result = {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
+            let run_interrupt_requested = Arc::clone(&interrupt_requested);
             let callback_tool_call_active = Arc::clone(&tool_call_active);
             let run_steering_prompts = Arc::clone(&steering_prompts);
             let (question_tx, mut question_rx) = mpsc::unbounded_channel::<QuestionAnswerRequest>();
@@ -2382,6 +2383,7 @@ impl App {
                         Ok(())
                     },
                     questionnaire_handler,
+                    move || run_interrupt_requested.load(Ordering::SeqCst),
                     move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
                 ),
             );
@@ -2413,10 +2415,10 @@ impl App {
                             &tool_call_active,
                             RunningInputMode::Turn,
                         ) {
-                            Ok(StreamControl::Interrupt) => {
+                            Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
                             }
-                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                            Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
                         self.drain_steering_prompts_to(&steering_prompts);
@@ -2431,10 +2433,10 @@ impl App {
                             &tool_call_active,
                             RunningInputMode::Turn,
                         ) {
-                            Ok(StreamControl::Interrupt) => {
+                            Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
                                 break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
                             }
-                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                            Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
                         self.drain_steering_prompts_to(&steering_prompts);
@@ -3274,11 +3276,9 @@ impl App {
     ) -> StreamControl {
         interrupt_requested.store(true, Ordering::SeqCst);
         if tool_call_active.load(Ordering::SeqCst) {
-            self.status = "interrupt requested; waiting for tool result".into();
-            StreamControl::Continue
-        } else {
-            StreamControl::Interrupt
+            self.status = "interrupting tool".into();
         }
+        StreamControl::Interrupt
     }
 
     fn handle_agent_event(
@@ -6062,6 +6062,19 @@ mod tests {
             },
             store,
         )
+    }
+
+    #[test]
+    fn interrupt_during_tool_ends_turn_immediately() {
+        let mut app = test_app();
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(true);
+
+        let control = app.request_running_interrupt(&interrupt_requested, &tool_call_active);
+
+        assert!(interrupt_requested.load(Ordering::SeqCst));
+        assert!(matches!(control, StreamControl::Interrupt));
+        assert_eq!(app.status, "interrupting tool");
     }
 
     #[test]

@@ -79,6 +79,14 @@ enum CompactionTrigger {
 
 const MAX_INVALID_RESPONSE_RETRIES: usize = 1;
 
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
@@ -232,6 +240,7 @@ impl Agent {
             user_content,
             on_event,
             None,
+            || false,
             next_steer,
         )
         .await
@@ -242,6 +251,7 @@ impl Agent {
         user_content: Vec<ContentBlock>,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
         mut ask_questionnaire: Option<QuestionnaireHandler<'_>>,
+        mut interrupt_requested: impl FnMut() -> bool,
         mut next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
     ) -> Result<String, AgentError> {
         let mut specs = self.tools.specs();
@@ -475,6 +485,20 @@ impl Agent {
                                 }
                             } else {
                                 match tool {
+                                    Some(tool) if deferred_interrupt.is_some() => {
+                                        let result = ToolResult {
+                                            id: call.id.clone(),
+                                            ok: false,
+                                            content: "tool interrupted".into(),
+                                        };
+                                        let mut display_lines =
+                                            tool.display_lines(&call.arguments, &self.ctx, &result);
+                                        if !display_lines.iter().any(|line| line == &result.content)
+                                        {
+                                            display_lines.push(result.content.clone());
+                                        }
+                                        (result, None, display_lines)
+                                    }
                                     Some(tool) => {
                                         let event_content =
                                             tool.display_content(&call.arguments, &self.ctx);
@@ -492,8 +516,15 @@ impl Agent {
                                                 .call_with_updates(args, ctx, id, &mut on_update)
                                                 .await
                                         });
+                                        let _abort_on_drop = AbortOnDrop(task.abort_handle());
                                         let result = loop {
                                             tokio::select! {
+                                                _ = tokio::time::sleep(std::time::Duration::from_millis(25)), if deferred_interrupt.is_none() => {
+                                                    if interrupt_requested() {
+                                                        deferred_interrupt = Some(ModelError::Interrupted);
+                                                        task.abort();
+                                                    }
+                                                }
                                                 Some(display_lines) = progress_rx.recv() => {
                                                     if deferred_interrupt.is_none() {
                                                         match on_event(AgentEvent::ToolUpdated { display_lines }) {
@@ -512,6 +543,11 @@ impl Agent {
                                                             id: call.id.clone(),
                                                             ok: false,
                                                             content: err.to_string(),
+                                                        },
+                                                        Err(err) if err.is_cancelled() && deferred_interrupt.is_some() => ToolResult {
+                                                            id: call.id.clone(),
+                                                            ok: false,
+                                                            content: "tool interrupted".into(),
                                                         },
                                                         Err(err) => ToolResult {
                                                             id: call.id.clone(),
