@@ -15,6 +15,9 @@ const OPENAI_API_KEY_ACCOUNT: &str = provider::OPENAI_API_KEY_ACCOUNT;
 const ANTHROPIC_API_KEY_ACCOUNT: &str = provider::ANTHROPIC_API_KEY_ACCOUNT;
 const CODEX_TOKENS_ACCOUNT: &str = provider::CODEX_TOKENS_ACCOUNT;
 const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = provider::GITHUB_COPILOT_TOKENS_ACCOUNT;
+const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
+const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
+const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
 const CHUNK_MANIFEST_SUFFIX: &str = ":chunks";
 const CHUNK_ACCOUNT_INFIX: &str = ":chunk:";
 
@@ -430,6 +433,47 @@ impl CredentialStore for MemoryCredentialStore {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSearchCredential {
+    OpenAi,
+    Exa,
+    Brave,
+}
+
+impl WebSearchCredential {
+    pub const ALL: [Self; 3] = [Self::OpenAi, Self::Exa, Self::Brave];
+
+    pub const fn account(self) -> &'static str {
+        match self {
+            Self::OpenAi => WEB_SEARCH_OPENAI_API_KEY_ACCOUNT,
+            Self::Exa => WEB_SEARCH_EXA_API_KEY_ACCOUNT,
+            Self::Brave => WEB_SEARCH_BRAVE_API_KEY_ACCOUNT,
+        }
+    }
+}
+
+pub fn load_web_search_api_key(
+    store: &dyn CredentialStore,
+    credential: WebSearchCredential,
+) -> CredentialResult<Option<String>> {
+    store.get_secret(credential.account())
+}
+
+pub fn save_web_search_api_key(
+    store: &dyn CredentialStore,
+    credential: WebSearchCredential,
+    key: &str,
+) -> CredentialResult<()> {
+    store.set_secret(credential.account(), key)
+}
+
+pub fn delete_web_search_api_key(
+    store: &dyn CredentialStore,
+    credential: WebSearchCredential,
+) -> CredentialResult<bool> {
+    store.delete_secret(credential.account())
+}
+
 pub fn load_provider_api_key(
     store: &dyn CredentialStore,
     provider: &str,
@@ -603,6 +647,26 @@ pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_api_keys_use_dedicated_accounts() {
+        let store = MemoryCredentialStore::default();
+
+        for (credential, key) in [
+            (WebSearchCredential::OpenAi, "openai-search"),
+            (WebSearchCredential::Exa, "exa-search"),
+            (WebSearchCredential::Brave, "brave-search"),
+        ] {
+            save_web_search_api_key(&store, credential, key).unwrap();
+            assert_eq!(
+                load_web_search_api_key(&store, credential)
+                    .unwrap()
+                    .as_deref(),
+                Some(key)
+            );
+            assert!(delete_web_search_api_key(&store, credential).unwrap());
+        }
+    }
 
     #[test]
     fn api_key_round_trips_through_memory_store() {

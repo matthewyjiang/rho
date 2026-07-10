@@ -71,10 +71,10 @@ use crate::{
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     config::Config,
     credentials::{
-        available_auth_modes, delete_provider_credentials, provider_has_credentials,
-        provider_has_env_override, save_codex_tokens, save_github_copilot_tokens,
-        save_provider_api_key, CodexTokens, CredentialStore, GitHubCopilotTokens,
-        OsCredentialStore,
+        available_auth_modes, delete_provider_credentials, load_web_search_api_key,
+        provider_has_credentials, provider_has_env_override, save_codex_tokens,
+        save_github_copilot_tokens, save_provider_api_key, save_web_search_api_key, CodexTokens,
+        CredentialStore, GitHubCopilotTokens, OsCredentialStore, WebSearchCredential,
     },
     herdr::{HerdrReporter, HerdrState},
     model::{
@@ -797,6 +797,14 @@ impl ConfigTextKey {
             ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
             ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
             ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
+        }
+    }
+
+    fn web_search_credential(self) -> WebSearchCredential {
+        match self {
+            ConfigTextKey::OpenAiSearch => WebSearchCredential::OpenAi,
+            ConfigTextKey::Exa => WebSearchCredential::Exa,
+            ConfigTextKey::Brave => WebSearchCredential::Brave,
         }
     }
 }
@@ -2240,16 +2248,16 @@ impl App {
                 };
                 let key = input.key;
                 let value = input.value.trim().to_string();
-                let save_result =
-                    Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                        let value = (!value.is_empty()).then_some(value);
-                        match key {
-                            ConfigTextKey::OpenAiSearch => config.web_search_openai_api_key = value,
-                            ConfigTextKey::Exa => config.web_search_exa_api_key = value,
-                            ConfigTextKey::Brave => config.web_search_brave_api_key = value,
-                        }
-                        config.save(self.info.config_path.clone())
-                    });
+                let save_result = (|| -> anyhow::Result<()> {
+                    let credential = key.web_search_credential();
+                    let store = OsCredentialStore;
+                    if value.is_empty() {
+                        crate::credentials::delete_web_search_api_key(&store, credential)?;
+                    } else {
+                        save_web_search_api_key(&store, credential, &value)?;
+                    }
+                    Ok(())
+                })();
                 match save_result {
                     Ok(()) => {
                         self.refresh_web_search_config_picker(key.picker_value());
@@ -3886,26 +3894,23 @@ impl App {
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal)?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::OpenAiSearch,
-                    config.web_search_openai_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::OpenAi)?,
                 ));
                 self.status = "edit OpenAI web search API key".into();
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::Exa,
-                    config.web_search_exa_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Exa)?,
                 ));
                 self.status = "edit Exa API key".into();
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::Brave,
-                    config.web_search_brave_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Brave)?,
                 ));
                 self.status = "edit Brave Search API key".into();
             }
@@ -4785,28 +4790,25 @@ impl App {
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::OpenAiSearch,
-                    config.web_search_openai_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::OpenAi)?,
                 ));
                 self.status = "edit OpenAI web search API key".into();
                 Ok(())
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::Exa,
-                    config.web_search_exa_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Exa)?,
                 ));
                 self.status = "edit Exa API key".into();
                 Ok(())
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
                 self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
                     ConfigTextKey::Brave,
-                    config.web_search_brave_api_key,
+                    load_web_search_api_key(&OsCredentialStore, WebSearchCredential::Brave)?,
                 ));
                 self.status = "edit Brave Search API key".into();
                 Ok(())
@@ -5158,16 +5160,8 @@ impl App {
 
     fn cycle_web_search_provider(&mut self, _terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let mut config = Config::load(self.info.config_path.clone())?;
-        config.web_search_provider = match config.web_search_provider.as_str() {
-            "auto" => "openai",
-            "openai" => "exa",
-            "exa" => "brave",
-            "brave" => "disabled",
-            "disabled" => "auto",
-            _ => "auto",
-        }
-        .into();
-        let provider = config.web_search_provider.clone();
+        config.web_search_provider = config.web_search_provider.next_configurable();
+        let provider = config.web_search_provider.to_string();
         config.save(self.info.config_path.clone())?;
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
         self.status = format!("web search: {provider}");

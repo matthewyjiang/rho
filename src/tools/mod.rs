@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn registry_omits_web_search_when_disabled() {
         let config = Config {
-            web_search_provider: "disabled".into(),
+            web_search_provider: crate::config::SearchProvider::Disabled,
             ..Config::default()
         };
         let names = registry(&config)

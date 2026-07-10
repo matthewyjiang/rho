@@ -1,9 +1,13 @@
-use std::{fs, path::PathBuf};
+use std::{fmt, fs, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     agent::CompactionConfig,
+    credentials::{
+        load_web_search_api_key, save_web_search_api_key, CredentialStore, OsCredentialStore,
+        WebSearchCredential,
+    },
     model::favorites::{favorite_model_values, normalized_favorite_models},
     paths,
     reasoning::ReasoningLevel,
@@ -25,11 +29,10 @@ pub struct Config {
     pub title_model: Option<String>,
     pub title_auth: Option<String>,
     pub favorite_models: Vec<String>,
-    pub web_search_provider: String,
+    pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
-    pub web_search_openai_api_key: Option<String>,
-    pub web_search_exa_api_key: Option<String>,
-    pub web_search_brave_api_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
 }
 
@@ -50,14 +53,132 @@ impl Default for Config {
             title_model: None,
             title_auth: None,
             favorite_models: Vec::new(),
-            web_search_provider: "auto".into(),
+            web_search_provider: SearchProvider::Auto,
             check_for_updates: true,
-            web_search_openai_api_key: None,
-            web_search_exa_api_key: None,
-            web_search_brave_api_key: None,
+            legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SearchProvider {
+    #[default]
+    Auto,
+    OpenAi,
+    Exa,
+    Brave,
+    Parallel,
+    Tavily,
+    Perplexity,
+    Gemini,
+    Disabled,
+}
+
+impl SearchProvider {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::OpenAi => "openai",
+            Self::Exa => "exa",
+            Self::Brave => "brave",
+            Self::Parallel => "parallel",
+            Self::Tavily => "tavily",
+            Self::Perplexity => "perplexity",
+            Self::Gemini => "gemini",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    pub fn from_config_value(value: &str) -> Self {
+        value.parse().unwrap_or_default()
+    }
+
+    pub const fn next_configurable(self) -> Self {
+        match self {
+            Self::Auto => Self::OpenAi,
+            Self::OpenAi => Self::Exa,
+            Self::Exa => Self::Brave,
+            Self::Brave => Self::Disabled,
+            Self::Disabled | Self::Parallel | Self::Tavily | Self::Perplexity | Self::Gemini => {
+                Self::Auto
+            }
+        }
+    }
+}
+
+impl fmt::Display for SearchProvider {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SearchProvider {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "openai" => Ok(Self::OpenAi),
+            "exa" => Ok(Self::Exa),
+            "brave" => Ok(Self::Brave),
+            "parallel" => Ok(Self::Parallel),
+            "tavily" => Ok(Self::Tavily),
+            "perplexity" => Ok(Self::Perplexity),
+            "gemini" => Ok(Self::Gemini),
+            "disabled" => Ok(Self::Disabled),
+            other => Err(format!("unknown search provider: {other}")),
+        }
+    }
+}
+
+impl Serialize for SearchProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SearchProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LegacyWebSearchCredentials {
+    openai: Option<String>,
+    exa: Option<String>,
+    brave: Option<String>,
+}
+
+impl LegacyWebSearchCredentials {
+    fn get(&self, credential: WebSearchCredential) -> Option<&str> {
+        match credential {
+            WebSearchCredential::OpenAi => self.openai.as_deref(),
+            WebSearchCredential::Exa => self.exa.as_deref(),
+            WebSearchCredential::Brave => self.brave.as_deref(),
+        }
+    }
+
+    fn clear(&mut self, credential: WebSearchCredential) {
+        match credential {
+            WebSearchCredential::OpenAi => self.openai = None,
+            WebSearchCredential::Exa => self.exa = None,
+            WebSearchCredential::Brave => self.brave = None,
+        }
+    }
+}
+
+fn write_config(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
+    fs::write(path, toml::to_string_pretty(config)?)?;
+    Ok(())
 }
 
 impl Config {
@@ -72,7 +193,7 @@ impl Config {
         }
 
         let mut cfg = Config::default();
-        let text = fs::read_to_string(path)?;
+        let text = fs::read_to_string(&path)?;
         let file: PartialConfig = toml::from_str(&text)?;
         if let Some(v) = file.provider {
             cfg.provider = v;
@@ -119,22 +240,22 @@ impl Config {
             cfg.favorite_models = favorite_model_values(&normalized_favorite_models(&v));
         }
         if let Some(v) = file.web_search_provider {
-            cfg.web_search_provider = normalize_web_search_provider(v);
+            cfg.web_search_provider = SearchProvider::from_config_value(&v);
         }
         if let Some(v) = file.check_for_updates {
             cfg.check_for_updates = v;
         }
-        if let Some(v) = file.web_search_openai_api_key {
-            cfg.web_search_openai_api_key = non_empty_secret(v);
-        }
-        if let Some(v) = file.web_search_exa_api_key {
-            cfg.web_search_exa_api_key = non_empty_secret(v);
-        }
-        if let Some(v) = file.web_search_brave_api_key {
-            cfg.web_search_brave_api_key = non_empty_secret(v);
-        }
+        cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
+            openai: file.web_search_openai_api_key.and_then(non_empty_secret),
+            exa: file.web_search_exa_api_key.and_then(non_empty_secret),
+            brave: file.web_search_brave_api_key.and_then(non_empty_secret),
+        };
         if let Some(v) = file.rtk {
             cfg.rtk = v;
+        }
+        let store = OsCredentialStore;
+        if matches!(cfg.migrate_legacy_web_search_credentials(&store), Ok(true)) {
+            write_config(&path, &cfg)?;
         }
         Ok(cfg)
     }
@@ -148,7 +269,9 @@ impl Config {
         config.normalize_compaction_percentages();
         config.favorite_models =
             favorite_model_values(&normalized_favorite_models(&config.favorite_models));
-        fs::write(path, toml::to_string_pretty(&config)?)?;
+        let store = OsCredentialStore;
+        config.migrate_legacy_web_search_credentials(&store)?;
+        write_config(&path, &config)?;
         Ok(())
     }
 
@@ -160,6 +283,35 @@ impl Config {
     pub fn set_compact_target_percent(&mut self, value: u8) {
         self.compact_target_percent = clamp_percent(value);
         self.normalize_compaction_percentages();
+    }
+
+    pub(crate) fn legacy_web_search_api_key(
+        &self,
+        credential: WebSearchCredential,
+    ) -> Option<&str> {
+        self.legacy_web_search_credentials.get(credential)
+    }
+
+    fn migrate_legacy_web_search_credentials(
+        &mut self,
+        store: &dyn CredentialStore,
+    ) -> crate::credentials::CredentialResult<bool> {
+        let mut changed = false;
+        for credential in WebSearchCredential::ALL {
+            let Some(secret) = self
+                .legacy_web_search_credentials
+                .get(credential)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            if load_web_search_api_key(store, credential)?.is_none() {
+                save_web_search_api_key(store, credential, &secret)?;
+            }
+            self.legacy_web_search_credentials.clear(credential);
+            changed = true;
+        }
+        Ok(changed)
     }
 
     fn normalize_compaction_percentages(&mut self) {
@@ -206,13 +358,6 @@ struct PartialConfig {
     web_search_exa_api_key: Option<String>,
     web_search_brave_api_key: Option<String>,
     rtk: Option<bool>,
-}
-
-fn normalize_web_search_provider(provider: String) -> String {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "auto" | "openai" | "exa" | "brave" | "disabled" => provider.trim().to_ascii_lowercase(),
-        _ => "auto".into(),
-    }
 }
 
 fn non_empty_secret(secret: String) -> Option<String> {
@@ -325,25 +470,46 @@ favorite_models = [
     }
 
     #[test]
-    fn loads_web_search_config() {
+    fn migrates_legacy_web_search_keys_to_credentials() {
+        let store = crate::credentials::MemoryCredentialStore::default();
+        let mut config = Config {
+            legacy_web_search_credentials: super::LegacyWebSearchCredentials {
+                openai: Some("sk-test".into()),
+                exa: Some("exa-test".into()),
+                brave: Some("BSA-test".into()),
+            },
+            ..Config::default()
+        };
+
+        assert!(config
+            .migrate_legacy_web_search_credentials(&store)
+            .unwrap());
+        assert_eq!(
+            crate::credentials::load_web_search_api_key(
+                &store,
+                crate::credentials::WebSearchCredential::OpenAi
+            )
+            .unwrap()
+            .as_deref(),
+            Some("sk-test")
+        );
+        assert_eq!(
+            config.legacy_web_search_api_key(crate::credentials::WebSearchCredential::OpenAi),
+            None
+        );
+    }
+
+    #[test]
+    fn saved_config_omits_migrated_web_search_secrets() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-web_search_provider = "exa"
-web_search_openai_api_key = " sk-test "
-web_search_exa_api_key = "exa-test"
-web_search_brave_api_key = "BSA-test"
-"#,
-        )
-        .unwrap();
+        let config = Config::default();
 
-        let config = Config::load(Some(path)).unwrap();
+        super::write_config(&path, &config).unwrap();
 
-        assert_eq!(config.web_search_provider, "exa");
-        assert_eq!(config.web_search_openai_api_key.as_deref(), Some("sk-test"));
-        assert_eq!(config.web_search_exa_api_key.as_deref(), Some("exa-test"));
-        assert_eq!(config.web_search_brave_api_key.as_deref(), Some("BSA-test"));
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(!saved.contains("web_search_openai_api_key"), "{saved}");
+        assert!(!saved.contains("web_search_exa_api_key"), "{saved}");
+        assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
     }
 }
