@@ -1,7 +1,9 @@
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use crate::{
     config::Config,
-    credentials::{load_web_search_api_key, OsCredentialStore, WebSearchCredential},
+    credentials::{
+        load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
+    },
 };
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
@@ -148,7 +150,10 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
     )
 }
 
-pub(super) fn web_search_config_picker(config: &Config) -> UiPicker {
+pub(super) fn web_search_config_picker(
+    config: &Config,
+    credential_store: &dyn CredentialStore,
+) -> UiPicker {
     UiPicker::new(
         "Web search config",
         "type regex filter, enter change, esc back",
@@ -178,21 +183,33 @@ pub(super) fn web_search_config_picker(config: &Config) -> UiPicker {
                 label: "OpenAI API key".into(),
                 detail: Some("Optional key for OpenAI web search. Codex login is used automatically when available.".into()),
                 preview: None,
-                badge: Some(credential_badge(WebSearchCredential::OpenAi)),
+                badge: Some(credential_badge(
+                    config,
+                    credential_store,
+                    WebSearchCredential::OpenAi,
+                )),
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
             },
             PickerItem {
                 label: "Exa API key".into(),
                 detail: Some("Optional Exa API key. Without one, Exa hosted MCP is used.".into()),
                 preview: None,
-                badge: Some(credential_badge(WebSearchCredential::Exa)),
+                badge: Some(credential_badge(
+                    config,
+                    credential_store,
+                    WebSearchCredential::Exa,
+                )),
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
             },
             PickerItem {
                 label: "Brave API key".into(),
                 detail: Some("Optional Brave Search API key used by the brave backend.".into()),
                 preview: None,
-                badge: Some(credential_badge(WebSearchCredential::Brave)),
+                badge: Some(credential_badge(
+                    config,
+                    credential_store,
+                    WebSearchCredential::Brave,
+                )),
                 value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
             },
         ],
@@ -200,12 +217,17 @@ pub(super) fn web_search_config_picker(config: &Config) -> UiPicker {
     )
 }
 
-fn credential_badge(credential: WebSearchCredential) -> PickerBadge {
-    let value = load_web_search_api_key(&OsCredentialStore, credential)
-        .ok()
-        .flatten();
+fn credential_badge(
+    config: &Config,
+    credential_store: &dyn CredentialStore,
+    credential: WebSearchCredential,
+) -> PickerBadge {
+    let configured = web_search_api_key_is_set(
+        load_web_search_api_key(credential_store, credential),
+        config.legacy_web_search_api_key(credential),
+    );
     PickerBadge {
-        text: if value.is_some_and(|value| !value.trim().is_empty()) {
+        text: if configured {
             "set".into()
         } else {
             "unset".into()
@@ -213,3 +235,18 @@ fn credential_badge(credential: WebSearchCredential) -> PickerBadge {
         tone: PickerBadgeTone::Selected,
     }
 }
+
+fn web_search_api_key_is_set(
+    stored: CredentialResult<Option<String>>,
+    legacy: Option<&str>,
+) -> bool {
+    let stored = stored.ok().flatten();
+    stored
+        .as_deref()
+        .or(legacy)
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+#[cfg(test)]
+#[path = "config_picker_tests.rs"]
+mod tests;

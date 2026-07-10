@@ -210,8 +210,12 @@ impl Config {
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
+        Self::load_with_store(path, &OsCredentialStore)
+    }
+
+    fn load_with_store(path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<Self> {
         if !path.exists() {
-            Config::default().save(Some(path.clone()))?;
+            Config::default().save_with_store(path.clone(), store)?;
         }
 
         let mut cfg = Config::default();
@@ -275,9 +279,8 @@ impl Config {
         if let Some(v) = file.rtk {
             cfg.rtk = v;
         }
-        let store = OsCredentialStore;
-        if matches!(cfg.migrate_legacy_web_search_credentials(&store), Ok(true)) {
-            write_config(&path, &cfg)?;
+        if matches!(cfg.migrate_legacy_web_search_credentials(store), Ok(true)) {
+            let _cleanup_result = write_config(&path, &cfg);
         }
         Ok(cfg)
     }
@@ -565,6 +568,38 @@ favorite_models = [
             "{saved}"
         );
         assert!(saved.contains("rtk = false"), "{saved}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_succeeds_when_migrated_credential_cleanup_cannot_be_written() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "web_search_openai_api_key = \"sk-test\"\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let store = crate::credentials::MemoryCredentialStore::default();
+
+        let config = Config::load_with_store(path.clone(), &store).unwrap();
+
+        assert_eq!(
+            crate::credentials::load_web_search_api_key(
+                &store,
+                crate::credentials::WebSearchCredential::OpenAi
+            )
+            .unwrap()
+            .as_deref(),
+            Some("sk-test")
+        );
+        assert_eq!(
+            config.legacy_web_search_api_key(crate::credentials::WebSearchCredential::OpenAi),
+            None
+        );
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("web_search_openai_api_key"), "{saved}");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]

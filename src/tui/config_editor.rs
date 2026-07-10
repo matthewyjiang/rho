@@ -1,6 +1,12 @@
 use ratatui::text::Line;
 
-use crate::{app::config_repository::ConfigRepository, credentials::WebSearchCredential};
+use crate::{
+    app::config_repository::ConfigRepository,
+    credentials::{
+        delete_web_search_api_key, save_web_search_api_key, CredentialError, CredentialResult,
+        CredentialStore, WebSearchCredential,
+    },
+};
 
 use super::{
     config_picker,
@@ -50,6 +56,17 @@ pub(super) enum ConfigMutation {
     AutoCompact(bool),
     ShowReasoningOutput(bool),
     WebSearchProvider(String),
+}
+
+pub(super) fn resolve_web_search_editor_value(
+    stored: CredentialResult<Option<String>>,
+    legacy: Option<&str>,
+) -> (Option<String>, Option<CredentialError>) {
+    match stored {
+        Ok(Some(value)) => (Some(value), None),
+        Ok(None) => (legacy.map(str::to_string), None),
+        Err(err) => (legacy.map(str::to_string), Some(err)),
+    }
 }
 
 pub(super) fn toggle(
@@ -218,6 +235,16 @@ impl ConfigTextInput {
         let value = value.unwrap_or_default();
         let cursor = value.chars().count();
         Self { key, value, cursor }
+    }
+
+    pub(super) fn save(&self, credential_store: &dyn CredentialStore) -> CredentialResult<()> {
+        let value = self.value.trim();
+        let credential = self.key.web_search_credential();
+        if value.is_empty() {
+            delete_web_search_api_key(credential_store, credential).map(|_| ())
+        } else {
+            save_web_search_api_key(credential_store, credential, value)
+        }
     }
 
     fn char_len(&self) -> usize {

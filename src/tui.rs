@@ -51,8 +51,9 @@ mod stream;
 mod theme;
 
 use config_editor::{
-    config_number_input_lines, config_text_input_lines, ConfigMutation, ConfigNumberInput,
-    ConfigNumberKey, ConfigNumberSave, ConfigTextInput, ConfigTextKey, ConfigToggle,
+    config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
+    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
+    ConfigTextKey, ConfigToggle,
 };
 use markdown::push_wrapped_markdown;
 use paste_burst::{PasteBurst, PasteBurstEnter};
@@ -80,8 +81,8 @@ use crate::{
     credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
-        save_github_copilot_tokens, save_provider_api_key, save_web_search_api_key, CodexTokens,
-        CredentialStore, GitHubCopilotTokens, OsCredentialStore,
+        save_github_copilot_tokens, save_provider_api_key, CodexTokens, CredentialStore,
+        GitHubCopilotTokens, OsCredentialStore,
     },
     herdr::{HerdrReporter, HerdrState},
     model::{
@@ -1519,17 +1520,7 @@ impl App {
                     return Ok(true);
                 };
                 let key = input.key;
-                let value = input.value.trim().to_string();
-                let save_result = (|| -> anyhow::Result<()> {
-                    let credential = key.web_search_credential();
-                    let store = OsCredentialStore;
-                    if value.is_empty() {
-                        crate::credentials::delete_web_search_api_key(&store, credential)?;
-                    } else {
-                        save_web_search_api_key(&store, credential, &value)?;
-                    }
-                    Ok(())
-                })();
+                let save_result = input.save(self.credential_store.as_ref());
                 match save_result {
                     Ok(()) => {
                         self.refresh_web_search_config_picker(key.picker_value())?;
@@ -3108,8 +3099,10 @@ impl App {
             }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.config_repository.load()?;
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&config));
+                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                    &config,
+                    self.credential_store.as_ref(),
+                ));
                 self.status = "web search config".into();
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
@@ -3958,8 +3951,10 @@ impl App {
             }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.config_repository.load()?;
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&config));
+                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                    &config,
+                    self.credential_store.as_ref(),
+                ));
                 self.status = "web search config".into();
                 Ok(())
             }
@@ -3986,20 +3981,17 @@ impl App {
 
     fn open_web_search_api_key_editor(&mut self, key: ConfigTextKey) -> anyhow::Result<()> {
         let credential = key.web_search_credential();
-        let value = match load_web_search_api_key(&OsCredentialStore, credential) {
-            Ok(value) => value,
-            Err(err) => {
-                let config = self.info.config_repository.load()?;
-                let legacy_value = config
-                    .legacy_web_search_api_key(credential)
-                    .map(str::to_string);
-                self.insert_entry(&Entry::Error(format!(
-                    "could not access {}: {err}",
-                    key.label()
-                )));
-                legacy_value
-            }
-        };
+        let config = self.info.config_repository.load()?;
+        let (value, load_error) = resolve_web_search_editor_value(
+            load_web_search_api_key(self.credential_store.as_ref(), credential),
+            config.legacy_web_search_api_key(credential),
+        );
+        if let Some(err) = load_error {
+            self.insert_entry(&Entry::Error(format!(
+                "could not access {}: {err}",
+                key.label()
+            )));
+        }
         self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(key, value));
         self.status = format!("edit {}", key.label());
         Ok(())
@@ -4036,7 +4028,8 @@ impl App {
             _ => String::new(),
         };
         let config = self.info.config_repository.load()?;
-        let mut picker = config_picker::web_search_config_picker(&config);
+        let mut picker =
+            config_picker::web_search_config_picker(&config, self.credential_store.as_ref());
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
         Ok(())
@@ -7344,7 +7337,8 @@ mod tests {
         app.info.config_repository =
             ConfigRepository::new(Some(config_dir.path().join("config.toml")));
         let config = app.info.config_repository.load().unwrap();
-        let mut picker = config_picker::web_search_config_picker(&config);
+        let mut picker =
+            config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
 
         App::restore_picker_position(
             &mut picker,
@@ -7365,7 +7359,10 @@ mod tests {
         app.info.config_repository =
             ConfigRepository::new(Some(config_dir.path().join("config.toml")));
         let config = app.info.config_repository.load().unwrap();
-        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&config));
+        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+            &config,
+            app.credential_store.as_ref(),
+        ));
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
