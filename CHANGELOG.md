@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.21.0...rho-coding-agent-v0.21.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **codex:** prevent Sol tool call loops ([#165](https://github.com/matthewyjiang/rho/issues/165)) ([2a16eca](https://github.com/matthewyjiang/rho/commit/2a16ecaba342e952b0ce09ab830481232c402ba0))
+
 ## [0.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.20.0...rho-coding-agent-v0.21.0) (2026-07-09)
 
 
