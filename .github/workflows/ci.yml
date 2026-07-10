@@ -42,3 +42,6 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Check platform build
         run: cargo check --all-targets --locked
+      - name: Run Bash behavior tests
+        if: runner.os == 'macOS'
+        run: cargo test --locked tools::bash::tests
