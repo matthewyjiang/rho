@@ -400,6 +400,31 @@ async fn retries_recoverable_invalid_response_errors() {
     assert_eq!(*requests.lock().unwrap(), 2);
 }
 
+#[tokio::test]
+async fn stops_retrying_persistently_invalid_responses() {
+    let requests = Arc::new(Mutex::new(0));
+    let mut agent = Agent::new(
+        Box::new(FailingProvider {
+            requests: requests.clone(),
+            error: ModelError::InvalidResponse("persistent parse failure".into()),
+        }),
+        ToolRegistry::new(),
+        ToolContext {
+            cwd: std::env::current_dir().unwrap(),
+            max_output_bytes: 12000,
+        },
+    );
+
+    let err = agent.run("hello".into()).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        AgentError::Provider(ModelError::InvalidResponse(message))
+            if message == "persistent parse failure"
+    ));
+    assert_eq!(*requests.lock().unwrap(), MAX_INVALID_RESPONSE_RETRIES + 1);
+}
+
 #[test]
 fn load_skill_truncates_contents_before_persisting() {
     let root = tempfile::tempdir().unwrap();

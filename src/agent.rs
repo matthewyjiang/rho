@@ -77,6 +77,8 @@ enum CompactionTrigger {
     Manual,
 }
 
+const MAX_INVALID_RESPONSE_RETRIES: usize = 1;
+
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
@@ -249,6 +251,7 @@ impl Agent {
         self.push_message(Message::User(user_content))?;
 
         let mut step = 1usize;
+        let mut invalid_response_retries = 0usize;
         loop {
             self.compact_history(&specs, CompactionTrigger::Automatic, &mut on_event)
                 .await?;
@@ -294,9 +297,16 @@ impl Agent {
                 )
                 .await
             {
-                Ok(response) => response,
+                Ok(response) => {
+                    invalid_response_retries = 0;
+                    response
+                }
                 Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
-                Err(err) if should_retry_model_error(&err) => {
+                Err(err)
+                    if should_retry_model_error(&err)
+                        && invalid_response_retries < MAX_INVALID_RESPONSE_RETRIES =>
+                {
+                    invalid_response_retries += 1;
                     self.push_message(Message::user_text(format!(
                         "The previous assistant response could not be processed by the client. Error: {err}\n\nPlease continue from the last request. If you attempted a tool call, emit valid tool-call JSON that exactly matches the required schema."
                     )))?;
