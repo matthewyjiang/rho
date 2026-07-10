@@ -1,0 +1,18 @@
+{
+  "default_production_line_budget": 1000,
+  "legacy_file_budgets": {
+    "src/model/openai/codex_ws.rs": 1036,
+    "src/tui.rs": 8001
+  },
+  "generated_files": {},
+  "thin_binary_budgets": {
+    "src/main.rs": 50
+  },
+  "forbidden_dependencies": [
+    {
+      "path": "src/credentials.rs",
+      "modules": ["model"],
+      "reason": "keep credentials independent from model runtime metadata"
+    }
+  ]
+}

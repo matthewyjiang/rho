@@ -5,10 +5,11 @@ use crate::{
     credentials::{load_provider_api_key, OsCredentialStore},
     model::{
         openai::auth::{load_api_key_auth, load_codex_auth},
-        registry::{self, provider_descriptor, AuthMode, ProviderAuthKind, ProviderRuntime},
+        registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
         AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
         ModelRequest, ModelResponse, OpenAiProvider,
     },
+    provider::{self, ProviderAuthKind},
     reasoning::ReasoningLevel,
 };
 
@@ -20,9 +21,9 @@ pub fn build_provider(
     let reasoning = reasoning.for_model(provider, model);
     let reasoning_effort = reasoning.effort().map(str::to_string);
     let reasoning_summary = reasoning.summary().map(str::to_string);
-    let descriptor = provider_descriptor(provider)
+    let runtime = provider_runtime(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
-    match descriptor.runtime {
+    match runtime {
         ProviderRuntime::OpenAi { auth_mode } => {
             let credential_store = Arc::new(OsCredentialStore);
             let auth = match auth_mode {
@@ -70,7 +71,7 @@ fn anthropic_max_tokens(model: &str) -> u32 {
 }
 
 fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
-    let descriptor = registry::provider_descriptor("anthropic")
+    let descriptor = provider::provider_descriptor("anthropic")
         .ok_or_else(|| ModelError::UnsupportedProvider("anthropic".into()))?;
     let ProviderAuthKind::ApiKey {
         env_var, missing, ..
@@ -82,8 +83,7 @@ fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
         return Ok(key);
     }
     let store = OsCredentialStore;
-    load_provider_api_key(&store, descriptor.name)?
-        .ok_or_else(|| registry::missing_credential_error(missing))
+    load_provider_api_key(&store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
 }
 
 #[derive(Debug)]

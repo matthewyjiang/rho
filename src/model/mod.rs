@@ -7,6 +7,7 @@ pub mod models_dev;
 pub mod openai;
 pub mod provider;
 pub mod provider_models;
+
 pub mod registry;
 
 pub use crate::provider_backend::{

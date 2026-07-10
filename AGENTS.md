@@ -56,6 +56,17 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 - Do not add tests for statically defined constants or negative tests for behavior that has been removed.
 - Avoid mutating process environment in tests; pass environment-derived values or dependencies explicitly where possible.
 
+## rho subagents with herdr
+
+- When asked to create subagents, use `rho` unless the user explicitly requests a different agent. Do not substitute Claude, Codex, or another agent.
+- Start each subagent in its own Git worktree so agents do not edit the same checkout concurrently.
+- Launch `rho` in the target pane first, then wait until herdr reports the pane's agent status as `idle` before submitting the task.
+- Submit the task with `herdr pane run <pane> "<prompt>"`, which sends the text followed by a real Enter key. Do not rely on `pane send-text` followed by `pane send-keys Enter` for multiline prompts, because the prompt can remain in Rho's composer without being submitted.
+- After submission, verify that herdr reports `agent_status: working` and inspect the pane for an actual response or tool call. Seeing the prompt rendered in the composer is not proof that it was submitted.
+- If the pane remains idle, inspect it and retry submission before reporting that the subagent is running.
+- Keep parallel tasks ownership-disjoint. Sequence agents that must modify the same large file or module root.
+- Ask subagents to run focused tests, commit their changes with a Conventional Commit, and report the commit hash for integration.
+
 ## rho smoke tests with herdr
 
 - When running inside herdr, you can smoke test rho itself by launching it from source in a sibling pane with `cargo run`.

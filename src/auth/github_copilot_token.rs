@@ -13,9 +13,9 @@ use crate::{
         GitHubCopilotTokens,
     },
     model::ModelError,
+    provider::{self, ProviderId},
 };
 
-pub(crate) const GITHUB_COPILOT_TOKEN_ENV: &str = "GITHUB_COPILOT_TOKEN";
 pub(crate) const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 pub(crate) const COPILOT_CHAT_COMPLETIONS_URL: &str =
     "https://api.githubcopilot.com/chat/completions";
@@ -320,7 +320,10 @@ fn now_unix_seconds() -> i64 {
 }
 
 fn nonempty_env_copilot_token() -> Option<String> {
-    nonempty_token(std::env::var(GITHUB_COPILOT_TOKEN_ENV).ok())
+    let env_var = provider::provider_descriptor_by_id(ProviderId::GithubCopilot)
+        .auth_kind
+        .env_var();
+    nonempty_token(std::env::var(env_var).ok())
 }
 
 fn nonempty_token(token: Option<String>) -> Option<String> {

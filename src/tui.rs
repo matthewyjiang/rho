@@ -31,6 +31,7 @@ use ratatui::{
     widgets::Paragraph,
     DefaultTerminal, Frame, Terminal,
 };
+mod config_editor;
 mod config_picker;
 mod file_picker;
 mod history_cache;
@@ -40,6 +41,7 @@ mod model_picker;
 mod paste_burst;
 mod picker;
 mod provider_picker;
+mod questionnaire;
 mod render;
 mod scrollbar;
 mod session_picker;
@@ -48,13 +50,22 @@ mod statusline;
 mod stream;
 mod theme;
 
+use config_editor::{
+    config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
+    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
+    ConfigTextKey, ConfigToggle,
+};
 use markdown::push_wrapped_markdown;
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use questionnaire::{
+    questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
+    QuestionAnswerRequest, QuestionnaireCancelReason, QuestionnaireComposer, QuestionnaireReply,
+    QuestionnaireResponseChannel,
+};
 use render::{
     display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, push_wrapped_text_with, session_header_lines, styled_line,
-    truncate_one_line, wrap_line_at_whitespace, LineFill,
+    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{statusline_lines, StatusLineState};
@@ -62,19 +73,16 @@ use stream::{AppendOnlyStream, StreamFragment};
 use theme::Theme;
 
 use crate::{
-    agent::{
-        Agent, AgentEvent, QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind,
-        QuestionnaireRequest, QuestionnaireResponse, SessionHistorySink,
-    },
+    agent::{Agent, AgentEvent, QuestionnaireRequest, SessionHistorySink},
+    app::config_repository::ConfigRepository,
     auth::{codex_oauth, github_copilot_device},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
-    config::Config,
     credentials::{
-        available_auth_modes, delete_provider_credentials, provider_has_credentials,
-        provider_has_env_override, save_codex_tokens, save_github_copilot_tokens,
-        save_provider_api_key, CodexTokens, CredentialStore, GitHubCopilotTokens,
-        OsCredentialStore,
+        available_auth_modes, delete_provider_credentials, load_web_search_api_key,
+        provider_has_credentials, provider_has_env_override, save_codex_tokens,
+        save_github_copilot_tokens, save_provider_api_key, CodexTokens, CredentialStore,
+        GitHubCopilotTokens, OsCredentialStore,
     },
     herdr::{HerdrReporter, HerdrState},
     model::{
@@ -83,10 +91,10 @@ use crate::{
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
-        registry::{self, ProviderAuthKind},
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
         ModelResponse, ModelUsage, UnavailableProvider,
     },
+    provider::{self, ProviderAuthKind},
     reasoning::ReasoningLevel,
     session::Session,
     tool::ToolDisplayStyle,
@@ -118,7 +126,7 @@ pub struct TuiInfo {
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
-    pub config_path: Option<PathBuf>,
+    pub(crate) config_repository: ConfigRepository,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub herdr: HerdrReporter,
@@ -257,548 +265,6 @@ enum ComposerMode {
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
     Questionnaire(QuestionnaireComposer),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum QuestionnaireCancelReason {
-    UserCancelled,
-    UiUnavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum QuestionnaireReply {
-    Answer(QuestionnaireResponse),
-    Cancelled(QuestionnaireCancelReason),
-}
-
-struct QuestionnaireResponseChannel {
-    reply_tx: Option<oneshot::Sender<QuestionnaireReply>>,
-}
-
-impl std::fmt::Debug for QuestionnaireResponseChannel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QuestionnaireResponseChannel")
-            .field("reply_pending", &self.reply_tx.is_some())
-            .finish()
-    }
-}
-
-impl QuestionnaireResponseChannel {
-    fn new(reply_tx: oneshot::Sender<QuestionnaireReply>) -> Self {
-        Self {
-            reply_tx: Some(reply_tx),
-        }
-    }
-
-    fn send_response(&mut self, response: QuestionnaireResponse) {
-        if let Some(reply_tx) = self.reply_tx.take() {
-            let _ = reply_tx.send(QuestionnaireReply::Answer(response));
-        }
-    }
-
-    fn cancel(&mut self, reason: QuestionnaireCancelReason) {
-        if let Some(reply_tx) = self.reply_tx.take() {
-            let _ = reply_tx.send(QuestionnaireReply::Cancelled(reason));
-        }
-    }
-}
-
-impl Drop for QuestionnaireResponseChannel {
-    fn drop(&mut self) {
-        self.cancel(QuestionnaireCancelReason::UiUnavailable);
-    }
-}
-
-#[derive(Debug)]
-struct QuestionAnswerRequest {
-    request: QuestionnaireRequest,
-    response: QuestionnaireResponseChannel,
-}
-
-#[derive(Debug)]
-struct QuestionnaireComposer {
-    request: QuestionnaireRequest,
-    response: QuestionnaireResponseChannel,
-    fields: Vec<QuestionnaireFieldState>,
-    active_index: usize,
-}
-
-#[derive(Debug)]
-struct QuestionnaireFieldState {
-    selection: FieldSelection,
-    choice_cursor: usize,
-    other_value: String,
-    other_cursor: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum FieldSelection {
-    Text,
-    None,
-    Single(usize),
-    Multi { selected: Vec<usize>, other: bool },
-    Other,
-}
-
-impl QuestionnaireComposer {
-    fn new(request: QuestionnaireRequest, response: QuestionnaireResponseChannel) -> Self {
-        let fields = request
-            .questions
-            .iter()
-            .map(QuestionnaireFieldState::new)
-            .collect::<Vec<_>>();
-        Self {
-            request,
-            response,
-            fields,
-            active_index: 0,
-        }
-    }
-
-    fn active_question(&self) -> &QuestionnaireQuestion {
-        &self.request.questions[self.active_index]
-    }
-
-    fn active_field(&self) -> &QuestionnaireFieldState {
-        &self.fields[self.active_index]
-    }
-
-    fn active_field_mut(&mut self) -> &mut QuestionnaireFieldState {
-        &mut self.fields[self.active_index]
-    }
-
-    fn active_char_len(&self) -> usize {
-        self.active_field().char_len()
-    }
-
-    fn move_to_previous_field(&mut self) {
-        self.active_index = self.active_index.saturating_sub(1);
-    }
-
-    fn move_to_next_field(&mut self) {
-        self.active_index = (self.active_index + 1).min(self.fields.len().saturating_sub(1));
-    }
-
-    fn move_active_choice_previous(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().move_choice_previous(&question);
-    }
-
-    fn move_active_choice_next(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().move_choice_next(&question);
-    }
-
-    fn toggle_active_choice(&mut self) {
-        let question = self.active_question().clone();
-        self.active_field_mut().toggle_highlighted(&question);
-    }
-
-    fn clear_active_answer(&mut self) {
-        let question = self.active_question().clone();
-        *self.active_field_mut() = QuestionnaireFieldState::empty(&question);
-    }
-
-    fn active_text_entry_active(&self) -> bool {
-        self.active_field()
-            .text_entry_active(self.active_question())
-    }
-
-    fn insert_char(&mut self, ch: char) -> bool {
-        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
-            return false;
-        }
-        self.active_field_mut().insert_char(ch);
-        true
-    }
-
-    fn insert_text(&mut self, text: &str) -> bool {
-        if !self.active_text_entry_active() && !self.activate_other_for_typing() {
-            return false;
-        }
-        self.active_field_mut().insert_text(text);
-        true
-    }
-
-    fn backspace(&mut self) {
-        if self.active_text_entry_active() {
-            self.active_field_mut().backspace();
-        }
-    }
-
-    fn delete(&mut self) {
-        if self.active_text_entry_active() {
-            self.active_field_mut().delete();
-        }
-    }
-
-    fn activate_other_for_typing(&mut self) -> bool {
-        let question = self.active_question().clone();
-        if !question.allow_other {
-            return false;
-        }
-        match &mut self.active_field_mut().selection {
-            FieldSelection::Text | FieldSelection::Other => true,
-            FieldSelection::None | FieldSelection::Single(_) => {
-                let field = self.active_field_mut();
-                field.selection = FieldSelection::Other;
-                field.choice_cursor = question.choices.len();
-                true
-            }
-            FieldSelection::Multi { .. } => {
-                let field = self.active_field_mut();
-                if let FieldSelection::Multi { other, .. } = &mut field.selection {
-                    *other = true;
-                }
-                field.choice_cursor = question.choices.len();
-                true
-            }
-        }
-    }
-}
-
-impl QuestionnaireFieldState {
-    fn empty(question: &QuestionnaireQuestion) -> Self {
-        let selection = match question.kind {
-            QuestionnaireQuestionKind::Text => FieldSelection::Text,
-            QuestionnaireQuestionKind::Choice => FieldSelection::None,
-            QuestionnaireQuestionKind::MultiSelect => FieldSelection::Multi {
-                selected: Vec::new(),
-                other: false,
-            },
-            QuestionnaireQuestionKind::Confirm => FieldSelection::None,
-        };
-        Self {
-            selection,
-            choice_cursor: 0,
-            other_value: String::new(),
-            other_cursor: 0,
-        }
-    }
-
-    fn new(question: &QuestionnaireQuestion) -> Self {
-        let (selection, choice_cursor, other_value) = match question.kind {
-            QuestionnaireQuestionKind::Text => (
-                FieldSelection::Text,
-                0,
-                question
-                    .default
-                    .as_ref()
-                    .map(questionnaire_default_string)
-                    .unwrap_or_default(),
-            ),
-            QuestionnaireQuestionKind::Choice => default_choice_selection(question),
-            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question),
-            QuestionnaireQuestionKind::Confirm => default_confirm_selection(question),
-        };
-        let other_cursor = other_value.chars().count();
-        Self {
-            selection,
-            choice_cursor,
-            other_value,
-            other_cursor,
-        }
-    }
-
-    fn char_len(&self) -> usize {
-        self.other_value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.other_value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.other_value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        let byte_index = self.byte_index(self.other_cursor);
-        self.other_value.insert(byte_index, ch);
-        self.other_cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        let byte_index = self.byte_index(self.other_cursor);
-        self.other_value.insert_str(byte_index, text);
-        self.other_cursor += text.chars().count();
-    }
-
-    fn backspace(&mut self) {
-        if self.other_cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.other_cursor - 1);
-        let end = self.byte_index(self.other_cursor);
-        self.other_value.replace_range(start..end, "");
-        self.other_cursor -= 1;
-    }
-
-    fn delete(&mut self) {
-        if self.other_cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.other_cursor);
-        let end = self.byte_index(self.other_cursor + 1);
-        self.other_value.replace_range(start..end, "");
-    }
-
-    fn text_entry_active(&self, question: &QuestionnaireQuestion) -> bool {
-        match &self.selection {
-            FieldSelection::Text | FieldSelection::Other => true,
-            FieldSelection::None | FieldSelection::Single(_) => false,
-            FieldSelection::Multi { other, .. } => {
-                *other && self.choice_cursor == question.choices.len()
-            }
-        }
-    }
-
-    fn move_choice_previous(&mut self, question: &QuestionnaireQuestion) {
-        let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
-            return;
-        }
-        self.choice_cursor = self.choice_cursor.saturating_sub(1);
-        self.select_highlighted_for_single(question);
-    }
-
-    fn move_choice_next(&mut self, question: &QuestionnaireQuestion) {
-        let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
-            return;
-        }
-        self.choice_cursor = (self.choice_cursor + 1).min(count.saturating_sub(1));
-        self.select_highlighted_for_single(question);
-    }
-
-    fn toggle_highlighted(&mut self, question: &QuestionnaireQuestion) {
-        match &mut self.selection {
-            FieldSelection::Text => {}
-            FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    self.selection = FieldSelection::Other;
-                } else {
-                    self.selection = FieldSelection::Single(
-                        self.choice_cursor
-                            .min(choice_count(question).saturating_sub(1)),
-                    );
-                }
-            }
-            FieldSelection::Multi { selected, other } => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    *other = !*other;
-                } else {
-                    let cursor = self
-                        .choice_cursor
-                        .min(question.choices.len().saturating_sub(1));
-                    if selected.contains(&cursor) {
-                        selected.retain(|index| *index != cursor);
-                    } else {
-                        selected.push(cursor);
-                        selected.sort_unstable();
-                        selected.dedup();
-                    }
-                }
-            }
-            FieldSelection::Other => {
-                if self.choice_cursor < question.choices.len() {
-                    self.selection = FieldSelection::Single(self.choice_cursor);
-                }
-            }
-        }
-    }
-
-    fn select_highlighted_for_single(&mut self, question: &QuestionnaireQuestion) {
-        match &mut self.selection {
-            FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
-                    self.selection = FieldSelection::Other;
-                } else {
-                    self.selection = FieldSelection::Single(
-                        self.choice_cursor
-                            .min(choice_count(question).saturating_sub(1)),
-                    );
-                }
-            }
-            FieldSelection::Other if self.choice_cursor < question.choices.len() => {
-                self.selection = FieldSelection::Single(self.choice_cursor);
-            }
-            FieldSelection::Text | FieldSelection::Multi { .. } | FieldSelection::Other => {}
-        }
-    }
-}
-
-fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    let Some(default) = question.default.as_ref().map(questionnaire_default_string) else {
-        return (FieldSelection::None, 0, String::new());
-    };
-    if let Some(index) = question
-        .choices
-        .iter()
-        .position(|choice| choice.eq_ignore_ascii_case(&default))
-    {
-        return (FieldSelection::Single(index), index, String::new());
-    }
-    if question.allow_other {
-        return (FieldSelection::Other, question.choices.len(), default);
-    }
-    (FieldSelection::None, 0, String::new())
-}
-
-fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    let mut selected = Vec::new();
-    let mut other_values = Vec::new();
-    for value in question
-        .default
-        .as_ref()
-        .map(questionnaire_default_strings)
-        .unwrap_or_default()
-    {
-        if let Some(index) = question
-            .choices
-            .iter()
-            .position(|choice| choice.eq_ignore_ascii_case(&value))
-        {
-            selected.push(index);
-        } else if question.allow_other {
-            other_values.push(value);
-        }
-    }
-    selected.sort_unstable();
-    selected.dedup();
-    let other = !other_values.is_empty();
-    let choice_cursor = selected
-        .first()
-        .copied()
-        .or_else(|| other.then_some(question.choices.len()))
-        .unwrap_or(0);
-    (
-        FieldSelection::Multi { selected, other },
-        choice_cursor,
-        other_values.join(", "),
-    )
-}
-
-fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    match question
-        .default
-        .as_ref()
-        .map(questionnaire_default_string)
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "yes" | "y" | "true" => (FieldSelection::Single(0), 0, String::new()),
-        "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
-        _ => (FieldSelection::None, 0, String::new()),
-    }
-}
-
-fn questionnaire_default_strings(default: &serde_json::Value) -> Vec<String> {
-    match default {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_default_string)
-            .filter(|value| !value.is_empty())
-            .collect(),
-        value => {
-            let value = questionnaire_default_string(value);
-            if value.is_empty() {
-                Vec::new()
-            } else {
-                vec![value]
-            }
-        }
-    }
-}
-
-fn questionnaire_default_string(default: &serde_json::Value) -> String {
-    match default {
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => default.to_string(),
-    }
-}
-
-fn questionnaire_default_display(default: &serde_json::Value) -> String {
-    match default {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_default_display)
-            .collect::<Vec<_>>()
-            .join(", "),
-        value => questionnaire_default_string(value),
-    }
-}
-
-fn choice_count(question: &QuestionnaireQuestion) -> usize {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => 0,
-        QuestionnaireQuestionKind::Confirm => 2,
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
-            question.choices.len() + usize::from(question.allow_other)
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ConfigNumberInput {
-    key: ConfigNumberKey,
-    value: String,
-    cursor: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConfigNumberKey {
-    MaxOutputBytes,
-    MaxToolOutputLines,
-    CompactThresholdPercent,
-    CompactTargetPercent,
-}
-
-#[derive(Clone, Debug)]
-struct ConfigTextInput {
-    key: ConfigTextKey,
-    value: String,
-    cursor: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConfigTextKey {
-    OpenAiSearch,
-    Exa,
-    Brave,
-}
-
-impl ConfigNumberKey {
-    fn label(self) -> &'static str {
-        match self {
-            ConfigNumberKey::MaxOutputBytes => "max output bytes",
-            ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
-            ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
-            ConfigNumberKey::CompactTargetPercent => "compact target percent",
-        }
-    }
-}
-
-impl ConfigTextKey {
-    fn label(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
-            ConfigTextKey::Exa => "Exa API key",
-            ConfigTextKey::Brave => "Brave Search API key",
-        }
-    }
-
-    fn picker_value(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
-            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
-            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1010,102 +476,6 @@ impl StreamKind {
     }
 }
 
-impl ConfigNumberInput {
-    fn new(key: ConfigNumberKey, value: usize) -> Self {
-        let value = value.to_string();
-        let cursor = value.chars().count();
-        Self { key, value, cursor }
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        if !ch.is_ascii_digit() {
-            return;
-        }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        for ch in text.chars().filter(|ch| ch.is_ascii_digit()) {
-            self.insert_char(ch);
-        }
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-}
-
-impl ConfigTextInput {
-    fn new(key: ConfigTextKey, value: Option<String>) -> Self {
-        let value = value.unwrap_or_default();
-        let cursor = value.chars().count();
-        Self { key, value, cursor }
-    }
-
-    fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        if ch == '\n' || ch == '\r' {
-            return;
-        }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        let sanitized = text.replace(['\n', '\r'], "");
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, &sanitized);
-        self.cursor += sanitized.chars().count();
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
-    }
-}
-
 impl SecretInput {
     fn new(target: LoginTarget) -> Self {
         Self {
@@ -1239,17 +609,16 @@ impl App {
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
         if self.info.open_resume_picker {
-            self.open_resume_picker(terminal)?;
+            self.open_resume_picker()?;
         }
         if self.info.auth_unavailable.is_some() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice("no providers configured. run /login to sign in.".into()),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no providers configured. run /login to sign in.".into(),
+            ));
         }
         while !self.should_quit {
             self.poll_model_metadata_fetch(agent);
-            self.poll_pending_session_title(terminal)?;
+            self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             if !event::poll(Duration::from_millis(0))? {
                 self.flush_due_paste_burst();
@@ -1418,8 +787,7 @@ impl App {
         match &self.composer {
             ComposerMode::Input => true,
             ComposerMode::Questionnaire(questionnaire) => {
-                questionnaire.active_text_entry_active()
-                    || (ch != ' ' && questionnaire.active_question().allow_other)
+                questionnaire.accepts_paste_burst_char(ch)
             }
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -1435,7 +803,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.active_text_entry_active()
                     || (self.paste_burst.has_pending()
-                        && questionnaire.active_question().allow_other)
+                        && questionnaire.accepts_pending_paste_burst_enter())
             }
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -1459,11 +827,11 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_oauth_pending_key(key, terminal)? {
+        if self.handle_oauth_pending_key(key)? {
             return Ok(());
         }
 
-        if self.handle_questionnaire_key(key, terminal)? {
+        if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
 
@@ -1475,11 +843,11 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_config_text_key(key, terminal)? {
+        if self.handle_config_text_key(key)? {
             return Ok(());
         }
 
-        if self.handle_reasoning_cycle_key(key, terminal, agent)? {
+        if self.handle_reasoning_cycle_key(key, agent)? {
             return Ok(());
         }
 
@@ -1502,7 +870,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.notify_status(terminal, "input cleared; press ctrl-c again to quit")?;
+                    self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -1513,7 +881,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image(terminal)?;
+                self.paste_clipboard_image();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -1530,10 +898,9 @@ impl App {
                 self.cumulative_usage = None;
                 self.latest_usage = None;
                 self.current_context = None;
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("conversation reset; next message starts a new session".into()),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "conversation reset; next message starts a new session".into(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -1566,13 +933,10 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.notify_status(
-                        terminal,
-                        format!(
-                            "editing queued message; {} queued message(s) remain",
-                            self.queued_prompts.len()
-                        ),
-                    )?;
+                    self.notify_status(format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    ));
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -1667,7 +1031,7 @@ impl App {
         }
     }
 
-    fn poll_pending_session_title(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn poll_pending_session_title(&mut self) -> anyhow::Result<()> {
         let Some(future) = self.pending_session_title.as_mut() else {
             return Ok(());
         };
@@ -1684,16 +1048,12 @@ impl App {
             return Ok(());
         }
         if self.info.session_id.as_deref() == Some(result.session_id.as_str()) {
-            self.insert_entry(terminal, &Entry::Notice(format!("session titled: {title}")))?;
+            self.insert_entry(&Entry::Notice(format!("session titled: {title}")));
         }
         Ok(())
     }
 
-    fn handle_oauth_pending_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::OAuthPending(_)) {
             return Ok(false);
         }
@@ -1709,10 +1069,7 @@ impl App {
                 };
                 self.composer = ComposerMode::Input;
                 self.status = "login cancelled".into();
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!("{provider} login cancelled")),
-                )?;
+                self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -1721,11 +1078,7 @@ impl App {
         }
     }
 
-    fn handle_questionnaire_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_questionnaire_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Questionnaire(_)) {
             return Ok(false);
         }
@@ -1763,22 +1116,14 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        let new_cursor =
-                            previous_word_boundary(&field.other_value, field.other_cursor);
-                        let start = field.byte_index(new_cursor);
-                        let end = field.byte_index(field.other_cursor);
-                        field.other_value.replace_range(start..end, "");
-                        field.other_cursor = new_cursor;
-                    }
+                    questionnaire.delete_previous_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_questionnaire_answer(terminal)?;
+                self.submit_questionnaire_answer()?;
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -1822,11 +1167,7 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor =
-                            previous_word_boundary(&field.other_value, field.other_cursor);
-                    }
+                    questionnaire.move_text_cursor_previous_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1834,11 +1175,7 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor =
-                            next_word_boundary(&field.other_value, field.other_cursor);
-                    }
+                    questionnaire.move_text_cursor_next_word();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1846,12 +1183,7 @@ impl App {
             }
             (_, KeyCode::Left) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor = field.other_cursor.saturating_sub(1);
-                    } else {
-                        questionnaire.move_active_choice_previous();
-                    }
+                    questionnaire.move_cursor_left();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1859,13 +1191,7 @@ impl App {
             }
             (_, KeyCode::Right) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let char_len = questionnaire.active_char_len();
-                        let field = questionnaire.active_field_mut();
-                        field.other_cursor = (field.other_cursor + 1).min(char_len);
-                    } else {
-                        questionnaire.move_active_choice_next();
-                    }
+                    questionnaire.move_cursor_right();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1873,9 +1199,7 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        questionnaire.active_field_mut().other_cursor = 0;
-                    }
+                    questionnaire.move_cursor_home();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1883,10 +1207,7 @@ impl App {
             }
             (_, KeyCode::End) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    if questionnaire.active_text_entry_active() {
-                        let char_len = questionnaire.active_char_len();
-                        questionnaire.active_field_mut().other_cursor = char_len;
-                    }
+                    questionnaire.move_cursor_end();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -1937,12 +1258,9 @@ impl App {
         }
     }
 
-    fn submit_questionnaire_answer(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_questionnaire_answer(&mut self) -> anyhow::Result<()> {
         if let Some(display) = self.prepare_questionnaire_answer()? {
-            self.insert_entry(terminal, &Entry::User(display))?;
+            self.insert_entry(&Entry::User(display));
         }
         Ok(())
     }
@@ -1953,11 +1271,9 @@ impl App {
         else {
             return Ok(None);
         };
-        match questionnaire_answers(&questionnaire) {
-            Ok(answers) => {
-                let response = QuestionnaireResponse { answers };
-                let display = submitted_questionnaire_entry(&questionnaire.request, &response);
-                questionnaire.response.send_response(response);
+        match questionnaire.submit() {
+            Ok(submitted) => {
+                let display = submitted.display;
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1980,9 +1296,7 @@ impl App {
         else {
             return;
         };
-        questionnaire
-            .response
-            .cancel(QuestionnaireCancelReason::UserCancelled);
+        questionnaire.cancel_by_user();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
@@ -2002,10 +1316,7 @@ impl App {
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(questionnaire_notice_text(&request.request)),
-        )?;
+        self.insert_entry(&Entry::Notice(questionnaire_notice_text(&request.request)));
         self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             request.request,
             request.response,
@@ -2103,98 +1414,51 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                let Ok(mut value) = input.value.parse::<usize>() else {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!(
-                            "{} must be a positive whole number",
-                            input.key.label()
-                        )),
-                    )?;
-                    self.status = "config save failed".into();
-                    return Ok(true);
+                let saved = match input.save(&self.info.config_repository) {
+                    Ok(saved) => saved,
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err.to_string()));
+                        self.status = "config save failed".into();
+                        return Ok(true);
+                    }
                 };
-                value = value.max(1);
-                match input.key {
-                    ConfigNumberKey::MaxOutputBytes => {
-                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                            config.max_output_bytes = value;
-                            config.save(self.info.config_path.clone())
-                        })?;
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info,
-                            value,
-                            self.info.max_tool_output_lines,
-                        ));
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "max output bytes set to {value}; applies next session"
-                            )),
-                        )?;
-                        self.status = "config saved".into();
+                match saved {
+                    ConfigNumberSave::MaxOutputBytes(value) => {
+                        let config = self.info.config_repository.load()?;
+                        self.composer =
+                            ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
+                        self.insert_entry(&Entry::Notice(format!(
+                            "max output bytes set to {value}; applies next session"
+                        )));
                     }
-                    ConfigNumberKey::MaxToolOutputLines => {
-                        Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                            config.max_tool_output_lines = value;
-                            config.save(self.info.config_path.clone())
-                        })?;
+                    ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.max_tool_output_lines = value;
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info,
-                            Config::load(self.info.config_path.clone())?.max_output_bytes,
-                            value,
-                        ));
+                        let config = self.info.config_repository.load()?;
+                        self.composer =
+                            ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                         self.clamp_history_scroll_for_terminal(terminal)?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!("max tool output lines set to {value}")),
-                        )?;
-                        self.status = "config saved".into();
+                        self.insert_entry(&Entry::Notice(format!(
+                            "max tool output lines set to {value}"
+                        )));
                     }
-                    ConfigNumberKey::CompactThresholdPercent => {
-                        let value = value.clamp(1, 100) as u8;
-                        let config = Config::load(self.info.config_path.clone()).and_then(
-                            |mut config| {
-                                config.set_compact_threshold_percent(value);
-                                config.save(self.info.config_path.clone())?;
-                                Ok(config)
-                            },
-                        )?;
+                    ConfigNumberSave::CompactThresholdPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "compact threshold set to {}%",
-                                config.compact_threshold_percent
-                            )),
-                        )?;
-                        self.status = "config saved".into();
+                        self.insert_entry(&Entry::Notice(format!(
+                            "compact threshold set to {value}%"
+                        )));
                     }
-                    ConfigNumberKey::CompactTargetPercent => {
-                        let value = value.clamp(1, 100) as u8;
-                        let config = Config::load(self.info.config_path.clone()).and_then(
-                            |mut config| {
-                                config.set_compact_target_percent(value);
-                                config.save(self.info.config_path.clone())?;
-                                Ok(config)
-                            },
-                        )?;
+                    ConfigNumberSave::CompactTargetPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Notice(format!(
-                                "compact target set to {}%",
-                                config.compact_target_percent
-                            )),
-                        )?;
-                        self.status = "config saved".into();
+                        self.insert_entry(&Entry::Notice(format!(
+                            "compact target set to {value}%"
+                        )));
                     }
                 }
+                self.status = "config saved".into();
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -2209,14 +1473,35 @@ impl App {
                 }
                 Ok(true)
             }
+            (_, KeyCode::Left) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_left();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_right();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_home();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+                    input.move_cursor_end();
+                }
+                Ok(true)
+            }
             (_, KeyCode::Esc) => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.info.show_reasoning_output = config.show_reasoning_output;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
                 Ok(true)
             }
@@ -2224,11 +1509,7 @@ impl App {
         }
     }
 
-    fn handle_config_text_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
@@ -2239,27 +1520,17 @@ impl App {
                     return Ok(true);
                 };
                 let key = input.key;
-                let value = input.value.trim().to_string();
-                let save_result =
-                    Config::load(self.info.config_path.clone()).and_then(|mut config| {
-                        let value = (!value.is_empty()).then_some(value);
-                        match key {
-                            ConfigTextKey::OpenAiSearch => config.web_search_openai_api_key = value,
-                            ConfigTextKey::Exa => config.web_search_exa_api_key = value,
-                            ConfigTextKey::Brave => config.web_search_brave_api_key = value,
-                        }
-                        config.save(self.info.config_path.clone())
-                    });
+                let save_result = input.save(self.credential_store.as_ref());
                 match save_result {
                     Ok(()) => {
-                        self.refresh_web_search_config_picker(key.picker_value());
+                        self.refresh_web_search_config_picker(key.picker_value())?;
                         self.status = format!("{} saved", key.label());
                     }
                     Err(err) => {
-                        self.insert_entry(
-                            terminal,
-                            &Entry::Error(format!("could not save {}: {err}", key.label())),
-                        )?;
+                        self.insert_entry(&Entry::Error(format!(
+                            "could not save {}: {err}",
+                            key.label()
+                        )));
                         self.status = "config save failed".into();
                     }
                 }
@@ -2283,11 +1554,35 @@ impl App {
                 }
                 Ok(true)
             }
+            (_, KeyCode::Left) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_left();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_right();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_home();
+                }
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+                    input.move_cursor_end();
+                }
+                Ok(true)
+            }
             (_, KeyCode::Esc) => {
                 let ComposerMode::ConfigTextInput(input) = &self.composer else {
                     return Ok(true);
                 };
-                self.refresh_web_search_config_picker(input.key.picker_value());
+                self.refresh_web_search_config_picker(input.key.picker_value())?;
                 self.status = "web search config".into();
                 Ok(true)
             }
@@ -2298,7 +1593,6 @@ impl App {
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<bool> {
         let is_shift_tab = matches!(key.code, KeyCode::BackTab)
@@ -2307,7 +1601,7 @@ impl App {
             return Ok(false);
         }
 
-        self.cycle_reasoning(terminal, agent)?;
+        self.cycle_reasoning(agent)?;
         self.paste_burst.clear();
         self.ctrl_c_streak = 0;
         Ok(true)
@@ -2373,7 +1667,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite(terminal)?;
+                self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
@@ -2898,24 +2192,21 @@ impl App {
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                if self.execute_skill_command(&name, terminal, agent)? {
+                if self.execute_skill_command(&name, agent)? {
                     if trailing_prompt.is_empty() {
                         return Ok(());
                     }
                     prompt = trailing_prompt;
                     display_prompt = trailing_display_prompt;
                 } else {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!(
-                            "unknown command '/{name}'. Type / to choose one of: {}",
-                            commands::COMMANDS
-                                .iter()
-                                .map(|command| command.usage)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "unknown command '/{name}'. Type / to choose one of: {}",
+                        commands::COMMANDS
+                            .iter()
+                            .map(|command| command.usage)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
                     self.status = "unknown command".into();
                     return Ok(());
                 }
@@ -2969,10 +2260,7 @@ impl App {
         {
             self.start_session_title_generation(prompt.clone());
         }
-        self.insert_entry(
-            terminal,
-            &Entry::User(render_user_entry(&display_prompt, &images)),
-        )?;
+        self.insert_entry(&Entry::User(render_user_entry(&display_prompt, &images)));
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
@@ -2986,7 +2274,7 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+        if let Ok(config) = self.info.config_repository.load() {
             agent.set_compaction_config((&config).into());
         }
         self.active_tool_call = false;
@@ -3158,7 +2446,7 @@ impl App {
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
-                self.insert_entry(terminal, &Entry::Notice("model interrupted".into()))?;
+                self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.status = "interrupted".into();
@@ -3168,11 +2456,11 @@ impl App {
                 self.current_turn_start = None;
                 self.running = false;
                 self.loading_spinner.stop();
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "error".into();
             }
         }
-        self.apply_pending_model_selection(terminal, agent)?;
+        self.apply_pending_model_selection(agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
@@ -3202,35 +2490,28 @@ impl App {
         target.extend(self.steering_prompts.drain(..));
     }
 
-    fn paste_clipboard_image<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
+    fn paste_clipboard_image(&mut self) {
         if self.running {
-            self.notify_status(
-                terminal,
-                "image paste is unavailable while a model turn is running",
-            )?;
-            return Ok(());
+            self.notify_status("image paste is unavailable while a model turn is running");
+            return;
         }
         if !matches!(self.composer, ComposerMode::Input) {
-            self.notify_status(terminal, "image paste is only available in the message box")?;
-            return Ok(());
+            self.notify_status("image paste is only available in the message box");
+            return;
         }
         match read_clipboard_image() {
             Ok(image) => {
                 let summary = image_summary(&image);
                 self.pending_images.push(image);
-                self.notify_status(
-                    terminal,
-                    format!("attached image {} ({summary})", self.pending_images.len()),
-                )?;
+                self.notify_status(format!(
+                    "attached image {} ({summary})",
+                    self.pending_images.len()
+                ));
             }
             Err(err) => {
-                self.notify_status(terminal, format!("image paste failed: {err}"))?;
+                self.notify_status(format!("image paste failed: {err}"));
             }
         }
-        Ok(())
     }
 
     fn insert_paste(&mut self, text: &str) {
@@ -3259,16 +2540,16 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_questionnaire_key(key, terminal)? {
+        if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
         if self.handle_running_config_number_key(key, terminal)? {
             return Ok(());
         }
-        if self.handle_running_config_text_key(key, terminal)? {
+        if self.handle_running_config_text_key(key)? {
             return Ok(());
         }
-        if self.handle_running_picker_key(key, terminal)? {
+        if self.handle_running_picker_key(key)? {
             return Ok(());
         }
         if self.handle_running_command_palette_key(key, terminal)? {
@@ -3283,7 +2564,7 @@ impl App {
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
-                    self.notify_status(terminal, "input cleared; press esc to interrupt model")?;
+                    self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
                     self.should_quit = true;
@@ -3291,7 +2572,7 @@ impl App {
             }
             (KeyModifiers::CONTROL, KeyCode::Char('v'))
             | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image(terminal)?;
+                self.paste_clipboard_image();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -3301,10 +2582,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                self.notify_status(
-                    terminal,
-                    "reset is unavailable while a model turn is running",
-                )?;
+                self.notify_status("reset is unavailable while a model turn is running");
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -3337,13 +2615,10 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Up) => {
                 if self.recall_last_queued_prompt() {
-                    self.notify_status(
-                        terminal,
-                        format!(
-                            "editing queued message; {} queued message(s) remain",
-                            self.queued_prompts.len()
-                        ),
-                    )?;
+                    self.notify_status(format!(
+                        "editing queued message; {} queued message(s) remain",
+                        self.queued_prompts.len()
+                    ));
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -3368,7 +2643,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.queue_prompt_after_turn(terminal)?;
+                self.queue_prompt_after_turn()?;
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
@@ -3418,48 +2693,38 @@ impl App {
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
-                self.queue_steering_prompt(prompt, terminal)?;
+                self.queue_steering_prompt(prompt)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
-                        "unknown or unavailable command '/{name}' while a model turn is running"
-                    )),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "unknown or unavailable command '/{name}' while a model turn is running"
+                )));
                 self.status = "command unavailable while running".into();
             }
         }
         Ok(())
     }
 
-    fn queue_steering_prompt(
-        &mut self,
-        prompt: String,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn queue_steering_prompt(&mut self, prompt: String) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
         self.steering_prompts.push_back(prompt);
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "queued steer {} for after the current output or tool call",
-                self.steering_prompts.len()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "queued steer {} for after the current output or tool call",
+            self.steering_prompts.len()
+        )));
         self.status = format!("queued {} steer(s)", self.steering_prompts.len());
         Ok(())
     }
 
-    fn queue_prompt_after_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn queue_prompt_after_turn(&mut self) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
         let display_prompt = self.input.clone();
         let paste_segments = self.paste_segments.clone();
@@ -3470,7 +2735,7 @@ impl App {
             self.clamp_command_selection();
             return Ok(());
         }
-        self.queue_prompt(prompt, display_prompt, paste_segments, terminal)
+        self.queue_prompt(prompt, display_prompt, paste_segments)
     }
 
     fn queue_prompt(
@@ -3478,7 +2743,6 @@ impl App {
         prompt: String,
         display_prompt: String,
         paste_segments: Vec<PasteSegment>,
-        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
@@ -3490,13 +2754,10 @@ impl App {
             display_prompt,
             paste_segments,
         });
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "queued message {} for after the current turn",
-                self.queued_prompts.len()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "queued message {} for after the current turn",
+            self.queued_prompts.len()
+        )));
         self.status = format!("queued {} message(s)", self.queued_prompts.len());
         Ok(())
     }
@@ -3504,7 +2765,6 @@ impl App {
     fn execute_model_command_during_turn(
         &mut self,
         invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let model = invocation.args.trim();
         if model.is_empty() {
@@ -3515,13 +2775,10 @@ impl App {
                 &self.available_auths,
             );
             if picker.items.is_empty() {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "no cached API models. run /refresh-model-list after the current run ends."
-                            .into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "no cached API models. run /refresh-model-list after the current run ends."
+                        .into(),
+                ));
                 self.status = "running".into();
             } else {
                 self.composer = ComposerMode::Picker(picker);
@@ -3537,41 +2794,31 @@ impl App {
             &self.info.auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.queue_model_selection(selection, terminal),
+            Ok(selection) => self.queue_model_selection(selection),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "model switch failed".into();
                 Ok(())
             }
         }
     }
 
-    fn queue_model_selection(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn queue_model_selection(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
         let provider_model = format!("{}/{}", selection.provider, selection.model);
         self.pending_model_selection = Some(selection);
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
+        self.insert_entry(&Entry::Notice(format!(
                 "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
             )),
-        )?;
+        );
         self.status = format!("model queued: {provider_model}");
         Ok(())
     }
 
-    fn apply_pending_model_selection(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn apply_pending_model_selection(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         let Some(selection) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        self.select_model(selection, terminal, agent)
+        self.select_model(selection, agent)
     }
 
     fn execute_command_during_turn(
@@ -3580,24 +2827,21 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         match invocation.id {
-            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Skills => self.execute_skills_command(terminal),
+            CommandId::Skills => self.execute_skills_command(),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::Model => self.execute_model_command_during_turn(invocation, terminal),
+            CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::New
             | CommandId::Compact
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
             | CommandId::Resume => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "/{} is unavailable while a model turn is running",
-                        invocation.name
-                    )),
-                )?;
+                self.insert_entry(&Entry::Notice(format!(
+                    "/{} is unavailable while a model turn is running",
+                    invocation.name
+                )));
                 self.status = "command unavailable while running".into();
                 Ok(())
             }
@@ -3661,11 +2905,7 @@ impl App {
         }
     }
 
-    fn handle_running_picker_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_running_picker_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Picker(_)) {
             return Ok(false);
         }
@@ -3712,11 +2952,11 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite(terminal)?;
+                self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
-                self.submit_picker_selection_during_turn(terminal)?;
+                self.submit_picker_selection_during_turn()?;
                 Ok(true)
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
@@ -3726,7 +2966,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_picker_selection_during_turn(terminal)?;
+                self.submit_picker_selection_during_turn()?;
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
@@ -3737,10 +2977,7 @@ impl App {
         }
     }
 
-    fn submit_picker_selection_during_turn(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             if matches!(
                 &self.composer,
@@ -3767,7 +3004,7 @@ impl App {
             PickerAction::InsertFilePath => {
                 self.insert_selected_file_path(&value, /*running*/ true);
             }
-            PickerAction::Config => self.submit_config_selection_during_turn(&value, terminal)?,
+            PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::SelectTitleModel => {
                 self.refresh_available_auths();
                 let (provider, _model, auth) = self.title_model_selection();
@@ -3777,9 +3014,9 @@ impl App {
                     &auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_title_model(selection, terminal)?,
+                    Ok(selection) => self.select_title_model(selection)?,
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "title model switch failed".into();
                     }
                 }
@@ -3792,9 +3029,9 @@ impl App {
                     &self.info.auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.queue_model_selection(selection, terminal)?,
+                    Ok(selection) => self.queue_model_selection(selection)?,
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "model switch failed".into();
                     }
                 }
@@ -3802,26 +3039,19 @@ impl App {
             PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::ResumeSession => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "that picker action is unavailable while a model turn is running".into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "that picker action is unavailable while a model turn is running".into(),
+                ));
                 self.status = "picker action unavailable while running".into();
             }
         }
         Ok(())
     }
 
-    fn submit_config_selection_during_turn(
-        &mut self,
-        value: &str,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxOutputBytes,
                     config.max_output_bytes,
@@ -3829,7 +3059,7 @@ impl App {
                 self.status = "edit max output bytes".into();
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxToolOutputLines,
                     config.max_tool_output_lines,
@@ -3837,25 +3067,22 @@ impl App {
                 self.status = "edit max tool output lines".into();
             }
             config_picker::REASONING_VALUE => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
-                        "reasoning changes are unavailable while a model turn is running".into(),
-                    ),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "reasoning changes are unavailable while a model turn is running".into(),
+                ));
                 self.status = "config action unavailable while running".into();
             }
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
-                self.toggle_reasoning_output(terminal)?;
+                self.toggle_reasoning_output()?;
             }
             config_picker::CHECK_FOR_UPDATES_VALUE => {
-                self.toggle_check_for_updates(terminal)?;
+                self.toggle_check_for_updates()?;
             }
             config_picker::AUTO_COMPACT_VALUE => {
-                self.toggle_auto_compact(terminal)?;
+                self.toggle_auto_compact()?;
             }
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactThresholdPercent,
                     config.compact_threshold_percent as usize,
@@ -3863,7 +3090,7 @@ impl App {
                 self.status = "edit compact threshold percent".into();
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactTargetPercent,
                     config.compact_target_percent as usize,
@@ -3871,43 +3098,28 @@ impl App {
                 self.status = "edit compact target percent".into();
             }
             config_picker::WEB_SEARCH_VALUE => {
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                let config = self.info.config_repository.load()?;
+                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                    &config,
+                    self.credential_store.as_ref(),
+                ));
                 self.status = "web search config".into();
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                let config = self.info.config_repository.load()?;
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
             }
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal)?,
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::OpenAiSearch,
-                    config.web_search_openai_api_key,
-                ));
-                self.status = "edit OpenAI web search API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)?;
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Exa,
-                    config.web_search_exa_api_key,
-                ));
-                self.status = "edit Exa API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::Exa)?;
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Brave,
-                    config.web_search_brave_api_key,
-                ));
-                self.status = "edit Brave Search API key".into();
+                self.open_web_search_api_key_editor(ConfigTextKey::Brave)?;
             }
             _ => {}
         }
@@ -3925,15 +3137,11 @@ impl App {
         self.handle_config_number_key(key, terminal)
     }
 
-    fn handle_running_config_text_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    fn handle_running_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
-        self.handle_config_text_key(key, terminal)
+        self.handle_config_text_key(key)
     }
 
     fn reset_streams(&mut self) {
@@ -4077,7 +3285,7 @@ impl App {
                     self.finish_streams(terminal)?;
                 }
                 if let Some(entry) = self.record_agent_event(other) {
-                    self.insert_entry(terminal, &entry)?;
+                    self.insert_entry(&entry);
                 }
                 self.drain_streams(terminal)?;
                 Ok(true)
@@ -4318,7 +3526,7 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         match invocation.id {
-            CommandId::Exit => self.execute_exit_command(terminal),
+            CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal, agent),
             CommandId::Model => {
                 self.execute_model_command(invocation, terminal, agent)
@@ -4333,17 +3541,14 @@ impl App {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::Logout => {
-                self.execute_logout_command(invocation, terminal, agent)
-                    .await
-            }
+            CommandId::Logout => self.execute_logout_command(invocation, agent).await,
             CommandId::Resume => {
                 self.execute_resume_command(invocation, terminal, agent)
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
-            CommandId::Skills => self.execute_skills_command(terminal),
+            CommandId::Skills => self.execute_skills_command(),
         }
     }
 
@@ -4352,7 +3557,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
-        if let Ok(config) = Config::load(self.info.config_path.clone()) {
+        if let Ok(config) = self.info.config_repository.load() {
             agent.set_compaction_config((&config).into());
         }
         self.steering_prompts.clear();
@@ -4405,35 +3610,29 @@ impl App {
 
         match compacted {
             Ok(true) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("compacted conversation context".into()),
-                )?;
+                self.insert_entry(&Entry::Notice("compacted conversation context".into()));
                 self.status = "context compacted".into();
             }
             Ok(false) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(
+                self.insert_entry(&Entry::Notice(
                         "not enough conversation history to compact, or the model context window is unknown"
                             .into(),
                     ),
-                )?;
+                );
                 self.status = "context not compacted".into();
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("failed to compact conversation context: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "failed to compact conversation context: {err}"
+                )));
                 self.status = "context compaction failed".into();
             }
         }
         Ok(())
     }
 
-    fn execute_exit_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        self.insert_entry(terminal, &Entry::Notice("exiting rho".into()))?;
+    fn execute_exit_command(&mut self) -> anyhow::Result<()> {
+        self.insert_entry(&Entry::Notice("exiting rho".into()));
         self.should_quit = true;
         self.status = "exiting".into();
         Ok(())
@@ -4480,7 +3679,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let providers = if invocation.args.trim().is_empty() {
             self.refresh_available_auths();
-            registry::providers()
+            provider::providers()
                 .iter()
                 .filter(|provider| provider.model_refresh.is_some())
                 .filter(|provider| {
@@ -4495,13 +3694,11 @@ impl App {
         };
 
         if providers.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
+            self.insert_entry(&Entry::Notice(
                     "no refreshable providers are configured. run /login for a provider with model list support."
                         .into(),
                 ),
-            )?;
+            );
             self.status = "model refresh skipped".into();
             return Ok(());
         }
@@ -4513,20 +3710,16 @@ impl App {
                 .await
             {
                 Ok(refresh) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Notice(format!(
-                            "refreshed {} model list: {} models",
-                            refresh.provider,
-                            refresh.models.len()
-                        )),
-                    )?;
+                    self.insert_entry(&Entry::Notice(format!(
+                        "refreshed {} model list: {} models",
+                        refresh.provider,
+                        refresh.models.len()
+                    )));
                 }
                 Err(err) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!("failed to refresh {provider} model list: {err}")),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "failed to refresh {provider} model list: {err}"
+                    )));
                 }
             }
         }
@@ -4553,9 +3746,9 @@ impl App {
             &self.info.auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.select_model(selection, terminal, agent),
+            Ok(selection) => self.select_model(selection, agent),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "model switch failed".into();
                 Ok(())
             }
@@ -4573,12 +3766,9 @@ impl App {
         let picker = model_picker::model_picker(&self.info, &self.available_auths);
 
         if picker.items.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
-                    "no cached API models. run /refresh-model-list after signing in.".into(),
-                ),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. run /refresh-model-list after signing in.".into(),
+            ));
             self.status = "ready".into();
             return Ok(());
         }
@@ -4606,9 +3796,9 @@ impl App {
             &auth,
             &self.available_auths,
         ) {
-            Ok(selection) => self.select_title_model(selection, terminal),
+            Ok(selection) => self.select_title_model(selection),
             Err(err) => {
-                self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "title model switch failed".into();
                 Ok(())
             }
@@ -4628,12 +3818,9 @@ impl App {
         );
 
         if picker.items.is_empty() {
-            self.insert_entry(
-                terminal,
-                &Entry::Notice(
-                    "no cached API models. run /refresh-model-list after signing in.".into(),
-                ),
-            )?;
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. run /refresh-model-list after signing in.".into(),
+            ));
             self.status = "ready".into();
             return Ok(());
         }
@@ -4673,9 +3860,9 @@ impl App {
                     &self.info.auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_model(selection, terminal, agent),
+                    Ok(selection) => self.select_model(selection, agent),
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "model switch failed".into();
                         Ok(())
                     }
@@ -4690,9 +3877,9 @@ impl App {
                     &auth,
                     &self.available_auths,
                 ) {
-                    Ok(selection) => self.select_title_model(selection, terminal),
+                    Ok(selection) => self.select_title_model(selection),
                     Err(err) => {
-                        self.insert_entry(terminal, &Entry::Error(err.to_string()))?;
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "title model switch failed".into();
                         Ok(())
                     }
@@ -4701,7 +3888,7 @@ impl App {
             PickerAction::LoginProvider => {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
-            PickerAction::LogoutProvider => self.logout_provider(&value, terminal, agent).await,
+            PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::InsertSkillCommand => {
                 self.input = format!("/skill:{value}");
                 self.input_cursor = self.input_char_len();
@@ -4716,23 +3903,18 @@ impl App {
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
-            PickerAction::Config => self.submit_config_selection(&value, terminal, agent),
+            PickerAction::Config => self.submit_config_selection(&value, agent),
         }
     }
 
-    fn submit_config_selection(
-        &mut self,
-        value: &str,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
         match value {
-            config_picker::REASONING_VALUE => self.cycle_reasoning(terminal, agent),
-            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(terminal),
-            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(terminal),
-            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(terminal),
+            config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
+            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
+            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
+            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactThresholdPercent,
                     config.compact_threshold_percent as usize,
@@ -4741,7 +3923,7 @@ impl App {
                 Ok(())
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::CompactTargetPercent,
                     config.compact_target_percent as usize,
@@ -4750,7 +3932,7 @@ impl App {
                 Ok(())
             }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxOutputBytes,
                     config.max_output_bytes,
@@ -4759,7 +3941,7 @@ impl App {
                 Ok(())
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
+                let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                     ConfigNumberKey::MaxToolOutputLines,
                     config.max_tool_output_lines,
@@ -4768,51 +3950,51 @@ impl App {
                 Ok(())
             }
             config_picker::WEB_SEARCH_VALUE => {
-                self.composer =
-                    ComposerMode::Picker(config_picker::web_search_config_picker(&self.info));
+                let config = self.info.config_repository.load()?;
+                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                    &config,
+                    self.credential_store.as_ref(),
+                ));
                 self.status = "web search config".into();
                 Ok(())
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::Picker(config_picker::config_picker(
-                    &self.info,
-                    config.max_output_bytes,
-                    config.max_tool_output_lines,
-                ));
+                let config = self.info.config_repository.load()?;
+                self.composer =
+                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
                 self.status = "config".into();
                 Ok(())
             }
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(terminal),
+            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::OpenAiSearch,
-                    config.web_search_openai_api_key,
-                ));
-                self.status = "edit OpenAI web search API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)
             }
             config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Exa,
-                    config.web_search_exa_api_key,
-                ));
-                self.status = "edit Exa API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::Exa)
             }
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                let config = Config::load(self.info.config_path.clone())?;
-                self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(
-                    ConfigTextKey::Brave,
-                    config.web_search_brave_api_key,
-                ));
-                self.status = "edit Brave Search API key".into();
-                Ok(())
+                self.open_web_search_api_key_editor(ConfigTextKey::Brave)
             }
             _ => Ok(()),
         }
+    }
+
+    fn open_web_search_api_key_editor(&mut self, key: ConfigTextKey) -> anyhow::Result<()> {
+        let credential = key.web_search_credential();
+        let config = self.info.config_repository.load()?;
+        let (value, load_error) = resolve_web_search_editor_value(
+            load_web_search_api_key(self.credential_store.as_ref(), credential),
+            config.legacy_web_search_api_key(credential),
+        );
+        if let Some(err) = load_error {
+            self.insert_entry(&Entry::Error(format!(
+                "could not access {}: {err}",
+                key.label()
+            )));
+        }
+        self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(key, value));
+        self.status = format!("edit {}", key.label());
+        Ok(())
     }
 
     fn refresh_main_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
@@ -4832,26 +4014,25 @@ impl App {
         selected_value: &str,
         filter: String,
     ) -> anyhow::Result<()> {
-        let config = Config::load(self.info.config_path.clone())?;
-        let mut picker = config_picker::config_picker(
-            &self.info,
-            config.max_output_bytes,
-            config.max_tool_output_lines,
-        );
+        let config = self.info.config_repository.load()?;
+        let mut picker = config_picker::config_picker(&self.info, &config);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
         self.status = "config".into();
         Ok(())
     }
 
-    fn refresh_web_search_config_picker(&mut self, selected_value: &str) {
+    fn refresh_web_search_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
         let filter = match &self.composer {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
-        let mut picker = config_picker::web_search_config_picker(&self.info);
+        let config = self.info.config_repository.load()?;
+        let mut picker =
+            config_picker::web_search_config_picker(&config, self.credential_store.as_ref());
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.composer = ComposerMode::Picker(picker);
+        Ok(())
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
@@ -4882,13 +4063,7 @@ impl App {
         )
     }
 
-    fn toggle_selected_model_favorite<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> anyhow::Result<()>
-    where
-        B::Error: Send + Sync + 'static,
-    {
+    fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             return Ok(());
         };
@@ -4906,22 +4081,20 @@ impl App {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        let save_result = self.info.config_repository.update(|config| {
             let pinned = favorites::toggle_favorite(
                 &mut config.favorite_models,
                 &favorite.provider,
                 &favorite.model,
             );
-            config.save(self.info.config_path.clone())?;
-            Ok((pinned, config.favorite_models))
+            (pinned, config.favorite_models.clone())
         });
         let (pinned, favorite_models) = match save_result {
             Ok(saved) => saved,
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save pinned models: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save pinned models: {err}"
+                )));
                 self.status = "config save failed".into();
                 return Ok(());
             }
@@ -4957,7 +4130,7 @@ impl App {
         Self::restore_picker_position(&mut picker, &value, filter);
         self.composer = ComposerMode::Picker(picker);
         let action = if pinned { "pinned" } else { "unpinned" };
-        self.insert_entry(terminal, &Entry::Notice(format!("{action} {value}")))?;
+        self.insert_entry(&Entry::Notice(format!("{action} {value}")));
         self.status = format!("{action} model");
         Ok(())
     }
@@ -5004,11 +4177,7 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
         let reasoning = self
             .info
             .reasoning
@@ -5017,10 +4186,9 @@ impl App {
             let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
                 Ok(provider) => provider,
                 Err(err) => {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Error(format!("could not update reasoning to {reasoning}: {err}")),
-                    )?;
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not update reasoning to {reasoning}: {err}"
+                    )));
                     self.status = "reasoning change failed".into();
                     return Ok(());
                 }
@@ -5028,15 +4196,14 @@ impl App {
             agent.replace_provider(provider);
         }
         self.info.reasoning = reasoning;
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        let save_result = self.info.config_repository.update(|config| {
             config.reasoning = reasoning;
-            config.save(self.info.config_path.clone())
         });
         if matches!(
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            let config = self.info.config_repository.load().unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
@@ -5045,26 +4212,19 @@ impl App {
                 self.status = format!("reasoning: {reasoning}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "reasoning set to {reasoning} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
         Ok(())
     }
 
-    fn toggle_check_for_updates(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.check_for_updates = !config.check_for_updates;
-            config.save(self.info.config_path.clone())?;
-            Ok(config.check_for_updates)
-        });
-        match save_result {
-            Ok(check_for_updates) => {
+    fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(&self.info.config_repository, ConfigToggle::CheckForUpdates) {
+            Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
                 if !check_for_updates {
                     self.info.update_notice = None;
                 }
@@ -5075,12 +4235,16 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save update check setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save update check setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
@@ -5091,14 +4255,9 @@ impl App {
         Ok(())
     }
 
-    fn toggle_auto_compact(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.auto_compact = !config.auto_compact;
-            config.save(self.info.config_path.clone())?;
-            Ok(config.auto_compact)
-        });
-        match save_result {
-            Ok(auto_compact) => {
+    fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(&self.info.config_repository, ConfigToggle::AutoCompact) {
+            Ok(ConfigMutation::AutoCompact(auto_compact)) => {
                 self.status = if auto_compact {
                     "auto compact: on".into()
                 } else {
@@ -5106,12 +4265,16 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save auto compact setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save auto compact setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
@@ -5122,14 +4285,12 @@ impl App {
         Ok(())
     }
 
-    fn toggle_reasoning_output(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let show_reasoning_output = !self.info.show_reasoning_output;
-        let save_result = Config::load(self.info.config_path.clone()).and_then(|mut config| {
-            config.show_reasoning_output = show_reasoning_output;
-            config.save(self.info.config_path.clone())
-        });
-        match save_result {
-            Ok(()) => {
+    fn toggle_reasoning_output(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(
+            &self.info.config_repository,
+            ConfigToggle::ShowReasoningOutput,
+        ) {
+            Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.show_reasoning_output = show_reasoning_output;
                 self.status = if show_reasoning_output {
                     "reasoning output: shown".into()
@@ -5138,38 +4299,35 @@ impl App {
                 };
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not save reasoning output setting: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save reasoning output setting: {err}"
+                )));
                 self.status = "config save failed".into();
             }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let config = Config::load(self.info.config_path.clone()).unwrap_or_default();
+            let config = self.info.config_repository.load().unwrap_or_default();
             self.info.show_reasoning_output = config.show_reasoning_output;
             self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
         }
         Ok(())
     }
 
-    fn cycle_web_search_provider(&mut self, _terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let mut config = Config::load(self.info.config_path.clone())?;
-        config.web_search_provider = match config.web_search_provider.as_str() {
-            "auto" => "openai",
-            "openai" => "exa",
-            "exa" => "brave",
-            "brave" => "disabled",
-            "disabled" => "auto",
-            _ => "auto",
-        }
-        .into();
-        let provider = config.web_search_provider.clone();
-        config.save(self.info.config_path.clone())?;
-        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE);
+    fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
+        let ConfigMutation::WebSearchProvider(provider) =
+            config_editor::cycle_web_search_provider(&self.info.config_repository)?
+        else {
+            unreachable!("provider cycle returned a mismatched config mutation");
+        };
+        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.status = format!("web search: {provider}");
         Ok(())
     }
@@ -5183,12 +4341,7 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    fn select_model(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    fn select_model(&mut self, selection: ModelSelection, agent: &mut Agent) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -5197,10 +4350,9 @@ impl App {
         let new_provider = match build_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not switch to {provider_model}: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {provider_model}: {err}"
+                )));
                 self.status = "model switch failed".into();
                 return Ok(());
             }
@@ -5214,40 +4366,31 @@ impl App {
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
-        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        match self.info.config_repository.update(|config| {
             config.provider = provider.clone();
             config.model = model.clone();
             config.reasoning = reasoning;
             config.auth = auth.clone();
-            config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
+                self.insert_entry(&Entry::Notice(format!(
                         "model switched to {provider_model} with reasoning {reasoning} and saved to config"
                     )),
-                )?;
+                );
                 self.status = format!("model: {provider_model}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "model switched to {provider_model} with reasoning {reasoning} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
         Ok(())
     }
 
-    fn select_title_model(
-        &mut self,
-        selection: ModelSelection,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    fn select_title_model(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -5255,28 +4398,22 @@ impl App {
         self.info.title_provider = Some(provider.clone());
         self.info.title_model = Some(model.clone());
         self.info.title_auth = Some(auth.clone());
-        match Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        match self.info.config_repository.update(|config| {
             config.title_provider = Some(provider.clone());
             config.title_model = Some(model.clone());
             config.title_auth = Some(auth.clone());
-            config.save(self.info.config_path.clone())
         }) {
             Ok(()) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice(format!(
-                        "session title model switched to {provider_model} and saved to config"
-                    )),
-                )?;
+                self.insert_entry(&Entry::Notice(format!(
+                    "session title model switched to {provider_model} and saved to config"
+                )));
                 self.status = format!("title model: {provider_model}");
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!(
+                self.insert_entry(&Entry::Error(format!(
                         "session title model switched to {provider_model} for this session, but saving config failed: {err}"
                     )),
-                )?;
+                );
                 self.status = "config save failed".into();
             }
         }
@@ -5288,11 +4425,10 @@ impl App {
     }
 
     fn save_current_config(&self) -> anyhow::Result<()> {
-        Config::load(self.info.config_path.clone()).and_then(|mut config| {
+        self.info.config_repository.update(|config| {
             config.provider = self.info.provider.clone();
             config.model = self.info.model.clone();
             config.auth = self.info.auth.clone();
-            config.save(self.info.config_path.clone())
         })
     }
 
@@ -5309,26 +4445,24 @@ impl App {
                 .await;
         }
 
-        self.open_resume_picker(terminal)
+        self.open_resume_picker()
     }
 
-    fn open_resume_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn open_resume_picker(&mut self) -> anyhow::Result<()> {
         match Session::list(&self.info.cwd) {
             Ok(sessions) if sessions.is_empty() => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Notice("no saved sessions for this workspace".into()),
-                )?;
+                self.insert_entry(&Entry::Notice(
+                    "no saved sessions for this workspace".into(),
+                ));
                 self.status = "no sessions".into();
             }
             Ok(sessions) => {
                 let picker =
                     session_picker::session_picker(sessions, self.info.session_id.as_deref());
                 if picker.items.is_empty() {
-                    self.insert_entry(
-                        terminal,
-                        &Entry::Notice("no other saved sessions for this workspace".into()),
-                    )?;
+                    self.insert_entry(&Entry::Notice(
+                        "no other saved sessions for this workspace".into(),
+                    ));
                     self.status = "no sessions".into();
                     return Ok(());
                 }
@@ -5336,10 +4470,7 @@ impl App {
                 self.status = "select session".into();
             }
             Err(err) => {
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not list sessions: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!("could not list sessions: {err}")));
                 self.status = "resume failed".into();
             }
         }
@@ -5362,10 +4493,7 @@ impl App {
             }
             Err(err) => {
                 self.composer = ComposerMode::Input;
-                self.insert_entry(
-                    terminal,
-                    &Entry::Error(format!("could not resume session: {err}")),
-                )?;
+                self.insert_entry(&Entry::Error(format!("could not resume session: {err}")));
                 self.status = "resume failed".into();
                 Ok(())
             }
@@ -5412,32 +4540,25 @@ impl App {
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!("resumed session {short_id}")),
-        )?;
+        self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
         self.status = format!("resumed {short_id}");
         Ok(())
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let config = Config::load(self.info.config_path.clone())?;
+        let config = self.info.config_repository.load()?;
         self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.info.show_reasoning_output = config.show_reasoning_output;
-        self.composer = ComposerMode::Picker(config_picker::config_picker(
-            &self.info,
-            config.max_output_bytes,
-            self.info.max_tool_output_lines,
-        ));
+        self.composer = ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }
 
-    fn execute_skills_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    fn execute_skills_command(&mut self) -> anyhow::Result<()> {
         let picker = skill_picker::skill_picker(crate::skills::discover(&self.info.cwd));
         if picker.items.is_empty() {
-            self.insert_entry(terminal, &Entry::Notice("no skills loaded".into()))?;
+            self.insert_entry(&Entry::Notice("no skills loaded".into()));
             self.status = "skills".into();
             return Ok(());
         }
@@ -5447,12 +4568,7 @@ impl App {
         Ok(())
     }
 
-    fn execute_skill_command(
-        &mut self,
-        name: &str,
-        terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
-    ) -> anyhow::Result<bool> {
+    fn execute_skill_command(&mut self, name: &str, agent: &mut Agent) -> anyhow::Result<bool> {
         let Some(name) = name.strip_prefix("skill:") else {
             return Ok(false);
         };
@@ -5465,14 +4581,11 @@ impl App {
 
         self.ensure_session(agent)?;
         agent.load_skill(&skill)?;
-        self.insert_entry(
-            terminal,
-            &Entry::Notice(format!(
-                "loaded skill {} from {}",
-                skill.name,
-                skill.path.display()
-            )),
-        )?;
+        self.insert_entry(&Entry::Notice(format!(
+            "loaded skill {} from {}",
+            skill.name,
+            skill.path.display()
+        )));
         self.status = format!("loaded skill {}", skill.name);
         Ok(true)
     }
@@ -6335,27 +5448,17 @@ impl App {
             .map(|session_id| format!("rho session saved: {session_id}"))
     }
 
-    fn insert_entry<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        entry: &Entry,
-    ) -> Result<(), B::Error> {
-        let _ = terminal.size()?;
+    fn insert_entry(&mut self, entry: &Entry) {
         self.record_inserted_entry(entry.clone());
-        Ok(())
     }
 
-    fn notify_status<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        status: impl Into<String>,
-    ) -> Result<(), B::Error> {
+    fn notify_status(&mut self, status: impl Into<String>) {
         let status = status.into();
         self.status = status.clone();
         if self.last_status_notice.as_deref() == Some(status.as_str()) {
-            return Ok(());
+            return;
         }
-        self.insert_entry(terminal, &Entry::Notice(status))
+        self.insert_entry(&Entry::Notice(status));
     }
 
     fn record_inserted_entry(&mut self, entry: Entry) {
@@ -6660,45 +5763,6 @@ fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-fn config_number_input_lines(input: &ConfigNumberInput, width: usize) -> Vec<Line<'static>> {
-    let label = input.key.label();
-    vec![
-        styled_line(
-            truncate_one_line(&format!("edit {label}  enter save, esc cancel"), width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&input.value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
-}
-
-fn config_text_input_lines(input: &ConfigTextInput, width: usize) -> Vec<Line<'static>> {
-    let masked = "•".repeat(input.value.chars().count());
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!("edit {}  enter save, esc cancel", input.key.label()),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&masked, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
-}
-
 fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>> {
     vec![styled_line(
         truncate_one_line(
@@ -6709,509 +5773,6 @@ fn oauth_pending_lines(target: &LoginTarget, width: usize) -> Vec<Line<'static>>
         Theme::dim(),
         LineFill::Natural,
     )]
-}
-
-fn questionnaire_lines(questionnaire: &QuestionnaireComposer, width: usize) -> Vec<Line<'static>> {
-    questionnaire_frame(questionnaire, width).0
-}
-
-fn questionnaire_frame(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> (Vec<Line<'static>>, Position) {
-    let mut lines = Vec::new();
-    if let Some(title) = &questionnaire.request.title {
-        push_wrapped_text(
-            &mut lines,
-            title,
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
-    } else {
-        push_wrapped_text(
-            &mut lines,
-            &format!(
-                "answer {} question(s)",
-                questionnaire.request.questions.len()
-            ),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
-    }
-    if let Some(reason) = &questionnaire.request.reason {
-        push_wrapped_text(
-            &mut lines,
-            &format!("reason: {reason}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-    lines.push(styled_line(
-        truncate_one_line(
-            "enter submit · up/down choose · space toggle · tab next · type only for other",
-            width,
-        ),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
-
-    let mut cursor = Position { x: 0, y: 0 };
-    for (index, (question, field)) in questionnaire
-        .request
-        .questions
-        .iter()
-        .zip(questionnaire.fields.iter())
-        .enumerate()
-    {
-        let active = questionnaire.active_index == index;
-        let before = lines.len();
-        questionnaire_push_question_lines(&mut lines, question, field, index, active, width);
-        if active {
-            cursor = questionnaire_question_cursor(question, field, before, width);
-        }
-    }
-    (lines, cursor)
-}
-
-fn questionnaire_push_question_lines(
-    lines: &mut Vec<Line<'static>>,
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    index: usize,
-    active: bool,
-    width: usize,
-) {
-    let marker = if active { ">" } else { " " };
-    let required = if question.required { "" } else { " optional" };
-    push_wrapped_text(
-        lines,
-        &format!("{marker} {}. {}{required}", index + 1, question.question),
-        width,
-        if active {
-            Theme::input_prompt()
-        } else {
-            Theme::dim()
-        },
-        LineFill::Natural,
-    );
-    if let Some(help) = &question.help {
-        push_wrapped_text(
-            lines,
-            &format!("  help: {help}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        push_wrapped_text(
-            lines,
-            &format!("  {answer_hint}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
-
-    match question.kind {
-        QuestionnaireQuestionKind::Text => {
-            push_prefixed_input_lines(lines, "  ", &field.other_value, width, Theme::text());
-        }
-        QuestionnaireQuestionKind::Choice
-        | QuestionnaireQuestionKind::MultiSelect
-        | QuestionnaireQuestionKind::Confirm => {
-            for choice_index in 0..choice_count(question) {
-                let highlighted = active && field.choice_cursor == choice_index;
-                let line_marker = if highlighted { " >" } else { "  " };
-                let selection_marker =
-                    questionnaire_selection_marker(question, field, choice_index);
-                let label = questionnaire_choice_label(question, choice_index);
-                push_wrapped_text(
-                    lines,
-                    &format!("{line_marker} {selection_marker} {label}"),
-                    width,
-                    if highlighted {
-                        Theme::input_prompt()
-                    } else {
-                        Theme::text()
-                    },
-                    LineFill::Natural,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    push_prefixed_input_lines(
-                        lines,
-                        "      other: ",
-                        &field.other_value,
-                        width,
-                        Theme::text(),
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
-    let mut hints = Vec::new();
-    match question.kind {
-        QuestionnaireQuestionKind::Text => hints.push("free text only when needed".into()),
-        QuestionnaireQuestionKind::Choice => hints.push("select one".into()),
-        QuestionnaireQuestionKind::MultiSelect => hints.push("select one or more".into()),
-        QuestionnaireQuestionKind::Confirm => hints.push("select yes or no".into()),
-    }
-    if !question.choices.is_empty() && question.allow_other {
-        hints.push("other available".into());
-    }
-    if let Some(default) = &question.default {
-        hints.push(format!(
-            "default: {}",
-            questionnaire_default_display(default)
-        ));
-    }
-    hints.join(" · ")
-}
-
-fn questionnaire_selection_marker(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    choice_index: usize,
-) -> &'static str {
-    match (&question.kind, &field.selection) {
-        (QuestionnaireQuestionKind::MultiSelect, FieldSelection::Multi { selected, other }) => {
-            if choice_index < question.choices.len() {
-                if selected.contains(&choice_index) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                }
-            } else if *other {
-                "[x]"
-            } else {
-                "[ ]"
-            }
-        }
-        (_, FieldSelection::Single(index)) if *index == choice_index => "(x)",
-        (_, FieldSelection::Other)
-            if question.allow_other && choice_index == question.choices.len() =>
-        {
-            "(x)"
-        }
-        (_, FieldSelection::None) => "( )",
-        _ => "( )",
-    }
-}
-
-fn questionnaire_choice_label(question: &QuestionnaireQuestion, choice_index: usize) -> String {
-    match question.kind {
-        QuestionnaireQuestionKind::Confirm => {
-            if choice_index == 0 {
-                "yes".into()
-            } else {
-                "no".into()
-            }
-        }
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => question
-            .choices
-            .get(choice_index)
-            .cloned()
-            .unwrap_or_else(|| "Other".into()),
-        QuestionnaireQuestionKind::Text => String::new(),
-    }
-}
-
-fn questionnaire_other_selected(field: &QuestionnaireFieldState) -> bool {
-    match &field.selection {
-        FieldSelection::Other => true,
-        FieldSelection::Multi { other, .. } => *other,
-        FieldSelection::Text | FieldSelection::None | FieldSelection::Single(_) => false,
-    }
-}
-
-fn push_prefixed_input_lines(
-    lines: &mut Vec<Line<'static>>,
-    prefix: &str,
-    value: &str,
-    width: usize,
-    style: Style,
-) {
-    let prefix_width = display_width(prefix);
-    let input_width = width.saturating_sub(prefix_width).max(1);
-    let continuation = " ".repeat(prefix_width);
-    for (index, line) in input_visual_lines(value, input_width)
-        .into_iter()
-        .enumerate()
-    {
-        let prefix = if index == 0 { prefix } else { &continuation };
-        lines.push(styled_line(
-            format!("{prefix}{line}"),
-            width,
-            style,
-            LineFill::Natural,
-        ));
-    }
-}
-
-fn questionnaire_cursor_position(questionnaire: &QuestionnaireComposer, width: usize) -> Position {
-    questionnaire_frame(questionnaire, width).1
-}
-
-fn questionnaire_question_cursor(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    start_y: usize,
-    width: usize,
-) -> Position {
-    let prefix_height = questionnaire_question_prefix_line_count(question, width);
-    match question.kind {
-        QuestionnaireQuestionKind::Text => prefixed_input_cursor(
-            &field.other_value,
-            field.other_cursor,
-            "  ",
-            start_y + prefix_height,
-            width,
-        ),
-        QuestionnaireQuestionKind::Choice
-        | QuestionnaireQuestionKind::MultiSelect
-        | QuestionnaireQuestionKind::Confirm => {
-            let mut y = start_y + prefix_height;
-            for choice_index in 0..choice_count(question) {
-                if field.choice_cursor == choice_index {
-                    if question.allow_other
-                        && choice_index == question.choices.len()
-                        && field.text_entry_active(question)
-                    {
-                        let option_lines = wrapped_line_count(
-                            format!(
-                                " > {} {}",
-                                questionnaire_selection_marker(question, field, choice_index),
-                                questionnaire_choice_label(question, choice_index)
-                            ),
-                            width,
-                        );
-                        return prefixed_input_cursor(
-                            &field.other_value,
-                            field.other_cursor,
-                            "      other: ",
-                            y + option_lines,
-                            width,
-                        );
-                    }
-                    return Position { x: 1, y: y as u16 };
-                }
-                y += wrapped_line_count(
-                    format!(
-                        "   {} {}",
-                        questionnaire_selection_marker(question, field, choice_index),
-                        questionnaire_choice_label(question, choice_index)
-                    ),
-                    width,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    y += input_visual_lines(
-                        &field.other_value,
-                        width.saturating_sub(display_width("      other: ")).max(1),
-                    )
-                    .len();
-                }
-            }
-            Position { x: 1, y: y as u16 }
-        }
-    }
-}
-
-fn prefixed_input_cursor(
-    value: &str,
-    cursor: usize,
-    prefix: &str,
-    start_y: usize,
-    width: usize,
-) -> Position {
-    let prefix_width = display_width(prefix);
-    let mut position =
-        input_cursor_position(value, cursor, width.saturating_sub(prefix_width).max(1));
-    position.x = position.x.saturating_add(prefix_width as u16);
-    position.y = position.y.saturating_add(start_y as u16);
-    position
-}
-
-fn questionnaire_question_prefix_line_count(
-    question: &QuestionnaireQuestion,
-    width: usize,
-) -> usize {
-    let required = if question.required { "" } else { " optional" };
-    let mut count = wrapped_line_count(format!("> 1. {}{required}", question.question), width);
-    if let Some(help) = &question.help {
-        count += wrapped_line_count(format!("  help: {help}"), width);
-    }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        count += wrapped_line_count(format!("  {answer_hint}"), width);
-    }
-    count
-}
-
-fn wrapped_line_count(text: String, width: usize) -> usize {
-    let mut lines = Vec::new();
-    push_wrapped_text_with(
-        &mut lines,
-        &text,
-        width,
-        Theme::text(),
-        LineFill::Natural,
-        wrap_line_at_whitespace,
-    );
-    lines.len()
-}
-
-fn questionnaire_answers(
-    questionnaire: &QuestionnaireComposer,
-) -> Result<Vec<QuestionnaireAnswer>, String> {
-    questionnaire
-        .request
-        .questions
-        .iter()
-        .zip(questionnaire.fields.iter())
-        .enumerate()
-        .map(|(index, (question, field))| {
-            let answer = normalize_questionnaire_answer(question, field)
-                .map_err(|error| format!("question {}: {error}", index + 1))?;
-            Ok(QuestionnaireAnswer {
-                id: question.id.clone(),
-                answer,
-            })
-        })
-        .collect()
-}
-
-fn normalize_questionnaire_answer(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-) -> Result<serde_json::Value, String> {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => {
-            normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-        }
-        QuestionnaireQuestionKind::Choice => match &field.selection {
-            FieldSelection::Single(index) => question
-                .choices
-                .get(*index)
-                .cloned()
-                .map(serde_json::Value::String)
-                .ok_or_else(|| "answer is not selected".into()),
-            FieldSelection::Other => {
-                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-            }
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text | FieldSelection::None | FieldSelection::Multi { .. } => {
-                Err("answer is not selected".into())
-            }
-        },
-        QuestionnaireQuestionKind::MultiSelect => match &field.selection {
-            FieldSelection::Multi { selected, other } => {
-                let mut answers = selected
-                    .iter()
-                    .filter_map(|index| question.choices.get(*index).cloned())
-                    .collect::<Vec<_>>();
-                if *other {
-                    let other_answer = normalize_text_answer(question, &field.other_value)?;
-                    if !other_answer.is_empty() {
-                        answers.push(other_answer);
-                    }
-                }
-                if answers.is_empty() && question.required {
-                    return Err("select at least one answer".into());
-                }
-                Ok(serde_json::Value::Array(
-                    answers.into_iter().map(serde_json::Value::String).collect(),
-                ))
-            }
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Other => Err("answer is not selected".into()),
-        },
-        QuestionnaireQuestionKind::Confirm => match field.selection {
-            FieldSelection::Single(0) => Ok(serde_json::json!("yes")),
-            FieldSelection::Single(1) => Ok(serde_json::json!("no")),
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Multi { .. }
-            | FieldSelection::Other => Err("answer is not selected".into()),
-        },
-    }
-}
-
-fn normalize_text_answer(question: &QuestionnaireQuestion, value: &str) -> Result<String, String> {
-    let answer = value.trim().to_string();
-    if answer.is_empty() && question.required {
-        Err("answer cannot be empty".into())
-    } else {
-        Ok(answer)
-    }
-}
-
-fn submitted_questionnaire_entry(
-    request: &QuestionnaireRequest,
-    response: &QuestionnaireResponse,
-) -> String {
-    if response.answers.len() == 1 {
-        return questionnaire_answer_display(&response.answers[0].answer);
-    }
-    let mut lines = Vec::new();
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
-    } else {
-        lines.push("questionnaire answers".into());
-    }
-    for answer in &response.answers {
-        let label = request
-            .questions
-            .iter()
-            .find(|question| question.id == answer.id)
-            .map(|question| question.question.as_str())
-            .unwrap_or(answer.id.as_str());
-        lines.push(format!(
-            "{label}: {}",
-            questionnaire_answer_display(&answer.answer)
-        ));
-    }
-    lines.join("\n")
-}
-
-fn questionnaire_answer_display(answer: &serde_json::Value) -> String {
-    match answer {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_answer_display)
-            .collect::<Vec<_>>()
-            .join(", "),
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::Object(_) => answer.to_string(),
-    }
-}
-
-fn questionnaire_notice_text(request: &QuestionnaireRequest) -> String {
-    match (&request.title, request.questions.as_slice()) {
-        (Some(title), _) => format!("agent asks: {title}"),
-        (None, [question]) => format!("agent asks: {}", question.question),
-        (None, questions) => format!("agent asks {} questions", questions.len()),
-    }
 }
 
 fn padded_content_width(width: usize) -> usize {
@@ -7499,7 +6060,7 @@ mod tests {
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
-                config_path: None,
+                config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
                 herdr: HerdrReporter::default(),
@@ -7621,6 +6182,23 @@ mod tests {
     }
 
     #[test]
+    fn transcript_and_status_mutations_do_not_require_a_terminal() {
+        let mut app = test_app();
+
+        app.insert_entry(&Entry::Assistant("hello".into()));
+        app.insert_entry(&Entry::Assistant(" world".into()));
+        app.notify_status("ready");
+        app.notify_status("ready");
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::Assistant(answer), Entry::Notice(status)]
+                if answer == "hello world" && status == "ready"
+        ));
+        assert_eq!(app.status, "ready");
+    }
+
+    #[test]
     fn transcript_entries_render_without_prefix_labels() {
         let entries = [
             Entry::User("hello?".into()),
@@ -7659,209 +6237,6 @@ mod tests {
             Entry::User(b),
             Entry::User(c),
         ] if a == "message 7" && b == "message 8" && c == "message 9"));
-    }
-
-    #[test]
-    fn questionnaire_cancel_sends_user_cancelled_reply() {
-        let mut app = test_app();
-        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            QuestionnaireRequest {
-                title: None,
-                reason: None,
-                questions: vec![QuestionnaireQuestion {
-                    id: "file".into(),
-                    question: "Which file?".into(),
-                    help: None,
-                    default: None,
-                    kind: QuestionnaireQuestionKind::Text,
-                    required: true,
-                    choices: Vec::new(),
-                    allow_other: false,
-                }],
-            },
-            QuestionnaireResponseChannel::new(reply_tx),
-        ));
-        app.input = "draft".into();
-        app.input_cursor = app.input_char_len();
-
-        app.cancel_questionnaire_answer();
-
-        assert!(matches!(app.composer, ComposerMode::Input));
-        assert_eq!(app.input, "");
-        assert_eq!(app.input_cursor, 0);
-        assert_eq!(app.status, "answer cancelled");
-        assert!(matches!(
-            reply_rx.try_recv(),
-            Ok(QuestionnaireReply::Cancelled(
-                QuestionnaireCancelReason::UserCancelled
-            ))
-        ));
-    }
-
-    #[test]
-    fn questionnaire_submit_sends_selection_answers() {
-        let mut app = test_app();
-        let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            QuestionnaireRequest {
-                title: Some("PR details".into()),
-                reason: Some("Need missing preferences".into()),
-                questions: vec![
-                    QuestionnaireQuestion {
-                        id: "branch".into(),
-                        question: "Which branch?".into(),
-                        help: None,
-                        default: Some(serde_json::json!("main")),
-                        kind: QuestionnaireQuestionKind::Choice,
-                        required: true,
-                        choices: vec!["main".into(), "develop".into()],
-                        allow_other: true,
-                    },
-                    QuestionnaireQuestion {
-                        id: "test_suites".into(),
-                        question: "Which test suites should I run?".into(),
-                        help: None,
-                        default: Some(serde_json::json!(["unit"])),
-                        kind: QuestionnaireQuestionKind::MultiSelect,
-                        required: true,
-                        choices: vec!["unit".into(), "e2e".into(), "lint".into()],
-                        allow_other: false,
-                    },
-                    QuestionnaireQuestion {
-                        id: "apply".into(),
-                        question: "Apply changes?".into(),
-                        help: None,
-                        default: Some(serde_json::json!("yes")),
-                        kind: QuestionnaireQuestionKind::Confirm,
-                        required: true,
-                        choices: Vec::new(),
-                        allow_other: false,
-                    },
-                ],
-            },
-            QuestionnaireResponseChannel::new(reply_tx),
-        ));
-        if let ComposerMode::Questionnaire(questionnaire) = &mut app.composer {
-            questionnaire.fields[0].selection = FieldSelection::Other;
-            questionnaire.fields[0].choice_cursor = 2;
-            questionnaire.fields[0].other_value = "release".into();
-            questionnaire.fields[0].other_cursor = "release".chars().count();
-            questionnaire.fields[1].selection = FieldSelection::Multi {
-                selected: vec![0, 1],
-                other: false,
-            };
-            questionnaire.fields[2].selection = FieldSelection::Single(1);
-        }
-        let display = app.prepare_questionnaire_answer().unwrap().unwrap();
-
-        assert!(display.contains("Which branch?: release"), "{display}");
-        assert!(
-            display.contains("Which test suites should I run?: unit, e2e"),
-            "{display}"
-        );
-        assert!(display.contains("Apply changes?: no"), "{display}");
-
-        assert!(matches!(app.composer, ComposerMode::Input));
-        assert_eq!(app.status, "answers submitted");
-        assert!(matches!(
-            reply_rx.try_recv(),
-            Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers }))
-                if answers == vec![
-                    QuestionnaireAnswer { id: "branch".into(), answer: serde_json::json!("release") },
-                    QuestionnaireAnswer { id: "test_suites".into(), answer: serde_json::json!(["unit", "e2e"]) },
-                    QuestionnaireAnswer { id: "apply".into(), answer: serde_json::json!("no") },
-                ]
-        ));
-    }
-
-    #[test]
-    fn required_confirm_without_default_requires_explicit_choice() {
-        let question = QuestionnaireQuestion {
-            id: "apply".into(),
-            question: "Apply changes?".into(),
-            help: None,
-            default: None,
-            kind: QuestionnaireQuestionKind::Confirm,
-            required: true,
-            choices: Vec::new(),
-            allow_other: false,
-        };
-        let field = QuestionnaireFieldState::new(&question);
-
-        assert_eq!(field.selection, FieldSelection::None);
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Err("answer is not selected".into())
-        );
-
-        let mut field = field;
-        field.toggle_highlighted(&question);
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Ok(serde_json::json!("yes"))
-        );
-    }
-
-    #[test]
-    fn multi_select_default_preserves_commas() {
-        let question = QuestionnaireQuestion {
-            id: "targets".into(),
-            question: "Targets?".into(),
-            help: None,
-            default: Some(serde_json::json!(["New York, NY", "Los Angeles, CA"])),
-            kind: QuestionnaireQuestionKind::MultiSelect,
-            required: true,
-            choices: vec!["New York, NY".into(), "Boston, MA".into()],
-            allow_other: true,
-        };
-
-        let field = QuestionnaireFieldState::new(&question);
-
-        assert_eq!(
-            field.selection,
-            FieldSelection::Multi {
-                selected: vec![0],
-                other: true
-            }
-        );
-        assert_eq!(field.other_value, "Los Angeles, CA");
-        assert_eq!(
-            normalize_questionnaire_answer(&question, &field),
-            Ok(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
-        );
-    }
-
-    #[test]
-    fn questionnaire_cursor_counts_whitespace_wrapped_question_lines() {
-        let question = QuestionnaireQuestion {
-            id: "style".into(),
-            question: "hello wide world".into(),
-            help: None,
-            default: None,
-            kind: QuestionnaireQuestionKind::Choice,
-            required: true,
-            choices: vec!["brief".into(), "detailed".into()],
-            allow_other: false,
-        };
-        let field = QuestionnaireFieldState::new(&question);
-        let expected_cursor = questionnaire_question_cursor(&question, &field, 3, 14);
-        let rendered = questionnaire_frame(
-            &QuestionnaireComposer {
-                request: QuestionnaireRequest {
-                    title: None,
-                    reason: None,
-                    questions: vec![question.clone()],
-                },
-                response: QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
-                fields: vec![field],
-                active_index: 0,
-            },
-            14,
-        );
-
-        assert_eq!(expected_cursor, rendered.1);
-        assert_eq!(expected_cursor.y, 6);
     }
 
     #[test]
@@ -8751,7 +7126,7 @@ mod tests {
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
-                config_path: None,
+                config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
                 herdr: HerdrReporter::default(),
@@ -8929,7 +7304,7 @@ mod tests {
     fn favorite_save_failure_keeps_model_picker_open() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().to_path_buf());
+        app.info.config_repository = ConfigRepository::new(Some(config_dir.path().to_path_buf()));
         let selected_value = "openai/gpt-5.5";
         app.composer = ComposerMode::Picker(UiPicker::new(
             "select model",
@@ -8943,9 +7318,7 @@ mod tests {
             }],
             PickerAction::SelectModel,
         ));
-        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
-
-        app.toggle_selected_model_favorite(&mut terminal).unwrap();
+        app.toggle_selected_model_favorite().unwrap();
 
         assert!(matches!(app.composer, ComposerMode::Picker(_)));
         assert_eq!(app.active_picker_selection().unwrap().1, selected_value);
@@ -8961,8 +7334,11 @@ mod tests {
     fn web_search_config_restore_keeps_api_key_row_selected() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        let mut picker = config_picker::web_search_config_picker(&app.info);
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        let mut picker =
+            config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
 
         App::restore_picker_position(
             &mut picker,
@@ -8980,8 +7356,13 @@ mod tests {
     fn esc_from_nested_web_search_config_returns_to_main_config() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(&app.info));
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+            &config,
+            app.credential_store.as_ref(),
+        ));
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
@@ -9000,8 +7381,10 @@ mod tests {
     fn esc_from_main_config_still_closes_picker() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
-        app.info.config_path = Some(config_dir.path().join("config.toml"));
-        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, 12000, 10));
+        app.info.config_repository =
+            ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+        let config = app.info.config_repository.load().unwrap();
+        app.composer = ComposerMode::Picker(config_picker::config_picker(&app.info, &config));
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
@@ -9576,12 +7959,8 @@ mod tests {
     #[test]
     fn status_notice_suppresses_consecutive_duplicates() {
         let mut app = test_app();
-        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
-
-        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
-            .unwrap();
-        app.notify_status(&mut terminal, "input cleared; press ctrl-c again to quit")
-            .unwrap();
+        app.notify_status("input cleared; press ctrl-c again to quit");
+        app.notify_status("input cleared; press ctrl-c again to quit");
 
         assert_eq!(
             app.transcript
@@ -9597,8 +7976,7 @@ mod tests {
         let mut app = test_app();
         app.running = true;
 
-        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
-        app.paste_clipboard_image(&mut terminal).unwrap();
+        app.paste_clipboard_image();
 
         assert!(app.pending_images.is_empty());
         assert_eq!(

@@ -17,10 +17,8 @@ use crate::{
         GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
     },
     credentials::{load_provider_api_key, CredentialStore},
-    model::{
-        registry::{self, missing_credential_error, ProviderAuthKind, ProviderModelRefreshKind},
-        ModelError,
-    },
+    model::{registry::missing_credential_error, ModelError},
+    provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
 
 #[cfg(not(test))]
@@ -75,7 +73,7 @@ pub async fn refresh_provider_models_with_store(
     provider: &str,
     store: &dyn CredentialStore,
 ) -> Result<ProviderModelRefresh, ModelError> {
-    let descriptor = registry::provider_descriptor(provider)
+    let descriptor = provider::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let models = match descriptor.model_refresh {
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
@@ -296,7 +294,7 @@ fn parse_github_copilot_models(
 }
 
 fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<String, ModelError> {
-    let descriptor = registry::provider_descriptor(provider)
+    let descriptor = provider::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let ProviderAuthKind::ApiKey {
         env_var, missing, ..

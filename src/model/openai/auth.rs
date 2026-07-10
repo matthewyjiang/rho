@@ -4,7 +4,8 @@ use crate::{
     credentials::{
         load_codex_tokens, load_provider_api_key, save_codex_tokens, CodexTokens, CredentialStore,
     },
-    model::{registry, ModelError},
+    model::{registry::missing_credential_error, ModelError},
+    provider::{self, ProviderAuthKind},
 };
 
 pub(crate) enum Auth {
@@ -30,9 +31,9 @@ struct RefreshResponse {
 }
 
 pub(crate) fn load_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
-    let descriptor = registry::provider_descriptor("openai")
+    let descriptor = provider::provider_descriptor("openai")
         .ok_or_else(|| ModelError::UnsupportedProvider("openai".into()))?;
-    let registry::ProviderAuthKind::ApiKey {
+    let ProviderAuthKind::ApiKey {
         env_var, missing, ..
     } = descriptor.auth_kind
     else {
@@ -42,12 +43,15 @@ pub(crate) fn load_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, Mod
         return Ok(Auth::ApiKey(key));
     }
     let key = load_provider_api_key(store, descriptor.name)?
-        .ok_or_else(|| registry::missing_credential_error(missing))?;
+        .ok_or_else(|| missing_credential_error(missing))?;
     Ok(Auth::ApiKey(key))
 }
 
 pub(crate) fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
-    if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
+    let env_var = provider::provider_descriptor_by_id(provider::ProviderId::OpenAiCodex)
+        .auth_kind
+        .env_var();
+    if let Ok(access_token) = std::env::var(env_var) {
         return Ok(Auth::Codex {
             tokens: CodexTokens {
                 access_token,
