@@ -31,7 +31,7 @@ impl App {
     pub(super) fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
         let config_path = self.info.config_repository.configured_path()?;
         let session_root = crate::paths::rho_dir()?.join("sessions");
-        let lines = doctor::report(doctor::DoctorContext {
+        let picker = doctor::picker(doctor::DoctorContext {
             provider: &self.info.provider,
             model: &self.info.model,
             auth: &self.info.auth,
@@ -42,8 +42,8 @@ impl App {
             herdr_enabled: self.info.herdr.is_enabled(),
             herdr_socket_reachable: self.info.herdr.socket_is_reachable(),
         });
-        self.insert_entry(&Entry::Notice(lines.join("\n")));
-        self.status = "doctor complete".into();
+        self.composer = super::ComposerMode::Picker(picker);
+        self.status = "doctor diagnostics".into();
         Ok(())
     }
 }

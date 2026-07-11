@@ -2751,6 +2751,9 @@ impl App {
                 self.insert_selected_file_path(&value, /*running*/ true);
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
+            PickerAction::Doctor => {
+                self.status = "running".into();
+            }
             PickerAction::SelectTitleModel => {
                 self.refresh_available_auths();
                 let (provider, _model, auth) = self.title_model_selection();
@@ -3653,6 +3656,7 @@ impl App {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent),
+            PickerAction::Doctor => Ok(()),
         }
     }
 
@@ -3874,7 +3878,8 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::InsertFilePath
             | PickerAction::ResumeSession
-            | PickerAction::Config => return Ok(()),
+            | PickerAction::Config
+            | PickerAction::Doctor => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
         self.composer = ComposerMode::Picker(picker);

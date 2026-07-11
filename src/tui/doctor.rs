@@ -6,6 +6,8 @@ use crate::{
     provider::{self, ProviderModelSource},
 };
 
+use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+
 pub(super) struct DoctorContext<'a> {
     pub(super) provider: &'a str,
     pub(super) model: &'a str,
@@ -18,19 +20,39 @@ pub(super) struct DoctorContext<'a> {
     pub(super) herdr_socket_reachable: Option<bool>,
 }
 
-pub(super) fn report(context: DoctorContext<'_>) -> Vec<String> {
-    let mut lines = vec!["rho doctor".into()];
+pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
+    let mut items = Vec::new();
     for descriptor in provider::providers() {
-        let auth = match provider_has_credentials(context.credential_store, descriptor.name) {
-            Ok(true) if provider_has_env_override(descriptor.name) => "ok (environment)",
-            Ok(true) => "ok (credential store)",
-            Ok(false) => "missing",
-            Err(_) => "error reading credential store",
+        let (healthy, status, detail) = match provider_has_credentials(
+            context.credential_store,
+            descriptor.name,
+        ) {
+            Ok(true) if provider_has_env_override(descriptor.name) => (
+                true,
+                "authenticated",
+                "Credentials are provided by an environment variable.",
+            ),
+            Ok(true) => (
+                true,
+                "authenticated",
+                "Credentials are available in the OS credential store.",
+            ),
+            Ok(false) => (
+                false,
+                "missing",
+                "No credentials found. Run /login to authenticate this provider.",
+            ),
+            Err(_) => (
+                false,
+                "error",
+                "The OS credential store could not be read. No secret values were inspected or displayed.",
+            ),
         };
-        lines.push(format!(
-            "[{}] auth {}: {auth}",
-            tone(auth.starts_with("ok")),
-            descriptor.name
+        items.push(item(
+            format!("{} authentication", descriptor.display_name),
+            status,
+            healthy,
+            detail.into(),
         ));
     }
 
@@ -41,75 +63,132 @@ pub(super) fn report(context: DoctorContext<'_>) -> Vec<String> {
         context.available_auths,
     )
     .is_ok();
-    lines.push(format!(
-        "[{}] selected model: {}/{} ({})",
-        tone(model_available),
-        context.provider,
-        context.model,
+    items.push(item(
+        "Selected model",
         if model_available {
             "available"
         } else {
             "unavailable"
-        }
+        },
+        model_available,
+        format!(
+            "{}/{} using {} authentication",
+            context.provider, context.model, context.auth
+        ),
     ));
-    lines.push(writability_line(
-        "config",
-        context.config_path,
-        PathKind::File,
+
+    let config_writable = probe_writable(context.config_path, PathKind::File);
+    items.push(item(
+        "Configuration",
+        writable_status(config_writable),
+        config_writable,
+        context.config_path.display().to_string(),
     ));
-    lines.push(writability_line(
-        "sessions",
-        context.session_root,
-        PathKind::Directory,
+    let sessions_writable = probe_writable(context.session_root, PathKind::Directory);
+    items.push(item(
+        "Sessions",
+        writable_status(sessions_writable),
+        sessions_writable,
+        context.session_root.display().to_string(),
     ));
 
     for descriptor in provider::providers() {
         if descriptor.model_source == ProviderModelSource::CachedProviderModels {
             let count =
                 crate::model::provider_models::cached_provider_models(descriptor.name).len();
-            lines.push(format!(
-                "[{}] model cache {}: {count} model{}",
-                tone(count > 0),
-                descriptor.name,
-                if count == 1 { "" } else { "s" }
+            items.push(item(
+                format!("{} model cache", descriptor.display_name),
+                if count > 0 { "populated" } else { "empty" },
+                count > 0,
+                format!("{count} cached model{}", if count == 1 { "" } else { "s" }),
             ));
         }
     }
 
     let helpers = clipboard_helpers();
-    lines.push(format!(
-        "[{}] clipboard image helper: {}",
-        tone(!helpers.is_empty()),
+    items.push(item(
+        "Clipboard image helper",
         if helpers.is_empty() {
-            "not found".into()
+            "not found"
         } else {
-            helpers.join(", ")
-        }
+            "available"
+        },
+        !helpers.is_empty(),
+        if helpers.is_empty() {
+            "Install a supported platform clipboard helper to paste images.".into()
+        } else {
+            format!("Detected: {}", helpers.join(", "))
+        },
     ));
     let rtk = crate::tools::rtk::is_available();
-    lines.push(format!(
-        "[{}] rtk: {}",
-        tone(rtk),
-        if rtk { "available" } else { "unavailable" }
+    items.push(item(
+        "rtk",
+        if rtk { "available" } else { "unavailable" },
+        rtk,
+        "Optional shell-command rewriting helper.".into(),
     ));
-    let herdr = match (context.herdr_enabled, context.herdr_socket_reachable) {
-        (false, _) => "not configured",
-        (true, Some(true)) => "connected environment and socket present",
-        (true, Some(false)) => "configured but socket missing",
-        (true, None) => "configured",
-    };
-    lines.push(format!(
-        "[{}] Herdr: {herdr}",
-        tone(!context.herdr_enabled || context.herdr_socket_reachable == Some(true))
+    let (herdr_healthy, herdr_status, herdr_detail) =
+        match (context.herdr_enabled, context.herdr_socket_reachable) {
+            (false, _) => (true, "not configured", "Rho is not running inside Herdr."),
+            (true, Some(true)) => (
+                true,
+                "connected",
+                "The configured Herdr socket accepted a connection.",
+            ),
+            (true, Some(false)) => (
+                false,
+                "unreachable",
+                "Herdr environment variables are set, but the socket did not accept a connection.",
+            ),
+            (true, None) => (
+                false,
+                "unavailable",
+                "Herdr is configured, but socket reachability could not be determined.",
+            ),
+        };
+    items.push(item(
+        "Herdr",
+        herdr_status,
+        herdr_healthy,
+        herdr_detail.into(),
     ));
-    lines
+
+    UiPicker::new(
+        "Doctor diagnostics",
+        "up/down inspect, type to filter, enter or esc close",
+        items,
+        PickerAction::Doctor,
+    )
 }
 
-fn tone(ok: bool) -> &'static str {
-    if ok {
-        "ok"
+fn item(
+    label: impl Into<String>,
+    status: impl Into<String>,
+    healthy: bool,
+    detail: String,
+) -> PickerItem {
+    let label = label.into();
+    PickerItem {
+        value: label.clone(),
+        label,
+        detail: Some(detail),
+        preview: None,
+        badge: Some(PickerBadge {
+            text: status.into(),
+            tone: if healthy {
+                PickerBadgeTone::Healthy
+            } else {
+                PickerBadgeTone::Warning
+            },
+        }),
+    }
+}
+
+fn writable_status(writable: bool) -> &'static str {
+    if writable {
+        "writable"
     } else {
-        "warn"
+        "not writable"
     }
 }
 
@@ -117,16 +196,6 @@ fn tone(ok: bool) -> &'static str {
 enum PathKind {
     File,
     Directory,
-}
-
-fn writability_line(label: &str, path: &Path, kind: PathKind) -> String {
-    let writable = probe_writable(path, kind);
-    format!(
-        "[{}] {label} writable: {} ({})",
-        tone(writable),
-        if writable { "yes" } else { "no" },
-        path.display()
-    )
 }
 
 fn probe_writable(path: &Path, kind: PathKind) -> bool {

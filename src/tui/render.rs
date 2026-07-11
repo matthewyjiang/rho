@@ -145,6 +145,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         super::PickerAction::ResumeSession => 36,
         super::PickerAction::InsertFilePath => width.saturating_sub(2).max(1),
         super::PickerAction::Config
+        | super::PickerAction::Doctor
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand => 30,
@@ -217,6 +218,7 @@ fn picker_item_line(
 fn picker_footer_text(picker: &UiPicker) -> String {
     let action = match picker.action {
         super::PickerAction::Config => "change",
+        super::PickerAction::Doctor => "close",
         super::PickerAction::SelectModel
         | super::PickerAction::SelectTitleModel
         | super::PickerAction::LoginProvider
@@ -246,7 +248,8 @@ fn picker_footer_text(picker: &UiPicker) -> String {
 fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
         PickerBadgeTone::Selected => Theme::warning(),
-        PickerBadgeTone::Favorite => Theme::success(),
+        PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
+        PickerBadgeTone::Warning => Theme::warning(),
     }
 }
 

@@ -29,6 +29,8 @@ pub(super) struct PickerBadge {
 pub(super) enum PickerBadgeTone {
     Selected,
     Favorite,
+    Healthy,
+    Warning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,12 +43,13 @@ pub(super) enum PickerAction {
     InsertFilePath,
     ResumeSession,
     Config,
+    Doctor,
 }
 
 impl PickerAction {
     pub(super) fn space_confirms_selection(self) -> bool {
         match self {
-            PickerAction::Config => true,
+            PickerAction::Config | PickerAction::Doctor => true,
             PickerAction::SelectModel
             | PickerAction::SelectTitleModel
             | PickerAction::LoginProvider
@@ -136,7 +139,8 @@ impl UiPicker {
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
-            | PickerAction::Config => picker_matching_indices(&self.items, &self.filter),
+            | PickerAction::Config
+            | PickerAction::Doctor => picker_matching_indices(&self.items, &self.filter),
         }
     }
 
