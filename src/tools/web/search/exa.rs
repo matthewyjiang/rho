@@ -5,13 +5,13 @@ use crate::{credentials::WebSearchCredential, tool::ToolError};
 use super::{
     openai::normalize_domain_filters, openai::openai_recency_label, SearchBackendConfig, SearchItem,
 };
-use crate::tools::web::util::http_client;
 
 const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
 
 pub(super) async fn search(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
@@ -22,13 +22,22 @@ pub(super) async fn search(
         .ok()
         .or_else(|| config.credential(WebSearchCredential::Exa))
     {
-        exa_api_search(query, num_results, recency_filter, domain_filter, &key).await
+        exa_api_search(
+            client,
+            query,
+            num_results,
+            recency_filter,
+            domain_filter,
+            &key,
+        )
+        .await
     } else {
-        exa_mcp_search(query, num_results, recency_filter, domain_filter).await
+        exa_mcp_search(client, query, num_results, recency_filter, domain_filter).await
     }
 }
 
 async fn exa_api_search(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
@@ -57,7 +66,7 @@ async fn exa_api_search(
         body["excludeDomains"] = exclude.clone();
     }
 
-    let response = http_client()
+    let response = client
         .post(if use_search {
             EXA_SEARCH_URL
         } else {
@@ -107,12 +116,13 @@ async fn exa_api_search(
 }
 
 async fn exa_mcp_search(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let response = http_client()
+    let response = client
         .post(EXA_MCP_URL)
         .header("Accept", "application/json, text/event-stream")
         .json(&json!({

@@ -25,11 +25,11 @@ pub fn registry(config: &Config) -> ToolRegistry {
     #[cfg(windows)]
     r.register(powershell::PowerShell::new(rtk_enabled));
     r.register(skill::Skill);
-    let web_search = web::WebSearch::from_config(config);
+    let (web_search, fetch_content) = web::access_tools(config);
     if web_search.is_available() {
         r.register(web_search);
     }
-    r.register(web::FetchContent);
+    r.register(fetch_content);
     r.register(web::GetSearchContent);
     r
 }
@@ -49,7 +49,7 @@ mod tests {
 
         assert_eq!(
             names.contains(&"web_search".to_string()),
-            web::WebSearch::from_config(&Config::default()).is_available()
+            web::access_tools(&Config::default()).0.is_available()
         );
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));

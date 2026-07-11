@@ -16,15 +16,25 @@ use super::{
 
 pub struct WebSearch {
     config: SearchBackendConfig,
+    client: reqwest::Client,
 }
 
-pub struct FetchContent;
+pub struct FetchContent {
+    client: reqwest::Client,
+}
 pub struct GetSearchContent;
 
+impl FetchContent {
+    pub(super) fn with_client(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
 impl WebSearch {
-    pub fn from_config(config: &Config) -> Self {
+    pub(super) fn with_client(config: &Config, client: reqwest::Client) -> Self {
         Self {
             config: SearchBackendConfig::from_config(config),
+            client,
         }
     }
 
@@ -121,6 +131,7 @@ impl Tool for WebSearch {
 
         for query in queries {
             let result = search::run_search_query(
+                &self.client,
                 &query,
                 num_results,
                 provider,
@@ -133,7 +144,7 @@ impl Tool for WebSearch {
                 Ok(search_items) if !search_items.is_empty() => {
                     for (index, item) in search_items.into_iter().enumerate() {
                         let (content, content_kind) =
-                            search::item_content(&item, include_content).await;
+                            search::item_content(&self.client, &item, include_content).await;
                         summaries.push(format!(
                             "{}. [{}] {}{}",
                             index + 1,
@@ -239,6 +250,7 @@ impl Tool for FetchContent {
 
         for target in urls {
             let fetched = fetch_target(
+                &self.client,
                 &target,
                 &ctx,
                 args.prompt.as_deref(),

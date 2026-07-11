@@ -3,7 +3,6 @@ use serde_json::Value;
 use crate::{credentials::WebSearchCredential, tool::ToolError};
 
 use super::{SearchBackendConfig, SearchItem};
-use crate::tools::web::util::http_client;
 
 pub(in crate::tools::web) fn resolve_api_key(config: &SearchBackendConfig) -> Option<String> {
     std::env::var("BRAVE_SEARCH_API_KEY")
@@ -13,6 +12,7 @@ pub(in crate::tools::web) fn resolve_api_key(config: &SearchBackendConfig) -> Op
 }
 
 pub(super) async fn search(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
@@ -23,7 +23,7 @@ pub(super) async fn search(
         .ok_or_else(|| ToolError::Message("BRAVE_SEARCH_API_KEY is not set".into()))?;
     let filtered_query = apply_domain_filter(query, domain_filter);
     let count = num_results.to_string();
-    let mut request = http_client()
+    let mut request = client
         .get("https://api.search.brave.com/res/v1/web/search")
         .query(&[("q", filtered_query.as_str()), ("count", count.as_str())]);
     if let Some(freshness) = brave_freshness(recency_filter) {

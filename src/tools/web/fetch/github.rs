@@ -14,47 +14,49 @@ use super::{FetchedTarget, PREVIEW_BYTES};
 use crate::tools::web::{
     process,
     storage::{create_private_dir_all, web_access_cache_root},
-    util::{http_client, safe_path_component, to_pretty_json},
+    util::{safe_path_component, to_pretty_json},
 };
 
 const LARGE_REPO_THRESHOLD_KB: u64 = 350 * 1024;
 
 pub(super) async fn fetch(
+    client: &reqwest::Client,
     github: &GitHubTarget,
     force_clone: bool,
 ) -> Result<FetchedTarget, ToolError> {
     if github.kind == GitHubKind::Commit {
-        return github_api_fallback(github, None).await;
+        return github_api_fallback(client, github, None).await;
     }
 
     let repo_api = format!(
         "https://api.github.com/repos/{}/{}",
         github.owner, github.repo
     );
-    let repo_size_kb = github_api_json(&repo_api)
+    let repo_size_kb = github_api_json(client, &repo_api)
         .await
         .ok()
         .and_then(|value| value.get("size").and_then(Value::as_u64));
     let oversized = repo_size_kb.is_some_and(|size| size > LARGE_REPO_THRESHOLD_KB);
     if oversized && !force_clone {
-        return github_api_fallback(github, repo_size_kb).await;
+        return github_api_fallback(client, github, repo_size_kb).await;
     }
 
     match ensure_github_clone(github).await {
         Ok(local_path) => read_github_clone(github, &local_path).await,
-        Err(_) => github_api_fallback(github, repo_size_kb).await,
+        Err(_) => github_api_fallback(client, github, repo_size_kb).await,
     }
 }
 
 async fn github_api_fallback(
+    client: &reqwest::Client,
     github: &GitHubTarget,
     repo_size_kb: Option<u64>,
 ) -> Result<FetchedTarget, ToolError> {
     let api_url = github_api_content_url(github);
     let content = match github.kind {
-        GitHubKind::Blob => github_api_file_content(&api_url).await?,
+        GitHubKind::Blob => github_api_file_content(client, &api_url).await?,
         GitHubKind::Root | GitHubKind::Tree | GitHubKind::Commit => {
-            to_pretty_json(&github_api_json(&api_url).await?)
+            to_pretty_json(&github_api_json(client, &api_url).await?)
         }
     };
     Ok(FetchedTarget {
@@ -93,8 +95,8 @@ fn github_api_content_url(github: &GitHubTarget) -> String {
     }
 }
 
-async fn github_api_file_content(url: &str) -> Result<String, ToolError> {
-    let value = github_api_json(url).await?;
+async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<String, ToolError> {
+    let value = github_api_json(client, url).await?;
     let encoding = value.get("encoding").and_then(Value::as_str);
     let content = value
         .get("content")
@@ -112,10 +114,8 @@ async fn github_api_file_content(url: &str) -> Result<String, ToolError> {
     Ok(content.to_string())
 }
 
-async fn github_api_json(url: &str) -> Result<Value, ToolError> {
-    let mut request = http_client()
-        .get(url)
-        .header("User-Agent", "rho-coding-agent");
+async fn github_api_json(client: &reqwest::Client, url: &str) -> Result<Value, ToolError> {
+    let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Ok(token) = github_token() {
         request = request.bearer_auth(token);
     }

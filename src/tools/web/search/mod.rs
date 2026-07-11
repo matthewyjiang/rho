@@ -62,6 +62,7 @@ pub(super) fn brave_available(config: &SearchBackendConfig) -> bool {
 }
 
 pub(super) async fn run_search_query(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     provider: SearchProvider,
@@ -71,26 +72,72 @@ pub(super) async fn run_search_query(
 ) -> Result<Vec<SearchItem>, ToolError> {
     match provider {
         SearchProvider::Auto => {
-            if let Ok(results) =
-                openai::search(query, num_results, recency_filter, domain_filter, config).await
+            if let Ok(results) = openai::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
             {
                 return Ok(results);
             }
-            if let Ok(results) =
-                exa::search(query, num_results, recency_filter, domain_filter, config).await
+            if let Ok(results) = exa::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
             {
                 return Ok(results);
             }
-            brave::search(query, num_results, recency_filter, domain_filter, config).await
+            brave::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
         }
         SearchProvider::OpenAi => {
-            openai::search(query, num_results, recency_filter, domain_filter, config).await
+            openai::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
         }
         SearchProvider::Exa => {
-            exa::search(query, num_results, recency_filter, domain_filter, config).await
+            exa::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
         }
         SearchProvider::Brave => {
-            brave::search(query, num_results, recency_filter, domain_filter, config).await
+            brave::search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
         }
         SearchProvider::Parallel
         | SearchProvider::Tavily
@@ -105,6 +152,7 @@ pub(super) async fn run_search_query(
 }
 
 pub(super) async fn item_content(
+    client: &reqwest::Client,
     item: &SearchItem,
     include_content: bool,
 ) -> (String, &'static str) {
@@ -114,7 +162,7 @@ pub(super) async fn item_content(
     let Some(url) = item.url.as_deref() else {
         return (item.snippet.clone(), "snippet");
     };
-    match fetch_url_text(url).await {
+    match fetch_url_text(client, url).await {
         Ok(content) => (content, "source_page"),
         Err(err) => {
             let warning = format!("content fetch failed for {url}: {err}");

@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use regex::Regex;
 use serde_json::{json, Value};
 use url::Url;
 
@@ -15,7 +14,6 @@ use crate::{
 };
 
 use super::{SearchBackendConfig, SearchItem};
-use crate::tools::web::util::http_client;
 
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -108,6 +106,7 @@ fn resolve_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolEr
 }
 
 pub(super) async fn search(
+    client: &reqwest::Client,
     query: &str,
     num_results: usize,
     recency_filter: Option<&str>,
@@ -116,7 +115,7 @@ pub(super) async fn search(
 ) -> Result<Vec<SearchItem>, ToolError> {
     let mut auth = resolve_auth(config)?;
     let body = openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
-    let (mut status, mut text) = send_openai_search_request(&auth, &body).await?;
+    let (mut status, mut text) = send_openai_search_request(client, &auth, &body).await?;
     if status == reqwest::StatusCode::UNAUTHORIZED {
         if let OpenAiSearchAuth::Codex {
             tokens,
@@ -124,10 +123,9 @@ pub(super) async fn search(
         } = &auth
         {
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                let client = http_client();
                 let store = OsCredentialStore;
                 let refreshed = refresh_codex_token(
-                    &client,
+                    client,
                     &store,
                     refresh_token,
                     CodexAuthSource::Store,
@@ -143,7 +141,7 @@ pub(super) async fn search(
                 };
                 let body =
                     openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
-                let retried = send_openai_search_request(&auth, &body).await?;
+                let retried = send_openai_search_request(client, &auth, &body).await?;
                 status = retried.0;
                 text = retried.1;
             }
@@ -188,10 +186,11 @@ fn openai_search_body(
 }
 
 async fn send_openai_search_request(
+    client: &reqwest::Client,
     auth: &OpenAiSearchAuth,
     body: &Value,
 ) -> Result<(reqwest::StatusCode, String), ToolError> {
-    let mut request = http_client()
+    let mut request = client
         .post(auth.endpoint())
         .bearer_auth(auth.bearer_token())
         .header("Content-Type", "application/json");
@@ -311,10 +310,7 @@ fn normalize_domain(raw: &str) -> Option<String> {
         input = input.split('/').next()?.split(':').next()?.to_string();
     }
     let input = input.trim_matches('.').to_string();
-    Regex::new(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$")
-        .ok()?
-        .is_match(&input)
-        .then_some(input)
+    crate::tools::web::util::is_valid_domain(&input).then_some(input)
 }
 
 fn parse_openai_search_output(text: &str) -> Result<Vec<Value>, ToolError> {
