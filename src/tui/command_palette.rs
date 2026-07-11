@@ -19,21 +19,31 @@ impl App {
                 kind: CommandChoiceKind::Builtin(command),
             })
             .collect::<Vec<_>>();
-        matches.extend(
-            self.info
-                .prompt_templates
-                .iter()
-                .filter(|(name, _)| crate::prompt_templates::matches_search(name, &prefix))
-                .map(|(name, template)| {
-                    let command_name = format!("prompt:{name}");
-                    CommandChoice {
-                        usage: format!("/{command_name} [text]"),
-                        name: command_name,
-                        description: crate::prompt_templates::description(template),
-                        kind: CommandChoiceKind::PromptTemplate(template.clone()),
-                    }
-                }),
-        );
+        let mut template_matches = self
+            .info
+            .prompt_templates
+            .iter()
+            .filter(|(name, _)| crate::prompt_templates::matches_search(name, &prefix))
+            .map(|(name, template)| {
+                let command_name = format!("prompt:{name}");
+                CommandChoice {
+                    usage: format!("/{command_name} [text]"),
+                    name: command_name,
+                    description: crate::prompt_templates::description(template),
+                    kind: CommandChoiceKind::PromptTemplate(template.clone()),
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Some(index) = template_matches.iter().position(|choice| {
+            choice
+                .name
+                .strip_prefix("prompt:")
+                .is_some_and(|name| name.eq_ignore_ascii_case(&prefix))
+        }) {
+            let exact = template_matches.remove(index);
+            matches.insert(0, exact);
+        }
+        matches.extend(template_matches);
         matches.extend(
             crate::skills::discover(&self.info.cwd)
                 .into_iter()
@@ -61,23 +71,34 @@ impl App {
             .cloned()
     }
 
-    pub(super) fn complete_command_choice(&self, choice: &CommandChoice) -> (String, usize) {
-        match &choice.kind {
+    pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
+        let (input, cursor) = match &choice.kind {
             CommandChoiceKind::Builtin(spec) => {
+                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
                 commands::complete_command(&self.input, self.input_cursor, spec)
             }
             CommandChoiceKind::PromptTemplate(template) => {
+                let expanded_input = self.expanded_input();
                 let mut input = crate::prompt_templates::expand(
                     template,
-                    super::slash_command_args(&self.input),
+                    super::slash_command_args(&expanded_input),
                 );
                 input.push(' ');
                 let cursor = input.chars().count();
+                self.paste_segments.clear();
+                self.input_submission_mode = super::InputSubmissionMode::Prompt;
                 (input, cursor)
             }
             CommandChoiceKind::Skill => {
+                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
                 super::complete_slash_command(&self.input, self.input_cursor, &choice.name)
             }
-        }
+        };
+        self.input = input;
+        self.input_cursor = cursor;
     }
 }
+
+#[cfg(test)]
+#[path = "command_palette_tests.rs"]
+mod tests;

@@ -1,4 +1,4 @@
-use super::{description, expand, matches_search, validate, PromptTemplates};
+use super::{description, expand, matches_search, merge, validate, PromptTemplates};
 
 #[test]
 fn appends_trailing_text_to_template() {
@@ -23,6 +23,34 @@ fn validates_names_and_builtin_conflicts() {
         .unwrap_err()
         .to_string()
         .contains("conflicts"));
+}
+
+#[test]
+fn rejects_case_insensitive_duplicate_names() {
+    let templates = PromptTemplates::from([
+        ("Review".into(), "upper".into()),
+        ("review".into(), "lower".into()),
+    ]);
+
+    assert!(validate(&templates)
+        .unwrap_err()
+        .to_string()
+        .contains("case-insensitive"));
+}
+
+#[test]
+fn merges_case_insensitive_overrides() {
+    let mut templates = PromptTemplates::from([("Review".into(), "global".into())]);
+
+    merge(
+        &mut templates,
+        PromptTemplates::from([("review".into(), "project".into())]),
+    );
+
+    assert_eq!(
+        templates,
+        PromptTemplates::from([("review".into(), "project".into())])
+    );
 }
 
 #[test]

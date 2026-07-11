@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub type PromptTemplates = BTreeMap<String, String>;
 
@@ -28,7 +31,11 @@ fn discover_with_home(cwd: &Path, home: Option<&Path>) -> PromptTemplates {
                 continue;
             };
             if validate_entry(name, &template).is_ok() {
-                templates.insert(name.to_string(), template.trim().to_string());
+                insert_override(
+                    &mut templates,
+                    name.to_string(),
+                    template.trim().to_string(),
+                );
             }
         }
     }
@@ -55,10 +62,33 @@ fn template_paths(root: &Path) -> Vec<std::path::PathBuf> {
 }
 
 pub fn validate(templates: &PromptTemplates) -> anyhow::Result<()> {
+    let mut names = BTreeSet::new();
     for (name, template) in templates {
         validate_entry(name, template)?;
+        if !names.insert(name.to_ascii_lowercase()) {
+            anyhow::bail!(
+                "prompt template name '/{name}' conflicts with another template name (names are case-insensitive)"
+            );
+        }
     }
     Ok(())
+}
+
+pub fn merge(templates: &mut PromptTemplates, overrides: PromptTemplates) {
+    for (name, template) in overrides {
+        insert_override(templates, name, template);
+    }
+}
+
+fn insert_override(templates: &mut PromptTemplates, name: String, template: String) {
+    if let Some(existing) = templates
+        .keys()
+        .find(|existing| existing.eq_ignore_ascii_case(&name))
+        .cloned()
+    {
+        templates.remove(&existing);
+    }
+    templates.insert(name, template);
 }
 
 fn validate_entry(name: &str, template: &str) -> anyhow::Result<()> {

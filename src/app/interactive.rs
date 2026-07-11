@@ -50,7 +50,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
         None => None,
     };
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
-    prompt_templates.extend(config.prompt_templates);
+    crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates);
     let tui_result = tui::run(
         &mut agent,
         TuiInfo {
