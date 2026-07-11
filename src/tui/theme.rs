@@ -484,14 +484,12 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 
 #[cfg(windows)]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::{stdout, Write};
-    use std::ptr::null_mut;
+    use std::io::stdout;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-    use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
-        STD_INPUT_HANDLE,
+        GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -535,21 +533,32 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
             break;
         }
 
-        let mut buffer = [0u8; 1024];
+        let mut records = [INPUT_RECORD::default(); 128];
         let mut count = 0;
         if unsafe {
-            ReadFile(
+            ReadConsoleInputW(
                 input,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
+                records.as_mut_ptr(),
+                records.len() as u32,
                 &mut count,
-                null_mut(),
             )
         } == 0
         {
             return Err(std::io::Error::last_os_error());
         }
-        bytes.extend_from_slice(&buffer[..count as usize]);
+        for record in &records[..count as usize] {
+            if u32::from(record.EventType) != KEY_EVENT {
+                continue;
+            }
+            let key = unsafe { record.Event.KeyEvent };
+            if key.bKeyDown == 0 {
+                continue;
+            }
+            let character = unsafe { key.uChar.UnicodeChar };
+            if character != 0 {
+                bytes.extend_from_slice(String::from_utf16_lossy(&[character]).as_bytes());
+            }
+        }
         if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
             return Ok(Some(palette));
         }
