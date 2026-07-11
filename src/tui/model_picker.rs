@@ -4,7 +4,7 @@ use crate::model::{catalog, favorites};
 pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPicker {
     model_picker_for_current(
         "select model",
-        "type regex filter, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
+        "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
         CurrentModel {
             provider: &info.provider,
             model: &info.model,
@@ -52,7 +52,7 @@ pub(super) fn title_model_picker(
 ) -> UiPicker {
     model_picker_for_current(
         "select title model",
-        "type regex filter, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
+        "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
         CurrentModel {
             provider: current_provider,
             model: current_model,

@@ -118,7 +118,17 @@ impl UiPicker {
 
     pub(super) fn complete_filter(&mut self) {
         if let Some(item) = self.selected_item() {
-            self.filter = regex::escape(&item.value);
+            self.filter = match self.action {
+                PickerAction::SelectModel
+                | PickerAction::SelectTitleModel
+                | PickerAction::InsertFilePath => item.value.clone(),
+                PickerAction::LoginProvider
+                | PickerAction::LogoutProvider
+                | PickerAction::InsertSkillCommand
+                | PickerAction::ResumeSession
+                | PickerAction::Config
+                | PickerAction::Doctor => regex::escape(&item.value),
+            };
         }
     }
 
@@ -130,12 +140,12 @@ impl UiPicker {
 
     pub(super) fn matching_indices(&self) -> Vec<usize> {
         match self.action {
-            PickerAction::InsertFilePath => {
-                fuzzy_picker_matching_indices(&self.items, &self.filter)
-            }
             PickerAction::SelectModel
             | PickerAction::SelectTitleModel
-            | PickerAction::LoginProvider
+            | PickerAction::InsertFilePath => {
+                fuzzy_picker_matching_indices(&self.items, &self.filter)
+            }
+            PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
