@@ -59,8 +59,10 @@ unsafe impl Sync for ProcessTree {}
 #[cfg(windows)]
 impl ProcessTree {
     pub(super) fn attach(child: &Child) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
+        let process = child
+            .raw_handle()
+            .ok_or_else(|| "spawned process has no handle".to_string())?;
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
@@ -74,8 +76,7 @@ impl ProcessTree {
                 (&raw const limits).cast(),
                 std::mem::size_of_val(&limits) as u32,
             );
-            let assigned =
-                configured != 0 && AssignProcessToJobObject(job, child.as_raw_handle()) != 0;
+            let assigned = configured != 0 && AssignProcessToJobObject(job, process as _) != 0;
             if !assigned {
                 let error = std::io::Error::last_os_error();
                 CloseHandle(job);
