@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
+const FALLBACK_BACKGROUND: Rgb = Rgb::new(12, 12, 12);
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -130,35 +131,26 @@ impl Palette {
             warning: AnsiColor::Yellow.color(),
             error: AnsiColor::Red.color(),
             skill: AnsiColor::Magenta.color(),
-            user_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Gray,
-                USER_BACKGROUND_ALPHA,
-                Color::DarkGray,
-            ),
+            user_background: blended_or_fallback(terminal, AnsiColor::Gray, USER_BACKGROUND_ALPHA),
             neutral_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
-                Color::DarkGray,
             ),
             success_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Green,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Green.color(),
             ),
             failure_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Red,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Red.color(),
             ),
             skill_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Magenta,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Magenta.color(),
             ),
         }
     }
@@ -354,11 +346,21 @@ fn blended_or_fallback(
     terminal: Option<&TerminalPalette>,
     color: AnsiColor,
     alpha: f32,
-    fallback: Color,
 ) -> BlockColor {
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or_else(|| BlockColor::from_color(fallback))
+        .unwrap_or_else(|| {
+            let fallback_ansi = match color {
+                AnsiColor::Red => Rgb::new(205, 49, 49),
+                AnsiColor::Green => Rgb::new(13, 188, 121),
+                AnsiColor::Yellow => Rgb::new(229, 229, 16),
+                AnsiColor::Blue => Rgb::new(36, 114, 200),
+                AnsiColor::Magenta => Rgb::new(188, 63, 188),
+                AnsiColor::Cyan => Rgb::new(17, 168, 205),
+                AnsiColor::Gray => Rgb::new(204, 204, 204),
+            };
+            BlockColor::from_rgb(FALLBACK_BACKGROUND.blend_toward(fallback_ansi, alpha))
+        })
 }
 
 fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {
@@ -369,12 +371,7 @@ fn query_terminal_palette() -> Option<TerminalPalette> {
     query_terminal_palette_impl().ok().flatten()
 }
 
-#[cfg(unix)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::{Read, Write};
-    use std::os::fd::AsRawFd;
-    use std::time::{Duration, Instant};
-
+fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
     const COLORS: [AnsiColor; 7] = [
         AnsiColor::Red,
         AnsiColor::Green,
@@ -385,12 +382,21 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         AnsiColor::Gray,
     ];
 
-    let mut stdout = std::io::stdout();
-    stdout.write_all(b"\x1b]11;?\x1b\\")?;
+    output.write_all(b"\x1b]11;?\x1b\\")?;
     for color in COLORS {
-        write!(stdout, "\x1b]4;{};?\x1b\\", color.index())?;
+        write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
     }
-    stdout.flush()?;
+    output.flush()
+}
+
+#[cfg(unix)]
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::time::{Duration, Instant};
+
+    let mut stdout = std::io::stdout();
+    write_palette_queries(&mut stdout)?;
 
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
@@ -428,7 +434,83 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(palette)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+    use std::io::{stdout, Write};
+    use std::ptr::null_mut;
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
+        STD_INPUT_HANDLE,
+    };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    struct ConsoleModeGuard {
+        handle: *mut std::ffi::c_void,
+        mode: u32,
+    }
+
+    impl Drop for ConsoleModeGuard {
+        fn drop(&mut self) {
+            unsafe { SetConsoleMode(self.handle, self.mode) };
+        }
+    }
+
+    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if input.is_null() || input == -1isize as _ {
+        return Ok(None);
+    }
+
+    let mut original_mode = 0;
+    if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
+        return Ok(None);
+    }
+    if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
+        return Ok(None);
+    }
+    let _mode_guard = ConsoleModeGuard {
+        handle: input,
+        mode: original_mode,
+    };
+
+    let mut output = stdout();
+    write_palette_queries(&mut output)?;
+
+    let mut bytes = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(80);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
+        if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
+            break;
+        }
+
+        let mut buffer = [0u8; 1024];
+        let mut count = 0;
+        if unsafe {
+            ReadFile(
+                input,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                &mut count,
+                null_mut(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        bytes.extend_from_slice(&buffer[..count as usize]);
+        if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
+            return Ok(Some(palette));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(None)
 }

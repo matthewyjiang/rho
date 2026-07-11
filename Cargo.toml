@@ -41,6 +41,14 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 similar = "2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
 # Use unreleased Windows VT input support so bracketed paste produces Event::Paste.
 # Remove this override after crossterm-rs/crossterm#1030 is released.
 [patch.crates-io]
