@@ -5,6 +5,7 @@ pub mod edit_file;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
+mod process;
 pub mod read_file;
 pub mod rtk;
 pub mod skill;
@@ -19,6 +20,13 @@ pub fn registry(config: &Config) -> ToolRegistry {
     r.register(read_file::ReadFile);
     r.register(write_file::WriteFile);
     r.register(edit_file::EditFile);
+    let processes = process::ProcessManager::new(process::ProcessLimits::default());
+    r.register(process::StartProcess::new(processes.clone()));
+    r.register(process::PollProcess::new(processes.clone()));
+    r.register(process::WriteProcess::new(processes.clone()));
+    r.register(process::StopProcess::new(processes.clone()));
+    r.register(process::ListProcesses::new(processes.clone()));
+    r.set_shutdown(processes);
     let rtk_enabled = config.rtk && rtk::is_available();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     r.register(bash::Bash::new(rtk_enabled));
@@ -53,6 +61,18 @@ mod tests {
         );
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
+        for process_tool in [
+            "start_process",
+            "poll_process",
+            "write_process",
+            "stop_process",
+            "list_processes",
+        ] {
+            assert!(
+                names.contains(&process_tool.to_string()),
+                "missing {process_tool}"
+            );
+        }
     }
 
     #[test]
@@ -70,5 +90,17 @@ mod tests {
         assert!(!names.contains(&"web_search".to_string()));
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
+        for process_tool in [
+            "start_process",
+            "poll_process",
+            "write_process",
+            "stop_process",
+            "list_processes",
+        ] {
+            assert!(
+                names.contains(&process_tool.to_string()),
+                "missing {process_tool}"
+            );
+        }
     }
 }

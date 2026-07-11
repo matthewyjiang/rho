@@ -21,7 +21,7 @@ pub(super) struct Startup<'a> {
     pub(super) herdr: HerdrReporter,
 }
 
-pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Result<()> {
+pub(super) async fn run(agent: &mut Agent, startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
         cli,
         config,
@@ -38,7 +38,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
             let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
             let session_id = Some(session.id().to_string());
             recovered_messages = histories.display;
-            agent = agent.with_history(histories.model);
+            agent.replace_history(histories.model);
             agent.set_session_id(session_id.clone());
             agent.set_history_sink(SessionHistorySink::new(session));
             session_id
@@ -52,7 +52,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates);
     let tui_result = tui::run(
-        &mut agent,
+        agent,
         TuiInfo {
             cwd,
             provider: config.provider,

@@ -240,7 +240,7 @@ fn format_timeout(args: &serde_json::Value) -> String {
     }
 }
 
-fn wrapped_command(command: &str) -> String {
+pub(crate) fn wrapped_command(command: &str) -> String {
     format!(
         "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
          $OutputEncoding = [Console]::OutputEncoding; \
