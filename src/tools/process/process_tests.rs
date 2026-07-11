@@ -322,3 +322,67 @@ async fn async_shutdown_kills_descendants() {
 async fn drop_kills_descendants() {
     descendant_case("drop").await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let command = format!("python3 -m http.server {port} --bind 127.0.0.1 & echo $!; wait");
+    let started = manager
+        .start(command, std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let first = manager
+        .poll(&started.process_id, Some(0), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let pid: i32 = first
+        .chunks
+        .iter()
+        .map(|chunk| chunk.text.as_str())
+        .collect::<String>()
+        .trim()
+        .parse()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/Cargo.toml");
+    let body = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(response) = reqwest::get(&url).await {
+                break response.text().await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("server did not accept connections");
+    assert!(body.contains("rho-coding-agent"));
+    let after_access = manager
+        .poll(
+            &started.process_id,
+            Some(first.next_cursor),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    let duplicate = manager
+        .poll(
+            &started.process_id,
+            Some(after_access.next_cursor),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+    assert!(duplicate.chunks.is_empty());
+    manager
+        .stop(&started.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+}
