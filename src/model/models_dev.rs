@@ -49,8 +49,8 @@ pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadat
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    if let Some(metadata) = cached_model_metadata(provider, model) {
-        return Some(metadata);
+    if let Some(metadata) = cached_upstream_model_metadata(provider, model) {
+        return Some(apply_overrides(provider, model, metadata));
     }
 
     if let Some(metadata) = read_cached_api()
