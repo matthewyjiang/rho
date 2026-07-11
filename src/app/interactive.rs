@@ -49,6 +49,8 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
         }
         None => None,
     };
+    let mut prompt_templates = crate::prompt_templates::discover(&cwd);
+    crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates);
     let tui_result = tui::run(
         &mut agent,
         TuiInfo {
@@ -64,6 +66,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
             favorite_models: config.favorite_models,
             max_tool_output_lines: config.max_tool_output_lines,
             keybindings: config.keybindings,
+            prompt_templates,
             questionnaire_enabled: !cli.no_tools,
             session_id,
             recovered_messages,

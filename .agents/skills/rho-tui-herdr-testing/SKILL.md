@@ -66,7 +66,13 @@ Useful Rho controls:
 - `/` opens the command palette; `@` opens file completion.
 - `Up` and `Down` select, `Tab` completes, `Enter` confirms, and `Esc` cancels or interrupts.
 - `PageUp` and `PageDown` scroll; `Ctrl-g` returns to the bottom.
-- `Ctrl-r` resets history. `Ctrl-c` clears input, then exits when pressed again.
+- `Ctrl-r` resets history. `Ctrl-c` clears input, then exits when pressed again. Since `pane send-keys` does not currently accept `Ctrl-c`, send its literal control byte from Bash or Zsh:
+
+  ```bash
+  herdr pane send-text "$TUI_PANE" $'\003'
+  ```
+
+  Send the command twice to exercise Rho's clear-then-exit behavior.
 - `Enter` queues a prompt during a run; `Alt-Up` restores the latest queued prompt to the composer.
 
 Rho owns its transcript viewport, so use these controls instead of terminal scrollback.
@@ -87,9 +93,11 @@ Exercise the user-facing exit path first:
 herdr pane run "$TUI_PANE" "/exit"
 ```
 
-Verify the shell returns and the alternate screen is restored. Use `Esc` or `Ctrl-c` if stuck, then close the temporary pane:
+Verify the shell returns and the alternate screen is restored. Use `Esc` or send a literal Ctrl-c if stuck, then close the temporary pane:
 
 ```bash
+herdr pane send-keys "$TUI_PANE" Esc
+herdr pane send-text "$TUI_PANE" $'\003'
 herdr pane close "$TUI_PANE"
 ```
 

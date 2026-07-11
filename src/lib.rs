@@ -11,6 +11,7 @@ mod keybindings;
 mod model;
 mod paths;
 mod prompt;
+mod prompt_templates;
 mod provider;
 mod provider_backend;
 mod reasoning;

@@ -61,6 +61,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/exit` | Quit the TUI. |
 
+Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending.
+
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time.
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.

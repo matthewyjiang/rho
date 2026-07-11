@@ -35,6 +35,7 @@ pub struct Config {
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
     pub keybindings: Keybindings,
+    pub prompt_templates: crate::prompt_templates::PromptTemplates,
 }
 
 impl Default for Config {
@@ -59,6 +60,7 @@ impl Default for Config {
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
             keybindings: Keybindings::default(),
+            prompt_templates: Default::default(),
         }
     }
 }
@@ -215,6 +217,7 @@ struct GroupedConfig<'a> {
     web_search: WebSearchConfig<'a>,
     behavior: BehaviorConfig,
     keybindings: &'a Keybindings,
+    prompt_templates: &'a crate::prompt_templates::PromptTemplates,
 }
 
 #[derive(Serialize)]
@@ -309,6 +312,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 rtk: config.rtk,
             },
             keybindings: &config.keybindings,
+            prompt_templates: &config.prompt_templates,
         }
     }
 }
@@ -331,6 +335,10 @@ impl Config {
         let mut cfg = Config::default();
         let text = fs::read_to_string(&path)?;
         let file: PartialConfig = toml::from_str(&text)?;
+        if let Some(v) = file.prompt_templates {
+            crate::prompt_templates::validate(&v)?;
+            cfg.prompt_templates = v;
+        }
         if let Some(v) = file.provider {
             cfg.provider = v;
         }
@@ -560,6 +568,7 @@ struct PartialConfig {
     web_search: Option<PartialWebSearchConfig>,
     behavior: Option<PartialBehaviorConfig>,
     keybindings: Option<Keybindings>,
+    prompt_templates: Option<crate::prompt_templates::PromptTemplates>,
 }
 
 #[derive(Deserialize)]

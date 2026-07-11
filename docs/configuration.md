@@ -34,6 +34,10 @@ provider = "auto" # auto, openai, exa, brave, or disabled
 check_for_updates = true
 rtk = true
 
+[prompt_templates]
+review = "Review this code for correctness, security, and maintainability."
+"explain-tests" = "Explain how these tests cover the expected behavior."
+
 [keybindings]
 reset_conversation = "ctrl+r"
 jump_to_bottom = "ctrl+g"
@@ -47,6 +51,29 @@ Settings are grouped by purpose so the file is easier to scan and edit by hand. 
 Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
 
 The full saved file can also include optional title-generation and web-search settings. `provider`, `model`, and `auth` under `[title]` override the model used to generate session titles; when they are omitted, Rho uses the active provider/model/auth selection. Web search API keys are normally stored in the OS credential store rather than config.
+
+## Prompt templates
+
+The easiest way to add a reusable prompt is to create a Markdown or text file. The filename becomes the slash command and the file contents become its prompt:
+
+- `~/.rho/prompts/review.md` makes `/prompt:review` available everywhere.
+- `.rho/prompts/review.md` makes `/prompt:review` available in that project and its subdirectories.
+- A project file overrides a global file with the same name.
+
+For example, `~/.rho/prompts/review.md` could contain:
+
+```text
+Review this code for correctness, security, and maintainability.
+```
+
+Templates can also be defined inline in `config.toml` when a separate file would be unnecessary:
+
+```toml
+[prompt_templates]
+review = "Review this code for correctness, security, and maintainability."
+```
+
+Inline config templates override files with the same name. Typing `/prompt:review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
 
 ## CLI overrides
 

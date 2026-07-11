@@ -31,6 +31,7 @@ use ratatui::{
     widgets::Paragraph,
     DefaultTerminal, Frame, Terminal,
 };
+mod command_palette;
 mod config_editor;
 mod config_picker;
 mod copy_interaction;
@@ -141,6 +142,7 @@ pub struct TuiInfo {
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
+    pub prompt_templates: crate::prompt_templates::PromptTemplates,
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
@@ -245,6 +247,7 @@ struct App {
     input_history_draft: Option<InputDraft>,
     paste_burst: PasteBurst,
     paste_segments: Vec<PasteSegment>,
+    input_submission_mode: InputSubmissionMode,
     transcript: Vec<Entry>,
     history_lines: HistoryLineCache,
     last_status_notice: Option<String>,
@@ -273,6 +276,13 @@ struct App {
     text_selection: Option<TextSelection>,
     copy_notice: Option<CopyNotice>,
     clipboard: Box<dyn ClipboardWriter + Send>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum InputSubmissionMode {
+    #[default]
+    ParseCommands,
+    Prompt,
 }
 
 #[derive(Debug)]
@@ -317,6 +327,7 @@ struct QueuedPrompt {
 struct InputDraft {
     input: String,
     paste_segments: Vec<PasteSegment>,
+    submission_mode: InputSubmissionMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -421,6 +432,7 @@ impl LoadingSpinner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
+    PromptTemplate(String),
     Skill,
 }
 
@@ -600,6 +612,7 @@ impl App {
             input_history_draft: None,
             paste_burst: PasteBurst::default(),
             paste_segments: Vec::new(),
+            input_submission_mode: InputSubmissionMode::default(),
             transcript: Vec::new(),
             history_lines: HistoryLineCache::default(),
             last_status_notice: None,
@@ -910,6 +923,7 @@ impl App {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
                     self.paste_segments.clear();
+                    self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
@@ -1502,9 +1516,7 @@ impl App {
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
                 if let Some(choice) = self.selected_command() {
-                    let (input, cursor) = self.complete_command_choice(&choice);
-                    self.input = input;
-                    self.input_cursor = cursor;
+                    self.complete_command_choice(&choice);
                     self.command_palette_dismissed = false;
                     self.clamp_command_selection();
                 }
@@ -1514,9 +1526,7 @@ impl App {
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 if let Some(choice) = self.selected_command() {
-                    let (input, cursor) = self.complete_command_choice(&choice);
-                    self.input = input;
-                    self.input_cursor = cursor;
+                    self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
                 self.paste_burst.clear();
@@ -1569,6 +1579,7 @@ impl App {
                 self.input_history_draft = Some(InputDraft {
                     input: self.input.clone(),
                     paste_segments: self.paste_segments.clone(),
+                    submission_mode: self.input_submission_mode,
                 });
                 self.input_history.len() - 1
             }
@@ -1582,9 +1593,11 @@ impl App {
                 let draft = self.input_history_draft.take().unwrap_or(InputDraft {
                     input: String::new(),
                     paste_segments: Vec::new(),
+                    submission_mode: InputSubmissionMode::ParseCommands,
                 });
                 self.input = draft.input;
                 self.paste_segments = draft.paste_segments;
+                self.input_submission_mode = draft.submission_mode;
                 self.input_cursor = self.input_char_len();
                 self.input_history_cursor = None;
                 self.input_changed();
@@ -1594,6 +1607,7 @@ impl App {
 
         self.input = self.input_history[next_cursor].clone();
         self.paste_segments.clear();
+        self.input_submission_mode = InputSubmissionMode::ParseCommands;
         self.input_cursor = self.input_char_len();
         self.input_history_cursor = Some(next_cursor);
         self.input_changed();
@@ -1633,6 +1647,7 @@ impl App {
         };
         self.input = prompt.display_prompt;
         self.paste_segments = prompt.paste_segments;
+        self.input_submission_mode = InputSubmissionMode::ParseCommands;
         self.input_cursor = self.input_char_len();
         self.reset_input_history_navigation();
         self.input_changed();
@@ -1793,58 +1808,12 @@ impl App {
         self.clamp_command_selection();
     }
 
-    fn command_matches(&self) -> Vec<CommandChoice> {
-        let Some(prefix) = commands::command_prefix(&self.input) else {
-            return Vec::new();
-        };
-        let prefix = prefix
-            .strip_prefix('/')
-            .unwrap_or(prefix)
-            .to_ascii_lowercase();
-        let mut matches = commands::matching_commands(&prefix)
-            .into_iter()
-            .map(|command| CommandChoice {
-                name: command.name.to_string(),
-                usage: command.usage.to_string(),
-                description: command.description.to_string(),
-                kind: CommandChoiceKind::Builtin(command),
-            })
-            .collect::<Vec<_>>();
-        matches.extend(
-            crate::skills::discover(&self.info.cwd)
-                .into_iter()
-                .filter(|skill| {
-                    skill.name.starts_with(&prefix)
-                        || format!("skill:{}", skill.name).starts_with(&prefix)
-                })
-                .map(|skill| {
-                    let command_name = format!("skill:{}", skill.name);
-                    CommandChoice {
-                        usage: format!("/{command_name}"),
-                        name: command_name,
-                        description: skill.description,
-                        kind: CommandChoiceKind::Skill,
-                    }
-                }),
-        );
-        matches
-    }
-
-    fn selected_command(&self) -> Option<CommandChoice> {
-        let matches = self.command_matches();
-        matches
-            .get(self.command_selection.min(matches.len().saturating_sub(1)))
-            .cloned()
-    }
-
-    fn complete_command_choice(&self, choice: &CommandChoice) -> (String, usize) {
-        match &choice.kind {
-            CommandChoiceKind::Builtin(spec) => {
-                commands::complete_command(&self.input, self.input_cursor, spec)
-            }
-            CommandChoiceKind::Skill => {
-                complete_slash_command(&self.input, self.input_cursor, &choice.name)
-            }
+    fn parse_input_command(
+        &mut self,
+    ) -> Result<Option<CommandInvocation>, commands::CommandParseError> {
+        match std::mem::take(&mut self.input_submission_mode) {
+            InputSubmissionMode::ParseCommands => commands::parse_command(&self.input),
+            InputSubmissionMode::Prompt => Ok(None),
         }
     }
 
@@ -1941,7 +1910,7 @@ impl App {
             return Ok(());
         }
 
-        match commands::parse_command(&self.input) {
+        match self.parse_input_command() {
             Ok(Some(mut invocation)) => {
                 if invocation.id == CommandId::Goal {
                     invocation.raw_args = slash_command_args(&prompt).to_string();
@@ -1963,7 +1932,17 @@ impl App {
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                if self.execute_skill_command(&name, agent)? {
+                let template = name
+                    .get(.."prompt:".len())
+                    .filter(|prefix| prefix.eq_ignore_ascii_case("prompt:"))
+                    .and_then(|_| name.get("prompt:".len()..))
+                    .and_then(|template_name| {
+                        crate::prompt_templates::find(&self.info.prompt_templates, template_name)
+                    });
+                if let Some(template) = template {
+                    prompt = crate::prompt_templates::expand(template, &trailing_prompt);
+                    display_prompt = prompt.clone();
+                } else if self.execute_skill_command(&name, agent)? {
                     if trailing_prompt.is_empty() {
                         return Ok(());
                     }
@@ -2343,6 +2322,7 @@ impl App {
                 if self.ctrl_c_streak == 0 {
                     self.input.clear();
                     self.paste_segments.clear();
+                    self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
                     self.input_cursor = 0;
                     self.clamp_command_selection();
@@ -2451,7 +2431,7 @@ impl App {
             return Ok(());
         }
 
-        match commands::parse_command(&self.input) {
+        match self.parse_input_command() {
             Ok(Some(invocation)) => {
                 self.input.clear();
                 self.paste_segments.clear();
@@ -2648,9 +2628,7 @@ impl App {
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
                 if let Some(choice) = self.selected_command() {
-                    let (input, cursor) = self.complete_command_choice(&choice);
-                    self.input = input;
-                    self.input_cursor = cursor;
+                    self.complete_command_choice(&choice);
                     self.command_palette_dismissed = false;
                     self.clamp_command_selection();
                 }
@@ -2658,9 +2636,7 @@ impl App {
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 if let Some(choice) = self.selected_command() {
-                    let (input, cursor) = self.complete_command_choice(&choice);
-                    self.input = input;
-                    self.input_cursor = cursor;
+                    self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
                 self.submit_during_turn(terminal)?;
@@ -5812,6 +5788,7 @@ mod tests {
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
+                prompt_templates: Default::default(),
             },
             store,
         )
@@ -6892,6 +6869,7 @@ mod tests {
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
+                prompt_templates: Default::default(),
             },
             store,
         );
