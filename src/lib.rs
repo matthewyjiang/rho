@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod credentials;
 mod herdr;
+mod keybindings;
 mod model;
 mod paths;
 mod prompt;

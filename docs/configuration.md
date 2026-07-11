@@ -3,28 +3,50 @@
 Rho stores persistent config at `~/.rho/config.toml` by default.
 
 ```toml
+[model]
 provider = "openai"
 model = "gpt-5.5"
-max_output_bytes = 12000
-max_tool_output_lines = 10
 auth = "api-key" # or "codex", "anthropic-api-key", or "github-copilot"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
+favorite_models = []
+
+[display]
 show_reasoning_output = true
-check_for_updates = true
+max_tool_output_lines = 10
+
+[output]
+max_output_bytes = 12000
+
+[compaction]
 auto_compact = false
 compact_threshold_percent = 85
 compact_target_percent = 50
-title_provider = "openai"
-title_model = "gpt-5.5"
-title_auth = "api-key"
-web_search_provider = "auto" # auto, openai, exa, brave, or disabled
-web_search_openai_api_key = ""
-web_search_exa_api_key = ""
-web_search_brave_api_key = ""
+
+[title]
+# provider = "openai"
+# model = "gpt-5.5"
+# auth = "api-key"
+
+[web_search]
+provider = "auto" # auto, openai, exa, brave, or disabled
+
+[behavior]
+check_for_updates = true
 rtk = true
+
+[keybindings]
+reset_conversation = "ctrl+r"
+jump_to_bottom = "ctrl+g"
+toggle_tool_output = "ctrl+o"
+insert_newline = "ctrl+j"
+paste_image = "ctrl+v"
 ```
 
-The full saved file can also include optional title-generation and web-search settings. `title_provider`, `title_model`, and `title_auth` override the model used to generate session titles; when they are omitted, Rho uses the active provider/model/auth selection. The web search API-key fields are optional convenience settings for tool access; leave them unset unless you want Rho's built-in web search tool to use a specific provider credential.
+Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.
+
+Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
+
+The full saved file can also include optional title-generation and web-search settings. `provider`, `model`, and `auth` under `[title]` override the model used to generate session titles; when they are omitted, Rho uses the active provider/model/auth selection. Web search API keys are normally stored in the OS credential store rather than config.
 
 ## CLI overrides
 
@@ -61,9 +83,9 @@ If no title model settings are present, Rho falls back to the active provider, m
 
 ## Web search
 
-`web_search_provider` controls the built-in [web search tool](/tools-workspace#built-in-tools). Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded.
+`provider` under `[web_search]` controls the built-in [web search tool](/tools-workspace#built-in-tools). Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded.
 
-Optional `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values let the web search tool use provider-specific credentials from config. Empty strings are ignored. Set `web_search_provider = "disabled"` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
+Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the OS credential store when loaded. Empty strings are ignored. Set `provider = "disabled"` under `[web_search]` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
 
 ## TUI updates
 
