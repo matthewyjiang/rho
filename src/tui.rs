@@ -1941,7 +1941,11 @@ impl App {
         }
 
         match commands::parse_command(&self.input) {
-            Ok(Some(invocation)) => {
+            Ok(Some(mut invocation)) => {
+                if invocation.id == CommandId::Goal {
+                    invocation.raw_args = slash_command_args(&prompt).to_string();
+                    invocation.args = invocation.raw_args.trim().to_string();
+                }
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1984,24 +1988,25 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        let outcome = self
+        let mut outcome = self
             .run_prompt_turn(prompt, display_prompt, images, terminal, agent)
             .await?;
-        if matches!(outcome, TurnOutcome::Completed) && self.goal.is_some() {
-            self.continue_goal(terminal, agent).await?;
-        }
         while !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break;
             };
-            self.run_prompt_turn(
-                prompt.prompt,
-                prompt.display_prompt,
-                Vec::new(),
-                terminal,
-                agent,
-            )
-            .await?;
+            outcome = self
+                .run_prompt_turn(
+                    prompt.prompt,
+                    prompt.display_prompt,
+                    Vec::new(),
+                    terminal,
+                    agent,
+                )
+                .await?;
+        }
+        if matches!(outcome, TurnOutcome::Completed) && self.goal.is_some() {
+            self.continue_goal(terminal, agent).await?;
         }
         Ok(())
     }
@@ -5590,8 +5595,7 @@ fn disable_keyboard_enhancements() -> std::io::Result<()> {
 
 fn enable_modified_keys() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
-    // xterm modifyOtherKeys mode 2 helps terminals/tmux preserve modified Enter
-    // without forcing printable shifted characters into base-key escape codes.
+    // xterm mode 2 preserves modified Enter without altering printable shifted characters.
     stdout.write_all(b"\x1b[>4;2m")?;
     stdout.flush()
 }

@@ -9,6 +9,7 @@ use crate::{
 };
 
 pub(super) const MAX_GOAL_CHARS: usize = 4_000;
+pub(super) const EVALUATION_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_EVALUATION_TRANSCRIPT_CHARS: usize = 64_000;
 
 #[derive(Clone, Debug)]

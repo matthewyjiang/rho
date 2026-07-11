@@ -93,11 +93,12 @@ impl App {
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
         self.status = "goal active".into();
+        let images = std::mem::take(&mut self.pending_images);
         let outcome = self
             .run_prompt_turn(
                 condition.to_string(),
                 condition.to_string(),
-                Vec::new(),
+                images,
                 terminal,
                 agent,
             )
@@ -132,8 +133,45 @@ impl App {
                         .unwrap_or_else(|| self.info.model.clone()),
                 )
             };
-            let evaluation = goal::evaluate(&provider, &model, &condition, agent.messages()).await;
+            let evaluation = {
+                let interrupt_requested = AtomicBool::new(false);
+                let tool_call_active = AtomicBool::new(false);
+                let mut evaluation = Box::pin(goal::evaluate(
+                    &provider,
+                    &model,
+                    &condition,
+                    agent.messages(),
+                ));
+                let deadline = tokio::time::Instant::now() + goal::EVALUATION_TIMEOUT;
+                loop {
+                    tokio::select! {
+                        result = &mut evaluation => break Some(result),
+                        _ = tokio::time::sleep_until(deadline) => {
+                            break Some(Err(anyhow::anyhow!("goal evaluation timed out")));
+                        }
+                        _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                            let control = self.handle_running_terminal_events(
+                                terminal,
+                                &interrupt_requested,
+                                &tool_call_active,
+                                RunningInputMode::Turn,
+                            )?;
+                            if matches!(control, StreamControl::Interrupt) {
+                                self.clear_goal();
+                                break None;
+                            }
+                            if self.goal.is_none() {
+                                break None;
+                            }
+                            terminal.draw(|frame| self.draw(frame))?;
+                        }
+                    }
+                }
+            };
             self.loading_spinner.stop();
+            let Some(evaluation) = evaluation else {
+                break;
+            };
 
             let evaluation = match evaluation {
                 Ok(evaluation) => evaluation,
