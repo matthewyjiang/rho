@@ -2,6 +2,7 @@ use super::*;
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
+use std::time::Duration;
 
 macro_rules! result {
     ($id:expr,$value:expr) => {

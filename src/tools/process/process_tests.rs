@@ -1,4 +1,6 @@
+use super::types::{terminal, Stream};
 use super::*;
+use std::time::Duration;
 
 async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
     let mut cursor = 0;
@@ -175,4 +177,148 @@ async fn timeout_and_stop_reach_distinct_terminal_states() {
         eventually(&manager, &stopped.process_id).await.state,
         State::Terminated
     );
+}
+
+#[tokio::test]
+async fn drains_all_output_before_marking_terminal() {
+    let manager = ProcessManager::new(ProcessLimits {
+        max_bytes: 2_000_000,
+        ..ProcessLimits::default()
+    });
+    let started = manager
+        .start(
+            "head -c 1000000 /dev/zero | tr '\\0' x".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let snapshot = manager
+        .poll(&started.process_id, Some(0), Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .chunks
+            .iter()
+            .map(|chunk| chunk.text.len())
+            .sum::<usize>(),
+        1_000_000
+    );
+}
+
+#[tokio::test]
+async fn retained_record_limit_removes_oldest_completed_records() {
+    let manager = ProcessManager::new(ProcessLimits {
+        max_records: 2,
+        ..ProcessLimits::default()
+    });
+    let mut ids = Vec::new();
+    for command in ["true", "true", "true"] {
+        let started = manager
+            .start(command.into(), std::path::Path::new("."), None)
+            .await
+            .unwrap();
+        eventually(&manager, &started.process_id).await;
+        ids.push(started.process_id);
+    }
+    let listed = manager.list();
+    assert_eq!(listed.len(), 2);
+    assert!(manager.poll(&ids[0], None, Duration::ZERO).await.is_err());
+}
+
+#[tokio::test]
+async fn concurrent_list_poll_and_stop_do_not_deadlock() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start("cat".into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let id = started.process_id;
+    let operations = (0..20)
+        .map(|_| {
+            let manager = manager.clone();
+            let id = id.clone();
+            tokio::spawn(async move {
+                let _ = manager.list();
+                let _ = manager.poll(&id, None, Duration::from_millis(5)).await;
+            })
+        })
+        .collect::<Vec<_>>();
+    manager.stop(&id, Duration::ZERO).await.unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        futures_util::future::join_all(operations),
+    )
+    .await
+    .unwrap();
+    eventually(&manager, &id).await;
+}
+
+#[cfg(unix)]
+async fn descendant_case(action: &str) {
+    let directory = tempfile::tempdir().unwrap();
+    let pid_file = directory.path().join("pid");
+    let command = format!("sleep 300 & echo $! > {}; wait", pid_file.display());
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(
+            command,
+            std::path::Path::new("."),
+            (action == "timeout").then_some(Duration::from_millis(500)),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !pid_file.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("descendant pid file was not created");
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    match action {
+        "stop" => manager
+            .stop(&started.process_id, Duration::ZERO)
+            .await
+            .unwrap(),
+        "shutdown" => manager.shutdown().await,
+        "drop" => drop(manager),
+        "timeout" => {
+            eventually(&manager, &started.process_id).await;
+        }
+        _ => unreachable!(),
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        unsafe { libc::kill(pid, 0) },
+        -1,
+        "descendant {pid} survived {action}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn explicit_stop_kills_descendants() {
+    descendant_case("stop").await;
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_kills_descendants() {
+    descendant_case("timeout").await;
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn async_shutdown_kills_descendants() {
+    descendant_case("shutdown").await;
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn drop_kills_descendants() {
+    descendant_case("drop").await;
 }
