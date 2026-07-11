@@ -4,7 +4,14 @@ use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
 
 impl App {
     pub(super) fn execute_diff_command(&mut self) -> anyhow::Result<()> {
-        let diff = local_diff::collect(&self.info.cwd)?;
+        let diff = match local_diff::collect(&self.info.cwd) {
+            Ok(diff) => diff,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("unable to show Git diff: {error}")));
+                self.status = "git diff unavailable".into();
+                return Ok(());
+            }
+        };
         self.insert_entry(&Entry::Tool(ToolEntry {
             state: ToolEntryState::Finished {
                 ok: true,

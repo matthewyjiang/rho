@@ -52,8 +52,16 @@ pub(super) fn report(context: DoctorContext<'_>) -> Vec<String> {
             "unavailable"
         }
     ));
-    lines.push(writability_line("config", context.config_path));
-    lines.push(writability_line("sessions", context.session_root));
+    lines.push(writability_line(
+        "config",
+        context.config_path,
+        PathKind::File,
+    ));
+    lines.push(writability_line(
+        "sessions",
+        context.session_root,
+        PathKind::Directory,
+    ));
 
     for descriptor in provider::providers() {
         if descriptor.model_source == ProviderModelSource::CachedProviderModels {
@@ -105,8 +113,14 @@ fn tone(ok: bool) -> &'static str {
     }
 }
 
-fn writability_line(label: &str, path: &Path) -> String {
-    let writable = probe_writable(path);
+#[derive(Clone, Copy)]
+enum PathKind {
+    File,
+    Directory,
+}
+
+fn writability_line(label: &str, path: &Path, kind: PathKind) -> String {
+    let writable = probe_writable(path, kind);
     format!(
         "[{}] {label} writable: {} ({})",
         tone(writable),
@@ -115,18 +129,27 @@ fn writability_line(label: &str, path: &Path) -> String {
     )
 }
 
-fn probe_writable(path: &Path) -> bool {
-    if path.exists() && !path.is_dir() {
-        return fs::OpenOptions::new().write(true).open(path).is_ok();
+fn probe_writable(path: &Path, kind: PathKind) -> bool {
+    if path.exists() {
+        return match kind {
+            PathKind::File if path.is_file() => {
+                fs::OpenOptions::new().write(true).open(path).is_ok()
+            }
+            PathKind::Directory if path.is_dir() => probe_directory(path),
+            PathKind::File | PathKind::Directory => false,
+        };
     }
-    let directory = if path.is_dir() {
-        path
-    } else {
-        path.parent().unwrap_or(path)
+    let directory = match kind {
+        PathKind::File => path.parent().unwrap_or(path),
+        PathKind::Directory => path,
     };
     if fs::create_dir_all(directory).is_err() {
         return false;
     }
+    probe_directory(directory)
+}
+
+fn probe_directory(directory: &Path) -> bool {
     let probe = directory.join(format!(".rho-doctor-{}", uuid::Uuid::new_v4()));
     let result = fs::OpenOptions::new()
         .write(true)
@@ -156,4 +179,18 @@ fn clipboard_helpers() -> Vec<&'static str> {
 
 fn command_available(command: &str) -> bool {
     Command::new(command).arg("--help").output().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_probe_rejects_regular_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions");
+        fs::write(&path, "not a directory").unwrap();
+
+        assert!(!probe_writable(&path, PathKind::Directory));
+    }
 }

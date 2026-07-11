@@ -62,7 +62,7 @@ impl HerdrReporter {
 
     pub fn socket_is_reachable(&self) -> Option<bool> {
         let config = self.config.as_ref()?;
-        Some(config.socket_path.exists())
+        Some(socket_is_reachable(&config.socket_path))
     }
 
     pub async fn report_state(
@@ -140,6 +140,16 @@ impl HerdrReporter {
 
         let _ = tokio::time::timeout(REQUEST_TIMEOUT, send_payload(socket_path, payload)).await;
     }
+}
+
+#[cfg(unix)]
+fn socket_is_reachable(path: &std::path::Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
+#[cfg(not(unix))]
+fn socket_is_reachable(_path: &std::path::Path) -> bool {
+    false
 }
 
 fn json_rpc_request(method: &str, params: serde_json::Value) -> serde_json::Value {

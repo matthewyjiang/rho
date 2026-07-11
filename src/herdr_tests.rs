@@ -27,6 +27,28 @@ fn enabled_from_complete_herdr_environment() {
 }
 
 #[cfg(unix)]
+#[test]
+fn socket_reachability_connects_to_live_socket() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    let reporter = reporter_for_socket(&socket_path);
+
+    assert_eq!(reporter.socket_is_reachable(), Some(true));
+}
+
+#[cfg(unix)]
+#[test]
+fn socket_reachability_rejects_regular_file() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    std::fs::write(&socket_path, "not a socket").unwrap();
+    let reporter = reporter_for_socket(&socket_path);
+
+    assert_eq!(reporter.socket_is_reachable(), Some(false));
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn report_state_sends_herdr_json_rpc_request() {
     let socket_dir = tempfile::tempdir().unwrap();
