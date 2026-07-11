@@ -67,7 +67,7 @@ impl BlockColor {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 enum AnsiColor {
     Red,
     Green,
@@ -78,7 +78,7 @@ enum AnsiColor {
     Gray,
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 impl AnsiColor {
     const fn index(self) -> u8 {
         match self {
@@ -399,12 +399,7 @@ fn query_terminal_palette() -> Option<TerminalPalette> {
     query_terminal_palette_impl().ok().flatten()
 }
 
-#[cfg(unix)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::{Read, Write};
-    use std::os::fd::AsRawFd;
-    use std::time::{Duration, Instant};
-
+fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
     const COLORS: [AnsiColor; 7] = [
         AnsiColor::Red,
         AnsiColor::Green,
@@ -415,12 +410,21 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         AnsiColor::Gray,
     ];
 
-    let mut stdout = std::io::stdout();
-    stdout.write_all(b"\x1b]11;?\x1b\\")?;
+    output.write_all(b"\x1b]11;?\x1b\\")?;
     for color in COLORS {
-        write!(stdout, "\x1b]4;{};?\x1b\\", color.index())?;
+        write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
     }
-    stdout.flush()?;
+    output.flush()
+}
+
+#[cfg(unix)]
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::time::{Duration, Instant};
+
+    let mut stdout = std::io::stdout();
+    write_palette_queries(&mut stdout)?;
 
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
@@ -458,12 +462,97 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(palette)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+    use std::io::stdout;
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
+    };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    struct ConsoleModeGuard {
+        handle: *mut std::ffi::c_void,
+        mode: u32,
+    }
+
+    impl Drop for ConsoleModeGuard {
+        fn drop(&mut self) {
+            unsafe { SetConsoleMode(self.handle, self.mode) };
+        }
+    }
+
+    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if input.is_null() || input == -1isize as _ {
+        return Ok(None);
+    }
+
+    let mut original_mode = 0;
+    if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
+        return Ok(None);
+    }
+    if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
+        return Ok(None);
+    }
+    let _mode_guard = ConsoleModeGuard {
+        handle: input,
+        mode: original_mode,
+    };
+
+    let mut output = stdout();
+    write_palette_queries(&mut output)?;
+
+    let mut bytes = Vec::new();
+    let deadline = Instant::now() + Duration::from_millis(80);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
+        if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
+            break;
+        }
+
+        let mut records = [INPUT_RECORD::default(); 128];
+        let mut count = 0;
+        if unsafe {
+            ReadConsoleInputW(
+                input,
+                records.as_mut_ptr(),
+                records.len() as u32,
+                &mut count,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        for record in &records[..count as usize] {
+            if u32::from(record.EventType) != KEY_EVENT {
+                continue;
+            }
+            let key = unsafe { record.Event.KeyEvent };
+            if key.bKeyDown == 0 {
+                continue;
+            }
+            let character = unsafe { key.uChar.UnicodeChar };
+            if character != 0 {
+                bytes.extend_from_slice(String::from_utf16_lossy(&[character]).as_bytes());
+            }
+        }
+        if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
+            return Ok(Some(palette));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(None)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     let mut background = None;
     let mut ansi = HashMap::new();
@@ -493,7 +582,7 @@ fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     .filter(|palette| palette.ansi.len() >= 7)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn osc_sequences(response: &str) -> Vec<&str> {
     let mut sequences = Vec::new();
     let mut rest = response;
@@ -510,7 +599,7 @@ fn osc_sequences(response: &str) -> Vec<&str> {
     sequences
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> {
     match (bel_end, st_end) {
         (Some(bel), Some(st)) => Some(bel.min(st)),
@@ -520,7 +609,7 @@ fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> 
     }
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_rgb_response(response: &str) -> Option<Rgb> {
     let rgb = response.strip_prefix("rgb:")?;
     let mut components = rgb.split('/');
@@ -531,14 +620,14 @@ fn parse_rgb_response(response: &str) -> Option<Rgb> {
     ))
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_xterm_component(component: &str) -> Option<u8> {
     let value = u16::from_str_radix(component, 16).ok()?;
     let max = (1u32 << (component.len() * 4)) - 1;
     Some(((value as u32 * 255 + max / 2) / max) as u8)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
     match index {
         1 => Some(AnsiColor::Red),
