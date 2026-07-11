@@ -4,7 +4,6 @@ use ratatui::style::{Color, Modifier, Style};
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
-const FALLBACK_BACKGROUND: Rgb = Rgb::new(12, 12, 12);
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -68,7 +67,7 @@ impl BlockColor {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 enum AnsiColor {
     Red,
     Green,
@@ -79,7 +78,7 @@ enum AnsiColor {
     Gray,
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 impl AnsiColor {
     const fn index(self) -> u8 {
         match self {
@@ -119,6 +118,8 @@ struct Palette {
     success_tool_background: BlockColor,
     failure_tool_background: BlockColor,
     skill_tool_background: BlockColor,
+    web_tool_background: BlockColor,
+    questionnaire_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -131,26 +132,47 @@ impl Palette {
             warning: AnsiColor::Yellow.color(),
             error: AnsiColor::Red.color(),
             skill: AnsiColor::Magenta.color(),
-            user_background: blended_or_fallback(terminal, AnsiColor::Gray, USER_BACKGROUND_ALPHA),
+            user_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Gray,
+                USER_BACKGROUND_ALPHA,
+                BlockColor::from_color(Color::DarkGray),
+            ),
             neutral_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
+                BlockColor::from_color(Color::DarkGray),
             ),
             success_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Green,
                 TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_color(AnsiColor::Green.color()),
             ),
             failure_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Red,
                 TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_color(AnsiColor::Red.color()),
             ),
             skill_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Magenta,
                 TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_color(AnsiColor::Magenta.color()),
+            ),
+            web_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Blue,
+                TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_color(AnsiColor::Blue.color()),
+            ),
+            questionnaire_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Yellow,
+                TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_rgb(Rgb::new(128, 128, 0)),
             ),
         }
     }
@@ -304,6 +326,22 @@ impl Theme {
         )
     }
 
+    pub(super) fn tool_web() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.web_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
+    pub(super) fn tool_questionnaire() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.questionnaire_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
     fn dim_block(background: BlockColor) -> Style {
         Style::default()
             .fg(block_foreground(background.rgb))
@@ -346,21 +384,31 @@ fn blended_or_fallback(
     terminal: Option<&TerminalPalette>,
     color: AnsiColor,
     alpha: f32,
+    fallback: BlockColor,
 ) -> BlockColor {
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or_else(|| {
-            let fallback_ansi = match color {
-                AnsiColor::Red => Rgb::new(205, 49, 49),
-                AnsiColor::Green => Rgb::new(13, 188, 121),
-                AnsiColor::Yellow => Rgb::new(229, 229, 16),
-                AnsiColor::Blue => Rgb::new(36, 114, 200),
-                AnsiColor::Magenta => Rgb::new(188, 63, 188),
-                AnsiColor::Cyan => Rgb::new(17, 168, 205),
-                AnsiColor::Gray => Rgb::new(204, 204, 204),
-            };
-            BlockColor::from_rgb(FALLBACK_BACKGROUND.blend_toward(fallback_ansi, alpha))
-        })
+        .unwrap_or_else(|| fallback_block(color, alpha, fallback))
+}
+
+#[cfg(windows)]
+fn fallback_block(color: AnsiColor, alpha: f32, _fallback: BlockColor) -> BlockColor {
+    const BACKGROUND: Rgb = Rgb::new(12, 12, 12);
+    let ansi = match color {
+        AnsiColor::Red => Rgb::new(205, 49, 49),
+        AnsiColor::Green => Rgb::new(13, 188, 121),
+        AnsiColor::Yellow => Rgb::new(229, 229, 16),
+        AnsiColor::Blue => Rgb::new(36, 114, 200),
+        AnsiColor::Magenta => Rgb::new(188, 63, 188),
+        AnsiColor::Cyan => Rgb::new(17, 168, 205),
+        AnsiColor::Gray => Rgb::new(204, 204, 204),
+    };
+    BlockColor::from_rgb(BACKGROUND.blend_toward(ansi, alpha))
+}
+
+#[cfg(not(windows))]
+fn fallback_block(_color: AnsiColor, _alpha: f32, fallback: BlockColor) -> BlockColor {
+    fallback
 }
 
 fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {
@@ -515,7 +563,7 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(None)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     let mut background = None;
     let mut ansi = HashMap::new();
@@ -545,7 +593,7 @@ fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     .filter(|palette| palette.ansi.len() >= 7)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn osc_sequences(response: &str) -> Vec<&str> {
     let mut sequences = Vec::new();
     let mut rest = response;
@@ -562,7 +610,7 @@ fn osc_sequences(response: &str) -> Vec<&str> {
     sequences
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> {
     match (bel_end, st_end) {
         (Some(bel), Some(st)) => Some(bel.min(st)),
@@ -572,7 +620,7 @@ fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> 
     }
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_rgb_response(response: &str) -> Option<Rgb> {
     let rgb = response.strip_prefix("rgb:")?;
     let mut components = rgb.split('/');
@@ -583,14 +631,14 @@ fn parse_rgb_response(response: &str) -> Option<Rgb> {
     ))
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_xterm_component(component: &str) -> Option<u8> {
     let value = u16::from_str_radix(component, 16).ok()?;
     let max = (1u32 << (component.len() * 4)) - 1;
     Some(((value as u32 * 255 + max / 2) / max) as u8)
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
     match index {
         1 => Some(AnsiColor::Red),

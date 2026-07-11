@@ -15,6 +15,8 @@ pub enum ToolDisplayStyle {
     FileOrCommand,
     FileDiff,
     Skill,
+    Web,
+    Questionnaire,
 }
 
 impl ToolDisplayStyle {
@@ -34,11 +36,21 @@ impl ToolDisplayStyle {
         Self::Skill
     }
 
+    pub const fn web() -> Self {
+        Self::Web
+    }
+
+    pub const fn questionnaire() -> Self {
+        Self::Questionnaire
+    }
+
     pub fn for_tool_name(name: &str) -> Self {
         match name {
             "edit_file" | "write_file" => Self::file_diff(),
             "bash" | "powershell" | "list_dir" | "read_file" => Self::file_or_command(),
             "skill" => Self::skill(),
+            "web_search" | "fetch_content" | "get_search_content" => Self::web(),
+            "questionnaire" => Self::questionnaire(),
             _ => Self::default_tool(),
         }
     }
@@ -72,7 +84,7 @@ pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
 
     fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::default_tool()
+        ToolDisplayStyle::for_tool_name(&self.spec().name)
     }
 
     fn display_command(&self, _args: &Value) -> Option<String> {
@@ -247,6 +259,13 @@ mod tests {
         assert_eq!(
             ToolDisplayStyle::for_tool_name("skill"),
             ToolDisplayStyle::Skill
+        );
+        for name in ["web_search", "fetch_content", "get_search_content"] {
+            assert_eq!(ToolDisplayStyle::for_tool_name(name), ToolDisplayStyle::Web);
+        }
+        assert_eq!(
+            ToolDisplayStyle::for_tool_name("questionnaire"),
+            ToolDisplayStyle::Questionnaire
         );
         assert_eq!(
             ToolDisplayStyle::for_tool_name("custom"),

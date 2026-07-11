@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::tool::ToolSpec;
+use crate::tool::{ToolResult, ToolSpec};
 
 pub const TOOL_NAME: &str = "questionnaire";
 const MAX_QUESTIONS: usize = 8;
@@ -212,60 +212,59 @@ pub fn response_content(response: &QuestionnaireResponse) -> String {
 }
 
 pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
-    let mut lines = vec![TOOL_NAME.to_string()];
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
-    } else {
-        lines.push(format!("{} question form", request.questions.len()));
-    }
-    if let Some(reason) = &request.reason {
-        lines.push(format!("reason: {reason}"));
-    }
+    let heading = request.title.as_ref().map_or_else(
+        || TOOL_NAME.to_string(),
+        |title| format!("{TOOL_NAME}: {title}"),
+    );
+    let mut lines = vec![heading];
     for (index, question) in request.questions.iter().enumerate() {
         lines.push(format!("{}. {}", index + 1, question.question));
-        if let Some(help) = &question.help {
-            lines.push(format!("   help: {help}"));
-        }
-        if let Some(default) = &question.default {
-            lines.push(format!(
-                "   default: {}",
-                questionnaire_default_display(default)
-            ));
-        }
-        if !question.choices.is_empty() {
-            let suffix = if question.allow_other { ", other" } else { "" };
-            lines.push(format!(
-                "   choices: {}{suffix}",
-                question.choices.join(", ")
-            ));
-        }
-        if !question.required {
-            lines.push("   optional".into());
-        }
     }
     lines
 }
 
-pub fn finished_display_lines(request: &QuestionnaireRequest, result_content: &str) -> Vec<String> {
+pub fn finished_display_lines(request: &QuestionnaireRequest, result: &ToolResult) -> Vec<String> {
+    if !result.ok {
+        let mut lines = start_display_lines(request);
+        if !result.content.trim().is_empty() {
+            lines.push(result.content.clone());
+        }
+        return lines;
+    }
+
+    let Ok(response) = serde_json::from_str::<QuestionnaireResponse>(&result.content) else {
+        return start_display_lines(request);
+    };
     let mut lines = start_display_lines(request);
-    if !result_content.trim().is_empty() {
-        lines.push(result_content.to_string());
+    lines.truncate(1);
+    for (index, question) in request.questions.iter().enumerate() {
+        lines.push(format!("{}. {}", index + 1, question.question));
+        if let Some(answer) = response
+            .answers
+            .iter()
+            .find(|answer| answer.id == question.id)
+        {
+            lines.push(format!(
+                "   {}",
+                questionnaire_value_display(&answer.answer)
+            ));
+        }
     }
     lines
 }
 
-fn questionnaire_default_display(default: &Value) -> String {
-    match default {
+fn questionnaire_value_display(value: &Value) -> String {
+    match value {
         Value::Array(values) => values
             .iter()
-            .map(questionnaire_default_display)
+            .map(questionnaire_value_display)
             .collect::<Vec<_>>()
             .join(", "),
         Value::String(value) => value.clone(),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
         Value::Null => String::new(),
-        Value::Object(_) => default.to_string(),
+        Value::Object(_) => value.to_string(),
     }
 }
 
@@ -468,6 +467,37 @@ fn default_required() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn questionnaire_display_hides_metadata_and_result_json() {
+        let request = parse_request(json!({
+            "title": "Questionnaire test",
+            "reason": "Testing the questionnaire interface.",
+            "questions": [{
+                "id": "favorite_language",
+                "question": "What is your favorite programming language?",
+                "type": "choice",
+                "default": "Rust",
+                "choices": ["Rust", "Python", "TypeScript", "Go"],
+                "allow_other": true
+            }]
+        }))
+        .unwrap();
+        let result = ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: r#"{"answers":[{"id":"favorite_language","answer":"Rust"}]}"#.into(),
+        };
+
+        assert_eq!(
+            finished_display_lines(&request, &result),
+            vec![
+                "questionnaire: Questionnaire test",
+                "1. What is your favorite programming language?",
+                "   Rust",
+            ]
+        );
+    }
 
     #[test]
     fn parse_request_trims_optional_fields() {
