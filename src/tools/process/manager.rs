@@ -303,6 +303,7 @@ fn snapshot_bounded(rec: &SharedRecord, cursor: u64, max_output_bytes: usize) ->
     let r = rec.lock().unwrap();
     let first = r.chunks.front().map_or(r.next, |chunk| chunk.chunk.cursor);
     let requested = cursor.max(first);
+    let mut next_cursor = requested;
     let mut chunks = Vec::new();
     for retained in r
         .chunks
@@ -312,10 +313,15 @@ fn snapshot_bounded(rec: &SharedRecord, cursor: u64, max_output_bytes: usize) ->
         chunks.push(retained.chunk.clone());
         if serde_json::to_vec(&chunks).map_or(true, |json| json.len() > max_output_bytes) {
             chunks.pop();
+            if chunks.is_empty() {
+                // A chunk that cannot fit by itself must still be consumed, or
+                // every poll will remain stuck on it.
+                next_cursor = retained.chunk.cursor + 1;
+            }
             break;
         }
+        next_cursor = retained.chunk.cursor + 1;
     }
-    let next_cursor = chunks.last().map_or(requested, |chunk| chunk.cursor + 1);
     Snapshot {
         process_id: r.id.clone(),
         command: r.command.clone(),

@@ -56,12 +56,25 @@ pub(super) async fn supervise(
             tokio::select! {Some((stream,b))=rx.recv()=>push(&rec,stream,b,&limits),g=stop.recv()=>{final_state=State::Terminated;tree.terminate(&mut child,g.unwrap_or_default()).await;break},s=child.wait()=>{{let mut r=rec.lock().unwrap();r.exit_code=s.ok().and_then(|x|x.code());}break}}
         }
     }
-    while let Some((s, b)) = rx.recv().await {
-        push(&rec, s, b, &limits)
+    loop {
+        tokio::select! {
+            output = rx.recv() => {
+                let Some((stream, bytes)) = output else { break };
+                push(&rec, stream, bytes, &limits);
+            }
+            grace = stop.recv() => {
+                if let Some(grace) = grace {
+                    final_state = State::Terminated;
+                    tree.terminate(&mut child, grace).await;
+                }
+                break;
+            }
+        }
     }
     let mut r = rec.lock().unwrap();
     r.stdin = None;
     r.stop = None;
+    r.tree = None;
     r.state = final_state;
     r.completed = Some(Instant::now());
     r.notify.notify_waiters();

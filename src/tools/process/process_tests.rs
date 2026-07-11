@@ -486,6 +486,39 @@ async fn bounded_poll_advances_only_over_delivered_chunks() {
 }
 
 #[tokio::test]
+async fn bounded_poll_skips_a_chunk_larger_than_the_budget() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(
+            "printf 'a very large first chunk'; sleep .05; printf later".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let skipped = manager
+        .poll_bounded(&started.process_id, Some(0), Duration::ZERO, 2)
+        .await
+        .unwrap();
+    assert!(skipped.chunks.is_empty());
+    assert!(skipped.next_cursor > 0);
+    let later = manager
+        .poll_bounded(
+            &started.process_id,
+            Some(skipped.next_cursor),
+            Duration::ZERO,
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    assert!(later
+        .chunks
+        .iter()
+        .any(|chunk| chunk.text.contains("later")));
+}
+
+#[tokio::test]
 async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
