@@ -29,7 +29,7 @@ impl App {
                     CommandChoice {
                         usage: format!("/{command_name} [text]"),
                         name: command_name,
-                        description: "insert prompt template".into(),
+                        description: crate::prompt_templates::description(template),
                         kind: CommandChoiceKind::PromptTemplate(template.clone()),
                     }
                 }),

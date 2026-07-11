@@ -83,6 +83,11 @@ fn validate_entry(name: &str, template: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn description(template: &str) -> String {
+    let preview = template.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("prompt: {preview}")
+}
+
 pub fn matches_search(name: &str, search: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with(search) || format!("prompt:{name}").starts_with(search)
