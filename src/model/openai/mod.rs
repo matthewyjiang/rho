@@ -103,7 +103,7 @@ impl ModelProvider for OpenAiProvider {
     ) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(key) => {
-                self.send_chat_completions_stream(request.clone(), key, on_event)
+                self.send_chat_completions_stream(request, key, on_event)
                     .await
             }
             Auth::Codex { tokens, source } => {

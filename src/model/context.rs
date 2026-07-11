@@ -58,14 +58,6 @@ impl ContextUsage {
     }
 }
 
-pub fn estimate_context_usage(
-    messages: &[Message],
-    tools: &[ToolSpec],
-    context_window: Option<u64>,
-) -> ContextUsage {
-    ContextUsage::estimated(estimate_context_tokens(messages, tools), context_window)
-}
-
 pub fn estimate_context_tokens(messages: &[Message], tools: &[ToolSpec]) -> u64 {
     REQUEST_OVERHEAD_TOKENS
         .saturating_add(estimate_messages_tokens(messages))

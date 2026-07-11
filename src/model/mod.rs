@@ -14,7 +14,7 @@ pub use crate::provider_backend::{
     AnthropicProvider, ContentBlock, DynModelProvider, ImageContent, Message, ModelError,
     ModelEvent, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
 };
-pub use context::{estimate_context_usage, ContextUsage, ContextUsageSource};
+pub use context::{ContextUsage, ContextUsageSource};
 pub use github_copilot::GitHubCopilotProvider;
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
