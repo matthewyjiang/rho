@@ -1910,9 +1910,14 @@ impl App {
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                if let Some(template) =
-                    crate::prompt_templates::find(&self.info.prompt_templates, &name)
-                {
+                let template = name
+                    .get(.."prompt:".len())
+                    .filter(|prefix| prefix.eq_ignore_ascii_case("prompt:"))
+                    .and_then(|_| name.get("prompt:".len()..))
+                    .and_then(|template_name| {
+                        crate::prompt_templates::find(&self.info.prompt_templates, template_name)
+                    });
+                if let Some(template) = template {
                     prompt = crate::prompt_templates::expand(template, &trailing_prompt);
                     display_prompt = prompt.clone();
                 } else if self.execute_skill_command(&name, agent)? {

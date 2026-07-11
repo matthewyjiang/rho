@@ -56,8 +56,8 @@ The full saved file can also include optional title-generation and web-search se
 
 The easiest way to add a reusable prompt is to create a Markdown or text file. The filename becomes the slash command and the file contents become its prompt:
 
-- `~/.rho/prompts/review.md` makes `/review` available everywhere.
-- `.rho/prompts/review.md` makes `/review` available in that project and its subdirectories.
+- `~/.rho/prompts/review.md` makes `/prompt:review` available everywhere.
+- `.rho/prompts/review.md` makes `/prompt:review` available in that project and its subdirectories.
 - A project file overrides a global file with the same name.
 
 For example, `~/.rho/prompts/review.md` could contain:
@@ -73,7 +73,7 @@ Templates can also be defined inline in `config.toml` when a separate file would
 review = "Review this code for correctness, security, and maintainability."
 ```
 
-Inline config templates override files with the same name. Typing `/review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
+Inline config templates override files with the same name. Typing `/prompt:review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
 
 ## CLI overrides
 

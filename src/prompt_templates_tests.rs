@@ -1,4 +1,4 @@
-use super::{expand, validate, PromptTemplates};
+use super::{expand, matches_search, validate, PromptTemplates};
 
 #[test]
 fn appends_trailing_text_to_template() {
@@ -58,4 +58,11 @@ fn discovers_global_and_project_template_files() {
         Some("explain this")
     );
     assert_eq!(templates.len(), 2);
+}
+
+#[test]
+fn matches_search_by_prompt_prefix_or_bare_name() {
+    assert!(matches_search("review-code", "prompt:rev"));
+    assert!(matches_search("review-code", "rev"));
+    assert!(!matches_search("review-code", "explain"));
 }

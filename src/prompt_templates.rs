@@ -83,6 +83,11 @@ fn validate_entry(name: &str, template: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn matches_search(name: &str, search: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with(search) || format!("prompt:{name}").starts_with(search)
+}
+
 pub fn find<'a>(templates: &'a PromptTemplates, name: &str) -> Option<&'a str> {
     templates
         .iter()

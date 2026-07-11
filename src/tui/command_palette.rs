@@ -23,12 +23,15 @@ impl App {
             self.info
                 .prompt_templates
                 .iter()
-                .filter(|(name, _)| name.to_ascii_lowercase().starts_with(&prefix))
-                .map(|(name, template)| CommandChoice {
-                    usage: format!("/{name} [text]"),
-                    name: name.clone(),
-                    description: "insert prompt template".into(),
-                    kind: CommandChoiceKind::PromptTemplate(template.clone()),
+                .filter(|(name, _)| crate::prompt_templates::matches_search(name, &prefix))
+                .map(|(name, template)| {
+                    let command_name = format!("prompt:{name}");
+                    CommandChoice {
+                        usage: format!("/{command_name} [text]"),
+                        name: command_name,
+                        description: "insert prompt template".into(),
+                        kind: CommandChoiceKind::PromptTemplate(template.clone()),
+                    }
                 }),
         );
         matches.extend(
