@@ -64,6 +64,7 @@ pub(super) async fn run(mut agent: Agent, startup: Startup<'_>) -> anyhow::Resul
             favorite_models: config.favorite_models,
             max_tool_output_lines: config.max_tool_output_lines,
             keybindings: config.keybindings,
+            prompt_templates: config.prompt_templates,
             questionnaire_enabled: !cli.no_tools,
             session_id,
             recovered_messages,

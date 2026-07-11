@@ -31,6 +31,7 @@ use ratatui::{
     widgets::Paragraph,
     DefaultTerminal, Frame, Terminal,
 };
+mod command_palette;
 mod config_editor;
 mod config_picker;
 mod copy_interaction;
@@ -140,6 +141,7 @@ pub struct TuiInfo {
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
+    pub prompt_templates: crate::prompt_templates::PromptTemplates,
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
@@ -420,6 +422,7 @@ impl LoadingSpinner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
+    PromptTemplate(String),
     Skill,
 }
 
@@ -1792,61 +1795,6 @@ impl App {
         self.clamp_command_selection();
     }
 
-    fn command_matches(&self) -> Vec<CommandChoice> {
-        let Some(prefix) = commands::command_prefix(&self.input) else {
-            return Vec::new();
-        };
-        let prefix = prefix
-            .strip_prefix('/')
-            .unwrap_or(prefix)
-            .to_ascii_lowercase();
-        let mut matches = commands::matching_commands(&prefix)
-            .into_iter()
-            .map(|command| CommandChoice {
-                name: command.name.to_string(),
-                usage: command.usage.to_string(),
-                description: command.description.to_string(),
-                kind: CommandChoiceKind::Builtin(command),
-            })
-            .collect::<Vec<_>>();
-        matches.extend(
-            crate::skills::discover(&self.info.cwd)
-                .into_iter()
-                .filter(|skill| {
-                    skill.name.starts_with(&prefix)
-                        || format!("skill:{}", skill.name).starts_with(&prefix)
-                })
-                .map(|skill| {
-                    let command_name = format!("skill:{}", skill.name);
-                    CommandChoice {
-                        usage: format!("/{command_name}"),
-                        name: command_name,
-                        description: skill.description,
-                        kind: CommandChoiceKind::Skill,
-                    }
-                }),
-        );
-        matches
-    }
-
-    fn selected_command(&self) -> Option<CommandChoice> {
-        let matches = self.command_matches();
-        matches
-            .get(self.command_selection.min(matches.len().saturating_sub(1)))
-            .cloned()
-    }
-
-    fn complete_command_choice(&self, choice: &CommandChoice) -> (String, usize) {
-        match &choice.kind {
-            CommandChoiceKind::Builtin(spec) => {
-                commands::complete_command(&self.input, self.input_cursor, spec)
-            }
-            CommandChoiceKind::Skill => {
-                complete_slash_command(&self.input, self.input_cursor, &choice.name)
-            }
-        }
-    }
-
     fn command_palette_visible(&self) -> bool {
         matches!(self.composer, ComposerMode::Input)
             && !self.command_palette_dismissed
@@ -1962,7 +1910,12 @@ impl App {
                 self.paste_segments.clear();
                 self.input_cursor = 0;
                 self.clamp_command_selection();
-                if self.execute_skill_command(&name, agent)? {
+                if let Some(template) =
+                    crate::prompt_templates::find(&self.info.prompt_templates, &name)
+                {
+                    prompt = crate::prompt_templates::expand(template, &trailing_prompt);
+                    display_prompt = prompt.clone();
+                } else if self.execute_skill_command(&name, agent)? {
                     if trailing_prompt.is_empty() {
                         return Ok(());
                     }
@@ -5812,6 +5765,7 @@ mod tests {
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
+                prompt_templates: Default::default(),
             },
             store,
         )
@@ -6892,6 +6846,7 @@ mod tests {
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
+                prompt_templates: Default::default(),
             },
             store,
         );
