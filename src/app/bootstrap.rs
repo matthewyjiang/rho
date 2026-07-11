@@ -85,11 +85,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             .and_then(|metadata| metadata.display_context_window()),
     );
 
-    match automation_prompt {
+    let result = match automation_prompt {
         Some(prompt) => automation::run(&mut agent, prompt, &herdr).await,
         None => {
             interactive::run(
-                agent,
+                &mut agent,
                 interactive::Startup {
                     cli: &cli,
                     config,
@@ -102,7 +102,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
-    }
+    };
+    agent.shutdown().await;
+    result
 }
 
 fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {

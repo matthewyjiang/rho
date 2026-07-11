@@ -1,6 +1,9 @@
 mod tools;
+mod types;
 
-use serde::Serialize;
+use types::terminal;
+pub use types::{Chunk, ProcessLimits, Snapshot, State, Stream};
+
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -17,60 +20,18 @@ use uuid::Uuid;
 
 pub use tools::{ListProcesses, PollProcess, StartProcess, StopProcess, WriteProcess};
 
-#[derive(Clone, Debug)]
-pub struct ProcessLimits {
-    pub max_live: usize,
-    pub max_records: usize,
-    pub max_bytes: usize,
-    pub max_chunks: usize,
-    pub retention: Duration,
-}
-impl Default for ProcessLimits {
-    fn default() -> Self {
-        Self {
-            max_live: 16,
-            max_records: 64,
-            max_bytes: 1024 * 1024,
-            max_chunks: 8192,
-            retention: Duration::from_secs(30 * 60),
-        }
+use crate::tool::ToolShutdown;
+use std::{future::Future, pin::Pin};
+impl ToolShutdown for ProcessManager {
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(ProcessManager::shutdown(self))
     }
 }
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum State {
-    Starting,
-    Running,
-    Exited,
-    Terminated,
-    TimedOut,
-    FailedToStart,
-}
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Stream {
-    Stdout,
-    Stderr,
-}
-#[derive(Clone, Debug, Serialize)]
-pub struct Chunk {
-    pub cursor: u64,
-    pub stream: Stream,
-    pub text: String,
-}
-#[derive(Clone, Debug, Serialize)]
-pub struct Snapshot {
-    pub process_id: String,
-    pub command: String,
-    pub state: State,
-    pub runtime_seconds: f64,
-    pub first_cursor: u64,
-    pub next_cursor: u64,
-    pub truncated: bool,
-    pub chunks: Vec<Chunk>,
-    pub exit_code: Option<i32>,
-    pub terminal_detail: Option<String>,
-}
+
+#[cfg(test)]
+#[path = "process_tests.rs"]
+mod tests;
+
 struct Record {
     id: String,
     command: String,
@@ -258,6 +219,36 @@ impl ProcessManager {
             .map(|r| snapshot(r, 0))
             .collect()
     }
+    pub async fn shutdown(&self) {
+        let records = self
+            .0
+            .lock()
+            .unwrap()
+            .records
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let requests = records
+            .iter()
+            .filter_map(|record| record.lock().unwrap().stop.clone())
+            .collect::<Vec<_>>();
+        for request in requests {
+            let _ = request.send(Duration::ZERO).await;
+        }
+        for record in records {
+            loop {
+                let notified = {
+                    let record = record.lock().unwrap();
+                    if terminal(record.state) {
+                        break;
+                    }
+                    record.notify.clone().notified_owned()
+                };
+                notified.await;
+            }
+        }
+    }
+
     fn get(&self, id: &str) -> Result<Arc<Mutex<Record>>, String> {
         self.0
             .lock()
@@ -291,12 +282,6 @@ impl ProcessManager {
             }
         }
     }
-}
-fn terminal(s: State) -> bool {
-    matches!(
-        s,
-        State::Exited | State::Terminated | State::TimedOut | State::FailedToStart
-    )
 }
 fn snapshot(rec: &Arc<Mutex<Record>>, cursor: u64) -> Snapshot {
     let r = rec.lock().unwrap();

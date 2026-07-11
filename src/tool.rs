@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Component, Path, PathBuf},
+    pin::Pin,
     sync::Arc,
 };
 
@@ -148,12 +150,28 @@ pub trait Tool: Send + Sync {
 
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    shutdown: Option<Arc<dyn ToolShutdown>>,
+}
+
+pub trait ToolShutdown: Send + Sync {
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            shutdown: None,
+        }
+    }
+
+    pub fn set_shutdown<T: ToolShutdown + 'static>(&mut self, shutdown: T) {
+        self.shutdown = Some(Arc::new(shutdown));
+    }
+
+    pub async fn shutdown(&self) {
+        if let Some(shutdown) = &self.shutdown {
+            shutdown.shutdown().await;
         }
     }
 

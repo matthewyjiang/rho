@@ -100,6 +100,10 @@ pub struct Agent {
 }
 
 impl Agent {
+    pub async fn shutdown(&self) {
+        self.tools.shutdown().await;
+    }
+
     pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
         let messages = initial_messages(&tools, &ctx.cwd, true);
         Self {
@@ -118,11 +122,6 @@ impl Agent {
     pub fn without_system_prompt(mut self) -> Self {
         self.include_system_prompt = false;
         self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);
-        self
-    }
-
-    pub fn with_history(mut self, history: Vec<Message>) -> Self {
-        self.messages.extend(history);
         self
     }
 
