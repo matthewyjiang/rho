@@ -212,10 +212,11 @@ pub fn response_content(response: &QuestionnaireResponse) -> String {
 }
 
 pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
-    let mut lines = vec![TOOL_NAME.to_string()];
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
-    }
+    let heading = request.title.as_ref().map_or_else(
+        || TOOL_NAME.to_string(),
+        |title| format!("{TOOL_NAME}: {title}"),
+    );
+    let mut lines = vec![heading];
     for (index, question) in request.questions.iter().enumerate() {
         lines.push(format!("{}. {}", index + 1, question.question));
     }
@@ -234,10 +235,8 @@ pub fn finished_display_lines(request: &QuestionnaireRequest, result: &ToolResul
     let Ok(response) = serde_json::from_str::<QuestionnaireResponse>(&result.content) else {
         return start_display_lines(request);
     };
-    let mut lines = vec![TOOL_NAME.to_string()];
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
-    }
+    let mut lines = start_display_lines(request);
+    lines.truncate(1);
     for (index, question) in request.questions.iter().enumerate() {
         lines.push(format!("{}. {}", index + 1, question.question));
         if let Some(answer) = response
@@ -493,8 +492,7 @@ mod tests {
         assert_eq!(
             finished_display_lines(&request, &result),
             vec![
-                "questionnaire",
-                "Questionnaire test",
+                "questionnaire: Questionnaire test",
                 "1. What is your favorite programming language?",
                 "   Rust",
             ]
