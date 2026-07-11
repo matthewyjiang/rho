@@ -35,6 +35,7 @@ mod config_editor;
 mod config_picker;
 mod copy_interaction;
 mod doctor;
+mod event_batch;
 mod file_picker;
 mod goal;
 mod goal_command;
@@ -2155,9 +2156,7 @@ impl App {
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                     Some(event) = event_rx.recv() => {
-                        if let Err(err) = self.handle_queued_agent_event(event, terminal) {
-                            break Err(crate::agent::AgentError::Provider(err));
-                        }
+                        event_batch::handle_batch(event, &mut event_rx, |event| self.handle_queued_agent_event(event, terminal)).map_err(crate::agent::AgentError::Provider)?;
                         match self.handle_running_terminal_events(
                             terminal,
                             &interrupt_requested,
@@ -3178,7 +3177,9 @@ impl App {
                 include_leading_blank: preview.include_leading_blank(),
             });
             Ok(true)
-        } else { Ok(false) }
+        } else {
+            Ok(false)
+        }
     }
 
     fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
