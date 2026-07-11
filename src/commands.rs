@@ -12,6 +12,8 @@ pub enum CommandId {
     Config,
     Compact,
     Skills,
+    Diff,
+    Doctor,
     Exit,
 }
 
@@ -97,6 +99,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+    },
+    CommandSpec {
+        id: CommandId::Diff,
+        name: "diff",
+        usage: "/diff",
+        description: "show Git status and worktree patches",
+    },
+    CommandSpec {
+        id: CommandId::Doctor,
+        name: "doctor",
+        usage: "/doctor",
+        description: "run local setup diagnostics",
     },
     CommandSpec {
         id: CommandId::Exit,

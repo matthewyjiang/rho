@@ -13,6 +13,13 @@ impl ConfigRepository {
         Self { path }
     }
 
+    pub(crate) fn configured_path(&self) -> anyhow::Result<PathBuf> {
+        self.path
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(Config::default_path)
+    }
+
     pub(crate) fn load(&self) -> anyhow::Result<Config> {
         Config::load(self.path.clone())
     }
