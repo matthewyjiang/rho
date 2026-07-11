@@ -1,0 +1,22 @@
+[models."openai-codex/gpt-5.6-sol"]
+effective_context_window = 372000
+usable_context_window = 372000
+
+[models."openai-codex/gpt-5.6-terra"]
+effective_context_window = 372000
+usable_context_window = 372000
+
+[models."openai-codex/gpt-5.6-luna"]
+effective_context_window = 372000
+usable_context_window = 372000
+
+[models."openai/gpt-5.5"]
+usable_context_window = 272000
+long_context_threshold = 272000
+cost_long_context = { input = 10.0, output = 45.0, cache_read = 1.0 }
+
+[models."openai-codex/gpt-5.5"]
+effective_context_window = 400000
+usable_context_window = 272000
+long_context_threshold = 272000
+cost_long_context = { input = 10.0, output = 45.0, cache_read = 1.0 }
