@@ -35,6 +35,7 @@ mod config_editor;
 mod config_picker;
 mod copy_interaction;
 mod doctor;
+mod event_batch;
 mod file_picker;
 mod goal;
 mod goal_command;
@@ -2155,9 +2156,7 @@ impl App {
                         terminal.draw(|frame| self.draw(frame))?;
                     }
                     Some(event) = event_rx.recv() => {
-                        if let Err(err) = self.handle_queued_agent_event(event, terminal) {
-                            break Err(crate::agent::AgentError::Provider(err));
-                        }
+                        event_batch::handle_batch(event, &mut event_rx, |event| self.handle_queued_agent_event(event, terminal)).map_err(crate::agent::AgentError::Provider)?;
                         match self.handle_running_terminal_events(
                             terminal,
                             &interrupt_requested,
@@ -3169,6 +3168,7 @@ impl App {
                 .drain_preview_markdown(inner_width, self.assistant_stream_in_code_block),
             StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
         };
+        self.stream_preview_deadline = None;
         self.update_stream_preview_deadline(kind);
         if let Some(preview) = preview {
             self.live_stream_preview = Some(LiveStreamPreview {
@@ -3187,11 +3187,11 @@ impl App {
             StreamKind::Assistant => self.assistant_stream.pending_text().chars().count(),
             StreamKind::Reasoning => self.reasoning_stream.pending_text().chars().count(),
         };
-        self.stream_preview_deadline = if pending_chars >= STREAM_PREVIEW_MIN_CHARS {
-            Some(Instant::now() + STREAM_PREVIEW_DELAY)
-        } else {
-            None
-        };
+        if pending_chars < STREAM_PREVIEW_MIN_CHARS {
+            self.stream_preview_deadline = None;
+        } else if self.stream_preview_deadline.is_none() {
+            self.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
+        }
     }
 
     fn insert_final_answer_suffix(
