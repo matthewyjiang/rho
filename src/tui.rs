@@ -3169,6 +3169,7 @@ impl App {
                 .drain_preview_markdown(inner_width, self.assistant_stream_in_code_block),
             StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
         };
+        self.stream_preview_deadline = None;
         self.update_stream_preview_deadline(kind);
         if let Some(preview) = preview {
             self.live_stream_preview = Some(LiveStreamPreview {
@@ -3177,9 +3178,7 @@ impl App {
                 include_leading_blank: preview.include_leading_blank(),
             });
             Ok(true)
-        } else {
-            Ok(false)
-        }
+        } else { Ok(false) }
     }
 
     fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
@@ -3187,11 +3186,11 @@ impl App {
             StreamKind::Assistant => self.assistant_stream.pending_text().chars().count(),
             StreamKind::Reasoning => self.reasoning_stream.pending_text().chars().count(),
         };
-        self.stream_preview_deadline = if pending_chars >= STREAM_PREVIEW_MIN_CHARS {
-            Some(Instant::now() + STREAM_PREVIEW_DELAY)
-        } else {
-            None
-        };
+        if pending_chars < STREAM_PREVIEW_MIN_CHARS {
+            self.stream_preview_deadline = None;
+        } else if self.stream_preview_deadline.is_none() {
+            self.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
+        }
     }
 
     fn insert_final_answer_suffix(
