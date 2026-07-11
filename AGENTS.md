@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## Conventional commits
+## Commits and pull requests
 
 Use Conventional Commits for commit messages and PR titles:
 
@@ -8,11 +8,10 @@ Use Conventional Commits for commit messages and PR titles:
 <type>(<scope>): <description>
 ```
 
-- `type` must be one of: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
-- `scope` is optional, but preferred when it makes the affected area clear.
-- `description` must be concise, imperative, and lowercase unless it contains a proper noun.
-- Do not end the description with a period.
-- For breaking changes, add `!` after the type or scope and include a `BREAKING CHANGE:` footer.
+- Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+- Scope is optional but preferred when useful.
+- Use a concise, imperative, lowercase description unless it contains a proper noun; do not end it with a period.
+- For breaking changes, add `!` after the type or scope and a `BREAKING CHANGE:` footer.
 
 Examples:
 
@@ -26,65 +25,56 @@ feat(config)!: require explicit config path
 BREAKING CHANGE: the default config discovery behavior was removed.
 ```
 
-## Rust code conventions
+For PRs:
 
-- Prefer small, cohesive modules with explicit public API. Keep modules private by default and export only the crate surface that callers actually need.
-- Avoid growing already-large files. Add a focused module when new behavior is separable, and keep tests/docs for invariants close to the implementation.
-- Keep API call sites self-documenting. Avoid boolean or ambiguous `Option` parameters such as `foo(false)` or `bar(None)`; prefer enums, named methods, builders, or newtypes when practical.
-- When a positional literal is unavoidable, add an exact parameter-name comment before opaque literals such as booleans, `None`, and numeric values, for example `set_mode(/*enabled*/ false)`.
-- Prefer exhaustive `match` statements over wildcard arms when matching known enums, so future variants force an intentional update.
-- Newly added traits should have doc comments explaining their role and expectations for implementors.
-- For async traits, avoid `#[async_trait]` and `#[allow(async_fn_in_trait)]`. Prefer returning an explicit future with a `Send` bound, for example `fn run(&self) -> impl std::future::Future<Output = Result<()>> + Send;`.
-- Do not create small helper methods that are only used once unless they materially improve readability or isolate a clear invariant.
-- Follow common Clippy/rustfmt style: collapse nested `if` statements when possible, inline `format!` arguments (`format!("hello {name}")`), and prefer method references over redundant closures.
-- After Rust code changes, run `cargo fmt` and `python3 scripts/check_architecture.py` as part of the local lint flow. Run the narrowest relevant tests for the changed crate or module before finalizing when practical.
+- Prefer the most user-visible type, usually `feat`, `fix`, `docs`, or `refactor`.
+- Clearly summarize what changed and why, list validation, and call out breaking changes with a `BREAKING CHANGE:` section.
+- Update documentation for important user-visible changes.
 
-## Abstraction and module boundaries
+## Rust code
 
-- Keep generic infrastructure separate from feature-specific policy. Rendering, transport, storage, parsing, and orchestration layers should operate on explicit generic data shapes instead of knowing special cases from individual commands, menus, providers, or features.
-- Put feature-specific construction and decisions near the feature that owns them. For example, a picker renderer should understand labels, details, badges, and selection state, while a model picker module decides which model gets a selected badge.
-- Prefer explicit interfaces over encoded strings or suffix parsing. If behavior depends on a concept like selected, current, unavailable, warning, or detail text, model it as a field, enum, or small type instead of inferring it from display text.
-- When a file starts accumulating unrelated responsibilities, split along ownership boundaries: shared types and mechanics in one module, each feature's setup and policy in its own focused module.
-- Design reusable components around stable concepts, not today's specific UI copy or provider names. New features should be able to plug into existing components by providing data, not by adding conditionals to the component.
-- Avoid broad abstractions before there are clear boundaries, but once a pattern appears in multiple places, extract the common mechanics and leave the differing policy at the call sites.
+- Prefer small, cohesive modules with explicit public APIs. Keep modules private by default and export only the required crate surface.
+- Avoid growing large files. Extract separable behavior into focused modules and keep tests and invariant documentation close to implementation.
+- Make call sites self-documenting. Prefer enums, named methods, builders, or newtypes over ambiguous boolean or `Option` parameters. When an opaque positional boolean, `None`, or number is unavoidable, add an exact parameter-name comment, such as `set_mode(/*enabled*/ false)`.
+- Match known enums exhaustively so new variants require intentional handling.
+- Document new traits with their role and implementor expectations.
+- For async traits, return an explicit future with a `Send` bound. Do not use `#[async_trait]` or `#[allow(async_fn_in_trait)]`.
+- Avoid one-use helpers unless they materially improve readability or isolate a clear invariant.
+- Follow Clippy and rustfmt style: collapse nested `if` statements when possible, inline format arguments (`format!("hello {name}")`), and prefer method references to redundant closures.
+- After Rust changes, run `cargo fmt`, `python3 scripts/check_architecture.py`, and the narrowest relevant tests when practical. Use the `rho-rust-change-validation` skill for the full workflow.
+
+## Architecture and module boundaries
+
+- Separate generic infrastructure from feature policy. Rendering, transport, storage, parsing, and orchestration should consume explicit generic data rather than know individual commands, menus, providers, or features.
+- Keep feature-specific construction and decisions with the owning feature. For example, a picker renderer handles labels, details, badges, and selection state, while the model picker decides which model is selected.
+- Model concepts such as selected, current, unavailable, warning, or detail explicitly instead of inferring them from encoded strings or suffixes.
+- Split files that accumulate unrelated responsibilities along ownership boundaries: shared types and mechanics together, feature setup and policy in focused modules.
+- Design reusable components around stable concepts rather than current UI text or provider names, so new features provide data instead of adding component conditionals.
+- Avoid broad abstractions before boundaries are clear. Once a pattern repeats, extract shared mechanics and leave differing policy at call sites.
 
 ## Rust tests
 
-- Prefer integration or behavior-level tests for user-visible logic. Use unit tests for focused pure logic.
-- When adding a new test module, prefer a sibling `*_tests.rs` file with an explicit `#[path = "..."] mod tests;` instead of growing implementation files.
-- Prefer `pretty_assertions::assert_eq` in tests when available, and compare whole objects rather than asserting field-by-field.
-- Do not add tests for statically defined constants or negative tests for behavior that has been removed.
-- Avoid mutating process environment in tests; pass environment-derived values or dependencies explicitly where possible.
+- Prefer integration or behavior tests for user-visible logic and unit tests for focused pure logic.
+- Put new test modules in sibling `*_tests.rs` files with explicit `#[path = "..."] mod tests;` declarations instead of growing implementation files.
+- Prefer `pretty_assertions::assert_eq` when available and whole-object comparisons over field-by-field assertions.
+- Do not test static constants or add negative tests solely for removed behavior.
+- Avoid mutating process environment; pass environment-derived values or dependencies explicitly when possible.
 
-## rho subagents with herdr
+## Rho subagents with Herdr
 
-- When asked to create subagents, use `rho` unless the user explicitly requests a different agent. Do not substitute Claude, Codex, or another agent.
-- Start each subagent in its own Git worktree so agents do not edit the same checkout concurrently.
-- Launch `rho` in the target pane first, then wait until herdr reports the pane's agent status as `idle` before submitting the task.
-- Submit the task with `herdr pane run <pane> "<prompt>"`, which sends the text followed by a real Enter key. Do not rely on `pane send-text` followed by `pane send-keys Enter` for multiline prompts, because the prompt can remain in Rho's composer without being submitted.
-- After submission, verify that herdr reports `agent_status: working` and inspect the pane for an actual response or tool call. Seeing the prompt rendered in the composer is not proof that it was submitted.
-- If the pane remains idle, inspect it and retry submission before reporting that the subagent is running.
-- Keep parallel tasks ownership-disjoint. Sequence agents that must modify the same large file or module root.
-- Ask subagents to run focused tests, commit their changes with a Conventional Commit, and report the commit hash for integration.
+When asked to create subagents, use Rho unless the user explicitly requests another agent.
 
-## rho smoke tests with herdr
+- Give each subagent its own Git worktree so agents never edit the same checkout concurrently.
+- Launch `rho` in the target pane and wait for Herdr to report `agent_status: idle` before assigning work.
+- Submit with `herdr pane run <pane> "<prompt>"`, which sends text and a real Enter. Do not use separate `send-text` and `send-keys Enter` calls for multiline prompts because they can remain unsubmitted in the composer.
+- Confirm `agent_status: working` and inspect the pane for a response or tool call. A rendered prompt alone does not prove submission. If the pane stays idle, inspect it and retry before reporting that the agent is running.
+- Keep parallel tasks ownership-disjoint; sequence work that touches the same large file or module root.
+- Ask agents to run focused tests, create a Conventional Commit, and report the commit hash for integration.
 
-- When running inside herdr, you can smoke test rho itself by launching it from source in a sibling pane with `cargo run`.
-- Use herdr to control that pane like a user would: split a pane, run `cargo run`, wait for expected output, send text or keys, and read the pane output to verify behavior.
-- Prefer this for quick end-to-end checks of terminal UI flows, command handling, startup behavior, and regressions that unit tests do not cover.
-- Keep smoke tests focused and lightweight. Capture only relevant excerpts from pane output, and close any temporary panes when they are no longer needed.
+## Rho TUI smoke tests with Herdr
+
+When inside Herdr, test Rho from source in a sibling pane with `cargo run`. Control it as a user would: split a pane, launch Rho, wait for output, send text or keys, and inspect rendered output. Use this for focused end-to-end checks of TUI flows, commands, startup, and regressions. Capture only relevant excerpts and close temporary panes. Follow the `rho-tui-herdr-testing` skill for the full workflow.
 
 ## Rho experience tests
 
-- If you are the rho agent, (not other agents like claude/pi), you should report any issues you experience with using the agent harness so that the experience can be improved.
-
-## Documentation
-
-- When making a pull request, update documentation with important changes that users need to know.
-
-## Pull requests
-
-- Prefer the most user-visible Conventional Commit type for the PR title, usually `feat`, `fix`, `docs`, or `refactor`.
-- Include a clear summary of what changed and why.
-- List tests or validation performed.
-- Call out breaking changes with a `BREAKING CHANGE:` section.
+When operating as Rho rather than another agent such as Claude or Pi, report problems experienced with the agent harness so the Rho experience can be improved.
