@@ -386,3 +386,137 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
 }
+
+#[tokio::test]
+async fn concurrent_starts_atomically_enforce_live_limit() {
+    let manager = ProcessManager::new(ProcessLimits {
+        max_live: 1,
+        ..ProcessLimits::default()
+    });
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(3));
+    let starts = (0..2)
+        .map(|_| {
+            let manager = manager.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                manager
+                    .start("cat".into(), std::path::Path::new("."), None)
+                    .await
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait().await;
+    let results = futures_util::future::join_all(starts).await;
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.as_ref().unwrap().is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .is_err_and(|error| error == "live process limit reached"))
+            .count(),
+        1
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn invalid_utf8_retention_uses_raw_byte_cost() {
+    let manager = ProcessManager::new(ProcessLimits {
+        max_bytes: 2,
+        max_chunks: 10,
+        ..ProcessLimits::default()
+    });
+    let started = manager
+        .start(
+            "printf '\\377\\377\\377'".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let snapshot = manager
+        .poll(&started.process_id, Some(0), Duration::ZERO)
+        .await
+        .unwrap();
+    assert!(snapshot.chunks.is_empty());
+    assert!(snapshot.truncated);
+}
+
+#[tokio::test]
+async fn bounded_poll_advances_only_over_delivered_chunks() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(
+            "printf first; sleep .05; printf second".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let one = manager
+        .poll_bounded(&started.process_id, Some(0), Duration::ZERO, 70)
+        .await
+        .unwrap();
+    assert_eq!(one.chunks.len(), 1);
+    assert!(one.output_pending);
+    assert!(one.next_cursor < one.available_cursor);
+    let two = manager
+        .poll_bounded(
+            &started.process_id,
+            Some(one.next_cursor),
+            Duration::ZERO,
+            70,
+        )
+        .await
+        .unwrap();
+    assert_eq!(two.chunks.len(), 1);
+    assert_ne!(one.chunks[0].text, two.chunks[0].text);
+}
+
+#[tokio::test]
+async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start("cat".into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let stop = {
+        let manager = manager.clone();
+        let id = started.process_id.clone();
+        tokio::spawn(async move { manager.stop(&id, Duration::ZERO).await })
+    };
+    tokio::task::yield_now().await;
+    stop.abort();
+    assert_eq!(
+        eventually(&manager, &started.process_id).await.state,
+        State::Terminated
+    );
+}
+
+#[tokio::test]
+async fn list_contains_metadata_without_output_chunks() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(
+            "printf secret-output".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let json = serde_json::to_value(manager.list()).unwrap();
+    assert!(json[0].get("chunks").is_none());
+}

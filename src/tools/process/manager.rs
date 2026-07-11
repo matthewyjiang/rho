@@ -2,7 +2,7 @@ use super::{
     platform::{shell_command, ProcessTree},
     supervisor::supervise,
     types::{terminal, ProcessLimits},
-    Chunk, Snapshot, State,
+    Chunk, ProcessSummary, Snapshot, State,
 };
 use crate::tool::ToolShutdown;
 use std::{
@@ -21,13 +21,17 @@ use tokio::{
 };
 use uuid::Uuid;
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
+pub(super) struct RetainedChunk {
+    pub(super) chunk: Chunk,
+    pub(super) byte_cost: usize,
+}
 pub(super) struct Record {
     pub(super) id: String,
     pub(super) command: String,
     pub(super) state: State,
     pub(super) started: Instant,
     pub(super) completed: Option<Instant>,
-    pub(super) chunks: VecDeque<Chunk>,
+    pub(super) chunks: VecDeque<RetainedChunk>,
     pub(super) bytes: usize,
     pub(super) next: u64,
     pub(super) exit_code: Option<i32>,
@@ -63,17 +67,6 @@ impl ProcessManager {
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
         self.prune();
-        {
-            let i = self.0.lock().unwrap();
-            if i.records
-                .values()
-                .filter(|r| !terminal(r.lock().unwrap().state))
-                .count()
-                >= i.limits.max_live
-            {
-                return Err("live process limit reached".into());
-            }
-        }
         let id = Uuid::new_v4().to_string();
         let notify = Arc::new(Notify::new());
         let rec = Arc::new(Mutex::new(Record {
@@ -92,11 +85,18 @@ impl ProcessManager {
             tree: None,
             notify,
         }));
-        self.0
-            .lock()
-            .unwrap()
-            .records
-            .insert(id.clone(), rec.clone());
+        {
+            let mut inner = self.0.lock().unwrap();
+            let live = inner
+                .records
+                .values()
+                .filter(|record| !terminal(record.lock().unwrap().state))
+                .count();
+            if live >= inner.limits.max_live {
+                return Err("live process limit reached".into());
+            }
+            inner.records.insert(id.clone(), rec.clone());
+        }
         let mut cmd = shell_command(&command);
         cmd.current_dir(cwd)
             .stdin(Stdio::piped())
@@ -156,11 +156,21 @@ impl ProcessManager {
             }
         }
     }
+    #[cfg(test)]
     pub async fn poll(
         &self,
         id: &str,
         cursor: Option<u64>,
         wait: Duration,
+    ) -> Result<Snapshot, String> {
+        self.poll_bounded(id, cursor, wait, usize::MAX).await
+    }
+    pub async fn poll_bounded(
+        &self,
+        id: &str,
+        cursor: Option<u64>,
+        wait: Duration,
+        max_output_bytes: usize,
     ) -> Result<Snapshot, String> {
         let rec = self.get(id)?;
         let cursor = cursor.unwrap_or(0);
@@ -170,12 +180,12 @@ impl ProcessManager {
                 let r = rec.lock().unwrap();
                 r.notify.clone().notified_owned()
             };
-            let s = snapshot(&rec, cursor);
+            let s = snapshot_bounded(&rec, cursor, max_output_bytes);
             if !s.chunks.is_empty() || terminal(s.state) || wait.is_zero() {
                 return Ok(s);
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return Ok(snapshot(&rec, cursor));
+                return Ok(snapshot_bounded(&rec, cursor, max_output_bytes));
             }
         }
     }
@@ -212,14 +222,14 @@ impl ProcessManager {
         };
         tx.send(grace).map_err(|_| "process already stopped".into())
     }
-    pub fn list(&self) -> Vec<Snapshot> {
+    pub fn list(&self) -> Vec<ProcessSummary> {
         self.prune();
         self.0
             .lock()
             .unwrap()
             .records
             .values()
-            .map(|r| snapshot(r, 0))
+            .map(summary)
             .collect()
     }
     pub async fn shutdown(&self) {
@@ -287,22 +297,36 @@ impl ProcessManager {
     }
 }
 fn snapshot(rec: &SharedRecord, cursor: u64) -> Snapshot {
+    snapshot_bounded(rec, cursor, usize::MAX)
+}
+fn snapshot_bounded(rec: &SharedRecord, cursor: u64, max_output_bytes: usize) -> Snapshot {
     let r = rec.lock().unwrap();
-    let first = r.chunks.front().map_or(r.next, |c| c.cursor);
+    let first = r.chunks.front().map_or(r.next, |chunk| chunk.chunk.cursor);
+    let requested = cursor.max(first);
+    let mut chunks = Vec::new();
+    for retained in r
+        .chunks
+        .iter()
+        .filter(|item| item.chunk.cursor >= requested)
+    {
+        chunks.push(retained.chunk.clone());
+        if serde_json::to_vec(&chunks).map_or(true, |json| json.len() > max_output_bytes) {
+            chunks.pop();
+            break;
+        }
+    }
+    let next_cursor = chunks.last().map_or(requested, |chunk| chunk.cursor + 1);
     Snapshot {
         process_id: r.id.clone(),
         command: r.command.clone(),
         state: r.state,
         runtime_seconds: r.started.elapsed().as_secs_f64(),
         first_cursor: first,
-        next_cursor: r.next,
+        next_cursor,
+        available_cursor: r.next,
         truncated: cursor < first,
-        chunks: r
-            .chunks
-            .iter()
-            .filter(|c| c.cursor >= cursor.max(first))
-            .cloned()
-            .collect(),
+        output_pending: next_cursor < r.next,
+        chunks,
         exit_code: r.exit_code,
         terminal_detail: r.detail.clone(),
     }
@@ -314,5 +338,20 @@ impl Drop for Inner {
                 tree.kill();
             }
         }
+    }
+}
+
+fn summary(rec: &SharedRecord) -> ProcessSummary {
+    let r = rec.lock().unwrap();
+    let first = r.chunks.front().map_or(r.next, |c| c.chunk.cursor);
+    ProcessSummary {
+        process_id: r.id.clone(),
+        command: r.command.clone(),
+        state: r.state,
+        runtime_seconds: r.started.elapsed().as_secs_f64(),
+        first_cursor: first,
+        next_cursor: r.next,
+        exit_code: r.exit_code,
+        terminal_detail: r.detail.clone(),
     }
 }

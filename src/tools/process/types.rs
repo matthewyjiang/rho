@@ -43,6 +43,17 @@ pub struct Chunk {
     pub text: String,
 }
 #[derive(Clone, Debug, Serialize)]
+pub struct ProcessSummary {
+    pub process_id: String,
+    pub command: String,
+    pub state: State,
+    pub runtime_seconds: f64,
+    pub first_cursor: u64,
+    pub next_cursor: u64,
+    pub exit_code: Option<i32>,
+    pub terminal_detail: Option<String>,
+}
+#[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
     pub process_id: String,
     pub command: String,
@@ -50,7 +61,9 @@ pub struct Snapshot {
     pub runtime_seconds: f64,
     pub first_cursor: u64,
     pub next_cursor: u64,
+    pub available_cursor: u64,
     pub truncated: bool,
+    pub output_pending: bool,
     pub chunks: Vec<Chunk>,
     pub exit_code: Option<i32>,
     pub terminal_detail: Option<String>,

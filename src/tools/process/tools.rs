@@ -82,7 +82,7 @@ impl Tool for PollProcess {
     async fn call(
         &self,
         a: serde_json::Value,
-        _: ToolContext,
+        context: ToolContext,
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let a: PollArgs = serde_json::from_value(a)?;
@@ -93,7 +93,12 @@ impl Tool for PollProcess {
         }
         let s = self
             .0
-            .poll(&a.process_id, a.cursor, Duration::from_secs(a.wait_seconds))
+            .poll_bounded(
+                &a.process_id,
+                a.cursor,
+                Duration::from_secs(a.wait_seconds),
+                context.max_output_bytes,
+            )
             .await
             .map_err(ToolError::Message)?;
         result!(id, s)

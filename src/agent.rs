@@ -119,6 +119,11 @@ impl Agent {
         }
     }
 
+    pub fn with_history(mut self, history: Vec<Message>) -> Self {
+        self.messages.extend(history);
+        self
+    }
+
     pub fn without_system_prompt(mut self) -> Self {
         self.include_system_prompt = false;
         self.messages = initial_messages(&self.tools, &self.ctx.cwd, self.include_system_prompt);

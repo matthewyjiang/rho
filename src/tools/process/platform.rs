@@ -9,8 +9,13 @@ pub(super) fn shell_command(command: &str) -> Command {
 }
 #[cfg(windows)]
 pub(super) fn shell_command(command: &str) -> Command {
-    let mut command_line = Command::new("powershell");
-    command_line.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+    let mut command_line = Command::new("powershell.exe");
+    command_line.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        &super::super::powershell::wrapped_command(command),
+    ]);
     command_line
 }
 
