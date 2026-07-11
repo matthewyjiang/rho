@@ -291,7 +291,7 @@ impl Agent {
                             command: None,
                             ok: true,
                             content: detail.clone(),
-                            display_style: ToolDisplayStyle::default_tool(),
+                            display_style: ToolDisplayStyle::web(),
                             display_lines: vec![format!("web search: {detail}")],
                         }),
                         ModelEvent::Usage(usage) => {
@@ -365,12 +365,12 @@ impl Agent {
                             let (display_style, command, start_display_lines) =
                                 match (&tool, &questionnaire_request) {
                                     (_, Some(Ok(request))) => (
-                                        ToolDisplayStyle::default_tool(),
+                                        ToolDisplayStyle::questionnaire(),
                                         None,
                                         questionnaire::start_display_lines(request),
                                     ),
                                     (_, Some(Err(err))) => (
-                                        ToolDisplayStyle::default_tool(),
+                                        ToolDisplayStyle::questionnaire(),
                                         None,
                                         vec![questionnaire::TOOL_NAME.into(), err.clone()],
                                     ),

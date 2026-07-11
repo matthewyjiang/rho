@@ -118,6 +118,8 @@ struct Palette {
     success_tool_background: BlockColor,
     failure_tool_background: BlockColor,
     skill_tool_background: BlockColor,
+    web_tool_background: BlockColor,
+    questionnaire_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -159,6 +161,18 @@ impl Palette {
                 AnsiColor::Magenta,
                 TOOL_BACKGROUND_ALPHA,
                 AnsiColor::Magenta.color(),
+            ),
+            web_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Blue,
+                TOOL_BACKGROUND_ALPHA,
+                AnsiColor::Blue.color(),
+            ),
+            questionnaire_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Yellow,
+                TOOL_BACKGROUND_ALPHA,
+                AnsiColor::Yellow.color(),
             ),
         }
     }
@@ -308,6 +322,22 @@ impl Theme {
         let palette = Palette::current();
         ToolStyle::new(
             Self::dim_block(palette.skill_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
+    pub(super) fn tool_web() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.web_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
+    pub(super) fn tool_questionnaire() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.questionnaire_tool_background),
             Self::dim_block(palette.failure_tool_background),
         )
     }
