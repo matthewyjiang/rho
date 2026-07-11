@@ -36,6 +36,8 @@ mod config_picker;
 mod copy_interaction;
 mod doctor;
 mod file_picker;
+mod goal;
+mod goal_command;
 mod history_cache;
 mod keybindings;
 mod local_commands;
@@ -66,6 +68,7 @@ use config_editor::{
     ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
+use goal::GoalState;
 use markdown::{push_wrapped_markdown, push_wrapped_markdown_without_copy_button};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -79,7 +82,7 @@ use render::{
     push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
-use statusline::{statusline_lines, StatusLineState};
+use statusline::{statusline_lines, GoalStatus, StatusLineState};
 use stream::{AppendOnlyStream, StreamFragment};
 use text_selection::{
     highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
@@ -234,6 +237,7 @@ struct App {
     pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<QueuedPrompt>,
+    goal: Option<GoalState>,
     pending_images: Vec<ImageContent>,
     input_history: Vec<String>,
     input_history_cursor: Option<usize>,
@@ -359,6 +363,13 @@ struct CommandChoice {
 #[derive(Clone, Debug, Default)]
 struct LoadingSpinner {
     started_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TurnOutcome {
+    Completed,
+    Interrupted,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -581,6 +592,7 @@ impl App {
             pending_tool_call: None,
             steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
+            goal: None,
             pending_images: Vec::new(),
             input_history: Vec::new(),
             input_history_cursor: None,
@@ -1929,7 +1941,11 @@ impl App {
         }
 
         match commands::parse_command(&self.input) {
-            Ok(Some(invocation)) => {
+            Ok(Some(mut invocation)) => {
+                if invocation.id == CommandId::Goal {
+                    invocation.raw_args = slash_command_args(&prompt).to_string();
+                    invocation.args = invocation.raw_args.trim().to_string();
+                }
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1972,20 +1988,25 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        self.run_prompt_turn(prompt, display_prompt, images, terminal, agent)
+        let mut outcome = self
+            .run_prompt_turn(prompt, display_prompt, images, terminal, agent)
             .await?;
         while !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break;
             };
-            self.run_prompt_turn(
-                prompt.prompt,
-                prompt.display_prompt,
-                Vec::new(),
-                terminal,
-                agent,
-            )
-            .await?;
+            outcome = self
+                .run_prompt_turn(
+                    prompt.prompt,
+                    prompt.display_prompt,
+                    Vec::new(),
+                    terminal,
+                    agent,
+                )
+                .await?;
+        }
+        if matches!(outcome, TurnOutcome::Completed) && self.goal.is_some() {
+            self.continue_goal(terminal, agent).await?;
         }
         Ok(())
     }
@@ -1997,7 +2018,7 @@ impl App {
         images: Vec<ImageContent>,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<TurnOutcome> {
         if !prompt.is_empty() {
             self.push_input_history(&prompt);
         }
@@ -2181,7 +2202,7 @@ impl App {
         self.active_tool_call = false;
         self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
-        match result {
+        let outcome = match result {
             Ok(answer) => {
                 self.running = false;
                 self.loading_spinner.stop();
@@ -2197,6 +2218,7 @@ impl App {
                         self.queued_prompts.len()
                     )
                 };
+                TurnOutcome::Completed
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
                 self.running = false;
@@ -2206,6 +2228,7 @@ impl App {
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.status = "interrupted".into();
+                TurnOutcome::Interrupted
             }
             Err(err) => {
                 self.reset_streams();
@@ -2214,12 +2237,13 @@ impl App {
                 self.loading_spinner.stop();
                 self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "error".into();
+                TurnOutcome::Failed
             }
-        }
+        };
         self.apply_pending_model_selection(agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
-        Ok(())
+        Ok(outcome)
     }
 
     async fn report_resting_herdr_state(&self) {
@@ -2577,6 +2601,7 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
+            CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::New
             | CommandId::Compact
@@ -3298,6 +3323,7 @@ impl App {
             }
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
+            CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
@@ -3406,6 +3432,7 @@ impl App {
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
         self.queued_prompts.clear();
+        self.goal = None;
         self.steering_prompts.clear();
         self.reset_streams();
         self.running = false;
@@ -4278,6 +4305,7 @@ impl App {
         self.clamp_command_selection();
         self.reset_streams();
         self.running = false;
+        self.goal = None;
         self.cumulative_usage = None;
         self.latest_usage = None;
         self.current_context = None;
@@ -5046,6 +5074,10 @@ impl App {
                 self.current_context.clone(),
                 self.model_metadata.clone(),
                 self.pending_model_metadata.is_some(),
+                self.goal.as_ref().map(|goal| GoalStatus {
+                    turns: goal.turns,
+                    elapsed: goal::format_elapsed(goal.elapsed()),
+                }),
             ),
             width,
         )
@@ -5563,8 +5595,7 @@ fn disable_keyboard_enhancements() -> std::io::Result<()> {
 
 fn enable_modified_keys() -> std::io::Result<()> {
     let mut stdout = std::io::stdout();
-    // xterm modifyOtherKeys mode 2 helps terminals/tmux preserve modified Enter
-    // without forcing printable shifted characters into base-key escape codes.
+    // xterm mode 2 preserves modified Enter without altering printable shifted characters.
     stdout.write_all(b"\x1b[>4;2m")?;
     stdout.flush()
 }
@@ -5756,7 +5787,7 @@ mod tests {
         })
     }
 
-    fn test_app() -> App {
+    pub(super) fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
         save_openai_api_key(store.as_ref(), "sk-test").unwrap();
         App::new_with_credentials(

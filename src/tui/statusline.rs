@@ -25,6 +25,13 @@ pub(super) struct StatusLineState {
     pub(super) billing: BillingInfo,
     pub(super) model_metadata: Option<ModelMetadata>,
     pub(super) model_metadata_loading: bool,
+    pub(super) goal: Option<GoalStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct GoalStatus {
+    pub(super) turns: usize,
+    pub(super) elapsed: String,
 }
 
 impl StatusLineState {
@@ -35,6 +42,7 @@ impl StatusLineState {
         context_usage: Option<ContextUsage>,
         model_metadata: Option<ModelMetadata>,
         model_metadata_loading: bool,
+        goal: Option<GoalStatus>,
     ) -> Self {
         Self {
             cwd: info.cwd.clone(),
@@ -48,6 +56,7 @@ impl StatusLineState {
             billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
             model_metadata,
             model_metadata_loading,
+            goal,
         }
     }
 
@@ -64,8 +73,16 @@ impl StatusLineState {
 }
 
 pub(super) fn statusline_lines(state: &StatusLineState, width: usize) -> Vec<Line<'static>> {
+    let goal = state.goal.as_ref().map(|goal| {
+        format!(
+            "◎ /goal active • {} turn{} • {}",
+            goal.turns,
+            if goal.turns == 1 { "" } else { "s" },
+            goal.elapsed
+        )
+    });
     vec![
-        render_row(state.left_top(), String::new(), width),
+        render_row(state.left_top(), goal.unwrap_or_default(), width),
         render_row(format_usage(state), state.right_bottom(), width),
     ]
 }
@@ -317,6 +334,7 @@ mod tests {
             billing: BillingInfo::Metered,
             model_metadata: Some(priced_metadata()),
             model_metadata_loading: false,
+            goal: None,
         }
     }
 
@@ -333,6 +351,20 @@ mod tests {
         let text = line_text(&line);
 
         assert_eq!(display_width(&text), 10);
+    }
+
+    #[test]
+    fn statusline_shows_active_goal_indicator() {
+        let mut state = test_state(ModelUsage::default());
+        state.goal = Some(GoalStatus {
+            turns: 2,
+            elapsed: "1m 5s".into(),
+        });
+
+        let lines = statusline_lines(&state, 80);
+        let text = line_text(&lines[0]);
+
+        assert!(text.contains("◎ /goal active • 2 turns • 1m 5s"), "{text}");
     }
 
     #[test]
