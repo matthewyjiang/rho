@@ -20,14 +20,17 @@ use codex_ws::{CodexWsTransport, CodexWsTurn};
 use convert::{convert_openai_response, to_openai_message, to_openai_tool};
 use stream::{
     collect_codex_sse_response, convert_streamed_response, handle_openai_stream_line,
-    trim_sse_line_end,
+    invalid_stream_utf8,
 };
 use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
     model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
-    provider_backend::stream_timeout::{provider_client, StreamIdleDeadline},
+    provider_backend::{
+        line_decoder::LineDecoder,
+        stream_timeout::{provider_client, StreamIdleDeadline},
+    },
 };
 
 pub struct OpenAiProvider {
@@ -100,7 +103,7 @@ impl ModelProvider for OpenAiProvider {
     ) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(key) => {
-                self.send_chat_completions_stream(request.clone(), key, on_event)
+                self.send_chat_completions_stream(request, key, on_event)
                     .await
             }
             Auth::Codex { tokens, source } => {
@@ -189,34 +192,21 @@ impl OpenAiProvider {
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
-        let mut buffer = Vec::new();
+        let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
         loop {
             let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
                 break;
             };
-            buffer.extend_from_slice(&chunk?);
-            while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-                trim_sse_line_end(&mut line);
-                let line = std::str::from_utf8(&line).map_err(|err| {
-                    ModelError::InvalidResponse(format!(
-                        "streamed response contained invalid utf-8: {err}"
-                    ))
-                })?;
+            decoder.push(&chunk?);
+            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
                 if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
                     idle_deadline.record_activity();
                 }
             }
         }
-        if !buffer.is_empty() {
-            trim_sse_line_end(&mut buffer);
-            let line = std::str::from_utf8(&buffer).map_err(|err| {
-                ModelError::InvalidResponse(format!(
-                    "streamed response contained invalid utf-8: {err}"
-                ))
-            })?;
+        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
             handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
         }
 
@@ -370,7 +360,7 @@ mod tests {
     use super::convert::{codex_input_items, codex_reasoning_param, to_openai_message};
     use super::stream::{
         convert_streamed_response, extract_sse_text, handle_codex_sse_line,
-        handle_openai_stream_line, trim_sse_line_end, CodexSseState,
+        handle_openai_stream_line, CodexSseState,
     };
     use super::*;
     use crate::model::{ContentBlock, ImageContent, Message};
@@ -788,14 +778,6 @@ mod tests {
         assert!(text.is_empty());
         assert_eq!(deltas, vec!["thinking"]);
         assert!(tool_calls.is_empty());
-    }
-
-    #[test]
-    fn trims_sse_line_end_after_full_utf8_line() {
-        let mut line = "data: hé\r\n".as_bytes().to_vec();
-        trim_sse_line_end(&mut line);
-
-        assert_eq!(std::str::from_utf8(&line).unwrap(), "data: hé");
     }
 
     #[test]

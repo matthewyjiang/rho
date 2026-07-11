@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::tool::{resolve_path, truncate, ToolContext, ToolError};
 
-use super::util::{extract_title, html_to_text, http_client, is_video_extension, is_youtube_url};
+use super::util::{extract_title, html_to_text, is_video_extension, is_youtube_url};
 
 pub(super) const PREVIEW_BYTES: usize = 8_000;
 const MAX_FETCH_BYTES: usize = 2 * 1024 * 1024;
@@ -21,6 +21,7 @@ pub(super) struct FetchedTarget {
 }
 
 pub(super) async fn fetch_target(
+    client: &reqwest::Client,
     target: &str,
     ctx: &ToolContext,
     prompt: Option<&str>,
@@ -29,7 +30,7 @@ pub(super) async fn fetch_target(
     force_clone: bool,
 ) -> Result<FetchedTarget, ToolError> {
     if let Some(github) = github::parse_url(target) {
-        return github::fetch(&github, force_clone).await;
+        return github::fetch(client, &github, force_clone).await;
     }
 
     if is_youtube_url(target) {
@@ -50,7 +51,7 @@ pub(super) async fn fetch_target(
         if content_type_from_path(url.path()) == "pdf" {
             return Ok(remote_pdf_fallback(target));
         }
-        let content = fetch_url_text(url.as_str()).await?;
+        let content = fetch_url_text(client, url.as_str()).await?;
         let title = extract_title(&content);
         let markdown = html_to_text(&content);
         return Ok(FetchedTarget {
@@ -69,11 +70,15 @@ pub(super) async fn fetch_target(
     fetch_local_path(target, &ctx.cwd, prompt, timestamp, frames)
 }
 
-pub(super) async fn fetch_url_text(url: &str) -> Result<String, ToolError> {
-    fetch_url_text_with_auth(url, None).await
+pub(super) async fn fetch_url_text(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<String, ToolError> {
+    fetch_url_text_with_auth(client, url, None).await
 }
 
 async fn fetch_url_text_with_auth(
+    client: &reqwest::Client,
     url: &str,
     bearer_token: Option<&str>,
 ) -> Result<String, ToolError> {
@@ -82,9 +87,7 @@ async fn fetch_url_text_with_auth(
             "only http and https URLs are supported".into(),
         ));
     }
-    let mut request = http_client()
-        .get(url)
-        .header("User-Agent", "rho-coding-agent");
+    let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);
     }

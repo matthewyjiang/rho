@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use ratatui::text::Line;
 
-use super::{entry_lines, is_tool_entry, markdown::render_markdown, Entry};
+use super::{is_tool_entry, render::render_entry, Entry};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CachedCodeBlock {
@@ -114,34 +114,25 @@ impl HistoryLineCache {
                 self.lines.push(Line::raw(""));
             }
             let entry_start = self.lines.len();
-            self.cache_code_blocks(entry, width, entry_start);
-            self.lines
-                .extend(entry_lines(entry, width, max_tool_output_lines));
+            let rendered = render_entry(entry, width, max_tool_output_lines);
+            self.code_blocks
+                .extend(
+                    rendered
+                        .code_blocks
+                        .into_iter()
+                        .map(|block| CachedCodeBlock {
+                            // render_entry adds a blank row before the rendered markdown.
+                            line: entry_start.saturating_add(1 + block.top_line),
+                            // render_entry also pads markdown by one column on each side.
+                            copy_columns: block.copy_columns.start.saturating_add(1)
+                                ..block.copy_columns.end.saturating_add(1),
+                            text: Arc::from(block.text),
+                        }),
+                );
+            self.lines.extend(rendered.lines);
             self.entry_ranges.push(range_start..self.lines.len());
             previous_was_tool = is_tool_entry(entry);
         }
-    }
-
-    fn cache_code_blocks(&mut self, entry: &Entry, width: usize, entry_start: usize) {
-        let Entry::Assistant(text) = entry else {
-            return;
-        };
-        let inner_width = width.saturating_sub(2).max(1);
-        let mut in_code_block = false;
-        let rendered = render_markdown(text, inner_width, &mut in_code_block);
-        self.code_blocks.extend(
-            rendered
-                .code_blocks
-                .into_iter()
-                .map(|block| CachedCodeBlock {
-                    // entry_lines adds a blank row before the rendered markdown.
-                    line: entry_start.saturating_add(1 + block.top_line),
-                    // entry_lines also pads rendered markdown by one column on each side.
-                    copy_columns: block.copy_columns.start.saturating_add(1)
-                        ..block.copy_columns.end.saturating_add(1),
-                    text: Arc::from(block.text),
-                }),
-        );
     }
 }
 

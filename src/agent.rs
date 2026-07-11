@@ -21,9 +21,8 @@ use compaction::{
 use context_tracker::ContextTracker;
 
 use crate::model::{
-    context::estimate_context_tokens, openai::prompt_cache_key_from_session_id, ContentBlock,
-    ContextUsage, DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse,
-    ModelUsage,
+    openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage, DynModelProvider,
+    Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -182,7 +181,10 @@ impl Agent {
         on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<bool, AgentError> {
         let specs = self.tools.specs();
-        self.compact_history(&specs, CompactionTrigger::Manual, on_event)
+        let estimate = self
+            .context_tracker
+            .estimate_request(&self.messages, &specs);
+        self.compact_history(&specs, estimate, CompactionTrigger::Manual, on_event)
             .await
     }
 
@@ -263,16 +265,29 @@ impl Agent {
         let mut step = 1usize;
         let mut invalid_response_retries = 0usize;
         loop {
-            self.compact_history(&specs, CompactionTrigger::Automatic, &mut on_event)
-                .await?;
+            let mut request_estimate = self
+                .context_tracker
+                .estimate_request(&self.messages, &specs);
+            if self
+                .compact_history(
+                    &specs,
+                    request_estimate,
+                    CompactionTrigger::Automatic,
+                    &mut on_event,
+                )
+                .await?
+            {
+                request_estimate = self
+                    .context_tracker
+                    .estimate_request(&self.messages, &specs);
+            }
             on_event(AgentEvent::StepStarted(step))?;
             if let Some(context_usage) = self
                 .context_tracker
-                .before_provider_request(&self.messages, &specs)
+                .before_provider_request(request_estimate)
             {
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
-            let request_estimated_tokens = estimate_context_tokens(&self.messages, &specs);
             let response = match self
                 .provider
                 .send_turn_stream(
@@ -297,7 +312,7 @@ impl Agent {
                         ModelEvent::Usage(usage) => {
                             if let Some(context_usage) = self
                                 .context_tracker
-                                .record_provider_usage(&usage, request_estimated_tokens)
+                                .record_provider_usage(&usage, request_estimate)
                             {
                                 on_event(AgentEvent::ContextUsage(context_usage))?;
                             }
@@ -614,12 +629,11 @@ impl Agent {
     async fn compact_history(
         &mut self,
         specs: &[crate::tool::ToolSpec],
+        estimate: context_tracker::RequestContextEstimate,
         trigger: CompactionTrigger,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<bool, AgentError> {
-        let estimate = self
-            .context_tracker
-            .estimate_for_compaction(&self.messages, specs);
+        let estimate = self.context_tracker.estimate_for_compaction(estimate);
         if matches!(trigger, CompactionTrigger::Automatic)
             && !should_compact(&self.compaction, estimate.tokens, estimate.context_window)
         {

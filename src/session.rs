@@ -217,60 +217,59 @@ impl Session {
 }
 
 fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
-    let entries = read_entries(path)?;
+    let mut replacement = Vec::new();
+    let mut display = Vec::new();
+    let mut model_display_start = 0;
+    visit_entries(path, |entry| {
+        match entry {
+            SessionEntry::Session { .. } => {}
+            SessionEntry::Message { message, .. } => display.push(message),
+            SessionEntry::ReplaceHistory { messages, .. } => {
+                replacement = messages;
+                model_display_start = display.len();
+            }
+        }
+        Ok(())
+    })?;
+    replacement.extend(display[model_display_start..].iter().cloned());
     Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(model_messages_from_entries(entries.clone())),
-        display: drop_incomplete_tool_turn_tail(display_messages_from_entries(entries)),
+        model: drop_incomplete_tool_turn_tail(replacement),
+        display: drop_incomplete_tool_turn_tail(display),
     })
 }
 
-fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
+fn visit_entries(
+    path: &Path,
+    mut visit: impl FnMut(SessionEntry) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let file = fs::File::open(path)?;
-    let reader = BufReader::new(file);
-    let lines = reader
-        .lines()
-        .filter_map(|line| match line {
-            Ok(line) if line.trim().is_empty() => None,
-            other => Some(other),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut entries = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        let entry = match serde_json::from_str::<SessionEntry>(line) {
-            Ok(entry) => entry,
-            Err(_) if index + 1 == lines.len() => break,
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let terminated = line.ends_with('\n');
+        match serde_json::from_str::<SessionEntry>(&line) {
+            Ok(entry) => visit(entry)?,
+            Err(err) if !terminated && err.is_eof() => return Ok(()),
             Err(err) => return Err(err.into()),
-        };
+        }
+    }
+}
+
+#[cfg(test)]
+fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
+    let mut entries = Vec::new();
+    visit_entries(path, |entry| {
         entries.push(entry);
-    }
+        Ok(())
+    })?;
     Ok(entries)
-}
-
-fn model_messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
-    let mut messages = Vec::new();
-    for entry in entries {
-        match entry {
-            SessionEntry::Session { .. } => {}
-            SessionEntry::Message { message, .. } => messages.push(message),
-            SessionEntry::ReplaceHistory {
-                messages: replacement,
-                ..
-            } => messages = replacement,
-        }
-    }
-    messages
-}
-
-fn display_messages_from_entries(entries: Vec<SessionEntry>) -> Vec<Message> {
-    let mut messages = Vec::new();
-    for entry in entries {
-        match entry {
-            SessionEntry::Session { .. } | SessionEntry::ReplaceHistory { .. } => {}
-            SessionEntry::Message { message, .. } => messages.push(message),
-        }
-    }
-    messages
 }
 
 pub(super) fn summarize_session_file(
@@ -284,7 +283,7 @@ pub(super) fn summarize_session_file(
     let mut updated_at = created_at;
     let mut messages = Vec::new();
 
-    for entry in read_entries(path)? {
+    visit_entries(path, |entry| {
         match entry {
             SessionEntry::Session {
                 timestamp,
@@ -313,7 +312,8 @@ pub(super) fn summarize_session_file(
                 messages = replacement;
             }
         }
-    }
+        Ok(())
+    })?;
 
     let messages = drop_incomplete_tool_turn_tail(messages);
     let (file_size, file_mtime) = session_file_stats(path);
@@ -341,7 +341,7 @@ pub(super) fn summarize_session_file(
     })
 }
 
-fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
+fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
     let mut index = 0usize;
     while index < messages.len() {
         let Message::Assistant(blocks) = &messages[index] else {
@@ -363,7 +363,8 @@ fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
         let results_start = index + 1;
         let results_end = results_start + tool_call_ids.len();
         if results_end > messages.len() {
-            return messages[..index].to_vec();
+            messages.truncate(index);
+            return messages;
         }
 
         let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
@@ -373,7 +374,8 @@ fn drop_incomplete_tool_turn_tail(messages: Vec<Message>) -> Vec<Message> {
             )
         });
         if !complete {
-            return messages[..index].to_vec();
+            messages.truncate(index);
+            return messages;
         }
         index = results_end;
     }
@@ -778,23 +780,30 @@ mod tests {
     }
 
     #[test]
-    fn ignores_truncated_final_json_line_on_load() {
-        let root = temp_session_root();
-        let cwd = temp_cwd();
-        let session = Session::create_in_root(&root, &cwd).unwrap();
-        session
-            .append_message(&Message::user_text("complete"))
-            .unwrap();
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(session.path())
-            .unwrap();
-        file.write_all(b"{\"type\":\"message\"").unwrap();
+    fn tolerates_only_truncated_final_json() {
+        for (tail, should_load) in [
+            (b"{\"type\":\"message\"".as_slice(), true),
+            (b"{not json}\n".as_slice(), false),
+            (b"{not json}".as_slice(), false),
+        ] {
+            let root = temp_session_root();
+            let cwd = temp_cwd();
+            let session = Session::create_in_root(&root, &cwd).unwrap();
+            session
+                .append_message(&Message::user_text("complete"))
+                .unwrap();
+            OpenOptions::new()
+                .append(true)
+                .open(session.path())
+                .unwrap()
+                .write_all(tail)
+                .unwrap();
 
-        let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert!(matches!(&messages[0], Message::User(_)));
+            assert_eq!(
+                Session::open_by_id_in_root(&root, &cwd, session.id()).is_ok(),
+                should_load
+            );
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    adapters::{FetchContent, GetSearchContent, WebSearch},
+    adapters::GetSearchContent,
     fetch::github::{self, GitHubKind},
     search::{self, SearchItem},
     storage::{self, StoredItem},
@@ -56,7 +56,7 @@ fn parses_github_root_tree_blob_and_commit_urls() {
 async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
     let ctx = test_context();
-    let web_search = WebSearch::from_config(&Config::default());
+    let web_search = super::access_tools(&Config::default()).0;
     let result = web_search
         .call(args.clone(), ctx.clone(), "call_1".into())
         .await
@@ -91,7 +91,8 @@ async fn search_item_content_preserves_snippet_when_fetch_fails() {
         snippet: "original snippet".into(),
     };
 
-    let (content, content_kind) = search::item_content(&item, true).await;
+    let (content, content_kind) =
+        search::item_content(&super::util::http_client(), &item, true).await;
 
     assert_eq!(content_kind, "snippet_with_fetch_warning");
     assert!(content.contains("original snippet"));
@@ -141,7 +142,8 @@ async fn fetch_content_stores_local_file_content() {
     };
 
     let args = json!({"url": "note.txt"});
-    let result = FetchContent
+    let result = super::access_tools(&Config::default())
+        .1
         .call(args.clone(), ctx.clone(), "call_1".into())
         .await
         .unwrap();
@@ -149,7 +151,9 @@ async fn fetch_content_stores_local_file_content() {
     let response_id = value["responseId"].as_str().unwrap();
 
     assert_eq!(
-        FetchContent.display_lines(&args, &ctx, &result),
+        super::access_tools(&Config::default())
+            .1
+            .display_lines(&args, &ctx, &result),
         vec!["fetch content: fetched 1 item"]
     );
 
@@ -182,7 +186,8 @@ async fn fetch_content_reads_local_http_response() {
         stream.write_all(response.as_bytes()).unwrap();
     });
 
-    let result = FetchContent
+    let result = super::access_tools(&Config::default())
+        .1
         .call(
             json!({"url": format!("http://{addr}/article")}),
             test_context(),
@@ -229,9 +234,12 @@ fn search_provider_parses_tool_and_config_values() {
 #[test]
 fn tool_specs_preserve_public_names() {
     assert_eq!(
-        WebSearch::from_config(&Config::default()).spec().name,
+        super::access_tools(&Config::default()).0.spec().name,
         "web_search"
     );
-    assert_eq!(FetchContent.spec().name, "fetch_content");
+    assert_eq!(
+        super::access_tools(&Config::default()).1.spec().name,
+        "fetch_content"
+    );
     assert_eq!(GetSearchContent.spec().name, "get_search_content");
 }
