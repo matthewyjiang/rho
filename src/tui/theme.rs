@@ -118,6 +118,8 @@ struct Palette {
     success_tool_background: BlockColor,
     failure_tool_background: BlockColor,
     skill_tool_background: BlockColor,
+    web_tool_background: BlockColor,
+    questionnaire_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -134,31 +136,43 @@ impl Palette {
                 terminal,
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
-                Color::DarkGray,
+                BlockColor::from_color(Color::DarkGray),
             ),
             neutral_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
-                Color::DarkGray,
+                BlockColor::from_color(Color::DarkGray),
             ),
             success_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Green,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Green.color(),
+                BlockColor::from_color(AnsiColor::Green.color()),
             ),
             failure_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Red,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Red.color(),
+                BlockColor::from_color(AnsiColor::Red.color()),
             ),
             skill_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Magenta,
                 TOOL_BACKGROUND_ALPHA,
-                AnsiColor::Magenta.color(),
+                BlockColor::from_color(AnsiColor::Magenta.color()),
+            ),
+            web_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Blue,
+                TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_color(AnsiColor::Blue.color()),
+            ),
+            questionnaire_tool_background: blended_or_fallback(
+                terminal,
+                AnsiColor::Yellow,
+                TOOL_BACKGROUND_ALPHA,
+                BlockColor::from_rgb(Rgb::new(128, 128, 0)),
             ),
         }
     }
@@ -312,6 +326,22 @@ impl Theme {
         )
     }
 
+    pub(super) fn tool_web() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.web_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
+    pub(super) fn tool_questionnaire() -> ToolStyle {
+        let palette = Palette::current();
+        ToolStyle::new(
+            Self::dim_block(palette.questionnaire_tool_background),
+            Self::dim_block(palette.failure_tool_background),
+        )
+    }
+
     fn dim_block(background: BlockColor) -> Style {
         Style::default()
             .fg(block_foreground(background.rgb))
@@ -354,11 +384,11 @@ fn blended_or_fallback(
     terminal: Option<&TerminalPalette>,
     color: AnsiColor,
     alpha: f32,
-    fallback: Color,
+    fallback: BlockColor,
 ) -> BlockColor {
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or_else(|| BlockColor::from_color(fallback))
+        .unwrap_or(fallback)
 }
 
 fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {

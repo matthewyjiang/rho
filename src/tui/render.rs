@@ -529,6 +529,8 @@ fn tool_style(style: ToolDisplayStyle) -> ToolStyle {
             Theme::tool_file_or_command()
         }
         ToolDisplayStyle::Skill => Theme::tool_skill(),
+        ToolDisplayStyle::Web => Theme::tool_web(),
+        ToolDisplayStyle::Questionnaire => Theme::tool_questionnaire(),
     }
 }
 
