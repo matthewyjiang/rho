@@ -388,27 +388,7 @@ fn blended_or_fallback(
 ) -> BlockColor {
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or_else(|| fallback_block(color, alpha, fallback))
-}
-
-#[cfg(windows)]
-fn fallback_block(color: AnsiColor, alpha: f32, _fallback: BlockColor) -> BlockColor {
-    const BACKGROUND: Rgb = Rgb::new(12, 12, 12);
-    let ansi = match color {
-        AnsiColor::Red => Rgb::new(205, 49, 49),
-        AnsiColor::Green => Rgb::new(13, 188, 121),
-        AnsiColor::Yellow => Rgb::new(229, 229, 16),
-        AnsiColor::Blue => Rgb::new(36, 114, 200),
-        AnsiColor::Magenta => Rgb::new(188, 63, 188),
-        AnsiColor::Cyan => Rgb::new(17, 168, 205),
-        AnsiColor::Gray => Rgb::new(204, 204, 204),
-    };
-    BlockColor::from_rgb(BACKGROUND.blend_toward(ansi, alpha))
-}
-
-#[cfg(not(windows))]
-fn fallback_block(_color: AnsiColor, _alpha: f32, fallback: BlockColor) -> BlockColor {
-    fallback
+        .unwrap_or(fallback)
 }
 
 fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {
