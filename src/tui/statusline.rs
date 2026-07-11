@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use ratatui::text::{Line, Span};
@@ -10,53 +11,79 @@ use super::{
     theme::Theme,
     TuiInfo,
 };
-use crate::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
+use crate::{
+    model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
+    reasoning::ReasoningLevel,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusLineState {
-    pub(super) cwd: PathBuf,
-    pub(super) branch: Option<String>,
-    pub(super) usage: Option<ModelUsage>,
-    pub(super) latest_usage: Option<ModelUsage>,
-    pub(super) context_usage: Option<ContextUsage>,
-    pub(super) provider: String,
-    pub(super) model: String,
-    pub(super) reasoning: String,
-    pub(super) billing: BillingInfo,
-    pub(super) model_metadata: Option<ModelMetadata>,
-    pub(super) model_metadata_loading: bool,
-    pub(super) goal: Option<GoalStatus>,
+    cwd: PathBuf,
+    branch: Option<String>,
+    usage: Option<ModelUsage>,
+    latest_usage: Option<ModelUsage>,
+    context_usage: Option<ContextUsage>,
+    provider: String,
+    model: String,
+    reasoning: ReasoningLevel,
+    billing: BillingInfo,
+    model_metadata: Option<ModelMetadata>,
+    model_metadata_loading: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct StatusLineCache {
+    width: usize,
+    goal: Option<GoalStatus>,
+    lines: Vec<Line<'static>>,
+    #[cfg(test)]
+    render_count: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct StatusLine {
+    state: StatusLineState,
+    cache: StatusLineCache,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct GoalStatus {
     pub(super) turns: usize,
-    pub(super) elapsed: String,
+    pub(super) elapsed: Duration,
+}
+
+impl Default for StatusLineState {
+    fn default() -> Self {
+        Self {
+            cwd: PathBuf::new(),
+            branch: None,
+            usage: None,
+            latest_usage: None,
+            context_usage: None,
+            provider: String::new(),
+            model: String::new(),
+            reasoning: ReasoningLevel::default(),
+            billing: BillingInfo::Metered,
+            model_metadata: None,
+            model_metadata_loading: false,
+        }
+    }
 }
 
 impl StatusLineState {
-    pub(super) fn from_tui(
-        info: &TuiInfo,
-        usage: Option<ModelUsage>,
-        latest_usage: Option<ModelUsage>,
-        context_usage: Option<ContextUsage>,
-        model_metadata: Option<ModelMetadata>,
-        model_metadata_loading: bool,
-        goal: Option<GoalStatus>,
-    ) -> Self {
+    fn from_tui(info: &TuiInfo) -> Self {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
-            usage,
-            latest_usage,
-            context_usage,
+            usage: None,
+            latest_usage: None,
+            context_usage: None,
             provider: info.provider.clone(),
             model: info.model.clone(),
-            reasoning: info.reasoning.to_string(),
+            reasoning: info.reasoning,
             billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
-            model_metadata,
-            model_metadata_loading,
-            goal,
+            model_metadata: None,
+            model_metadata_loading: false,
         }
     }
 
@@ -72,13 +99,107 @@ impl StatusLineState {
     }
 }
 
-pub(super) fn statusline_lines(state: &StatusLineState, width: usize) -> Vec<Line<'static>> {
-    let goal = state.goal.as_ref().map(|goal| {
+impl StatusLine {
+    pub(super) fn new(info: &TuiInfo) -> Self {
+        Self {
+            state: StatusLineState::from_tui(info),
+            cache: StatusLineCache::default(),
+        }
+    }
+
+    pub(super) fn refresh_git_branch(&mut self) {
+        let branch = git_branch(&self.state.cwd);
+        if self.state.branch != branch {
+            self.state.branch = branch;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_model(&mut self, info: &TuiInfo) {
+        let billing = BillingInfo::from_provider_auth(&info.provider, &info.auth);
+        if self.state.provider != info.provider
+            || self.state.model != info.model
+            || self.state.reasoning != info.reasoning
+            || self.state.billing != billing
+        {
+            self.state.provider.clone_from(&info.provider);
+            self.state.model.clone_from(&info.model);
+            self.state.reasoning = info.reasoning;
+            self.state.billing = billing;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_usage(
+        &mut self,
+        usage: Option<&ModelUsage>,
+        latest_usage: Option<&ModelUsage>,
+        context_usage: Option<&ContextUsage>,
+    ) {
+        if self.state.usage.as_ref() != usage
+            || self.state.latest_usage.as_ref() != latest_usage
+            || self.state.context_usage.as_ref() != context_usage
+        {
+            self.state.usage = usage.cloned();
+            self.state.latest_usage = latest_usage.cloned();
+            self.state.context_usage = context_usage.cloned();
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_model_metadata(
+        &mut self,
+        model_metadata: Option<&ModelMetadata>,
+        loading: bool,
+    ) {
+        if self.state.model_metadata.as_ref() != model_metadata
+            || self.state.model_metadata_loading != loading
+        {
+            self.state.model_metadata = model_metadata.cloned();
+            self.state.model_metadata_loading = loading;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn lines(&mut self, width: usize, goal: Option<GoalStatus>) -> &[Line<'static>] {
+        if self.cache.lines.is_empty() || self.cache.width != width || self.cache.goal != goal {
+            let lines = statusline_lines(&self.state, width, goal.as_ref());
+            self.cache.width = width;
+            self.cache.goal = goal;
+            self.cache.lines = lines;
+            #[cfg(test)]
+            {
+                self.cache.render_count += 1;
+            }
+        }
+        &self.cache.lines
+    }
+
+    #[cfg(test)]
+    pub(super) fn render_count(&self) -> usize {
+        self.cache.render_count
+    }
+
+    pub(super) fn height(&self) -> usize {
+        2
+    }
+
+    fn invalidate(&mut self) {
+        self.cache.lines.clear();
+    }
+}
+
+fn statusline_lines(
+    state: &StatusLineState,
+    width: usize,
+    goal: Option<&GoalStatus>,
+) -> Vec<Line<'static>> {
+    let goal = goal.map(|goal| {
         format!(
             "◎ /goal active • {} turn{} • {}",
             goal.turns,
             if goal.turns == 1 { "" } else { "s" },
-            goal.elapsed
+            super::goal::format_elapsed(goal.elapsed)
         )
     });
     vec![
@@ -135,7 +256,7 @@ fn format_usage(state: &StatusLineState) -> String {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BillingInfo {
+enum BillingInfo {
     Metered,
     Subscription,
 }
@@ -305,153 +426,5 @@ fn compact_cwd(path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model::models_dev::ModelCost;
-
-    fn priced_metadata() -> ModelMetadata {
-        ModelMetadata {
-            cost_default: Some(ModelCost {
-                input_micros_per_m: Some(1_000_000),
-                output_micros_per_m: Some(2_000_000),
-                cache_read_micros_per_m: Some(100_000),
-                cache_write_micros_per_m: None,
-            }),
-            ..ModelMetadata::default()
-        }
-    }
-
-    fn test_state(usage: ModelUsage) -> StatusLineState {
-        StatusLineState {
-            cwd: PathBuf::from("/tmp/project"),
-            branch: None,
-            usage: Some(usage.clone()),
-            latest_usage: Some(usage),
-            context_usage: None,
-            provider: "openai".into(),
-            model: "gpt-test".into(),
-            reasoning: "low".into(),
-            billing: BillingInfo::Metered,
-            model_metadata: Some(priced_metadata()),
-            model_metadata_loading: false,
-            goal: None,
-        }
-    }
-
-    fn line_text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
-    #[test]
-    fn statusline_rows_use_display_width_for_alignment() {
-        let line = render_row("项目".into(), "模型".into(), 10);
-        let text = line_text(&line);
-
-        assert_eq!(display_width(&text), 10);
-    }
-
-    #[test]
-    fn statusline_shows_active_goal_indicator() {
-        let mut state = test_state(ModelUsage::default());
-        state.goal = Some(GoalStatus {
-            turns: 2,
-            elapsed: "1m 5s".into(),
-        });
-
-        let lines = statusline_lines(&state, 80);
-        let text = line_text(&lines[0]);
-
-        assert!(text.contains("◎ /goal active • 2 turns • 1m 5s"), "{text}");
-    }
-
-    #[test]
-    fn estimated_statusline_cost_uses_normalized_input_and_cache_read() {
-        let usage = ModelUsage {
-            input_tokens: Some(300_000),
-            cache_read_tokens: Some(700_000),
-            output_tokens: Some(100_000),
-            ..ModelUsage::default()
-        };
-
-        assert_eq!(
-            estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
-            Some(570_000)
-        );
-    }
-
-    #[test]
-    fn cache_hit_percentage_uses_latest_usage_prompt_tokens() {
-        let usage = ModelUsage {
-            input_tokens: Some(300_000),
-            cache_read_tokens: Some(700_000),
-            output_tokens: Some(100_000),
-            ..ModelUsage::default()
-        };
-
-        let formatted = format_usage(&test_state(usage));
-
-        assert!(formatted.contains("↑300.0k"), "{formatted}");
-        assert!(formatted.contains("R700.0k"), "{formatted}");
-        assert!(formatted.contains("CH70.0%"), "{formatted}");
-        assert!(formatted.contains("$0.570"), "{formatted}");
-    }
-
-    #[test]
-    fn cache_hit_percentage_uses_latest_usage_not_cumulative_totals() {
-        let mut state = test_state(ModelUsage {
-            input_tokens: Some(1_000_000),
-            cache_read_tokens: Some(1_000_000),
-            output_tokens: Some(100_000),
-            cache_write_tokens: Some(500_000),
-            ..ModelUsage::default()
-        });
-        state.latest_usage = Some(ModelUsage {
-            input_tokens: Some(100_000),
-            cache_read_tokens: Some(900_000),
-            cache_write_tokens: Some(500_000),
-            ..ModelUsage::default()
-        });
-
-        let formatted = format_usage(&state);
-
-        assert!(formatted.contains("↑1.0M"), "{formatted}");
-        assert!(formatted.contains("R1.0M"), "{formatted}");
-        assert!(formatted.contains("W500.0k"), "{formatted}");
-        assert!(formatted.contains("CH90.0%"), "{formatted}");
-        assert!(!formatted.contains("CH40.0%"), "{formatted}");
-        assert!(!formatted.contains("CH60.0%"), "{formatted}");
-    }
-
-    #[test]
-    fn context_percentage_uses_current_context_not_cumulative_usage() {
-        let mut state = test_state(ModelUsage {
-            input_tokens: Some(60_000),
-            output_tokens: Some(40_000),
-            ..ModelUsage::default()
-        });
-        state.context_usage = Some(ContextUsage::estimated(10_000, Some(100_000)));
-        state.model_metadata = Some(ModelMetadata {
-            advertised_context_window: Some(100_000),
-            ..priced_metadata()
-        });
-
-        let formatted = format_usage(&state);
-
-        assert!(formatted.contains("~10.0%/100.0k"), "{formatted}");
-        assert!(!formatted.contains("100.0%/100.0k"), "{formatted}");
-    }
-
-    #[test]
-    fn provider_reported_context_omits_estimate_marker() {
-        let mut state = test_state(ModelUsage::default());
-        state.context_usage = Some(ContextUsage::provider_reported(25_000, Some(100_000)));
-
-        let formatted = format_usage(&state);
-
-        assert!(formatted.contains("25.0%/100.0k"), "{formatted}");
-        assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
-    }
-}
+#[path = "statusline_tests.rs"]
+mod tests;

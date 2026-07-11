@@ -23,7 +23,7 @@ fn dragging_transcript_text_copies_on_mouse_release() {
     let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
     let now = Instant::now();
     let history_len = app.history_len(40, now);
-    let layout = app.screen_layout_for_history_len(Rect::new(0, 0, 40, 18), now, history_len);
+    let layout = app.screen_layout(Rect::new(0, 0, 40, 18), now);
     let history_start = app.visible_history_start(history_len, layout.history.height as usize);
     let full_lines = app.history_lines(40, now);
     let text_line = full_lines
@@ -70,7 +70,7 @@ fn code_block_copy_button_hovers_and_copies_raw_contents() {
     let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
     let now = Instant::now();
     let history_len = app.history_len(40, now);
-    let layout = app.screen_layout_for_history_len(Rect::new(0, 0, 40, 18), now, history_len);
+    let layout = app.screen_layout(Rect::new(0, 0, 40, 18), now);
     let history_start = app.visible_history_start(history_len, layout.history.height as usize);
     let target = app.code_block_copy_targets(40).into_iter().next().unwrap();
     let column = target.columns.start as u16;
