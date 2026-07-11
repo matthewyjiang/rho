@@ -75,6 +75,6 @@ fn description_previews_normalized_template_contents() {
 - correctness
 - security"
         ),
-        "prompt: Review this code for: - correctness - security"
+        "Review this code for: - correctness - security"
     );
 }

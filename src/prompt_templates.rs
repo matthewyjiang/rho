@@ -84,8 +84,7 @@ fn validate_entry(name: &str, template: &str) -> anyhow::Result<()> {
 }
 
 pub fn description(template: &str) -> String {
-    let preview = template.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("prompt: {preview}")
+    template.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn matches_search(name: &str, search: &str) -> bool {
