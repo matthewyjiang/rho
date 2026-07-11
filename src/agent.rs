@@ -465,8 +465,7 @@ impl Agent {
                                             }
                                         };
                                         let display_lines = questionnaire::finished_display_lines(
-                                            &request,
-                                            &result.content,
+                                            &request, &result,
                                         );
                                         (result, None, display_lines)
                                     }
