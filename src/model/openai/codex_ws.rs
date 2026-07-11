@@ -51,13 +51,15 @@ pub(super) enum CodexWsTurn {
 
 struct CodexWsCompleted {
     response: CodexSseResponse,
-    events: Vec<ModelEvent>,
     server_output_items: Vec<Value>,
 }
 
 #[derive(Debug)]
 enum CodexWsFailure {
-    Transport(String),
+    Transport {
+        message: String,
+        events_emitted: bool,
+    },
     Model(ModelError),
 }
 
@@ -95,13 +97,12 @@ impl CodexWsTransport {
         let frame = response_create_frame(body, mode);
 
         match state
-            .send_frame(&self.ws_url, tokens, frame, self.idle_timeout)
+            .send_frame(&self.ws_url, tokens, frame, self.idle_timeout, on_event)
             .await
         {
             Ok(output) => {
                 let CodexWsCompleted {
                     response,
-                    events,
                     server_output_items,
                 } = output;
                 let continuation_response = CodexContinuationResponse::from_response(
@@ -109,29 +110,28 @@ impl CodexWsTransport {
                     response.response_id.clone(),
                     server_output_items,
                 );
-                let response = match (CodexWsCompleted {
-                    response,
-                    events,
-                    server_output_items: Vec::new(),
-                }
-                .emit_events(on_event))
-                {
-                    Ok(response) => response,
-                    Err(err) => {
-                        state.connection = None;
-                        state.continuation.reset();
-                        return Err(err);
-                    }
-                };
                 state
                     .continuation
                     .record_success(&candidate, continuation_response);
                 Ok(CodexWsTurn::Completed(response.response))
             }
-            Err(CodexWsFailure::Transport(_error)) => {
+            Err(CodexWsFailure::Transport {
+                events_emitted: false,
+                ..
+            }) => {
                 state.connection = None;
                 state.continuation.reset();
                 Ok(CodexWsTurn::FullSseFallback)
+            }
+            Err(CodexWsFailure::Transport {
+                message,
+                events_emitted: true,
+            }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Err(ModelError::InvalidResponse(format!(
+                    "Codex WebSocket failed after streaming output: {message}"
+                )))
             }
             Err(CodexWsFailure::Model(err)) => {
                 state.connection = None;
@@ -173,6 +173,7 @@ impl CodexWsState {
         tokens: &CodexTokens,
         frame: Value,
         idle_timeout: std::time::Duration,
+        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
         if self.connection.is_none() {
             self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
@@ -183,10 +184,16 @@ impl CodexWsState {
             idle_timeout,
         )
         .await
-        .map_err(|err| CodexWsFailure::Transport(err.to_string()))?
-        .map_err(|err| CodexWsFailure::Transport(format!("websocket send failed: {err}")))?;
+        .map_err(|err| CodexWsFailure::Transport {
+            message: err.to_string(),
+            events_emitted: false,
+        })?
+        .map_err(|err| CodexWsFailure::Transport {
+            message: format!("websocket send failed: {err}"),
+            events_emitted: false,
+        })?;
 
-        collect_codex_ws_response(socket, idle_timeout).await
+        collect_codex_ws_response(socket, idle_timeout, on_event).await
     }
 }
 
@@ -197,7 +204,10 @@ async fn connect_codex_ws(
 ) -> Result<CodexSocket, CodexWsFailure> {
     let mut request = ws_url
         .into_client_request()
-        .map_err(|err| CodexWsFailure::Transport(format!("invalid websocket url: {err}")))?;
+        .map_err(|err| CodexWsFailure::Transport {
+            message: format!("invalid websocket url: {err}"),
+            events_emitted: false,
+        })?;
     let headers = request.headers_mut();
     headers.insert(USER_AGENT, HeaderValue::from_static("codex-cli"));
     headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
@@ -205,112 +215,118 @@ async fn connect_codex_ws(
         "OpenAI-Beta",
         HeaderValue::from_static("responses_websockets=2026-02-06"),
     );
-    let authorization = HeaderValue::from_str(&format!("Bearer {}", tokens.access_token))
-        .map_err(|err| CodexWsFailure::Transport(format!("invalid bearer token header: {err}")))?;
+    let authorization =
+        HeaderValue::from_str(&format!("Bearer {}", tokens.access_token)).map_err(|err| {
+            CodexWsFailure::Transport {
+                message: format!("invalid bearer token header: {err}"),
+                events_emitted: false,
+            }
+        })?;
     headers.insert(AUTHORIZATION, authorization);
     if let Some(account_id) = tokens.account_id.as_deref() {
-        let account_id = HeaderValue::from_str(account_id).map_err(|err| {
-            CodexWsFailure::Transport(format!("invalid ChatGPT account header: {err}"))
-        })?;
+        let account_id =
+            HeaderValue::from_str(account_id).map_err(|err| CodexWsFailure::Transport {
+                message: format!("invalid ChatGPT account header: {err}"),
+                events_emitted: false,
+            })?;
         headers.insert("ChatGPT-Account-ID", account_id);
     }
 
     let (socket, _) = wait_for_stream_activity_for(connect_async(request), idle_timeout)
         .await
-        .map_err(|err| CodexWsFailure::Transport(err.to_string()))?
-        .map_err(|err| CodexWsFailure::Transport(format!("websocket connect failed: {err}")))?;
+        .map_err(|err| CodexWsFailure::Transport {
+            message: err.to_string(),
+            events_emitted: false,
+        })?
+        .map_err(|err| CodexWsFailure::Transport {
+            message: format!("websocket connect failed: {err}"),
+            events_emitted: false,
+        })?;
     Ok(socket)
 }
 
 async fn collect_codex_ws_response(
     socket: &mut CodexSocket,
     idle_timeout: std::time::Duration,
+    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
 ) -> Result<CodexWsCompleted, CodexWsFailure> {
     let mut state = CodexSseState::default();
-    let mut events = Vec::new();
     let mut server_output_items = Vec::new();
+    let mut events_emitted = false;
     let mut idle_deadline = StreamIdleDeadline::with_timeout(idle_timeout);
     loop {
-        let Some(message) = idle_deadline
-            .wait_for(socket.next())
-            .await
-            .map_err(|err| CodexWsFailure::Transport(err.to_string()))?
+        let Some(message) = idle_deadline.wait_for(socket.next()).await.map_err(|err| {
+            CodexWsFailure::Transport {
+                message: err.to_string(),
+                events_emitted,
+            }
+        })?
         else {
             break;
         };
-        match message
-            .map_err(|err| CodexWsFailure::Transport(format!("websocket receive failed: {err}")))?
-        {
-            Message::Text(text) => {
-                let payload = serde_json::from_str::<Value>(&text).map_err(|err| {
-                    CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
-                })?;
-                collect_server_output_item(&payload, &mut server_output_items);
-                let (completed, activity) =
-                    handle_codex_ws_value(&payload, &mut state, &mut events)?;
-                if completed {
-                    let response = state.into_response().map_err(CodexWsFailure::Model)?;
-                    return Ok(CodexWsCompleted {
-                        response,
-                        events,
-                        server_output_items,
-                    });
-                }
-                if activity {
-                    idle_deadline.record_activity();
-                }
-            }
-            Message::Binary(bytes) => {
-                let text = std::str::from_utf8(&bytes).map_err(|err| {
-                    CodexWsFailure::Transport(format!(
-                        "websocket binary frame contained invalid utf-8: {err}"
-                    ))
-                })?;
-                let payload = serde_json::from_str::<Value>(text).map_err(|err| {
-                    CodexWsFailure::Transport(format!("websocket frame was not valid JSON: {err}"))
-                })?;
-                collect_server_output_item(&payload, &mut server_output_items);
-                let (completed, activity) =
-                    handle_codex_ws_value(&payload, &mut state, &mut events)?;
-                if completed {
-                    let response = state.into_response().map_err(CodexWsFailure::Model)?;
-                    return Ok(CodexWsCompleted {
-                        response,
-                        events,
-                        server_output_items,
-                    });
-                }
-                if activity {
-                    idle_deadline.record_activity();
-                }
-            }
-            Message::Ping(_) | Message::Pong(_) => {}
+        let message = message.map_err(|err| CodexWsFailure::Transport {
+            message: format!("websocket receive failed: {err}"),
+            events_emitted,
+        })?;
+        let text = match message {
+            Message::Text(text) => text.to_string(),
+            Message::Binary(bytes) => std::str::from_utf8(&bytes)
+                .map_err(|err| CodexWsFailure::Transport {
+                    message: format!("websocket binary frame contained invalid utf-8: {err}"),
+                    events_emitted,
+                })?
+                .to_string(),
+            Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => {
-                return Err(CodexWsFailure::Transport(
-                    "websocket closed before response.completed".into(),
-                ));
+                return Err(CodexWsFailure::Transport {
+                    message: "websocket closed before response.completed".into(),
+                    events_emitted,
+                });
             }
-            Message::Frame(_) => {}
+            Message::Frame(_) => continue,
+        };
+        let payload =
+            serde_json::from_str::<Value>(&text).map_err(|err| CodexWsFailure::Transport {
+                message: format!("websocket frame was not valid JSON: {err}"),
+                events_emitted,
+            })?;
+        collect_server_output_item(&payload, &mut server_output_items);
+        let (completed, activity) =
+            handle_codex_ws_value(&payload, &mut state, on_event, &mut events_emitted)?;
+        if completed {
+            let response = state.into_response().map_err(CodexWsFailure::Model)?;
+            return Ok(CodexWsCompleted {
+                response,
+                server_output_items,
+            });
+        }
+        if activity {
+            idle_deadline.record_activity();
         }
     }
-    Err(CodexWsFailure::Transport(
-        "websocket ended before response.completed".into(),
-    ))
+    Err(CodexWsFailure::Transport {
+        message: "websocket ended before response.completed".into(),
+        events_emitted,
+    })
 }
 
 fn handle_codex_ws_value(
     value: &Value,
     state: &mut CodexSseState,
-    events: &mut Vec<ModelEvent>,
+    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    events_emitted: &mut bool,
 ) -> Result<(bool, bool), CodexWsFailure> {
-    let mut collect_event = |event| {
-        events.push(event);
+    let mut emit_event = |event| {
+        if let Some(on_event) = on_event.as_mut() {
+            on_event(event)?;
+            *events_emitted = true;
+        }
         Ok(())
     };
     handle_codex_sse_line(
         &format!("data: {value}"),
         state,
-        &mut Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>),
+        &mut Some(&mut emit_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>),
     )
     .map_err(CodexWsFailure::Model)?;
     let event_type = value.get("type").and_then(Value::as_str);
@@ -325,20 +341,6 @@ fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
         if let Some(item) = payload.get("item") {
             output_items.push(item.clone());
         }
-    }
-}
-
-impl CodexWsCompleted {
-    fn emit_events(
-        self,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
-    ) -> Result<CodexSseResponse, ModelError> {
-        if let Some(on_event) = on_event.as_mut() {
-            for event in self.events {
-                on_event(event)?;
-            }
-        }
-        Ok(self.response)
     }
 }
 

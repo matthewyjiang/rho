@@ -97,6 +97,46 @@ async fn ws_server_connections(
     (format!("ws://{addr}/responses"), frames)
 }
 
+async fn ws_server_streams_delta_before_completion() -> (String, Arc<std::sync::atomic::AtomicBool>)
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_completed = Arc::clone(&completed);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let _request = socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(
+                json!({"type":"response.output_text.delta","delta":"first"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        server_completed.store(true, std::sync::atomic::Ordering::SeqCst);
+        socket
+            .send(Message::Text(
+                json!({
+                    "type":"response.completed",
+                    "response":{
+                        "id":"resp_streaming",
+                        "output_text":"first",
+                        "output":[],
+                        "usage":{"input_tokens":10,"output_tokens":1}
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+    (format!("ws://{addr}/responses"), completed)
+}
+
 async fn ws_server_closes_after_delta() -> (String, Arc<StdMutex<Vec<Value>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -370,11 +410,42 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
 }
 
 #[tokio::test]
-async fn websocket_fallback_does_not_emit_partial_events() {
+async fn websocket_emits_delta_before_response_completes() {
+    let (url, completed) = ws_server_streams_delta_before_completion().await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let callback_ran_before_completion = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let callback_observation = Arc::clone(&callback_ran_before_completion);
+    let mut collect_event = |event| {
+        if matches!(event, ModelEvent::OutputDelta(_)) {
+            callback_observation.store(
+                !completed.load(std::sync::atomic::Ordering::SeqCst),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+        Ok(())
+    };
+    let mut on_event =
+        Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>);
+
+    transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    assert!(callback_ran_before_completion.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn websocket_failure_after_delta_does_not_replay_request() {
     let (url, frames) = ws_server_closes_after_delta().await;
     let transport = CodexWsTransport::new_with_url(url);
     let mut deltas = Vec::new();
-    {
+    let error = {
         let mut collect_event = |event| {
             if let ModelEvent::OutputDelta(delta) = event {
                 deltas.push(delta);
@@ -384,7 +455,7 @@ async fn websocket_fallback_does_not_emit_partial_events() {
         let mut on_event =
             Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>);
 
-        let outcome = transport
+        transport
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
@@ -392,12 +463,13 @@ async fn websocket_fallback_does_not_emit_partial_events() {
                 &mut on_event,
             )
             .await
-            .unwrap();
+            .unwrap_err()
+    };
 
-        assert!(matches!(outcome, CodexWsTurn::FullSseFallback));
-    }
-
-    assert!(deltas.is_empty());
+    assert_eq!(deltas, ["partial"]);
+    assert!(error
+        .to_string()
+        .contains("Codex WebSocket failed after streaming output"));
     assert_eq!(frames.lock().unwrap().len(), 1);
 }
 
