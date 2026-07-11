@@ -55,12 +55,13 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
 | `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
+| `/goal [condition]` | Set a completion condition and start working immediately. After each turn, Rho evaluates the transcript and continues until the condition is met. Run `/goal` for status or `/goal clear` to cancel. |
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/exit` | Quit the TUI. |
 
-A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
+A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time.
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
 

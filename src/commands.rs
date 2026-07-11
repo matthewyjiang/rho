@@ -11,6 +11,7 @@ pub enum CommandId {
     Resume,
     Config,
     Compact,
+    Goal,
     Skills,
     Diff,
     Doctor,
@@ -93,6 +94,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "compact",
         usage: "/compact",
         description: "compact older conversation context",
+    },
+    CommandSpec {
+        id: CommandId::Goal,
+        name: "goal",
+        usage: "/goal [condition|clear]",
+        description: "work until a completion condition is met",
     },
     CommandSpec {
         id: CommandId::Skills,
@@ -271,6 +278,15 @@ mod tests {
 
         assert_eq!(invocation.id, CommandId::Skills);
         assert_eq!(invocation.name, "skills");
+    }
+
+    #[test]
+    fn parses_goal_command_with_condition() {
+        let invocation = parse_command("/goal all tests pass").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Goal);
+        assert_eq!(invocation.name, "goal");
+        assert_eq!(invocation.args, "all tests pass");
     }
 
     #[test]
