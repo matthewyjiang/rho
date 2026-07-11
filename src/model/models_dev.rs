@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, sync::OnceLock, time::Duration};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -49,8 +49,8 @@ pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadat
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    if let Some(metadata) = cached_model_metadata(provider, model) {
-        return Some(metadata);
+    if let Some(metadata) = cached_upstream_model_metadata(provider, model) {
+        return Some(apply_overrides(provider, model, metadata));
     }
 
     if let Some(metadata) = read_cached_api()
@@ -251,53 +251,25 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
     })
 }
 
-fn apply_builtin_overrides(
-    provider: &str,
-    model: &str,
-    mut metadata: ModelMetadata,
-) -> ModelMetadata {
-    match (provider, model) {
-        ("openai", "gpt-5.5") => {
-            metadata.advertised_context_window = Some(1_050_000);
-            metadata.effective_context_window = Some(272_000);
-            metadata.usable_context_window = Some(272_000);
-            metadata.long_context_threshold = Some(272_000);
-            metadata.max_output_tokens = Some(128_000);
-            metadata.cost_default = Some(ModelCost {
-                input_micros_per_m: Some(5_000_000),
-                output_micros_per_m: Some(30_000_000),
-                cache_read_micros_per_m: Some(500_000),
-                cache_write_micros_per_m: None,
-            });
-            metadata.cost_long_context = Some(ModelCost {
-                input_micros_per_m: Some(10_000_000),
-                output_micros_per_m: Some(45_000_000),
-                cache_read_micros_per_m: Some(1_000_000),
-                cache_write_micros_per_m: None,
-            });
-        }
-        ("openai-codex", "gpt-5.5") => {
-            metadata.advertised_context_window = Some(1_050_000);
-            metadata.effective_context_window = Some(400_000);
-            metadata.usable_context_window = Some(272_000);
-            metadata.long_context_threshold = Some(272_000);
-            metadata.max_output_tokens = Some(128_000);
-            metadata.cost_default = Some(ModelCost {
-                input_micros_per_m: Some(5_000_000),
-                output_micros_per_m: Some(30_000_000),
-                cache_read_micros_per_m: Some(500_000),
-                cache_write_micros_per_m: None,
-            });
-            metadata.cost_long_context = Some(ModelCost {
-                input_micros_per_m: Some(10_000_000),
-                output_micros_per_m: Some(45_000_000),
-                cache_read_micros_per_m: Some(1_000_000),
-                cache_write_micros_per_m: None,
-            });
-        }
-        _ => {}
-    }
-    metadata
+const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
+
+fn apply_builtin_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
+    static OVERRIDES: OnceLock<toml::Value> = OnceLock::new();
+    let overrides = OVERRIDES.get_or_init(|| {
+        BUILTIN_MODEL_OVERRIDES_TOML
+            .parse()
+            .expect("built-in model overrides must be valid TOML")
+    });
+    let key = format!("{provider}/{model}");
+    let Some(table) = overrides
+        .get("models")
+        .and_then(|models| models.get(&key))
+        .and_then(toml::Value::as_table)
+    else {
+        return metadata;
+    };
+
+    merge_toml_override(metadata, table)
 }
 
 fn apply_local_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
@@ -396,13 +368,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn builtin_gpt_56_codex_overrides_match_upstream_catalog() {
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let metadata = apply_builtin_overrides("openai-codex", model, ModelMetadata::default());
+
+            assert_eq!(metadata.effective_context_window, Some(372_000));
+            assert_eq!(metadata.usable_context_window, Some(372_000));
+            assert_eq!(metadata.display_context_window(), Some(372_000));
+        }
+    }
+
+    #[test]
     fn builtin_gpt_55_overrides_use_safer_effective_windows() {
-        let openai = apply_builtin_overrides("openai", "gpt-5.5", ModelMetadata::default());
-        let codex = apply_builtin_overrides("openai-codex", "gpt-5.5", ModelMetadata::default());
+        let upstream = ModelMetadata {
+            advertised_context_window: Some(1_050_000),
+            effective_context_window: Some(922_000),
+            max_output_tokens: Some(128_000),
+            cost_default: Some(ModelCost {
+                input_micros_per_m: Some(5_000_000),
+                output_micros_per_m: Some(30_000_000),
+                cache_read_micros_per_m: Some(500_000),
+                cache_write_micros_per_m: None,
+            }),
+            ..ModelMetadata::default()
+        };
+        let openai = apply_builtin_overrides("openai", "gpt-5.5", upstream.clone());
+        let codex = apply_builtin_overrides("openai-codex", "gpt-5.5", upstream);
 
         assert_eq!(openai.display_context_window(), Some(272_000));
+        assert_eq!(openai.effective_context_window, Some(922_000));
         assert_eq!(codex.display_context_window(), Some(272_000));
+        assert_eq!(codex.effective_context_window, Some(400_000));
         assert_eq!(codex.advertised_context_window, Some(1_050_000));
         assert_eq!(codex.long_context_threshold, Some(272_000));
+        assert_eq!(codex.max_output_tokens, Some(128_000));
+        assert_eq!(
+            codex.cost_default.unwrap().input_micros_per_m,
+            Some(5_000_000)
+        );
     }
 }
