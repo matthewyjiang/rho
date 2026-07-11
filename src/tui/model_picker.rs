@@ -172,6 +172,7 @@ mod tests {
             update_notice: None,
             herdr: crate::herdr::HerdrReporter::default(),
             max_tool_output_lines: 10,
+            keybindings: crate::keybindings::Keybindings::default(),
         };
 
         let picker = model_picker(&info, &auths);
@@ -217,6 +218,7 @@ mod tests {
             update_notice: None,
             herdr: crate::herdr::HerdrReporter::default(),
             max_tool_output_lines: 10,
+            keybindings: crate::keybindings::Keybindings::default(),
         };
         let pending = crate::model::catalog::ModelSelection {
             provider: "openai-codex".into(),

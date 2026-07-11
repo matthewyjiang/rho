@@ -37,6 +37,7 @@ mod copy_interaction;
 mod doctor;
 mod file_picker;
 mod history_cache;
+mod keybindings;
 mod local_commands;
 mod local_diff;
 mod login;
@@ -99,6 +100,7 @@ use crate::{
         GitHubCopilotTokens, OsCredentialStore,
     },
     herdr::{HerdrReporter, HerdrState},
+    keybindings::Keybindings,
     model::{
         build_provider,
         catalog::{self, LoginTarget, ModelSelection},
@@ -134,6 +136,7 @@ pub struct TuiInfo {
     pub title_auth: Option<String>,
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
+    pub keybindings: Keybindings,
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
@@ -885,6 +888,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_configurable_composer_key(key, terminal, agent)? {
+            return Ok(());
+        }
+
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
@@ -900,30 +907,6 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('v'))
-            | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                self.toggle_latest_tool_output(terminal)?;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                agent.reset();
-                self.info.session_id = None;
-                agent.set_session_id(None);
-                agent.clear_history_sink();
-                self.cumulative_usage = None;
-                self.latest_usage = None;
-                self.current_context = None;
-                self.insert_entry(&Entry::Notice(
-                    "conversation reset; next message starts a new session".into(),
-                ));
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -981,11 +964,6 @@ impl App {
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
                 self.input_cursor = self.input_char_len();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                self.insert_input_char('\n');
-                self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
@@ -2333,6 +2311,9 @@ impl App {
         if self.handle_running_command_palette_key(key, terminal)? {
             return Ok(());
         }
+        if self.handle_configurable_running_key(key, terminal)? {
+            return Ok(());
+        }
 
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -2347,21 +2328,6 @@ impl App {
                 } else {
                     self.should_quit = true;
                 }
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('v'))
-            | (KeyModifiers::ALT, KeyCode::Char('v')) => {
-                self.paste_clipboard_image();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                self.toggle_latest_tool_output(terminal)?;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                self.notify_status("reset is unavailable while a model turn is running");
-                self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
                 self.delete_word_before_cursor();
@@ -5007,17 +4973,13 @@ impl App {
     }
 
     fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
+        let binding = self.info.keybindings.jump_to_bottom.to_string();
         let text = if width < 24 {
-            "↓ bottom ^g"
+            format!("↓ bottom {binding}")
         } else {
-            "↓ jump to bottom  ctrl+g"
+            format!("↓ jump to bottom  {binding}")
         };
-        styled_line(
-            text.to_string(),
-            width.max(1),
-            Theme::accent(),
-            LineFill::PadToWidth,
-        )
+        styled_line(text, width.max(1), Theme::accent(), LineFill::PadToWidth)
     }
 
     fn handle_history_key<B: Backend>(
@@ -5046,7 +5008,7 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
+            _ if self.info.keybindings.jump_to_bottom.matches(key) => {
                 self.scroll_history_to_bottom();
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -5813,6 +5775,7 @@ mod tests {
                 update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
+                keybindings: Keybindings::default(),
             },
             store,
         )
@@ -6892,6 +6855,7 @@ mod tests {
                 update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
+                keybindings: Keybindings::default(),
             },
             store,
         );
@@ -7462,7 +7426,7 @@ mod tests {
     fn compact_jump_button_renders_on_narrow_terminals() {
         let app = test_app();
 
-        assert!(line_text(&app.jump_to_bottom_line(16)).contains("bottom ^g"));
+        assert!(line_text(&app.jump_to_bottom_line(16)).contains("bottom ctrl+g"));
         assert!(line_text(&app.jump_to_bottom_line(40)).contains("ctrl+g"));
     }
 
