@@ -6,12 +6,15 @@ use crate::{
     model::{
         openai::{
             convert::{convert_openai_response, to_openai_message, to_openai_tool},
-            stream::{convert_streamed_response, handle_openai_stream_line, trim_sse_line_end},
+            stream::{convert_streamed_response, handle_openai_stream_line, invalid_stream_utf8},
             types::{ChatRequest, ChatResponse, ChatStreamOptions},
         },
         ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
     },
-    provider_backend::stream_timeout::{provider_client, StreamIdleDeadline},
+    provider_backend::{
+        line_decoder::LineDecoder,
+        stream_timeout::{provider_client, StreamIdleDeadline},
+    },
 };
 
 const DEFAULT_COPILOT_CHAT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
@@ -147,34 +150,21 @@ impl ModelProvider for GitHubCopilotProvider {
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
-        let mut buffer = Vec::new();
+        let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
         loop {
             let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
                 break;
             };
-            buffer.extend_from_slice(&chunk?);
-            while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-                trim_sse_line_end(&mut line);
-                let line = std::str::from_utf8(&line).map_err(|err| {
-                    ModelError::InvalidResponse(format!(
-                        "streamed response contained invalid utf-8: {err}"
-                    ))
-                })?;
+            decoder.push(&chunk?);
+            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
                 if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
                     idle_deadline.record_activity();
                 }
             }
         }
-        if !buffer.is_empty() {
-            trim_sse_line_end(&mut buffer);
-            let line = std::str::from_utf8(&buffer).map_err(|err| {
-                ModelError::InvalidResponse(format!(
-                    "streamed response contained invalid utf-8: {err}"
-                ))
-            })?;
+        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
             handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
         }
 

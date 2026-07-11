@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub(crate) mod line_decoder;
 pub(crate) mod stream_timeout;
 
 use serde::{Deserialize, Serialize};

@@ -4,15 +4,7 @@ use crate::provider_backend::{ModelError, ModelEvent, ModelResponse};
 
 use super::convert::{convert_content_blocks, usage_to_model_usage};
 use super::types::{AnthropicContentBlock, AnthropicUsage};
-
-pub(super) fn trim_sse_line_end(line: &mut Vec<u8>) {
-    if line.ends_with(b"\n") {
-        line.pop();
-    }
-    if line.ends_with(b"\r") {
-        line.pop();
-    }
-}
+use crate::provider_backend::line_decoder::LineDecoder;
 
 #[derive(Default)]
 pub(super) struct AnthropicSseState {
@@ -72,35 +64,28 @@ pub(super) async fn collect_anthropic_sse_response(
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
 ) -> Result<ModelResponse, ModelError> {
     let mut state = AnthropicSseState::default();
-    let mut buffer = Vec::new();
+    let mut decoder = LineDecoder::default();
     let mut stream = response.bytes_stream();
     let mut idle_deadline = crate::provider_backend::stream_timeout::StreamIdleDeadline::new();
     loop {
         let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
             break;
         };
-        buffer.extend_from_slice(&chunk?);
-        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-            let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
-            trim_sse_line_end(&mut line);
-            let line = std::str::from_utf8(&line).map_err(|err| {
-                ModelError::InvalidResponse(format!(
-                    "streamed response contained invalid utf-8: {err}"
-                ))
-            })?;
+        decoder.push(&chunk?);
+        while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
             if handle_anthropic_stream_line(line, &mut state, on_event)? {
                 idle_deadline.record_activity();
             }
         }
     }
-    if !buffer.is_empty() {
-        trim_sse_line_end(&mut buffer);
-        let line = std::str::from_utf8(&buffer).map_err(|err| {
-            ModelError::InvalidResponse(format!("streamed response contained invalid utf-8: {err}"))
-        })?;
+    if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
         handle_anthropic_stream_line(line, &mut state, on_event)?;
     }
     state.into_response()
+}
+
+fn invalid_stream_utf8(err: std::str::Utf8Error) -> ModelError {
+    ModelError::InvalidResponse(format!("streamed response contained invalid utf-8: {err}"))
 }
 
 fn sse_data(line: &str) -> Option<&str> {
