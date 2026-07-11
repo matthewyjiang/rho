@@ -167,6 +167,7 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         questionnaire_enabled: true,
         session_id: None,
         recovered_messages: Vec::new(),
+        prompt_templates: Default::default(),
         open_resume_picker: false,
         config_repository: ConfigRepository::new(None),
         auth_unavailable: None,
