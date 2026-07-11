@@ -129,9 +129,7 @@ impl CodexWsTransport {
             }) => {
                 state.connection = None;
                 state.continuation.reset();
-                Err(ModelError::InvalidResponse(format!(
-                    "Codex WebSocket failed after streaming output: {message}"
-                )))
+                Err(ModelError::StreamFailedAfterOutput { message })
             }
             Err(CodexWsFailure::Model(err)) => {
                 state.connection = None;

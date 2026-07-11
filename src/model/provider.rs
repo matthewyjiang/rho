@@ -119,6 +119,9 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::StreamIdleTimeout { timeout } => {
             ModelError::StreamIdleTimeout { timeout: *timeout }
         }
+        ModelError::StreamFailedAfterOutput { message } => ModelError::StreamFailedAfterOutput {
+            message: message.clone(),
+        },
         ModelError::HttpStatus { status, body } => ModelError::HttpStatus {
             status: *status,
             body: body.clone(),

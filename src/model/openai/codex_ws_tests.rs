@@ -467,9 +467,11 @@ async fn websocket_failure_after_delta_does_not_replay_request() {
     };
 
     assert_eq!(deltas, ["partial"]);
-    assert!(error
-        .to_string()
-        .contains("Codex WebSocket failed after streaming output"));
+    assert!(matches!(
+        error,
+        ModelError::StreamFailedAfterOutput { message }
+            if message.contains("websocket")
+    ));
     assert_eq!(frames.lock().unwrap().len(), 1);
 }
 
