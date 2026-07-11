@@ -6886,7 +6886,7 @@ mod tests {
     }
 
     #[test]
-    fn picker_filters_by_regex_and_autocompletes() {
+    fn model_picker_fuzzy_matches_and_autocompletes() {
         let mut picker = UiPicker::new(
             "select model",
             "enter confirm",
@@ -6909,7 +6909,7 @@ mod tests {
             PickerAction::SelectModel,
         );
 
-        for ch in "codex.*mini".chars() {
+        for ch in "ocg54m".chars() {
             picker.push_filter_char(ch);
         }
 
@@ -6919,7 +6919,7 @@ mod tests {
             "openai-codex/gpt-5.4-mini"
         );
         picker.complete_filter();
-        assert_eq!(picker.filter, regex::escape("openai-codex/gpt-5.4-mini"));
+        assert_eq!(picker.filter, "openai-codex/gpt-5.4-mini");
     }
 
     #[test]
