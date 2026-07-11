@@ -54,14 +54,26 @@ The full saved file can also include optional title-generation and web-search se
 
 ## Prompt templates
 
-Define reusable prompts under `[prompt_templates]`. Each entry becomes a custom slash command in the interactive TUI. Type the command to insert its template into the composer, then keep typing to customize it before sending:
+The easiest way to add a reusable prompt is to create a Markdown or text file. The filename becomes the slash command and the file contents become its prompt:
+
+- `~/.rho/prompts/review.md` makes `/review` available everywhere.
+- `.rho/prompts/review.md` makes `/review` available in that project and its subdirectories.
+- A project file overrides a global file with the same name.
+
+For example, `~/.rho/prompts/review.md` could contain:
+
+```text
+Review this code for correctness, security, and maintainability.
+```
+
+Templates can also be defined inline in `config.toml` when a separate file would be unnecessary:
 
 ```toml
 [prompt_templates]
 review = "Review this code for correctness, security, and maintainability."
 ```
 
-Typing `/review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after editing the config file.
+Inline config templates override files with the same name. Typing `/review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
 
 ## CLI overrides
 
