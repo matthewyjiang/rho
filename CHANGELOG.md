@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.22.1...rho-coding-agent-v0.23.0) (2026-07-11)
+
+
+### Features
+
+* **config:** organize settings and add keybindings ([#186](https://github.com/matthewyjiang/rho/issues/186)) ([394aa35](https://github.com/matthewyjiang/rho/commit/394aa35d62af2b1f3e6558a39dedc188c063332f))
+* **tui:** add diff and doctor commands ([#187](https://github.com/matthewyjiang/rho/issues/187)) ([4b59d6f](https://github.com/matthewyjiang/rho/commit/4b59d6f04e9ac92a72d27770c20926c5dbe36344))
+* **tui:** add goal command ([#189](https://github.com/matthewyjiang/rho/issues/189)) ([e134003](https://github.com/matthewyjiang/rho/commit/e134003d8e5e70a32025f4437e3389bb54c7bfa3))
+
+
+### Bug Fixes
+
+* **agent:** bound invalid response retries ([#179](https://github.com/matthewyjiang/rho/issues/179)) ([168c6e3](https://github.com/matthewyjiang/rho/commit/168c6e3337879956d358fe515eb6d3c6b8de9b8a))
+* **openai:** accept compact SSE data fields ([#180](https://github.com/matthewyjiang/rho/issues/180)) ([99e5da4](https://github.com/matthewyjiang/rho/commit/99e5da4e4dde45f22c6a17d982c340696d3889fa))
+* **tools:** terminate bash process groups on timeout ([#181](https://github.com/matthewyjiang/rho/issues/181)) ([eb4863c](https://github.com/matthewyjiang/rho/commit/eb4863c1b5fa80560d1ee840c516b23e59bdcd8b))
+* **tui:** interrupt active tool calls on esc ([#184](https://github.com/matthewyjiang/rho/issues/184)) ([8c08843](https://github.com/matthewyjiang/rho/commit/8c088436a7100479aaf75612c4354bfddafcdb9f))
+* **tui:** keep running after cancelling questionnaire ([#182](https://github.com/matthewyjiang/rho/issues/182)) ([891aab6](https://github.com/matthewyjiang/rho/commit/891aab65a228cca2c511b8715b6bdfaaae5b8dab))
+
 ## [0.22.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.22.0...rho-coding-agent-v0.22.1) (2026-07-10)
 
 
