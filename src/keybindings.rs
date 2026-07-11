@@ -41,7 +41,16 @@ impl KeyBinding {
     }
 
     pub fn matches(&self, event: KeyEvent) -> bool {
-        self.modifiers == event.modifiers && self.code == event.code
+        self.modifiers == event.modifiers && key_codes_match(self.code, event.code)
+    }
+}
+
+fn key_codes_match(configured: KeyCode, received: KeyCode) -> bool {
+    match (configured, received) {
+        (KeyCode::Char(configured), KeyCode::Char(received)) => {
+            configured.eq_ignore_ascii_case(&received)
+        }
+        (configured, received) => configured == received,
     }
 }
 
@@ -58,6 +67,9 @@ impl fmt::Display for KeyBinding {
             parts.push("shift".to_string());
         }
         parts.push(match self.code {
+            KeyCode::Char(ch) if self.modifiers.contains(KeyModifiers::SHIFT) => {
+                ch.to_ascii_lowercase().to_string()
+            }
             KeyCode::Char(ch) => ch.to_string(),
             KeyCode::Enter => "enter".into(),
             KeyCode::Backspace => "backspace".into(),
@@ -143,6 +155,8 @@ impl<'de> Deserialize<'de> for KeyBinding {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use super::KeyBinding;
 
     #[test]
@@ -151,6 +165,18 @@ mod tests {
             let binding: KeyBinding = value.parse().unwrap();
             assert_eq!(binding.to_string(), value);
         }
+    }
+
+    #[test]
+    fn shifted_character_binding_matches_terminal_event() {
+        let binding: KeyBinding = "ctrl+shift+g".parse().unwrap();
+        let event = KeyEvent::new(
+            KeyCode::Char('G'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+
+        assert!(binding.matches(event));
+        assert_eq!(binding.to_string(), "ctrl+shift+g");
     }
 
     #[test]

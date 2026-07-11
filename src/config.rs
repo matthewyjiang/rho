@@ -32,7 +32,6 @@ pub struct Config {
     pub favorite_models: Vec<String>,
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
-    #[serde(flatten)]
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
     pub keybindings: Keybindings,
@@ -430,11 +429,15 @@ impl Config {
             if let Some(provider) = group.provider {
                 cfg.web_search_provider = SearchProvider::from_config_value(&provider);
             }
-            cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
-                openai: group.openai_api_key.and_then(non_empty_secret),
-                exa: group.exa_api_key.and_then(non_empty_secret),
-                brave: group.brave_api_key.and_then(non_empty_secret),
-            };
+            if let Some(secret) = group.openai_api_key.and_then(non_empty_secret) {
+                cfg.legacy_web_search_credentials.openai = Some(secret);
+            }
+            if let Some(secret) = group.exa_api_key.and_then(non_empty_secret) {
+                cfg.legacy_web_search_credentials.exa = Some(secret);
+            }
+            if let Some(secret) = group.brave_api_key.and_then(non_empty_secret) {
+                cfg.legacy_web_search_credentials.brave = Some(secret);
+            }
         }
         if let Some(group) = file.behavior {
             cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
@@ -793,6 +796,47 @@ favorite_models = [
             super::SearchProvider::from_config_value(" brave "),
             super::SearchProvider::Brave
         );
+    }
+
+    #[test]
+    fn grouped_web_search_preserves_omitted_legacy_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+web_search_openai_api_key = "legacy-openai"
+web_search_exa_api_key = "legacy-exa"
+
+[web_search]
+provider = "brave"
+brave_api_key = "grouped-brave"
+"#,
+        )
+        .unwrap();
+        let store = crate::credentials::MemoryCredentialStore::default();
+
+        let config = Config::load_with_store(path, &store).unwrap();
+
+        assert_eq!(config.web_search_provider, super::SearchProvider::Brave);
+        for (credential, expected) in [
+            (
+                crate::credentials::WebSearchCredential::OpenAi,
+                "legacy-openai",
+            ),
+            (crate::credentials::WebSearchCredential::Exa, "legacy-exa"),
+            (
+                crate::credentials::WebSearchCredential::Brave,
+                "grouped-brave",
+            ),
+        ] {
+            assert_eq!(
+                crate::credentials::load_web_search_api_key(&store, credential)
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
