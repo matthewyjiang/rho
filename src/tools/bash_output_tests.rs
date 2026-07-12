@@ -1,0 +1,27 @@
+use serde_json::json;
+
+use super::*;
+
+#[tokio::test]
+async fn captures_large_final_output_burst() {
+    let result = Bash::new(false)
+        .call(
+            json!({"command": "printf 'x%.0s' {1..100000}"}),
+            ToolContext {
+                cwd: std::env::temp_dir(),
+                max_output_bytes: 200_000,
+            },
+            "call_1".into(),
+        )
+        .await
+        .unwrap();
+
+    let stdout = result
+        .content
+        .strip_prefix("stdout:\n")
+        .unwrap()
+        .split_once("\n\nstderr:")
+        .unwrap()
+        .0;
+    assert_eq!(stdout.len(), 100_000);
+}

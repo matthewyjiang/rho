@@ -1,6 +1,5 @@
-use std::{fmt, fs, path::PathBuf, str::FromStr};
-
 use serde::{Deserialize, Serialize};
+use std::{fmt, fs, io::Write, path::PathBuf, str::FromStr};
 
 use crate::{
     agent::CompactionConfig,
@@ -203,7 +202,26 @@ impl LegacyWebSearchCredentials {
 }
 
 fn write_config(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
-    fs::write(path, toml::to_string_pretty(&GroupedConfig::from(config))?)?;
+    let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
+    let temp_path = path.with_extension("toml.tmp");
+    let mut temp_file = fs::File::create(&temp_path)?;
+    set_private_file_permissions(&temp_file)?;
+    temp_file.write_all(serialized.as_bytes())?;
+    temp_file.sync_all()?;
+    drop(temp_file);
+    fs::rename(temp_path, path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_file: &fs::File) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -976,3 +994,7 @@ brave_api_key = "grouped-brave"
         assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
     }
 }
+
+#[cfg(test)]
+#[path = "config_atomic_tests.rs"]
+mod atomic_tests;

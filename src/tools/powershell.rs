@@ -94,6 +94,7 @@ impl Tool for PowerShell {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+        let mut process_tree = ProcessTreeGuard::attach(&child)?;
 
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
         if let Some(stdout) = child.stdout.take() {
@@ -128,13 +129,9 @@ impl Tool for PowerShell {
             }
 
             if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
-                let _ = child.kill().await;
-                while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-                    match kind {
-                        StreamKind::Stdout => stdout.extend(bytes),
-                        StreamKind::Stderr => stderr.extend(bytes),
-                    }
-                }
+                process_tree.kill();
+                let _ = child.wait().await;
+                drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
                 let secs = args.timeout_seconds.unwrap_or_default();
                 return Err(ToolError::Message(truncate(
                     timeout_content(&stdout, &stderr, secs),
@@ -145,12 +142,8 @@ impl Tool for PowerShell {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
-        while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-            match kind {
-                StreamKind::Stdout => stdout.extend(bytes),
-                StreamKind::Stderr => stderr.extend(bytes),
-            }
-        }
+        process_tree.disarm();
+        drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
         let elapsed_secs = start.elapsed().as_secs_f64();
         let exit_code = status
@@ -173,6 +166,67 @@ impl Tool for PowerShell {
     }
 }
 
+#[cfg(windows)]
+struct ProcessTreeGuard {
+    job: Option<windows_sys::Win32::Foundation::HANDLE>,
+}
+
+#[cfg(windows)]
+unsafe impl Send for ProcessTreeGuard {}
+
+#[cfg(windows)]
+impl ProcessTreeGuard {
+    fn attach(child: &tokio::process::Child) -> std::io::Result<Self> {
+        use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
+
+        let process = child
+            .raw_handle()
+            .ok_or_else(|| std::io::Error::other("spawned PowerShell process has no handle"))?;
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            );
+            if configured == 0 || AssignProcessToJobObject(job, process as _) == 0 {
+                let error = std::io::Error::last_os_error();
+                CloseHandle(job);
+                return Err(error);
+            }
+            Ok(Self { job: Some(job) })
+        }
+    }
+
+    fn kill(&mut self) {
+        if let Some(job) = self.job.take() {
+            unsafe {
+                windows_sys::Win32::System::JobObjects::TerminateJobObject(job, 1);
+                windows_sys::Win32::Foundation::CloseHandle(job);
+            }
+        }
+    }
+
+    fn disarm(&mut self) {
+        if let Some(job) = self.job.take() {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTreeGuard {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 async fn read_stream<R>(
     kind: StreamKind,
     mut reader: R,
@@ -187,6 +241,19 @@ async fn read_stream<R>(
             Ok(n) => {
                 let _ = chunk_tx.send((kind, buffer[..n].to_vec()));
             }
+        }
+    }
+}
+
+async fn drain_stream_chunks(
+    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+) {
+    while let Some((kind, bytes)) = chunk_rx.recv().await {
+        match kind {
+            StreamKind::Stdout => stdout.extend(bytes),
+            StreamKind::Stderr => stderr.extend(bytes),
         }
     }
 }
@@ -250,3 +317,7 @@ pub(crate) fn wrapped_command(command: &str) -> String {
          exit 0"
     )
 }
+
+#[cfg(all(test, windows))]
+#[path = "powershell_tests.rs"]
+mod tests;

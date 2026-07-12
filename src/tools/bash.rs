@@ -144,12 +144,7 @@ impl Tool for Bash {
         };
 
         process_group.disarm();
-        while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-            match kind {
-                StreamKind::Stdout => stdout.extend(bytes),
-                StreamKind::Stderr => stderr.extend(bytes),
-            }
-        }
+        drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
         let elapsed_secs = start.elapsed().as_secs_f64();
         let exit_code = status
@@ -399,3 +394,7 @@ mod tests {
         assert!(!marker.exists(), "background process survived the timeout");
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "bash_output_tests.rs"]
+mod output_tests;
