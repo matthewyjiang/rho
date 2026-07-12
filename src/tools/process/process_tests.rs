@@ -1,6 +1,8 @@
 use super::types::{terminal, Stream};
 use super::*;
-use std::time::Duration;
+use crate::tool::{Tool, ToolContext, ToolError};
+use serde_json::json;
+use std::{path::PathBuf, time::Duration};
 
 async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
     let mut cursor = 0;
@@ -14,6 +16,121 @@ async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
             return snapshot;
         }
     }
+}
+
+fn tool_context() -> ToolContext {
+    ToolContext {
+        cwd: PathBuf::from("."),
+        max_output_bytes: 1024 * 1024,
+    }
+}
+
+#[test]
+fn process_tool_has_one_compact_action_schema() {
+    let tool = Process::new(ProcessManager::new(ProcessLimits::default()));
+    let spec = tool.spec();
+
+    assert_eq!(spec.name, "process");
+    assert_eq!(
+        spec.input_schema,
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["start", "poll", "stop"]},
+                "command": {"type": "string"},
+                "timeout_seconds": {"type": "integer", "minimum": 1},
+                "process_id": {"type": "string"},
+                "cursor": {"type": "integer", "minimum": 0},
+                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30}
+            },
+            "required": ["action"]
+        })
+    );
+}
+
+#[tokio::test]
+async fn process_tool_dispatches_start_poll_and_stop() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let tool = Process::new(manager.clone());
+    let started = tool
+        .call(
+            json!({"action": "start", "command": "sleep 300"}),
+            tool_context(),
+            "start-call".into(),
+        )
+        .await
+        .unwrap();
+    let started: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let process_id = started["process_id"].as_str().unwrap().to_owned();
+
+    let polled = tool
+        .call(
+            json!({"action": "poll", "process_id": process_id}),
+            tool_context(),
+            "poll-call".into(),
+        )
+        .await
+        .unwrap();
+    let polled: serde_json::Value = serde_json::from_str(&polled.content).unwrap();
+    assert_eq!(polled["state"], "running");
+
+    let stopped = tool
+        .call(
+            json!({"action": "stop", "process_id": process_id}),
+            tool_context(),
+            "stop-call".into(),
+        )
+        .await
+        .unwrap();
+    let stopped: serde_json::Value = serde_json::from_str(&stopped.content).unwrap();
+    assert_eq!(stopped["stop_requested"], true);
+    eventually(&manager, &process_id).await;
+}
+
+#[tokio::test]
+async fn process_tool_rejects_invalid_action_arguments() {
+    let tool = Process::new(ProcessManager::new(ProcessLimits::default()));
+    for args in [
+        json!({"action": "start"}),
+        json!({"action": "poll"}),
+        json!({"action": "stop"}),
+        json!({"action": "write", "process_id": "unused"}),
+    ] {
+        assert!(matches!(
+            tool.call(args, tool_context(), "call".into()).await,
+            Err(ToolError::InvalidArguments(_))
+        ));
+    }
+
+    let error = tool
+        .call(
+            json!({"action": "poll", "process_id": "unused", "wait_seconds": 31}),
+            tool_context(),
+            "call".into(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "wait_seconds must be between 0 and 30");
+}
+
+#[tokio::test]
+async fn managed_process_stdin_is_closed() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(
+            "read input || printf closed".into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    let snapshot = manager
+        .poll(&started.process_id, Some(0), Duration::ZERO)
+        .await
+        .unwrap();
+
+    assert!(snapshot.chunks.iter().any(|chunk| chunk.text == "closed"));
 }
 
 #[tokio::test]
@@ -46,27 +163,6 @@ async fn captures_streams_and_incremental_cursors() {
         .await
         .unwrap();
     assert!(empty.chunks.is_empty());
-}
-
-#[tokio::test]
-async fn stdin_close_drives_exit_and_subsequent_write_is_typed_error() {
-    let manager = ProcessManager::new(ProcessLimits::default());
-    let started = manager
-        .start("cat".into(), std::path::Path::new("."), None)
-        .await
-        .unwrap();
-    manager
-        .write(&started.process_id, "hello\n", true)
-        .await
-        .unwrap();
-    eventually(&manager, &started.process_id).await;
-    assert_eq!(
-        manager
-            .write(&started.process_id, "again", false)
-            .await
-            .unwrap_err(),
-        "process has exited"
-    );
 }
 
 #[tokio::test]
@@ -129,12 +225,12 @@ async fn enforces_live_limit_and_shutdown_is_terminal() {
         ..ProcessLimits::default()
     });
     let first = manager
-        .start("cat".into(), std::path::Path::new("."), None)
+        .start("sleep 300".into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     assert_eq!(
         manager
-            .start("cat".into(), std::path::Path::new("."), None)
+            .start("sleep 300".into(), std::path::Path::new("."), None)
             .await
             .unwrap_err(),
         "live process limit reached"
@@ -155,7 +251,7 @@ async fn timeout_and_stop_reach_distinct_terminal_states() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let timeout = manager
         .start(
-            "cat".into(),
+            "sleep 300".into(),
             std::path::Path::new("."),
             Some(Duration::from_millis(20)),
         )
@@ -166,7 +262,7 @@ async fn timeout_and_stop_reach_distinct_terminal_states() {
         State::TimedOut
     );
     let stopped = manager
-        .start("cat".into(), std::path::Path::new("."), None)
+        .start("sleep 300".into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     manager
@@ -223,16 +319,19 @@ async fn retained_record_limit_removes_oldest_completed_records() {
         eventually(&manager, &started.process_id).await;
         ids.push(started.process_id);
     }
-    let listed = manager.list();
-    assert_eq!(listed.len(), 2);
+    let fourth = manager
+        .start("true".into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    eventually(&manager, &fourth.process_id).await;
     assert!(manager.poll(&ids[0], None, Duration::ZERO).await.is_err());
 }
 
 #[tokio::test]
-async fn concurrent_list_poll_and_stop_do_not_deadlock() {
+async fn concurrent_poll_and_stop_do_not_deadlock() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start("cat".into(), std::path::Path::new("."), None)
+        .start("sleep 300".into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let id = started.process_id;
@@ -241,7 +340,6 @@ async fn concurrent_list_poll_and_stop_do_not_deadlock() {
             let manager = manager.clone();
             let id = id.clone();
             tokio::spawn(async move {
-                let _ = manager.list();
                 let _ = manager.poll(&id, None, Duration::from_millis(5)).await;
             })
         })
@@ -421,7 +519,7 @@ async fn concurrent_starts_atomically_enforce_live_limit() {
             tokio::spawn(async move {
                 barrier.wait().await;
                 manager
-                    .start("cat".into(), std::path::Path::new("."), None)
+                    .start("sleep 300".into(), std::path::Path::new("."), None)
                     .await
             })
         })
@@ -542,7 +640,7 @@ async fn bounded_poll_skips_a_chunk_larger_than_the_budget() {
 async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start("cat".into(), std::path::Path::new("."), None)
+        .start("sleep 300".into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let stop = {
@@ -556,20 +654,4 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
         eventually(&manager, &started.process_id).await.state,
         State::Terminated
     );
-}
-
-#[tokio::test]
-async fn list_contains_metadata_without_output_chunks() {
-    let manager = ProcessManager::new(ProcessLimits::default());
-    let started = manager
-        .start(
-            "printf secret-output".into(),
-            std::path::Path::new("."),
-            None,
-        )
-        .await
-        .unwrap();
-    eventually(&manager, &started.process_id).await;
-    let json = serde_json::to_value(manager.list()).unwrap();
-    assert!(json[0].get("chunks").is_none());
 }

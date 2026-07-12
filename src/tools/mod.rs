@@ -21,11 +21,7 @@ pub fn registry(config: &Config) -> ToolRegistry {
     r.register(write_file::WriteFile);
     r.register(edit_file::EditFile);
     let processes = process::ProcessManager::new(process::ProcessLimits::default());
-    r.register(process::StartProcess::new(processes.clone()));
-    r.register(process::PollProcess::new(processes.clone()));
-    r.register(process::WriteProcess::new(processes.clone()));
-    r.register(process::StopProcess::new(processes.clone()));
-    r.register(process::ListProcesses::new(processes.clone()));
+    r.register(process::Process::new(processes.clone()));
     r.set_shutdown(processes);
     let rtk_enabled = config.rtk && rtk::is_available();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -61,18 +57,13 @@ mod tests {
         );
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
-        for process_tool in [
-            "start_process",
-            "poll_process",
-            "write_process",
-            "stop_process",
-            "list_processes",
-        ] {
-            assert!(
-                names.contains(&process_tool.to_string()),
-                "missing {process_tool}"
-            );
-        }
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.as_str() == "process")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -90,17 +81,12 @@ mod tests {
         assert!(!names.contains(&"web_search".to_string()));
         assert!(names.contains(&"fetch_content".to_string()));
         assert!(names.contains(&"get_search_content".to_string()));
-        for process_tool in [
-            "start_process",
-            "poll_process",
-            "write_process",
-            "stop_process",
-            "list_processes",
-        ] {
-            assert!(
-                names.contains(&process_tool.to_string()),
-                "missing {process_tool}"
-            );
-        }
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.as_str() == "process")
+                .count(),
+            1
+        );
     }
 }

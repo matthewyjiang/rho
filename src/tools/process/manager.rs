@@ -2,7 +2,7 @@ use super::{
     platform::{shell_command, ProcessTree},
     supervisor::supervise,
     types::{terminal, ProcessLimits},
-    Chunk, ProcessSummary, Snapshot, State,
+    Chunk, Snapshot, State,
 };
 use crate::tool::ToolShutdown;
 use std::{
@@ -14,11 +14,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::{
-    io::AsyncWriteExt,
-    process::ChildStdin,
-    sync::{mpsc, Notify},
-};
+use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
 pub(super) struct RetainedChunk {
@@ -36,7 +32,6 @@ pub(super) struct Record {
     pub(super) next: u64,
     pub(super) exit_code: Option<i32>,
     pub(super) detail: Option<String>,
-    pub(super) stdin: Option<ChildStdin>,
     pub(super) stop: Option<mpsc::UnboundedSender<Duration>>,
     pub(super) tree: Option<Arc<ProcessTree>>,
     pub(super) notify: Arc<Notify>,
@@ -80,7 +75,6 @@ impl ProcessManager {
             next: 0,
             exit_code: None,
             detail: None,
-            stdin: None,
             stop: None,
             tree: None,
             notify,
@@ -99,7 +93,7 @@ impl ProcessManager {
         }
         let mut cmd = shell_command(&command);
         cmd.current_dir(cwd)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -116,7 +110,6 @@ impl ProcessManager {
                         return Ok(snapshot(&rec, 0));
                     }
                 };
-                let stdin = child.stdin.take();
                 let stdout = child.stdout.take().unwrap();
                 let stderr = child.stderr.take().unwrap();
                 let (tx, rx) = mpsc::channel(64);
@@ -124,7 +117,6 @@ impl ProcessManager {
                 {
                     let mut r = rec.lock().unwrap();
                     r.state = State::Running;
-                    r.stdin = stdin;
                     r.stop = Some(stop_tx);
                     r.tree = Some(tree.clone());
                     r.notify.notify_waiters();
@@ -189,28 +181,6 @@ impl ProcessManager {
             }
         }
     }
-    pub async fn write(&self, id: &str, text: &str, close: bool) -> Result<(), String> {
-        let rec = self.get(id)?;
-        let mut stdin = {
-            let mut r = rec.lock().unwrap();
-            if terminal(r.state) {
-                return Err("process has exited".into());
-            }
-            r.stdin.take().ok_or("stdin is closed")?
-        };
-        if !text.is_empty() {
-            stdin
-                .write_all(text.as_bytes())
-                .await
-                .map_err(|e| e.to_string())?
-        }
-        if close {
-            stdin.shutdown().await.map_err(|e| e.to_string())?
-        } else {
-            rec.lock().unwrap().stdin = Some(stdin)
-        }
-        Ok(())
-    }
     pub async fn stop(&self, id: &str, grace: Duration) -> Result<(), String> {
         let tx = {
             let r = self.get(id)?;
@@ -221,16 +191,6 @@ impl ProcessManager {
             r.stop.clone().ok_or("process is starting")?
         };
         tx.send(grace).map_err(|_| "process already stopped".into())
-    }
-    pub fn list(&self) -> Vec<ProcessSummary> {
-        self.prune();
-        self.0
-            .lock()
-            .unwrap()
-            .records
-            .values()
-            .map(summary)
-            .collect()
     }
     pub async fn shutdown(&self) {
         let records = self
@@ -344,20 +304,5 @@ impl Drop for Inner {
                 tree.kill();
             }
         }
-    }
-}
-
-fn summary(rec: &SharedRecord) -> ProcessSummary {
-    let r = rec.lock().unwrap();
-    let first = r.chunks.front().map_or(r.next, |c| c.chunk.cursor);
-    ProcessSummary {
-        process_id: r.id.clone(),
-        command: r.command.clone(),
-        state: r.state,
-        runtime_seconds: r.started.elapsed().as_secs_f64(),
-        first_cursor: first,
-        next_cursor: r.next,
-        exit_code: r.exit_code,
-        terminal_detail: r.detail.clone(),
     }
 }
