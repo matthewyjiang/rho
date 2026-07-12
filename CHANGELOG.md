@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.24.0...rho-coding-agent-v0.24.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **ci:** treat zombie descendants as terminated ([#202](https://github.com/matthewyjiang/rho/issues/202)) ([9dae958](https://github.com/matthewyjiang/rho/commit/9dae95869556b3bfe8d5411a800bd22c46868708))
+
 ## [0.24.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.23.0...rho-coding-agent-v0.24.0) (2026-07-12)
 
 
