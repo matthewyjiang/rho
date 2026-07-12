@@ -5,6 +5,7 @@ mod cli;
 mod clipboard_image;
 mod commands;
 mod config;
+mod config_writer;
 mod credentials;
 mod herdr;
 mod keybindings;
