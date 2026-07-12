@@ -93,7 +93,7 @@ impl Session {
         Ok((session, histories.model))
     }
 
-    fn open_by_id_with_histories_in_root(
+    pub(crate) fn open_by_id_with_histories_in_root(
         session_root: &Path,
         cwd: &Path,
         id_prefix: &str,
@@ -152,7 +152,7 @@ impl Session {
         Self::create_in_root(&session_root()?, cwd)
     }
 
-    fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
         let dir = ensure_session_dir(session_root, cwd)?;
         let id = Uuid::new_v4().to_string();
         let created_at = unix_timestamp_secs();
