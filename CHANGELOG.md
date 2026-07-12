@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.24.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.23.0...rho-coding-agent-v0.24.0) (2026-07-12)
+
+
+### Features
+
+* **tools:** add managed background processes ([#199](https://github.com/matthewyjiang/rho/issues/199)) ([9c6e75f](https://github.com/matthewyjiang/rho/commit/9c6e75f792e20041cfd2221e4fc170f04bcebbd3))
+* **tui:** add colors for web and questionnaire tools ([#191](https://github.com/matthewyjiang/rho/issues/191)) ([01d7003](https://github.com/matthewyjiang/rho/commit/01d70037879219451a029778221f899d36e51af6))
+* **tui:** add custom prompt templates ([#196](https://github.com/matthewyjiang/rho/issues/196)) ([f4b0ec1](https://github.com/matthewyjiang/rho/commit/f4b0ec139d2f1e062d7979aa682f0ed93e0e6363))
+* **tui:** use fuzzy model search ([#197](https://github.com/matthewyjiang/rho/issues/197)) ([0e82857](https://github.com/matthewyjiang/rho/commit/0e82857a691827c89d5ef3c2aa413bcc20f3a1c0))
+
+
+### Bug Fixes
+
+* **openai:** stream Codex websocket events immediately ([#200](https://github.com/matthewyjiang/rho/issues/200)) ([1f28a48](https://github.com/matthewyjiang/rho/commit/1f28a48386b52f73de34226bb16f3a734c009169))
+* **tui:** support ansi dimming on windows ([#192](https://github.com/matthewyjiang/rho/issues/192)) ([5a4d793](https://github.com/matthewyjiang/rho/commit/5a4d7933eb7a24013cdf37b5985150d5b80225c7))
+
+
+### Performance Improvements
+
+* optimize streaming, rendering, and session hot paths ([#198](https://github.com/matthewyjiang/rho/issues/198)) ([d043d1f](https://github.com/matthewyjiang/rho/commit/d043d1f3b580f3f62b82cc023ade095140c032ca))
+* **tui:** keep input responsive during agent output ([#195](https://github.com/matthewyjiang/rho/issues/195)) ([4a8f63d](https://github.com/matthewyjiang/rho/commit/4a8f63dad80ef10c705a5d30c6dc3a0e34606772))
+
 ## [0.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.22.1...rho-coding-agent-v0.23.0) (2026-07-11)
 
 
