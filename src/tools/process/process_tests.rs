@@ -271,7 +271,7 @@ fn process_is_running(pid: i32) -> bool {
         let Some((_, fields)) = stat.rsplit_once(") ") else {
             return true;
         };
-        return !fields.starts_with("Z ");
+        !fields.starts_with("Z ")
     }
     #[cfg(not(target_os = "linux"))]
     true
