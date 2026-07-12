@@ -137,6 +137,8 @@ pub enum ModelError {
     Interrupted,
     #[error("provider stream received no data for {timeout:?}; the connection may be stale")]
     StreamIdleTimeout { timeout: std::time::Duration },
+    #[error("provider stream failed after emitting output: {message}")]
+    StreamFailedAfterOutput { message: String },
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
     #[error("unsupported provider '{0}'")]

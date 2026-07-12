@@ -100,6 +100,11 @@ impl ModelProvider for FailingProvider {
         Err(match &self.error {
             ModelError::MissingApiKey => ModelError::MissingApiKey,
             ModelError::InvalidResponse(message) => ModelError::InvalidResponse(message.clone()),
+            ModelError::StreamFailedAfterOutput { message } => {
+                ModelError::StreamFailedAfterOutput {
+                    message: message.clone(),
+                }
+            }
             _ => unreachable!("test only clones selected errors"),
         })
     }
@@ -411,6 +416,33 @@ async fn does_not_retry_non_recoverable_provider_errors() {
     assert!(matches!(
         err,
         AgentError::Provider(ModelError::MissingApiKey)
+    ));
+    assert_eq!(*requests.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_provider_errors_after_streaming_output() {
+    let requests = Arc::new(Mutex::new(0));
+    let mut agent = Agent::new(
+        Box::new(FailingProvider {
+            requests: requests.clone(),
+            error: ModelError::StreamFailedAfterOutput {
+                message: "connection closed".into(),
+            },
+        }),
+        ToolRegistry::new(),
+        ToolContext {
+            cwd: std::env::current_dir().unwrap(),
+            max_output_bytes: 12000,
+        },
+    );
+
+    let err = agent.run("hello".into()).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        AgentError::Provider(ModelError::StreamFailedAfterOutput { message })
+            if message == "connection closed"
     ));
     assert_eq!(*requests.lock().unwrap(), 1);
 }
