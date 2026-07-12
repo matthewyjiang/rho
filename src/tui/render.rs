@@ -433,6 +433,33 @@ pub(super) struct RenderedEntry {
     pub(super) code_blocks: Vec<MarkdownCodeBlock>,
 }
 
+pub(super) fn tool_entry_lines(
+    tool: &super::ToolEntry,
+    width: usize,
+    max_tool_output_lines: usize,
+) -> Vec<Line<'static>> {
+    let inner_width = padded_inner_width(width);
+    let mut lines = Vec::new();
+    push_tool_block(
+        &mut lines,
+        &tool.display_lines,
+        tool.state,
+        inner_width,
+        max_tool_output_lines,
+        tool.expanded,
+    );
+    let style = lines
+        .first()
+        .and_then(|line| line.spans.first())
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut padded = Vec::with_capacity(lines.len() + 2);
+    padded.push(styled_blank_line(width, style));
+    padded.extend(lines.into_iter().map(pad_line));
+    padded.push(styled_blank_line(width, style));
+    padded
+}
+
 pub(super) fn entry_lines(
     entry: &Entry,
     width: usize,
