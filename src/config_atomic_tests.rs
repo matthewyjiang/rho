@@ -13,5 +13,10 @@ fn saves_config_atomically_and_round_trips() {
     let loaded = Config::load(Some(path.clone())).unwrap();
 
     assert_eq!(loaded.model, "round-trip-model");
-    assert!(!path.with_extension("toml.tmp").exists());
+    let temporary_files = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(temporary_files, 0);
 }

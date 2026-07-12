@@ -143,7 +143,7 @@ impl Tool for Bash {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
-        process_group.disarm();
+        process_group.kill();
         drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
         let elapsed_secs = start.elapsed().as_secs_f64();
@@ -178,10 +178,6 @@ impl ProcessGroupGuard {
 
     fn kill(&mut self) {
         kill_process_group(self.pid.take());
-    }
-
-    fn disarm(&mut self) {
-        self.pid = None;
     }
 }
 

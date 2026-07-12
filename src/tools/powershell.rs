@@ -142,7 +142,7 @@ impl Tool for PowerShell {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
-        process_tree.disarm();
+        process_tree.kill();
         drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
         let elapsed_secs = start.elapsed().as_secs_f64();
@@ -210,12 +210,6 @@ impl ProcessTreeGuard {
                 windows_sys::Win32::System::JobObjects::TerminateJobObject(job, 1);
                 windows_sys::Win32::Foundation::CloseHandle(job);
             }
-        }
-    }
-
-    fn disarm(&mut self) {
-        if let Some(job) = self.job.take() {
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
         }
     }
 }

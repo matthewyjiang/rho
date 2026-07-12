@@ -1,7 +1,7 @@
 use std::{fs, io::Write, path::PathBuf};
 
 pub(super) fn write_atomically(path: &PathBuf, contents: &str) -> anyhow::Result<()> {
-    let temp_path = path.with_extension("toml.tmp");
+    let temp_path = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4()));
     let mut temp_file = fs::File::create(&temp_path)?;
     set_private_file_permissions(&temp_file)?;
     temp_file.write_all(contents.as_bytes())?;

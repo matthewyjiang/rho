@@ -36,6 +36,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
     validate_terminal_mode(&cli)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
+    if automation_prompt.is_some()
+        && config.provider == "anthropic"
+        && cached_model_metadata(&config.provider, &config.model).is_none()
+    {
+        let _ =
+            crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
+    }
     let pending_update_notice = (cli.command.is_none() && config.check_for_updates)
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
