@@ -28,6 +28,10 @@ This matrix maps every finding in `FIXES.md` to its implementation and validatio
 | R7 | Stream insertion uses `update_code_block_state` instead of a discarded markdown render | `render_performance_tests::code_block_state_scan_matches_markdown_rendering` |
 | R8 | Session header lines are cached by width and update notice | `render_performance_tests::session_header_cache_tracks_width_and_notice` |
 
+## Machine-verifiable evidence
+
+Run `python3 scripts/check_fixes_validation.py`. The checker parses all finding IDs from this file and `FIXES.md`, requires an exact 23-ID match, then verifies that every mapped implementation marker and focused test function exists. CI runs this checker before the Rust test suite, so missing, renamed, or unmapped evidence fails the PR.
+
 ## Repository-wide gates
 
 - `cargo fmt --check`
