@@ -17,7 +17,7 @@ pub(super) struct Startup<'a> {
     pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
-    pub(super) update_notice: Option<String>,
+    pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub(super) herdr: HerdrReporter,
 }
 
@@ -28,7 +28,7 @@ pub(super) async fn run(agent: &mut Agent, startup: Startup<'_>) -> anyhow::Resu
         config_repository,
         cwd,
         missing_auth_error,
-        update_notice,
+        pending_update_notice,
         herdr,
     } = startup;
     let mut open_resume_picker = false;
@@ -73,7 +73,8 @@ pub(super) async fn run(agent: &mut Agent, startup: Startup<'_>) -> anyhow::Resu
             open_resume_picker,
             config_repository,
             auth_unavailable: missing_auth_error,
-            update_notice,
+            update_notice: None,
+            pending_update_notice,
             herdr,
         },
     )

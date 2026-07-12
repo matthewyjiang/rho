@@ -100,12 +100,10 @@ impl Session {
         id_prefix: &str,
     ) -> anyhow::Result<(Self, SessionHistories)> {
         let dir = ensure_session_dir(session_root, cwd)?;
-        let matches = match index::sync_workspace(session_root, cwd)
-            .and_then(|_| index::matching_session_paths(session_root, cwd, id_prefix))
-        {
-            Ok(paths) => paths,
-            Err(_) => matching_session_files(&dir, id_prefix)?,
-        };
+        let matches = matching_session_files(&dir, id_prefix)?;
+        for path in &matches {
+            let _ = index::sync_session_file(session_root, cwd, path);
+        }
         match matches.as_slice() {
             [] => anyhow::bail!("no session found matching '{id_prefix}'"),
             [path] => {
@@ -136,7 +134,10 @@ impl Session {
         id_prefix: &str,
         title: &str,
     ) -> anyhow::Result<()> {
-        index::sync_workspace(session_root, cwd)?;
+        let dir = ensure_session_dir(session_root, cwd)?;
+        for path in matching_session_files(&dir, id_prefix)? {
+            index::sync_session_file(session_root, cwd, &path)?;
+        }
         index::set_title(session_root, cwd, id_prefix, title)
     }
 

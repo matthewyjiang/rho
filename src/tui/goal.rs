@@ -49,9 +49,7 @@ pub(super) async fn evaluate(
 ) -> anyhow::Result<GoalEvaluation> {
     let provider = build_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
-    let response = provider
-        .send_turn(ModelRequest {
-            messages: vec![
+    let request_messages = vec![
                 Message::System(
                     "You are a conservative goal-completion evaluator. Decide whether the completion condition is fully satisfied using only evidence in the conversation transcript. Do not assume unreported work succeeded. Return only JSON in this exact shape: {\"met\":true|false,\"reason\":\"short explanation\"}."
                         .into(),
@@ -59,8 +57,11 @@ pub(super) async fn evaluate(
                 Message::user_text(format!(
                     "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
                 )),
-            ],
-            tools: Vec::new(),
+            ];
+    let response = provider
+        .send_turn(ModelRequest {
+            messages: &request_messages,
+            tools: &[],
             prompt_cache_key: None,
         })
         .await?;

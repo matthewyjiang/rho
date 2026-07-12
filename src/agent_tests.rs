@@ -59,13 +59,16 @@ struct RecordingProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for RecordingProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.prompt_cache_keys
             .lock()
             .unwrap()
-            .push(request.prompt_cache_key.clone());
-        self.tools.lock().unwrap().push(request.tools.clone());
-        self.requests.lock().unwrap().push(request.messages);
+            .push(request.prompt_cache_key.map(str::to_owned));
+        self.tools.lock().unwrap().push(request.tools.to_vec());
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.messages.to_vec());
         Ok(self
             .response
             .clone()
@@ -95,7 +98,7 @@ struct FailingProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for FailingProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         *self.requests.lock().unwrap() += 1;
         Err(match &self.error {
             ModelError::MissingApiKey => ModelError::MissingApiKey,
@@ -116,7 +119,7 @@ struct TransientInvalidResponseProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for TransientInvalidResponseProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let mut requests = self.requests.lock().unwrap();
         *requests += 1;
         if *requests == 1 {
@@ -137,8 +140,11 @@ struct SequencedProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for SequencedProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-        self.requests.lock().unwrap().push(request.messages);
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.messages.to_vec());
         Ok(self.responses.lock().unwrap().pop_front().unwrap())
     }
 }
@@ -151,9 +157,12 @@ struct SequencedToolRecordingProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for SequencedToolRecordingProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
-        self.tools.lock().unwrap().push(request.tools.clone());
-        self.requests.lock().unwrap().push(request.messages);
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        self.tools.lock().unwrap().push(request.tools.to_vec());
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.messages.to_vec());
         Ok(self.responses.lock().unwrap().pop_front().unwrap())
     }
 }
@@ -162,13 +171,13 @@ struct UsageStreamingProvider;
 
 #[async_trait(?Send)]
 impl ModelProvider for UsageStreamingProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         unreachable!("streaming provider should use send_turn_stream")
     }
 
     async fn send_turn_stream(
         &self,
-        _request: ModelRequest,
+        _request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         on_event(ModelEvent::Usage(ModelUsage {
@@ -189,11 +198,11 @@ struct CompactingProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for CompactingProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.requests
             .lock()
             .unwrap()
-            .push(("summary".into(), request.messages));
+            .push(("summary".into(), request.messages.to_vec()));
         Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
             "compacted summary".into(),
         )]))
@@ -201,7 +210,7 @@ impl ModelProvider for CompactingProvider {
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let is_summary_request = matches!(
@@ -212,7 +221,7 @@ impl ModelProvider for CompactingProvider {
             self.requests
                 .lock()
                 .unwrap()
-                .push(("summary".into(), request.messages));
+                .push(("summary".into(), request.messages.to_vec()));
             on_event(ModelEvent::Usage(ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(20),
@@ -225,7 +234,7 @@ impl ModelProvider for CompactingProvider {
         self.requests
             .lock()
             .unwrap()
-            .push(("normal".into(), request.messages));
+            .push(("normal".into(), request.messages.to_vec()));
         on_event(ModelEvent::Usage(ModelUsage {
             input_tokens: Some(900),
             ..ModelUsage::default()
@@ -242,13 +251,13 @@ struct ToolRecordingCompactingProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for ToolRecordingCompactingProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         unreachable!("streaming provider should use send_turn_stream")
     }
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         _on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let is_summary_request = matches!(
@@ -261,10 +270,11 @@ impl ModelProvider for ToolRecordingCompactingProvider {
         } else {
             "normal"
         };
-        self.requests
-            .lock()
-            .unwrap()
-            .push((kind.into(), request.messages, request.tools));
+        self.requests.lock().unwrap().push((
+            kind.into(),
+            request.messages.to_vec(),
+            request.tools.to_vec(),
+        ));
         let text = if is_summary_request {
             "compacted summary"
         } else {
@@ -282,13 +292,13 @@ struct FailingSummaryProvider {
 
 #[async_trait(?Send)]
 impl ModelProvider for FailingSummaryProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         unreachable!("streaming provider should use send_turn_stream")
     }
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         _on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let is_summary_request = matches!(
@@ -300,13 +310,13 @@ impl ModelProvider for FailingSummaryProvider {
             self.requests
                 .lock()
                 .unwrap()
-                .push(("summary".into(), request.messages));
+                .push(("summary".into(), request.messages.to_vec()));
             return Err(ModelError::InvalidResponse("summary failed".into()));
         }
         self.requests
             .lock()
             .unwrap()
-            .push(("normal".into(), request.messages));
+            .push(("normal".into(), request.messages.to_vec()));
         Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
             "ok".into(),
         )]))

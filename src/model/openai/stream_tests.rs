@@ -46,8 +46,8 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
     let response = provider
         .send_turn_stream(
             ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &vec![Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: None,
             },
             &mut |event| {

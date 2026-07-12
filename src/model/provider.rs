@@ -99,7 +99,7 @@ impl UnavailableProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for UnavailableProvider {
-    async fn send_turn(&self, _request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         Err(clone_model_error(&self.error))
     }
 }

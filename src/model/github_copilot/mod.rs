@@ -52,15 +52,21 @@ impl GitHubCopilotProvider {
         }
     }
 
-    fn chat_request(&self, request: ModelRequest, stream: bool) -> Result<ChatRequest, ModelError> {
+    fn chat_request(
+        &self,
+        request: ModelRequest<'_>,
+        stream: bool,
+    ) -> Result<ChatRequest, ModelError> {
         let messages = request
             .messages
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_message)
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_tool)
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
@@ -125,7 +131,7 @@ impl GitHubCopilotProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for GitHubCopilotProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
@@ -138,7 +144,7 @@ impl ModelProvider for GitHubCopilotProvider {
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, true)?;
@@ -221,8 +227,8 @@ mod tests {
         let body = provider
             .chat_request(
                 ModelRequest {
-                    messages: vec![Message::user_text("hello")],
-                    tools: Vec::new(),
+                    messages: &vec![Message::user_text("hello")],
+                    tools: &[],
                     prompt_cache_key: None,
                 },
                 true,
@@ -308,8 +314,8 @@ mod tests {
 
         let response = provider
             .send_turn(ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &vec![Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: None,
             })
             .await

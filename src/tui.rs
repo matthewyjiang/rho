@@ -151,6 +151,7 @@ pub struct TuiInfo {
     pub(crate) config_repository: ConfigRepository,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
+    pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub herdr: HerdrReporter,
 }
 pub struct TuiResult {
@@ -268,6 +269,7 @@ struct App {
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     history_scroll: HistoryScroll,
@@ -586,6 +588,7 @@ impl App {
             .map(|_| "no providers configured; run /login to sign in".into())
             .unwrap_or_else(|| "ready".into());
         let active_turn_show_reasoning_output = info.show_reasoning_output;
+        let pending_update_notice = info.pending_update_notice.take();
         let statusline = StatusLine::new(&info);
         Self {
             info,
@@ -635,6 +638,7 @@ impl App {
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_update_notice,
             pending_model_selection: None,
             pending_session_title: None,
             history_scroll: HistoryScroll::Bottom,
@@ -666,6 +670,7 @@ impl App {
         }
         while !self.should_quit {
             self.poll_model_metadata_fetch(agent);
+            self.poll_update_notice();
             self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             if !event::poll(Duration::from_millis(0))? {
@@ -1030,6 +1035,19 @@ impl App {
         }
         self.clamp_command_selection();
         Ok(())
+    }
+
+    fn poll_update_notice(&mut self) {
+        let Some(handle) = self.pending_update_notice.as_mut() else {
+            return;
+        };
+        let Some(result) = handle.now_or_never() else {
+            return;
+        };
+        self.pending_update_notice = None;
+        if let Ok(Some(notice)) = result {
+            self.info.update_notice = Some(notice);
+        }
     }
 
     fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
@@ -5384,17 +5402,18 @@ async fn generate_session_title(
     first_user_message: String,
 ) -> anyhow::Result<String> {
     let provider = build_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let response = tokio::time::timeout(
-        Duration::from_secs(20),
-        provider.send_turn(ModelRequest {
-            messages: vec![
+    let request_messages = vec![
                 Message::System(
                     "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
                         .into(),
                 ),
                 Message::user_text(format!("First user message:\n\n{first_user_message}")),
-            ],
-            tools: Vec::new(),
+            ];
+    let response = tokio::time::timeout(
+        Duration::from_secs(20),
+        provider.send_turn(ModelRequest {
+            messages: &request_messages,
+            tools: &[],
             prompt_cache_key: None,
         }),
     )
@@ -5820,6 +5839,7 @@ mod tests {
                 config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
+                pending_update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
@@ -6901,6 +6921,7 @@ mod tests {
                 config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
+                pending_update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),

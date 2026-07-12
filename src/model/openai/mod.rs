@@ -84,7 +84,7 @@ impl ModelProvider for OpenAiProvider {
         true
     }
 
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
             Auth::Codex { tokens, source } => {
@@ -98,7 +98,7 @@ impl ModelProvider for OpenAiProvider {
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         match &self.auth {
@@ -119,17 +119,19 @@ impl ModelProvider for OpenAiProvider {
 impl OpenAiProvider {
     async fn send_chat_completions(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         key: &str,
     ) -> Result<ModelResponse, ModelError> {
         let messages = request
             .messages
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_message)
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_tool)
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
@@ -156,18 +158,20 @@ impl OpenAiProvider {
 
     async fn send_chat_completions_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         key: &str,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let messages = request
             .messages
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_message)
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_openai_tool)
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
@@ -215,7 +219,7 @@ impl OpenAiProvider {
 
     async fn send_codex_responses(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         tokens: CodexTokens,
         source: CodexAuthSource,
     ) -> Result<ModelResponse, ModelError> {
@@ -225,7 +229,7 @@ impl OpenAiProvider {
 
     async fn send_codex_responses_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         tokens: CodexTokens,
         source: CodexAuthSource,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
@@ -236,7 +240,7 @@ impl OpenAiProvider {
 
     async fn send_codex_responses_inner(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         tokens: CodexTokens,
         source: CodexAuthSource,
         mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
@@ -414,8 +418,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &vec![Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: Some("rho:session-1".into()),
             },
             None,
@@ -434,8 +438,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &vec![Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: None,
             },
             None,
@@ -451,8 +455,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: vec![Message::user_text("find current docs")],
-                tools: vec![ToolSpec {
+                messages: &vec![Message::user_text("find current docs")],
+                tools: &vec![ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),

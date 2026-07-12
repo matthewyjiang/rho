@@ -172,6 +172,7 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         config_repository: ConfigRepository::new(None),
         auth_unavailable: None,
         update_notice: None,
+        pending_update_notice: None,
         herdr: HerdrReporter::default(),
     }
 }

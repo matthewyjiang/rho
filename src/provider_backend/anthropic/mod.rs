@@ -39,14 +39,15 @@ impl AnthropicProvider {
 
     fn request_body(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let (system, mut messages) = split_system_and_messages(request.messages)?;
+        let (system, mut messages) = split_system_and_messages(request.messages.to_vec())?;
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools
-            .into_iter()
+            .iter()
+            .cloned()
             .map(to_anthropic_tool)
             .collect::<Vec<_>>();
         if let Some(tool) = tools.last_mut() {
@@ -68,7 +69,7 @@ impl AnthropicProvider {
         })
     }
 
-    async fn send_messages(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
         let response = self
             .client
@@ -85,7 +86,7 @@ impl AnthropicProvider {
 
     async fn send_messages_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
@@ -151,13 +152,13 @@ async fn error_for_status_with_body(
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for AnthropicProvider {
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.send_messages(request).await
     }
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         self.send_messages_stream(request, on_event).await
@@ -187,7 +188,7 @@ mod tests {
         let body = provider
             .request_body(
                 ModelRequest {
-                    messages: vec![
+                    messages: &vec![
                         Message::System("system prompt".into()),
                         Message::User(vec![ContentBlock::Text("hello".into())]),
                         Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
@@ -196,7 +197,7 @@ mod tests {
                             arguments: json!({"command":"pwd"}),
                         })]),
                     ],
-                    tools: vec![ToolSpec {
+                    tools: &vec![ToolSpec {
                         name: "bash".into(),
                         description: "run command".into(),
                         input_schema: json!({"type":"object"}),

@@ -1,4 +1,7 @@
-use crate::model::{context::estimate_context_tokens, ContextUsage, Message, ModelUsage};
+use crate::model::{
+    context::{estimate_context_tokens, estimate_message_tokens},
+    ContextUsage, Message, ModelUsage,
+};
 use crate::tool::ToolSpec;
 
 #[derive(Debug, Default)]
@@ -7,6 +10,8 @@ pub(super) struct ContextTracker {
     last_context_window: Option<u64>,
     reported_anchor: Option<ReportedAnchor>,
     unknown_after_compaction: bool,
+    cached_message_tokens: u64,
+    cached_message_count: usize,
 }
 
 /// The local token estimate for one exact message and tool snapshot.
@@ -38,23 +43,42 @@ impl ContextTracker {
     }
 
     pub(super) fn reset(&mut self) {
+        self.cached_message_tokens = 0;
+        self.cached_message_count = 0;
         self.last_context_window = None;
         self.reported_anchor = None;
         self.unknown_after_compaction = false;
     }
 
     pub(super) fn history_replaced(&mut self) {
+        self.cached_message_tokens = 0;
+        self.cached_message_count = 0;
         self.reported_anchor = None;
         self.unknown_after_compaction = false;
     }
 
+    pub(super) fn message_appended(&mut self, message: &Message) {
+        self.cached_message_tokens = self
+            .cached_message_tokens
+            .saturating_add(estimate_message_tokens(message));
+        self.cached_message_count += 1;
+    }
+
     pub(super) fn estimate_request(
-        &self,
+        &mut self,
         messages: &[Message],
         specs: &[ToolSpec],
     ) -> RequestContextEstimate {
+        if self.cached_message_count > messages.len() {
+            self.cached_message_tokens = 0;
+            self.cached_message_count = 0;
+        }
+        for message in &messages[self.cached_message_count..] {
+            self.message_appended(message);
+        }
+        let empty_message_tokens = estimate_context_tokens(&[], specs);
         RequestContextEstimate {
-            tokens: estimate_context_tokens(messages, specs),
+            tokens: empty_message_tokens.saturating_add(self.cached_message_tokens),
         }
     }
 
@@ -124,7 +148,7 @@ mod tests {
     use super::*;
     use crate::model::{ContentBlock, ContextUsageSource, Message, ModelUsage};
 
-    fn estimate(tracker: &ContextTracker, messages: &[Message]) -> RequestContextEstimate {
+    fn estimate(tracker: &mut ContextTracker, messages: &[Message]) -> RequestContextEstimate {
         tracker.estimate_request(messages, &[])
     }
 
@@ -132,7 +156,7 @@ mod tests {
     fn one_request_estimate_drives_context_event_and_compaction_check() {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(4_000));
-        let estimate = estimate(&tracker, &[Message::user_text("hello")]);
+        let estimate = estimate(&mut tracker, &[Message::user_text("hello")]);
 
         let before_request = tracker.before_provider_request(estimate).unwrap();
         let for_compaction = tracker.estimate_for_compaction(estimate);
@@ -147,7 +171,7 @@ mod tests {
     fn provider_reported_usage_keeps_safer_configured_window() {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(4_000));
-        let estimate = estimate(&tracker, &[]);
+        let estimate = estimate(&mut tracker, &[]);
 
         let usage = tracker
             .record_provider_usage(
@@ -171,7 +195,7 @@ mod tests {
     fn provider_reported_usage_can_lower_configured_window() {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(10_000));
-        let estimate = estimate(&tracker, &[]);
+        let estimate = estimate(&mut tracker, &[]);
 
         let usage = tracker
             .record_provider_usage(
@@ -197,7 +221,7 @@ mod tests {
 
         assert_eq!(usage.source, ContextUsageSource::UnknownAfterCompaction);
         assert_eq!(usage.context_window, Some(4_000));
-        let estimate = estimate(&tracker, &[Message::user_text("after")]);
+        let estimate = estimate(&mut tracker, &[Message::user_text("after")]);
         assert_eq!(tracker.before_provider_request(estimate), None);
     }
 
@@ -207,7 +231,7 @@ mod tests {
         tracker.set_configured_window(Some(4_000));
         tracker.record_compaction();
         let messages = [Message::User(vec![ContentBlock::Text("after".into())])];
-        let estimate = estimate(&tracker, &messages);
+        let estimate = estimate(&mut tracker, &messages);
 
         tracker.record_provider_usage(
             &ModelUsage {
@@ -226,7 +250,7 @@ mod tests {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(10_000));
         let messages = vec![Message::user_text("hello")];
-        let estimate_at_report = estimate(&tracker, &messages);
+        let estimate_at_report = estimate(&mut tracker, &messages);
         let estimated_tokens = tracker
             .estimate_for_compaction(estimate_at_report)
             .tokens
@@ -242,7 +266,7 @@ mod tests {
 
         let mut grown = messages.clone();
         grown.push(Message::assistant_text("a longer assistant reply"));
-        let grown_estimate = estimate(&tracker, &grown);
+        let grown_estimate = estimate(&mut tracker, &grown);
         let anchored = tracker
             .estimate_for_compaction(grown_estimate)
             .tokens
@@ -258,7 +282,7 @@ mod tests {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(10_000));
         let messages = vec![Message::user_text("hello")];
-        let estimate = estimate(&tracker, &messages);
+        let estimate = estimate(&mut tracker, &messages);
         let local_tokens = estimate.tokens;
         tracker.record_provider_usage(
             &ModelUsage {
@@ -277,10 +301,25 @@ mod tests {
     }
 
     #[test]
+    fn appended_message_cache_matches_fresh_estimate() {
+        let specs = Vec::new();
+        let mut messages = vec![Message::user_text("first")];
+        let mut tracker = ContextTracker::default();
+        tracker.estimate_request(&messages, &specs);
+
+        messages.push(Message::assistant_text("second response"));
+
+        assert_eq!(
+            tracker.estimate_request(&messages, &specs).tokens,
+            estimate_context_tokens(&messages, &specs)
+        );
+    }
+
+    #[test]
     fn reset_clears_provider_window_and_unknown_state() {
         let mut tracker = ContextTracker::default();
         tracker.set_configured_window(Some(4_000));
-        let initial_estimate = estimate(&tracker, &[]);
+        let initial_estimate = estimate(&mut tracker, &[]);
         tracker.record_provider_usage(
             &ModelUsage {
                 input_tokens: Some(10),
@@ -294,7 +333,7 @@ mod tests {
         tracker.reset();
 
         assert_eq!(tracker.context_window(), Some(4_000));
-        let estimate = estimate(&tracker, &[Message::user_text("after")]);
+        let estimate = estimate(&mut tracker, &[Message::user_text("after")]);
         assert!(tracker.before_provider_request(estimate).is_some());
     }
 }
