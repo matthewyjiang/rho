@@ -325,7 +325,7 @@ mod tests {
     async fn timeout_error_includes_partial_output() {
         let err = Bash::new(false)
             .call(
-                json!({"command": "printf 'started\\n'; sleep 10", "timeout_seconds": 2}),
+                json!({"command": "printf 'started\\n'; sleep 10", "timeout_seconds": 5}),
                 test_context(),
                 "call_1".into(),
             )
@@ -333,7 +333,7 @@ mod tests {
             .unwrap_err();
 
         let message = err.to_string();
-        assert!(message.contains("timed out after 2s"));
+        assert!(message.contains("timed out after 5s"));
         assert!(message.contains("started"));
     }
 
