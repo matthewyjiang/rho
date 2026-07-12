@@ -52,7 +52,7 @@ pub(super) fn build_codex_responses_body(
     let mut input = codex_input_items(request.messages.to_vec(), &mut instructions)?;
     let tools = request
         .tools
-        .into_iter()
+        .iter()
         .map(|tool| responses_tool(mode, tool.clone()))
         .collect::<Vec<_>>();
     let instructions = instructions.join("\n\n");
@@ -131,8 +131,8 @@ mod tests {
             let body = build_codex_responses_body(
                 model,
                 ModelRequest {
-                    messages: &vec![Message::user_text("hello")],
-                    tools: &vec![ToolSpec {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[ToolSpec {
                         name: "read_file".into(),
                         description: "read a file".into(),
                         input_schema: json!({"type": "object"}),
@@ -161,7 +161,7 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.6-terra",
             ModelRequest {
-                messages: &vec![Message::user_text("hello")],
+                messages: &[Message::user_text("hello")],
                 tools: &[],
                 prompt_cache_key: None,
             },
@@ -181,11 +181,11 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.6-luna",
             ModelRequest {
-                messages: &vec![
+                messages: &[
                     Message::System("follow the repository instructions".into()),
                     Message::user_text("fix the bug"),
                 ],
-                tools: &vec![ToolSpec {
+                tools: &[ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),
@@ -232,8 +232,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.5",
             ModelRequest {
-                messages: &vec![Message::user_text("find current docs")],
-                tools: &vec![ToolSpec {
+                messages: &[Message::user_text("find current docs")],
+                tools: &[ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),

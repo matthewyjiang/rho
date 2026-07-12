@@ -188,7 +188,7 @@ mod tests {
         let body = provider
             .request_body(
                 ModelRequest {
-                    messages: &vec![
+                    messages: &[
                         Message::System("system prompt".into()),
                         Message::User(vec![ContentBlock::Text("hello".into())]),
                         Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
@@ -197,12 +197,12 @@ mod tests {
                             arguments: json!({"command":"pwd"}),
                         })]),
                     ],
-                    tools: &vec![ToolSpec {
+                    tools: &[ToolSpec {
                         name: "bash".into(),
                         description: "run command".into(),
                         input_schema: json!({"type":"object"}),
                     }],
-                    prompt_cache_key: Some("ignored".into()),
+                    prompt_cache_key: Some("ignored"),
                 },
                 true,
             )

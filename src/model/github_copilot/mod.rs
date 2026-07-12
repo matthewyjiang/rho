@@ -227,7 +227,7 @@ mod tests {
         let body = provider
             .chat_request(
                 ModelRequest {
-                    messages: &vec![Message::user_text("hello")],
+                    messages: &[Message::user_text("hello")],
                     tools: &[],
                     prompt_cache_key: None,
                 },
@@ -314,7 +314,7 @@ mod tests {
 
         let response = provider
             .send_turn(ModelRequest {
-                messages: &vec![Message::user_text("hello")],
+                messages: &[Message::user_text("hello")],
                 tools: &[],
                 prompt_cache_key: None,
             })

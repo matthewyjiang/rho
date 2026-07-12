@@ -14,7 +14,6 @@ use uuid::Uuid;
 use crate::model::{ContentBlock, Message};
 
 mod index;
-
 #[cfg(test)]
 #[path = "session_version_tests.rs"]
 mod version_tests;

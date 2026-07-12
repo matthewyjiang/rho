@@ -418,9 +418,9 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: &vec![Message::user_text("hello")],
+                messages: &[Message::user_text("hello")],
                 tools: &[],
-                prompt_cache_key: Some("rho:session-1".into()),
+                prompt_cache_key: Some("rho:session-1"),
             },
             None,
             None,
@@ -438,7 +438,7 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: &vec![Message::user_text("hello")],
+                messages: &[Message::user_text("hello")],
                 tools: &[],
                 prompt_cache_key: None,
             },
@@ -455,8 +455,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5-codex",
             ModelRequest {
-                messages: &vec![Message::user_text("find current docs")],
-                tools: &vec![ToolSpec {
+                messages: &[Message::user_text("find current docs")],
+                tools: &[ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),

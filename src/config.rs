@@ -920,7 +920,7 @@ brave_api_key = "grouped-brave"
 
     #[cfg(unix)]
     #[test]
-    fn load_succeeds_when_migrated_credential_cleanup_cannot_be_written() {
+    fn migrated_credential_cleanup_atomically_replaces_read_only_config() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
@@ -945,7 +945,7 @@ brave_api_key = "grouped-brave"
             None
         );
         let saved = std::fs::read_to_string(&path).unwrap();
-        assert!(saved.contains("web_search_openai_api_key"), "{saved}");
+        assert!(!saved.contains("web_search_openai_api_key"), "{saved}");
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }

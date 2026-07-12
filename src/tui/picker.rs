@@ -224,20 +224,6 @@ impl UiPicker {
     }
 }
 
-#[cfg(test)]
-pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
-    let filter = filter.trim();
-    let regex = (!filter.is_empty())
-        .then(|| {
-            RegexBuilder::new(filter)
-                .case_insensitive(true)
-                .build()
-                .ok()
-        })
-        .flatten();
-    picker_matching_indices_with_regex(items, filter, regex.as_ref())
-}
-
 fn picker_matching_indices_with_regex(
     items: &[PickerItem],
     filter: &str,

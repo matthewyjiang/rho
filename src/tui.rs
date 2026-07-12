@@ -694,7 +694,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|pending| pending.handle.is_finished());
             self.poll_model_metadata_fetch(agent);
-self.poll_update_notice();
+            self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             needs_redraw |= background_ready;
@@ -6179,7 +6179,7 @@ mod tests {
     }
 
     #[test]
-    fn single_character_fast_enter_is_not_treated_as_paste() {
+    fn single_character_fast_enter_is_buffered_as_paste() {
         let start = Instant::now();
         let mut app = test_app();
 
@@ -6187,12 +6187,12 @@ mod tests {
             KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
             start
         ));
-        assert!(!app.handle_paste_burst_key_at(
+        assert!(app.handle_paste_burst_key_at(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             start + Duration::from_millis(1)
         ));
 
-        assert_eq!(app.input, "y");
+        assert_eq!(app.input, "");
         assert!(app.paste_segments.is_empty());
     }
 
