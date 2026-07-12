@@ -183,14 +183,24 @@ impl UiPicker {
         };
         if stale {
             let filter = self.filter.trim();
-            let regex = (!filter.is_empty())
-                .then(|| {
-                    RegexBuilder::new(filter)
-                        .case_insensitive(true)
-                        .build()
-                        .ok()
-                })
-                .flatten();
+            let regex = match self.action {
+                PickerAction::SelectModel
+                | PickerAction::SelectTitleModel
+                | PickerAction::InsertFilePath => None,
+                PickerAction::LoginProvider
+                | PickerAction::LogoutProvider
+                | PickerAction::InsertSkillCommand
+                | PickerAction::ResumeSession
+                | PickerAction::Config
+                | PickerAction::Doctor => (!filter.is_empty())
+                    .then(|| {
+                        RegexBuilder::new(filter)
+                            .case_insensitive(true)
+                            .build()
+                            .ok()
+                    })
+                    .flatten(),
+            };
             let indices = match self.action {
                 PickerAction::SelectModel
                 | PickerAction::SelectTitleModel

@@ -204,10 +204,12 @@ fn content_index(value: &serde_json::Value) -> Result<usize, ModelError> {
     let index = value
         .get("index")
         .and_then(|index| index.as_u64())
-        .and_then(|index| usize::try_from(index).ok())
         .ok_or_else(|| {
             ModelError::InvalidResponse("Anthropic stream event missing index".into())
         })?;
+    let index = usize::try_from(index).map_err(|_| {
+        ModelError::InvalidResponse(format!("stream block index {index} out of range"))
+    })?;
     if index > MAX_STREAM_BLOCK_INDEX {
         return Err(ModelError::InvalidResponse(format!(
             "stream block index {index} out of range"
