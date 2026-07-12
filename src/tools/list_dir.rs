@@ -50,9 +50,9 @@ impl Tool for ListDir {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
         let mut lines = Vec::new();
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
-            let ty = entry.file_type()?;
+        let mut entries = tokio::fs::read_dir(path).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let ty = entry.file_type().await?;
             let suffix = if ty.is_dir() { "/" } else { "" };
             lines.push(format!("{}{}", entry.file_name().to_string_lossy(), suffix));
         }
