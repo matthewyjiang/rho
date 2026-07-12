@@ -144,7 +144,12 @@ impl Tool for Bash {
         };
 
         process_group.kill();
-        drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
+        )
+        .await;
+        drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
 
         let elapsed_secs = start.elapsed().as_secs_f64();
         let exit_code = status
