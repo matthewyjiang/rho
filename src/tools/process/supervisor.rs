@@ -72,7 +72,6 @@ pub(super) async fn supervise(
         }
     }
     let mut r = rec.lock().unwrap();
-    r.stdin = None;
     r.stop = None;
     r.tree = None;
     r.state = final_state;
