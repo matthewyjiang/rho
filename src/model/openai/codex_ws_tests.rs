@@ -97,12 +97,11 @@ async fn ws_server_connections(
     (format!("ws://{addr}/responses"), frames)
 }
 
-async fn ws_server_streams_delta_before_completion() -> (String, Arc<std::sync::atomic::AtomicBool>)
-{
+async fn ws_server_waits_for_delta_callback() -> (String, Arc<tokio::sync::Notify>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let server_completed = Arc::clone(&completed);
+    let delta_observed = Arc::new(tokio::sync::Notify::new());
+    let server_delta_observed = Arc::clone(&delta_observed);
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = accept_async(stream).await.unwrap();
@@ -115,8 +114,7 @@ async fn ws_server_streams_delta_before_completion() -> (String, Arc<std::sync::
             ))
             .await
             .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        server_completed.store(true, std::sync::atomic::Ordering::SeqCst);
+        server_delta_observed.notified().await;
         socket
             .send(Message::Text(
                 json!({
@@ -134,7 +132,7 @@ async fn ws_server_streams_delta_before_completion() -> (String, Arc<std::sync::
             .await
             .unwrap();
     });
-    (format!("ws://{addr}/responses"), completed)
+    (format!("ws://{addr}/responses"), delta_observed)
 }
 
 async fn ws_server_closes_after_delta() -> (String, Arc<StdMutex<Vec<Value>>>) {
@@ -411,16 +409,12 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
 
 #[tokio::test]
 async fn websocket_emits_delta_before_response_completes() {
-    let (url, completed) = ws_server_streams_delta_before_completion().await;
+    let (url, delta_observed) = ws_server_waits_for_delta_callback().await;
     let transport = CodexWsTransport::new_with_url(url);
-    let callback_ran_before_completion = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let callback_observation = Arc::clone(&callback_ran_before_completion);
+    let callback_delta_observed = Arc::clone(&delta_observed);
     let mut collect_event = |event| {
         if matches!(event, ModelEvent::OutputDelta(_)) {
-            callback_observation.store(
-                !completed.load(std::sync::atomic::Ordering::SeqCst),
-                std::sync::atomic::Ordering::SeqCst,
-            );
+            callback_delta_observed.notify_one();
         }
         Ok(())
     };
@@ -436,8 +430,6 @@ async fn websocket_emits_delta_before_response_completes() {
         )
         .await
         .unwrap();
-
-    assert!(callback_ran_before_completion.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[tokio::test]
