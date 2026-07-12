@@ -257,6 +257,27 @@ async fn concurrent_list_poll_and_stop_do_not_deadlock() {
 }
 
 #[cfg(unix)]
+fn process_is_running(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } == -1 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        // A container's PID 1 may not reap orphaned grandchildren. Zombies are
+        // terminated even though kill(pid, 0) continues to find their PID.
+        let Some((_, fields)) = stat.rsplit_once(") ") else {
+            return true;
+        };
+        !fields.starts_with("Z ")
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
+#[cfg(unix)]
 async fn descendant_case(action: &str) {
     let directory = tempfile::tempdir().unwrap();
     let pid_file = directory.path().join("pid");
@@ -295,9 +316,8 @@ async fn descendant_case(action: &str) {
         _ => unreachable!(),
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(
-        unsafe { libc::kill(pid, 0) },
-        -1,
+    assert!(
+        !process_is_running(pid),
         "descendant {pid} survived {action}"
     );
 }
@@ -384,7 +404,7 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     eventually(&manager, &started.process_id).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
-    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert!(!process_is_running(pid));
 }
 
 #[tokio::test]
