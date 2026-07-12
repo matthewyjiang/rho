@@ -80,8 +80,9 @@ use questionnaire::{
     QuestionnaireResponseChannel,
 };
 use render::{
-    display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
+    input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
+    session_header_lines, styled_line, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
@@ -1636,15 +1637,16 @@ impl App {
             return;
         }
 
-        let width = terminal_width.max(1);
-        match direction {
-            HistoryDirection::Previous => {
-                self.input_cursor = self.input_cursor.saturating_sub(width);
-            }
-            HistoryDirection::Next => {
-                self.input_cursor = (self.input_cursor + width).min(self.input_char_len());
-            }
-        }
+        let target_row = match direction {
+            HistoryDirection::Previous => cursor_position.y.saturating_sub(1) as usize,
+            HistoryDirection::Next => cursor_position.y as usize + 1,
+        };
+        self.input_cursor = input_cursor_index_on_visual_line(
+            &self.input,
+            &visual_lines,
+            target_row,
+            cursor_position.x as usize,
+        );
     }
 
     fn recall_last_queued_prompt(&mut self) -> bool {
@@ -5098,15 +5100,15 @@ impl App {
                 position
             }
             ComposerMode::SecretInput(secret) => Position {
-                x: secret.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&secret.value, secret.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::ConfigNumberInput(input) => Position {
-                x: input.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::ConfigTextInput(input) => Position {
-                x: input.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::Questionnaire(questionnaire) => {

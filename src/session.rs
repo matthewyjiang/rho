@@ -15,6 +15,10 @@ use crate::model::{ContentBlock, Message};
 
 mod index;
 
+#[cfg(test)]
+#[path = "session_version_tests.rs"]
+mod version_tests;
+
 const SESSION_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
@@ -255,9 +259,27 @@ fn visit_entries(
         }
         let terminated = line.ends_with('\n');
         match serde_json::from_str::<SessionEntry>(&line) {
-            Ok(entry) => visit(entry)?,
+            Ok(entry) => {
+                if let SessionEntry::Session { version, .. } = &entry {
+                    validate_session_version(*version, path)?;
+                }
+                visit(entry)?;
+            }
             Err(err) if !terminated && err.is_eof() => return Ok(()),
             Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
+    match version {
+        0..=SESSION_VERSION => Ok(()),
+        _ => {
+            eprintln!(
+                "warning: skipping session {} with unsupported version {version} (maximum supported: {SESSION_VERSION})",
+                path.display()
+            );
+            anyhow::bail!("unsupported session version {version}")
         }
     }
 }

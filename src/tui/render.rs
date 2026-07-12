@@ -373,6 +373,43 @@ pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) ->
     }
 }
 
+pub(super) fn char_prefix_display_width(value: &str, cursor: usize) -> usize {
+    value
+        .chars()
+        .take(cursor)
+        .map(char_display_width)
+        .sum::<usize>()
+}
+
+pub(super) fn input_cursor_index_on_visual_line(
+    input: &str,
+    visual_lines: &[String],
+    target_row: usize,
+    target_column: usize,
+) -> usize {
+    let mut line_start = 0;
+    for line in visual_lines.iter().take(target_row) {
+        line_start += line.chars().count();
+        if input.chars().nth(line_start) == Some('\n') {
+            line_start += 1;
+        }
+    }
+
+    let mut cursor = line_start;
+    let mut column = 0;
+    if let Some(line) = visual_lines.get(target_row) {
+        for ch in line.chars() {
+            let next_column = column + char_display_width(ch);
+            if next_column > target_column {
+                break;
+            }
+            column = next_column;
+            cursor += 1;
+        }
+    }
+    cursor
+}
+
 pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();

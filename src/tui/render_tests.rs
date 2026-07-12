@@ -281,3 +281,33 @@ fn stream_fragment_rendering_preserves_blank_lines() {
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
     assert_eq!(rendered, vec!["a".to_string(), String::new()]);
 }
+
+#[test]
+fn visual_cursor_movement_clamps_to_shorter_explicit_line() {
+    let input = "ab\ncdef";
+    let lines = input_visual_lines(input, 80);
+
+    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 4), 2);
+}
+
+#[test]
+fn visual_cursor_movement_uses_wide_character_columns() {
+    let input = "界a界b";
+    let lines = input_visual_lines(input, 3);
+
+    assert_eq!(lines, vec!["界a", "界b"]);
+    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 1);
+}
+
+#[test]
+fn visual_cursor_movement_preserves_ascii_wrapped_column() {
+    let input = "abcdef";
+    let lines = input_visual_lines(input, 4);
+
+    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 2);
+}
+
+#[test]
+fn char_prefix_width_accounts_for_wide_characters() {
+    assert_eq!(char_prefix_display_width("a界b", 2), 3);
+}
