@@ -8,6 +8,7 @@ mod config;
 mod config_writer;
 mod credentials;
 mod diagnostics;
+mod export;
 mod herdr;
 mod keybindings;
 mod model;

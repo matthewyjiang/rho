@@ -1,4 +1,4 @@
-use crate::tool::ToolDisplayStyle;
+use crate::{commands::CommandInvocation, export, tool::ToolDisplayStyle};
 
 use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
 
@@ -25,6 +25,33 @@ impl App {
         } else {
             "worktree clean".into()
         };
+        Ok(())
+    }
+
+    pub(super) fn execute_export_command(
+        &mut self,
+        invocation: &CommandInvocation,
+    ) -> anyhow::Result<()> {
+        let Some(session_id) = self.info.session_id.clone() else {
+            self.insert_entry(&Entry::Notice(
+                "no active session to export; send a message first".into(),
+            ));
+            self.status = "nothing to export".into();
+            return Ok(());
+        };
+        match export::write_session_html(&self.info.cwd, &session_id, &invocation.args) {
+            Ok(path) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "session transcript exported to {}",
+                    path.display()
+                )));
+                self.status = "session exported".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("unable to export session: {error}")));
+                self.status = "export failed".into();
+            }
+        }
         Ok(())
     }
 
