@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
