@@ -27,15 +27,21 @@ struct DirectoryScope {
     display_prefix: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FilePathCacheKey {
+    root: PathBuf,
+    include_hidden: bool,
+}
+
 #[derive(Debug)]
 struct FilePathCache {
-    root: Option<PathBuf>,
+    key: Option<FilePathCacheKey>,
     paths: Arc<Vec<String>>,
 }
 
 static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
     Mutex::new(FilePathCache {
-        root: None,
+        key: None,
         paths: Arc::new(Vec::new()),
     })
 });
@@ -76,7 +82,8 @@ pub(super) fn matching_file_paths_with_home_for_test(
 fn matching_file_paths_with_home(cwd: &Path, query: &str, home: Option<&Path>) -> Arc<Vec<String>> {
     let query = query.trim();
     if let Some((scope, residual)) = directory_scope(cwd, query, home) {
-        let relative_paths = file_paths_for_root(&scope.root);
+        let include_hidden = residual_includes_hidden(&residual);
+        let relative_paths = file_paths_for_root(&scope.root, include_hidden);
         let matches = if residual.is_empty() {
             relative_paths.as_slice().to_vec()
         } else {
@@ -90,7 +97,8 @@ fn matching_file_paths_with_home(cwd: &Path, query: &str, home: Option<&Path>) -
         );
     }
 
-    let paths = file_paths_for_root(cwd);
+    let include_hidden = residual_includes_hidden(query);
+    let paths = file_paths_for_root(cwd, include_hidden);
     if query.is_empty() {
         return paths;
     }
@@ -98,18 +106,26 @@ fn matching_file_paths_with_home(cwd: &Path, query: &str, home: Option<&Path>) -
 }
 
 pub(super) fn workspace_file_paths(cwd: &Path) -> Arc<Vec<String>> {
-    file_paths_for_root(cwd)
+    file_paths_for_root(cwd, /*include_hidden*/ false)
 }
 
-fn file_paths_for_root(root: &Path) -> Arc<Vec<String>> {
+fn residual_includes_hidden(residual: &str) -> bool {
+    residual.split('/').any(|part| part.starts_with('.'))
+}
+
+fn file_paths_for_root(root: &Path, include_hidden: bool) -> Arc<Vec<String>> {
     let root = normalize_existing_dir(root).unwrap_or_else(|| root.to_path_buf());
+    let key = FilePathCacheKey {
+        root: root.clone(),
+        include_hidden,
+    };
     if let Ok(cache) = FILE_PATH_CACHE.lock() {
-        if cache.root.as_ref() == Some(&root) {
+        if cache.key.as_ref() == Some(&key) {
             return Arc::clone(&cache.paths);
         }
     }
 
-    let mut paths = discover_file_paths(&root);
+    let mut paths = discover_file_paths(&root, include_hidden);
     paths.sort_by(|left, right| {
         left.to_ascii_lowercase()
             .cmp(&right.to_ascii_lowercase())
@@ -118,7 +134,7 @@ fn file_paths_for_root(root: &Path) -> Arc<Vec<String>> {
     let paths = Arc::new(paths);
 
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
-        cache.root = Some(root);
+        cache.key = Some(key);
         cache.paths = Arc::clone(&paths);
     }
     paths
@@ -127,7 +143,7 @@ fn file_paths_for_root(root: &Path) -> Arc<Vec<String>> {
 #[cfg(test)]
 pub(super) fn clear_workspace_file_path_cache() {
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
-        cache.root = None;
+        cache.key = None;
         cache.paths = Arc::new(Vec::new());
     }
 }
@@ -341,26 +357,47 @@ pub(super) fn file_palette_scroll_footer(
     Some(parts.join(" · "))
 }
 
-fn discover_file_paths(root: &Path) -> Vec<String> {
-    walk_file_paths(root)
+fn discover_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
+    walk_file_paths(root, include_hidden)
 }
 
-fn walk_file_paths(root: &Path) -> Vec<String> {
+fn walk_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
     let deadline = Instant::now() + FILE_DISCOVERY_TIMEOUT;
     let mut builder = WalkBuilder::new(root);
+    // Always allow walking into an explicitly scoped hidden root (depth 0).
+    // Hidden children are controlled by filter_entry below.
     builder
         .hidden(/*yes*/ false)
         .follow_links(/*yes*/ false)
-        .filter_entry(|entry| entry.file_name() != ".git");
+        .filter_entry(move |entry| {
+            let name = entry.file_name();
+            if name == ".git" {
+                return false;
+            }
+            if include_hidden || entry.depth() == 0 {
+                return true;
+            }
+            !name.to_string_lossy().starts_with('.')
+        });
 
     builder
         .build()
         .take_while(|_| Instant::now() < deadline)
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-        .filter_map(|entry| display_relative_path(root, entry.path()))
+        .filter_map(|entry| {
+            let path = display_relative_path(root, entry.path())?;
+            if !include_hidden && path_has_hidden_component(&path) {
+                return None;
+            }
+            Some(path)
+        })
         .take(MAX_FILE_PATHS)
         .collect()
+}
+
+fn path_has_hidden_component(path: &str) -> bool {
+    path.split('/').any(|part| part.starts_with('.'))
 }
 
 fn display_relative_path(root: &Path, path: &Path) -> Option<String> {

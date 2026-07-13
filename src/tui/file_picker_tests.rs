@@ -55,10 +55,72 @@ fn matching_paths_respect_gitignore_and_fuzzy_rank() {
     assert_eq!(matches.as_slice(), ["src/lib.rs"]);
 
     let paths = workspace_file_paths(workspace.path());
+    assert_eq!(paths.as_slice(), ["src/lib.rs", "src/nested/mod.rs"]);
+}
+
+#[test]
+fn hidden_paths_are_skipped_unless_query_mentions_dot() {
+    clear_workspace_file_path_cache();
+    let workspace = tempdir().unwrap();
+    fs::create_dir_all(workspace.path().join(".cache/nested")).unwrap();
+    fs::create_dir_all(workspace.path().join("docs")).unwrap();
+    fs::write(workspace.path().join(".gitignore"), "").unwrap();
+    fs::write(workspace.path().join(".cache/secret.bin"), "").unwrap();
+    fs::write(workspace.path().join(".cache/nested/tmp.bin"), "").unwrap();
+    fs::write(workspace.path().join("docs/guide.md"), "").unwrap();
+    fs::write(workspace.path().join("README.md"), "").unwrap();
+
+    let default_matches = matching_file_paths(workspace.path(), "");
+    assert_eq!(default_matches.as_slice(), ["docs/guide.md", "README.md"]);
+
+    let hidden_matches = matching_file_paths(workspace.path(), ".giti");
+    assert_eq!(hidden_matches.as_slice(), [".gitignore"]);
+
+    let scoped_default = matching_file_paths(workspace.path(), ".cache/");
     assert_eq!(
-        paths.as_slice(),
-        [".gitignore", "src/lib.rs", "src/nested/mod.rs"]
+        sorted_strings(scoped_default.as_slice()),
+        sorted_strs(&[".cache/nested/tmp.bin", ".cache/secret.bin"])
     );
+
+    let scoped_hidden = matching_file_paths(workspace.path(), ".cache/.");
+    assert_eq!(
+        sorted_strings(scoped_hidden.as_slice()),
+        sorted_strs(&[".cache/nested/tmp.bin", ".cache/secret.bin"])
+    );
+}
+
+fn sorted_strs(values: &[&str]) -> Vec<String> {
+    let mut values = values
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    values.sort();
+    values
+}
+
+fn sorted_strings(values: &[String]) -> Vec<String> {
+    let mut values = values.to_vec();
+    values.sort();
+    values
+}
+
+#[test]
+fn home_scope_skips_hidden_entries_by_default() {
+    clear_workspace_file_path_cache();
+    let home = tempdir().unwrap();
+    fs::create_dir_all(home.path().join(".cache")).unwrap();
+    fs::create_dir_all(home.path().join("docs")).unwrap();
+    fs::write(home.path().join(".cache/huge.bin"), "").unwrap();
+    fs::write(home.path().join("docs/guide.md"), "").unwrap();
+    fs::write(home.path().join("notes.txt"), "").unwrap();
+
+    let matches =
+        matching_file_paths_with_home_for_test(Path::new("/tmp"), "~/", Some(home.path()));
+    assert_eq!(matches.as_slice(), ["~/docs/guide.md", "~/notes.txt"]);
+
+    let hidden =
+        matching_file_paths_with_home_for_test(Path::new("/tmp"), "~/.cache/", Some(home.path()));
+    assert_eq!(hidden.as_slice(), ["~/.cache/huge.bin"]);
 }
 
 #[test]
