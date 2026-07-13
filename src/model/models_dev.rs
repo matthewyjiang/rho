@@ -169,7 +169,8 @@ fn write_cached_api(value: &Value) {
 }
 
 /// Bump when the models.dev parser gains fields that older cache rows omit.
-/// Rows written with a lower version are treated as misses and re-fetched.
+/// Rows written with a lower version are rehydrated from the cached models.dev
+/// api.json when available, otherwise treated as misses for a live refetch.
 const MODEL_METADATA_CACHE_VERSION: i64 = 2;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -183,10 +184,37 @@ fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMe
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .ok()?;
-    if cache_version < MODEL_METADATA_CACHE_VERSION {
-        return None;
+    let cached_value: Value = serde_json::from_str(&contents).ok()?;
+    let cached: ModelMetadata = serde_json::from_value(cached_value.clone()).ok()?;
+    if !should_rehydrate_cached_metadata(cache_version, &cached_value) {
+        return Some(cached);
     }
-    serde_json::from_str(&contents).ok()
+
+    // Older or incomplete sqlite rows can predate reasoning capability fields.
+    // Prefer the local models.dev snapshot so interactive reasoning cycling works
+    // immediately without waiting for a live network refresh.
+    if let Some(refreshed) = read_cached_api()
+        .as_ref()
+        .and_then(|api| model_metadata_from_api(api, upstream_provider, model))
+    {
+        write_cached_upstream_model_metadata(provider, model, &refreshed);
+        return Some(refreshed);
+    }
+
+    if cache_version >= MODEL_METADATA_CACHE_VERSION {
+        // Keep partial current-version rows usable when api.json cannot refresh them.
+        return Some(cached);
+    }
+
+    // Stale-version rows are treated as misses so fetch_model_metadata can still
+    // pull a live models.dev snapshot when the local api.json is missing.
+    None
+}
+
+fn should_rehydrate_cached_metadata(cache_version: i64, cached_value: &Value) -> bool {
+    cache_version < MODEL_METADATA_CACHE_VERSION
+        || cached_value.get("supported_reasoning_levels").is_none()
+        || cached_value.get("reasoning_off_behavior").is_none()
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
@@ -741,6 +769,11 @@ mod tests {
             "xai": {
                 "models": {
                     "grok-4.5": {
+                        "reasoning": true,
+                        "reasoning_options": [{
+                            "type": "effort",
+                            "values": ["low", "medium", "high"]
+                        }],
                         "limit": { "context": 500000, "output": 500000 },
                         "cost": {
                             "input": 2.0,
@@ -785,7 +818,12 @@ mod tests {
                     cache_read_micros_per_m: Some(1_000_000),
                     cache_write_micros_per_m: None,
                 }),
-                supported_reasoning_levels: None,
+                supported_reasoning_levels: Some(vec![
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Low,
+                    ReasoningLevel::Medium,
+                    ReasoningLevel::High,
+                ]),
                 reasoning_off_behavior: ReasoningOffBehavior::Omit,
             }
         );
@@ -802,6 +840,63 @@ mod tests {
                 .unwrap()
                 .input_micros_per_m,
             Some(2_000_000)
+        );
+    }
+
+    #[test]
+    fn rehydrates_when_cache_version_is_stale_or_reasoning_fields_are_missing() {
+        let complete = json!({
+            "supported_reasoning_levels": ["off", "low", "medium", "high"],
+            "reasoning_off_behavior": "omit"
+        });
+        let missing_reasoning = json!({
+            "advertised_context_window": 500_000,
+            "cost_default": { "input_micros_per_m": 2_000_000 }
+        });
+        let null_reasoning = json!({
+            "supported_reasoning_levels": null,
+            "reasoning_off_behavior": "omit"
+        });
+
+        assert!(should_rehydrate_cached_metadata(1, &complete));
+        assert!(should_rehydrate_cached_metadata(2, &missing_reasoning));
+        assert!(!should_rehydrate_cached_metadata(2, &complete));
+        // Explicit null is a complete current-version row: the model has no
+        // known effort list, so keep it instead of thrashing on rehydrate.
+        assert!(!should_rehydrate_cached_metadata(2, &null_reasoning));
+    }
+
+    #[test]
+    fn codex_models_skip_minimal_when_models_dev_omits_it() {
+        let api = json!({
+            "openai": {
+                "models": {
+                    "gpt-5.3-codex": {
+                        "reasoning": true,
+                        "reasoning_options": [{
+                            "type": "effort",
+                            "values": ["none", "low", "medium", "high", "xhigh"]
+                        }]
+                    }
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-5.3-codex").unwrap();
+
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![
+                ReasoningLevel::Off,
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::Xhigh,
+            ])
+        );
+        assert_eq!(
+            metadata.reasoning_off_behavior,
+            ReasoningOffBehavior::EffortNone
         );
     }
 }
