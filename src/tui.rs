@@ -1298,6 +1298,7 @@ impl App {
                     }
                     ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.max_tool_output_lines = value;
+                        self.info.diagnostics.update_max_tool_output_lines(value);
                         let config = self.info.config_repository.load()?;
                         self.composer =
                             ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
@@ -1323,7 +1324,6 @@ impl App {
                         )));
                     }
                 }
-                self.refresh_diagnostics_config()?;
                 self.status = "config saved".into();
                 Ok(true)
             }
@@ -4058,7 +4058,6 @@ impl App {
         }
         match save_result {
             Ok(()) => {
-                self.refresh_diagnostics_config()?;
                 self.status = format!("reasoning: {reasoning}");
             }
             Err(err) => {
@@ -4075,7 +4074,9 @@ impl App {
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.config_repository, ConfigToggle::CheckForUpdates) {
             Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
-                self.refresh_diagnostics_config()?;
+                self.info
+                    .diagnostics
+                    .update_check_for_updates(check_for_updates);
                 if !check_for_updates {
                     self.info.update_notice = None;
                 }
@@ -4109,7 +4110,6 @@ impl App {
     fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.config_repository, ConfigToggle::AutoCompact) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
-                self.refresh_diagnostics_config()?;
                 self.status = if auto_compact {
                     "auto compact: on".into()
                 } else {
@@ -4143,7 +4143,6 @@ impl App {
             ConfigToggle::ShowReasoningOutput,
         ) {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
-                self.refresh_diagnostics_config()?;
                 self.info.show_reasoning_output = show_reasoning_output;
                 self.status = if show_reasoning_output {
                     "reasoning output: shown".into()
@@ -4180,7 +4179,6 @@ impl App {
         else {
             unreachable!("provider cycle returned a mismatched config mutation");
         };
-        self.refresh_diagnostics_config()?;
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.status = format!("web search: {provider}");
         Ok(())
@@ -4232,7 +4230,6 @@ impl App {
             config.auth = auth.clone();
         }) {
             Ok(()) => {
-                self.refresh_diagnostics_config()?;
                 self.insert_entry(&Entry::Notice(format!(
                         "model switched to {provider_model} with reasoning {reasoning} and saved to config"
                     )),
@@ -4280,12 +4277,6 @@ impl App {
         Ok(())
     }
 
-    fn refresh_diagnostics_config(&self) -> anyhow::Result<()> {
-        let config = self.info.config_repository.load()?;
-        self.info.diagnostics.update_config(&config);
-        Ok(())
-    }
-
     fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
@@ -4295,8 +4286,7 @@ impl App {
             config.provider = self.info.provider.clone();
             config.model = self.info.model.clone();
             config.auth = self.info.auth.clone();
-        })?;
-        self.refresh_diagnostics_config()
+        })
     }
 
     async fn execute_resume_command(
@@ -4415,8 +4405,10 @@ impl App {
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let config = self.info.config_repository.load()?;
-        self.info.diagnostics.update_config(&config);
         self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
+        self.info
+            .diagnostics
+            .update_max_tool_output_lines(self.info.max_tool_output_lines);
         self.info.show_reasoning_output = config.show_reasoning_output;
         self.composer = ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
         self.status = "config".into();

@@ -2,7 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
 
-use crate::{config::Config, model::ContextUsage, reasoning::ReasoningLevel};
+use crate::{
+    agent::CompactionConfig, config::Config, model::ContextUsage, reasoning::ReasoningLevel,
+};
 
 #[cfg(test)]
 pub fn test_diagnostics(provider: &str, model: &str) -> RuntimeDiagnostics {
@@ -11,7 +13,7 @@ pub fn test_diagnostics(provider: &str, model: &str) -> RuntimeDiagnostics {
         model: model.into(),
         ..Config::default()
     };
-    RuntimeDiagnostics::new(&config, Vec::new(), Vec::new())
+    RuntimeDiagnostics::new(&config)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -31,13 +33,6 @@ impl RuntimeIdentity {
             reasoning: reasoning.to_string(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct PromptSource {
-    pub kind: String,
-    pub path: Option<String>,
-    pub bytes: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -64,7 +59,7 @@ impl From<&Config> for SanitizedConfig {
             web_search_provider: config.web_search_provider.as_str().into(),
             check_for_updates: config.check_for_updates,
             rtk: config.rtk,
-            source: "effective values after defaults, config, environment, and CLI overrides"
+            source: "live values used by this process; restart-only settings may differ from saved config"
                 .into(),
         }
     }
@@ -74,7 +69,7 @@ impl From<&Config> for SanitizedConfig {
 struct RuntimeState {
     identity: RuntimeIdentity,
     context: Option<ContextUsage>,
-    prompt_sources: Vec<PromptSource>,
+    prompt_sources: Vec<crate::prompt::PromptSource>,
     tools: Vec<String>,
     config: SanitizedConfig,
 }
@@ -85,14 +80,13 @@ pub struct RuntimeDiagnostics {
 }
 
 impl RuntimeDiagnostics {
-    pub fn new(config: &Config, prompt_sources: Vec<PromptSource>, mut tools: Vec<String>) -> Self {
-        tools.sort();
+    pub fn new(config: &Config) -> Self {
         Self {
             state: Arc::new(RwLock::new(RuntimeState {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
-                prompt_sources,
-                tools,
+                prompt_sources: Vec::new(),
+                tools: Vec::new(),
                 config: config.into(),
             })),
         }
@@ -106,19 +100,38 @@ impl RuntimeDiagnostics {
         self.write().identity = RuntimeIdentity::new(provider, model, reasoning);
     }
 
-    pub fn update_context(&self, context: ContextUsage) {
+    pub fn record_context(&self, context: ContextUsage) {
         self.write().context = Some(context);
     }
 
-    pub fn update_config(&self, config: &Config) {
-        self.write().config = config.into();
+    pub fn clear_context(&self) {
+        self.write().context = None;
     }
 
-    pub fn update_prompt_sources(&self, sources: Vec<PromptSource>) {
+    pub fn update_compaction_config(&self, config: &CompactionConfig) {
+        let mut state = self.write();
+        state.config.auto_compact = config.auto_compact;
+        state.config.compact_threshold_percent = config.threshold_percent;
+        state.config.compact_target_percent = config.target_percent;
+    }
+
+    pub fn update_max_tool_output_lines(&self, max_tool_output_lines: usize) {
+        self.write().config.max_tool_output_lines = max_tool_output_lines;
+    }
+
+    pub fn update_check_for_updates(&self, check_for_updates: bool) {
+        self.write().config.check_for_updates = check_for_updates;
+    }
+
+    pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {
         self.write().prompt_sources = sources;
     }
 
-    pub fn update_tools(&self, mut tools: Vec<String>) {
+    pub fn update_tools(&self, tools: &[crate::tool::ToolSpec]) {
+        let mut tools = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         tools.sort();
         self.write().tools = tools;
     }
@@ -134,7 +147,7 @@ impl RuntimeDiagnostics {
             _ => {
                 return Err(format!(
                     "unknown rho diagnostics action '{action}'; load the rho-diagnostics skill for usage"
-                ))
+                ));
             }
         }
         .map_err(|error| error.to_string())?;

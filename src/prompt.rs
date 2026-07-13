@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::{diagnostics::PromptSource, skills, tool::ToolSpec};
+use serde::Serialize;
+
+use crate::{skills, tool::ToolSpec};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -8,46 +10,34 @@ Match actions to the request: for reviews or diagnoses, inspect and explain; for
 
 During substantial work, give concise progress updates. Preserve existing work and unrelated changes. Never run destructive commands unless explicitly requested. Verify changes in proportion to risk, then report the outcome and any remaining concerns."#;
 
-pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptSourceKind {
+    Base,
+    Agents,
+    Skills,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PromptSource {
+    pub kind: PromptSourceKind,
+    pub path: Option<String>,
+    pub bytes: usize,
+}
+
+pub struct SystemPrompt {
+    pub text: String,
+    pub sources: Vec<PromptSource>,
+}
+
+pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> SystemPrompt {
     let home = crate::paths::home_dir();
     system_prompt_with_home(tools, cwd, home.as_deref())
 }
 
-pub fn prompt_sources(tools: &[ToolSpec], cwd: &Path) -> Vec<PromptSource> {
-    let home = crate::paths::home_dir();
-    let mut sources = vec![PromptSource {
-        kind: "base".into(),
-        path: None,
-        bytes: BASE_SYSTEM_PROMPT.len(),
-    }];
-    sources.extend(
-        agent_instruction_files(cwd, home.as_deref())
-            .into_iter()
-            .map(|(path, contents)| PromptSource {
-                kind: "agents".into(),
-                path: Some(path.display().to_string()),
-                bytes: contents.len(),
-            }),
-    );
-    if tools.iter().any(|tool| tool.name == "skill") {
-        let skills = skills::discover_with_home(cwd, home.as_deref());
-        if !skills.is_empty() {
-            sources.push(PromptSource {
-                kind: "skills".into(),
-                path: None,
-                bytes: skills
-                    .iter()
-                    .map(|skill| skill.name.len() + skill.description.len())
-                    .sum(),
-            });
-        }
-    }
-    sources
-}
-
-fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> String {
-    let mut out = BASE_SYSTEM_PROMPT.to_string();
-    out.push_str(
+fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
+    let mut text = BASE_SYSTEM_PROMPT.to_string();
+    text.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
 Web access is available through tool schemas; invoke it only when needed and retrieve stored content handles selectively.
@@ -57,14 +47,27 @@ Use structured tool calls when available. Do not write tool calls in prose.
 Do not invent tool results. When done, answer directly.
 "#,
     );
+    let mut sources = vec![PromptSource {
+        kind: PromptSourceKind::Base,
+        path: None,
+        bytes: text.len(),
+    }];
 
     let agent_instructions = agent_instruction_files(cwd, home);
     if !agent_instructions.is_empty() {
-        out.push_str(
+        let start = text.len();
+        text.push_str(
             "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
         );
+        sources[0].bytes += text.len() - start;
         for (path, contents) in agent_instructions {
-            push_context_file(&mut out, "agents_instructions", &path, &contents);
+            let start = text.len();
+            push_context_file(&mut text, "agents_instructions", &path, &contents);
+            sources.push(PromptSource {
+                kind: PromptSourceKind::Agents,
+                path: Some(path.display().to_string()),
+                bytes: text.len() - start,
+            });
         }
     }
 
@@ -74,26 +77,32 @@ Do not invent tool results. When done, answer directly.
         Vec::new()
     };
     if !skills.is_empty() {
-        out.push_str("\nAvailable skills from skill files, in discovery order:\n");
-        out.push_str("Use the skill tool to load a skill when the task matches its description. If a skill references relative paths, resolve them against the skill directory.\n");
-        out.push_str("<available_skills>\n");
+        let start = text.len();
+        text.push_str("\nAvailable skills from skill files, in discovery order:\n");
+        text.push_str("Use the skill tool to load a skill when the task matches its description. If a skill references relative paths, resolve them against the skill directory.\n");
+        text.push_str("<available_skills>\n");
         for skill in skills {
-            out.push_str("  <skill>\n");
-            out.push_str("    <name>");
-            out.push_str(&skill.name);
-            out.push_str("</name>\n");
-            out.push_str("    <description>");
-            out.push_str(&skill.description);
-            out.push_str("</description>\n");
-            out.push_str("    <source>");
-            out.push_str(&skill.source.to_string());
-            out.push_str("</source>\n");
-            out.push_str("  </skill>\n");
+            text.push_str("  <skill>\n");
+            text.push_str("    <name>");
+            text.push_str(&skill.name);
+            text.push_str("</name>\n");
+            text.push_str("    <description>");
+            text.push_str(&skill.description);
+            text.push_str("</description>\n");
+            text.push_str("    <source>");
+            text.push_str(&skill.source.to_string());
+            text.push_str("</source>\n");
+            text.push_str("  </skill>\n");
         }
-        out.push_str("</available_skills>\n");
+        text.push_str("</available_skills>\n");
+        sources.push(PromptSource {
+            kind: PromptSourceKind::Skills,
+            path: None,
+            bytes: text.len() - start,
+        });
     }
 
-    out
+    SystemPrompt { text, sources }
 }
 
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
@@ -150,7 +159,7 @@ mod tests {
         std::fs::write(home.path().join(".rho").join("AGENTS.md"), "home rules").unwrap();
         std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
 
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path()));
+        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
 
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
@@ -177,7 +186,7 @@ mod tests {
         std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
         std::fs::write(child.join("AGENTS.md"), "nested rules").unwrap();
 
-        let prompt = system_prompt_with_home(&[], &child, Some(home.path()));
+        let prompt = system_prompt_with_home(&[], &child, Some(home.path())).text;
 
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
@@ -191,7 +200,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
 
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path()));
+        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
 
         assert!(!prompt.contains("Additional instructions from AGENTS.md files"));
     }
@@ -209,7 +218,7 @@ mod tests {
         .unwrap();
 
         let prompt =
-            system_prompt_with_home(&[skill_tool_spec()], project.path(), Some(home.path()));
+            system_prompt_with_home(&[skill_tool_spec()], project.path(), Some(home.path())).text;
 
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("<name>rho-skill</name>"));
@@ -222,10 +231,47 @@ mod tests {
     }
 
     #[test]
+    fn prompt_sources_partition_the_exact_system_prompt() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir(home.path().join(".rho")).unwrap();
+        std::fs::write(home.path().join(".rho/AGENTS.md"), "home rules").unwrap();
+        let skill_dir = home.path().join(".rho/skills/rho-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: rho-skill\ndescription: rho skill desc\n---\nrules",
+        )
+        .unwrap();
+
+        let prompt =
+            system_prompt_with_home(&[skill_tool_spec()], project.path(), Some(home.path()));
+
+        assert_eq!(
+            prompt
+                .sources
+                .iter()
+                .map(|source| source.bytes)
+                .sum::<usize>(),
+            prompt.text.len()
+        );
+        assert!(prompt.sources[0].bytes > BASE_SYSTEM_PROMPT.len());
+        assert_eq!(prompt.sources[0].kind, PromptSourceKind::Base);
+        assert!(prompt
+            .sources
+            .iter()
+            .any(|source| source.kind == PromptSourceKind::Agents));
+        assert!(prompt
+            .sources
+            .iter()
+            .any(|source| source.kind == PromptSourceKind::Skills));
+    }
+
+    #[test]
     fn keeps_web_access_guidance_concise_and_lazy() {
         let project = TempDir::new().unwrap();
 
-        let prompt = system_prompt_with_home(&[], project.path(), None);
+        let prompt = system_prompt_with_home(&[], project.path(), None).text;
 
         assert!(prompt.contains("Web access is available through tool schemas"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
@@ -244,7 +290,7 @@ mod tests {
         )
         .unwrap();
 
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path()));
+        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
 
         assert!(!prompt.contains("<available_skills>"));
         assert!(!prompt.contains("rho-skill"));

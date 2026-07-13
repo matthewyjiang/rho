@@ -13,7 +13,7 @@ impl std::fmt::Display for SkillSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BuiltIn => formatter.write_str("built in to rho"),
-            Self::File(path) => path.display().fmt(formatter),
+            Self::File(path) => write!(formatter, "{}", path.display()),
         }
     }
 }
@@ -26,7 +26,7 @@ pub struct Skill {
     pub contents: String,
 }
 
-const RHO_DIAGNOSTICS_SKILL: &str = include_str!("builtin_skills/rho-diagnostics/SKILL.md");
+const BUILTIN_SKILLS: &[&str] = &[include_str!("builtin_skills/rho-diagnostics/SKILL.md")];
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
     let home = crate::paths::home_dir();
@@ -47,8 +47,10 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     );
 
     let mut seen = HashSet::new();
-    let mut discovered = vec![read_builtin_skill(RHO_DIAGNOSTICS_SKILL)
-        .expect("embedded rho-diagnostics skill must be valid")];
+    let mut discovered = BUILTIN_SKILLS
+        .iter()
+        .map(|contents| read_builtin_skill(contents).expect("embedded skills must be valid"))
+        .collect::<Vec<_>>();
     discovered.extend(
         roots
             .into_iter()

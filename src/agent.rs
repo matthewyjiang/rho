@@ -92,6 +92,7 @@ pub struct Agent {
     ctx: ToolContext,
     messages: Vec<Message>,
     initial_system_message: Option<Message>,
+    prompt_sources: Vec<crate::prompt::PromptSource>,
     history_sink: Option<Box<dyn HistorySink>>,
     prompt_cache_key: Option<String>,
     compaction: CompactionConfig,
@@ -105,14 +106,17 @@ impl Agent {
     }
 
     pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
-        let initial_system_message = Some(Message::System(system_prompt(&tools.specs(), &ctx.cwd)));
+        let system_prompt = system_prompt(&tools.specs(), &ctx.cwd);
+        let initial_system_message = Some(Message::System(system_prompt.text));
         let messages = initial_system_message.iter().cloned().collect();
+        let prompt_sources = system_prompt.sources;
         Self {
             provider,
             tools,
             ctx,
             messages,
             initial_system_message,
+            prompt_sources,
             history_sink: None,
             prompt_cache_key: None,
             compaction: CompactionConfig::default(),
@@ -129,6 +133,10 @@ impl Agent {
     pub fn without_system_prompt(mut self) -> Self {
         self.messages.clear();
         self.initial_system_message = None;
+        self.prompt_sources.clear();
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.update_prompt_sources(Vec::new());
+        }
         self
     }
 
@@ -136,6 +144,9 @@ impl Agent {
         self.messages = self.initial_messages();
         self.messages.extend(history);
         self.context_tracker.history_replaced();
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.clear_context();
+        }
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -151,10 +162,15 @@ impl Agent {
     }
 
     pub fn set_diagnostics(&mut self, diagnostics: crate::diagnostics::RuntimeDiagnostics) {
+        diagnostics.update_prompt_sources(self.prompt_sources.clone());
+        diagnostics.update_tools(&self.tools.specs());
         self.diagnostics = Some(diagnostics);
     }
 
     pub fn set_compaction_config(&mut self, compaction: CompactionConfig) {
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.update_compaction_config(&compaction);
+        }
         self.compaction = compaction;
     }
 
@@ -171,11 +187,17 @@ impl Agent {
     pub fn replace_provider(&mut self, provider: DynModelProvider) {
         self.provider = provider;
         self.context_tracker.replace_provider();
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.clear_context();
+        }
     }
 
     pub fn set_provider_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
         if self.provider.set_reasoning(reasoning) {
             self.context_tracker.replace_provider();
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.clear_context();
+            }
             true
         } else {
             false
@@ -185,6 +207,9 @@ impl Agent {
     pub fn reset(&mut self) {
         self.messages = self.initial_messages();
         self.context_tracker.reset();
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.clear_context();
+        }
     }
 
     fn initial_messages(&self) -> Vec<Message> {
@@ -275,6 +300,9 @@ impl Agent {
         if ask_questionnaire.is_some() {
             specs.push(questionnaire::tool_spec());
         }
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.update_tools(&specs);
+        }
         self.push_message(Message::User(user_content))?;
 
         let mut step = 1usize;
@@ -302,7 +330,7 @@ impl Agent {
                 .before_provider_request(request_estimate)
             {
                 if let Some(diagnostics) = &self.diagnostics {
-                    diagnostics.update_context(context_usage.clone());
+                    diagnostics.record_context(context_usage.clone());
                 }
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
@@ -333,7 +361,7 @@ impl Agent {
                                 .record_provider_usage(&usage, request_estimate)
                             {
                                 if let Some(diagnostics) = &self.diagnostics {
-                                    diagnostics.update_context(context_usage.clone());
+                                    diagnostics.record_context(context_usage.clone());
                                 }
                                 on_event(AgentEvent::ContextUsage(context_usage))?;
                             }
@@ -719,7 +747,7 @@ impl Agent {
         self.persist_history_replacement()?;
         let context_usage = self.context_tracker.record_compaction();
         if let Some(diagnostics) = &self.diagnostics {
-            diagnostics.update_context(context_usage.clone());
+            diagnostics.record_context(context_usage.clone());
         }
         on_event(AgentEvent::ContextUsage(context_usage))?;
         Ok(true)

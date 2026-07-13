@@ -1527,3 +1527,61 @@ async fn reset_clears_history_back_to_system_prompt() {
         matches!(last[1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "after reset"))
     );
 }
+
+#[test]
+fn without_system_prompt_clears_prompt_source_diagnostics() {
+    let diagnostics = crate::diagnostics::test_diagnostics("openai", "gpt-test");
+    let mut agent = test_agent(RecordingProvider::default());
+    agent.set_diagnostics(diagnostics.clone());
+
+    let before: serde_json::Value =
+        serde_json::from_str(&diagnostics.response("prompt_sources").unwrap()).unwrap();
+    assert!(!before.as_array().unwrap().is_empty());
+
+    let _agent = agent.without_system_prompt();
+
+    assert_eq!(diagnostics.response("prompt_sources").unwrap(), "[]");
+}
+
+#[tokio::test]
+async fn reset_clears_context_diagnostics() {
+    let diagnostics = crate::diagnostics::test_diagnostics("openai", "gpt-test");
+    let mut agent = test_agent(RecordingProvider::default());
+    agent.set_diagnostics(diagnostics.clone());
+
+    agent.run("hello".into()).await.unwrap();
+    assert_ne!(diagnostics.response("context").unwrap(), "null");
+
+    agent.reset();
+
+    assert_eq!(diagnostics.response("context").unwrap(), "null");
+}
+
+#[tokio::test]
+async fn diagnostics_report_questionnaire_only_when_available_to_the_request() {
+    let diagnostics = crate::diagnostics::test_diagnostics("openai", "gpt-test");
+    let mut agent = test_agent(RecordingProvider::default());
+    agent.set_diagnostics(diagnostics.clone());
+    let mut ask_questionnaire = |_request: QuestionnaireRequest| -> QuestionnaireFuture {
+        unreachable!("provider does not call the questionnaire")
+    };
+
+    agent
+        .run_with_content_and_events_questionnaire_and_steering(
+            vec![ContentBlock::Text("hello".into())],
+            |_| Ok(()),
+            Some(&mut ask_questionnaire),
+            || false,
+            || Ok(None),
+        )
+        .await
+        .unwrap();
+
+    let with_questionnaire: Vec<String> =
+        serde_json::from_str(&diagnostics.response("tools").unwrap()).unwrap();
+    assert_eq!(with_questionnaire, [questionnaire::TOOL_NAME]);
+
+    agent.run("again".into()).await.unwrap();
+
+    assert_eq!(diagnostics.response("tools").unwrap(), "[]");
+}

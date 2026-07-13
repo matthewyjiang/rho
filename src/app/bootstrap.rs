@@ -7,7 +7,6 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
     model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider},
-    prompt,
     tool::{ToolContext, ToolRegistry},
     tools, update,
 };
@@ -64,25 +63,22 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Err(error) => return Err(error.into()),
     };
     let cwd = std::env::current_dir()?;
-    let diagnostics = RuntimeDiagnostics::new(&config, Vec::new(), Vec::new());
+    let diagnostics = RuntimeDiagnostics::new(&config);
     let registry = if cli.no_tools {
         ToolRegistry::new()
     } else {
         tools::registry(&config, diagnostics.clone())
     };
-    let tool_specs = registry.specs();
-    diagnostics.update_tools(tool_specs.iter().map(|spec| spec.name.clone()).collect());
-    diagnostics.update_prompt_sources(prompt::prompt_sources(&tool_specs, &cwd));
     let context = ToolContext {
         cwd: cwd.clone(),
         max_output_bytes: config.max_output_bytes,
     };
     let herdr = HerdrReporter::from_env();
     let mut agent = Agent::new(provider, registry, context).with_history(Vec::new());
-    agent.set_diagnostics(diagnostics.clone());
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
     }
+    agent.set_diagnostics(diagnostics.clone());
     agent.set_compaction_config((&config).into());
     agent.set_context_window(
         cached_model_metadata(&config.provider, &config.model)
