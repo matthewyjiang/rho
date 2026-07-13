@@ -30,7 +30,13 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 detail: Some(format!(
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
-                    info.reasoning.next_for_model(&info.provider, &info.model)
+                    info.reasoning.next_supported(
+                        crate::model::models_dev::cached_reasoning_levels(
+                            &info.provider,
+                            &info.model,
+                        )
+                        .as_deref(),
+                    )
                 )),
                 preview: None,
                 badge: Some(PickerBadge {

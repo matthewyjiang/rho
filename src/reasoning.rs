@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningLevel {
     Off,
@@ -23,6 +23,16 @@ pub enum ReasoningLevel {
 pub struct ParseReasoningLevelError(String);
 
 impl ReasoningLevel {
+    pub const ALL: [Self; 7] = [
+        Self::Off,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+    ];
+
     pub fn next(self) -> Self {
         match self {
             Self::Off => Self::Minimal,
@@ -35,38 +45,45 @@ impl ReasoningLevel {
         }
     }
 
-    pub fn next_for_model(self, provider: &str, model: &str) -> Self {
+    pub fn next_supported(self, supported: Option<&[Self]>) -> Self {
+        let Some(supported) = supported else {
+            return self.next();
+        };
+        if supported.is_empty() {
+            return self;
+        }
         let mut next = self.next();
-        while !next.is_supported_by(provider, model) {
+        for _ in 0..Self::ALL.len() {
+            if supported.contains(&next) {
+                return next;
+            }
             next = next.next();
         }
-        next
+        self
     }
 
-    pub fn for_model(self, provider: &str, model: &str) -> Self {
-        if self.is_supported_by(provider, model) {
-            self
-        } else {
-            match self {
-                Self::Max => Self::Xhigh,
-                Self::Off | Self::Minimal | Self::Low | Self::Medium | Self::High | Self::Xhigh => {
-                    self
-                }
-            }
+    pub fn normalize(self, supported: Option<&[Self]>) -> Self {
+        let Some(supported) = supported else {
+            return self;
+        };
+        if supported.is_empty() {
+            return self;
         }
-    }
-
-    pub fn is_supported_by(self, provider: &str, model: &str) -> bool {
-        match self {
-            Self::Max => provider != "openai-codex" || codex_supports_max_effort(model),
-            Self::Off | Self::Minimal | Self::Low | Self::Medium | Self::High | Self::Xhigh => true,
+        if supported.contains(&self) {
+            return self;
         }
+        supported
+            .iter()
+            .copied()
+            .rfind(|level| *level < self)
+            .or_else(|| supported.first().copied())
+            .unwrap_or(self)
     }
 
     pub fn effort(self) -> Option<&'static str> {
         match self {
             Self::Off => None,
-            Self::Minimal => Some("low"),
+            Self::Minimal => Some("minimal"),
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
@@ -78,10 +95,6 @@ impl ReasoningLevel {
     pub fn summary(self) -> Option<&'static str> {
         self.effort().map(|_| "auto")
     }
-}
-
-fn codex_supports_max_effort(model: &str) -> bool {
-    matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna")
 }
 
 impl fmt::Display for ReasoningLevel {

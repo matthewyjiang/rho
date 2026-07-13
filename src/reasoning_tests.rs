@@ -29,7 +29,7 @@ fn cycles_through_all_reasoning_levels() {
 #[test]
 fn maps_reasoning_levels_to_provider_effort() {
     assert_eq!(ReasoningLevel::Off.effort(), None);
-    assert_eq!(ReasoningLevel::Minimal.effort(), Some("low"));
+    assert_eq!(ReasoningLevel::Minimal.effort(), Some("minimal"));
     assert_eq!(ReasoningLevel::Low.effort(), Some("low"));
     assert_eq!(ReasoningLevel::Medium.effort(), Some("medium"));
     assert_eq!(ReasoningLevel::High.effort(), Some("high"));
@@ -38,49 +38,54 @@ fn maps_reasoning_levels_to_provider_effort() {
 }
 
 #[test]
-fn skips_unsupported_max_effort_for_older_codex_models() {
+fn cycles_only_through_supported_levels() {
+    let supported = [
+        ReasoningLevel::Off,
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+    ];
+
     assert_eq!(
-        ReasoningLevel::Xhigh.next_for_model("openai-codex", "gpt-5.5"),
+        ReasoningLevel::Off.next_supported(Some(&supported)),
+        ReasoningLevel::Low
+    );
+    assert_eq!(
+        ReasoningLevel::High.next_supported(Some(&supported)),
+        ReasoningLevel::Off
+    );
+}
+
+#[test]
+fn falls_back_to_full_cycle_without_capability_metadata() {
+    assert_eq!(
+        ReasoningLevel::Off.next_supported(None),
+        ReasoningLevel::Minimal
+    );
+}
+
+#[test]
+fn normalizes_to_nearest_supported_level_without_exceeding_selection() {
+    let supported = [
+        ReasoningLevel::Off,
+        ReasoningLevel::Low,
+        ReasoningLevel::High,
+        ReasoningLevel::Xhigh,
+    ];
+
+    assert_eq!(
+        ReasoningLevel::Minimal.normalize(Some(&supported)),
         ReasoningLevel::Off
     );
     assert_eq!(
-        ReasoningLevel::Max.for_model("openai-codex", "gpt-5.5"),
+        ReasoningLevel::Max.normalize(Some(&supported)),
         ReasoningLevel::Xhigh
     );
 }
 
 #[test]
-fn enables_max_effort_for_gpt_5_6_codex_models() {
-    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-        assert_eq!(
-            ReasoningLevel::Xhigh.next_for_model("openai-codex", model),
-            ReasoningLevel::Max
-        );
-        assert_eq!(
-            ReasoningLevel::Max.for_model("openai-codex", model),
-            ReasoningLevel::Max
-        );
-    }
-}
-
-#[test]
-fn remaps_unsupported_max_effort_before_building_provider() {
-    assert_eq!(
-        crate::model::provider::mapped_reasoning_for_model(
-            "openai-codex",
-            "gpt-5.5",
-            ReasoningLevel::Max,
-        ),
-        ReasoningLevel::Xhigh
-    );
-    assert_eq!(
-        crate::model::provider::mapped_reasoning_for_model(
-            "openai-codex",
-            "gpt-5.6-sol",
-            ReasoningLevel::Max,
-        ),
-        ReasoningLevel::Max
-    );
+fn keeps_selection_without_capability_metadata() {
+    assert_eq!(ReasoningLevel::Max.normalize(None), ReasoningLevel::Max);
 }
 
 #[test]
