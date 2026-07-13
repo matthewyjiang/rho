@@ -36,6 +36,7 @@ pub enum InstallMethod {
     Cargo,
     Pacman,
     Scoop,
+    ScoopGlobal,
     Script,
 }
 
@@ -45,6 +46,7 @@ impl InstallMethod {
             Self::Cargo => "Cargo",
             Self::Pacman => "pacman",
             Self::Scoop => "Scoop",
+            Self::ScoopGlobal => "Scoop (global)",
             Self::Script => "install script",
         }
     }
@@ -53,10 +55,17 @@ impl InstallMethod {
         match self {
             Self::Cargo => cargo_update_command_display(),
             Self::Pacman => pacman_update_command_display(),
-            Self::Scoop => scoop_update_command_display(),
+            Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
+            Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
             Self::Script => script_update_command_display(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScoopInstallScope {
+    User,
+    Global,
 }
 
 #[derive(Deserialize)]
@@ -181,9 +190,9 @@ fn update_command(method: InstallMethod) -> Command {
             command.args(["pacman", "-Syu", PACMAN_PACKAGE]);
             command
         }
-        InstallMethod::Scoop => {
-            let mut command = Command::new("scoop");
-            command.args(["update", SCOOP_PACKAGE]);
+        InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
+            let mut command = Command::new("sh");
+            command.args(["-c", &method.update_command()]);
             command
         }
         InstallMethod::Script => script_update_command(),
@@ -203,8 +212,15 @@ fn pacman_update_command_display() -> String {
     format!("sudo pacman -Syu {PACMAN_PACKAGE}")
 }
 
-fn scoop_update_command_display() -> String {
-    format!("scoop update {SCOOP_PACKAGE}")
+fn scoop_update_command_display(scope: ScoopInstallScope) -> String {
+    // Refresh Scoop/buckets first so a just-published release is visible even when
+    // Scoop's own outdated check would still skip a bucket sync.
+    match scope {
+        ScoopInstallScope::User => format!("scoop update; scoop update {SCOOP_PACKAGE}"),
+        ScoopInstallScope::Global => {
+            format!("scoop update; scoop update -g {SCOOP_PACKAGE}")
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -249,6 +265,7 @@ pub fn detect_install_method() -> InstallMethod {
             "cargo" => return InstallMethod::Cargo,
             "pacman" => return InstallMethod::Pacman,
             "scoop" => return InstallMethod::Scoop,
+            "scoop-global" | "scoop_global" => return InstallMethod::ScoopGlobal,
             "script" | "install-script" => return InstallMethod::Script,
             _ => {}
         }
@@ -264,8 +281,11 @@ pub fn detect_install_method() -> InstallMethod {
     if current_exe.as_deref().is_some_and(is_pacman_owned) {
         return InstallMethod::Pacman;
     }
-    if current_exe.as_deref().is_some_and(is_scoop_install_path) {
-        return InstallMethod::Scoop;
+    if let Some(scope) = current_exe.as_deref().and_then(scoop_install_scope) {
+        return match scope {
+            ScoopInstallScope::User => InstallMethod::Scoop,
+            ScoopInstallScope::Global => InstallMethod::ScoopGlobal,
+        };
     }
     InstallMethod::Script
 }
@@ -367,12 +387,50 @@ fn is_pacman_owned(_path: &Path) -> bool {
     false
 }
 
-fn is_scoop_install_path(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    let lower = normalized.to_ascii_lowercase();
-    lower.contains("/scoop/apps/rho/")
-        || lower.ends_with("/scoop/shims/rho")
-        || lower.ends_with("/scoop/shims/rho.exe")
+fn scoop_install_scope(path: &Path) -> Option<ScoopInstallScope> {
+    scoop_install_scope_for_path(path, scoop_global_roots_from_env())
+}
+
+fn scoop_global_roots_from_env() -> Vec<String> {
+    std::env::var("SCOOP_GLOBAL")
+        .ok()
+        .into_iter()
+        .filter(|root| !root.trim().is_empty())
+        .collect()
+}
+
+fn scoop_install_scope_for_path(
+    path: &Path,
+    global_roots: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<ScoopInstallScope> {
+    let lower = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if !is_scoop_rho_path(&lower) {
+        return None;
+    }
+    for root in global_roots {
+        let root = root
+            .as_ref()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if !root.is_empty() && (lower == root || lower.starts_with(&format!("{root}/"))) {
+            return Some(ScoopInstallScope::Global);
+        }
+    }
+    // Default global Scoop root is %ProgramData%\scoop.
+    if lower.contains("/programdata/scoop/") {
+        return Some(ScoopInstallScope::Global);
+    }
+    Some(ScoopInstallScope::User)
+}
+
+fn is_scoop_rho_path(lower_path: &str) -> bool {
+    lower_path.contains("/scoop/apps/rho/")
+        || lower_path.ends_with("/scoop/shims/rho")
+        || lower_path.ends_with("/scoop/shims/rho.exe")
 }
 
 async fn latest_release_tag() -> anyhow::Result<String> {
@@ -437,8 +495,8 @@ mod tests {
 
     use super::{
         cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
-        is_scoop_install_path, pacman_update_command_display, release_tag_to_version,
-        scoop_update_command_display, version_is_newer, InstallMethod,
+        pacman_update_command_display, release_tag_to_version, scoop_install_scope_for_path,
+        scoop_update_command_display, version_is_newer, InstallMethod, ScoopInstallScope,
     };
 
     #[test]
@@ -498,35 +556,103 @@ mod tests {
     }
 
     #[test]
-    fn scoop_update_command_updates_rho_package() {
-        assert_eq!(scoop_update_command_display(), "scoop update rho");
-        assert_eq!(InstallMethod::Scoop.update_command(), "scoop update rho");
+    fn scoop_update_command_refreshes_buckets_then_updates_rho() {
+        assert_eq!(
+            scoop_update_command_display(ScoopInstallScope::User),
+            "scoop update; scoop update rho"
+        );
+        assert_eq!(
+            InstallMethod::Scoop.update_command(),
+            "scoop update; scoop update rho"
+        );
         assert_eq!(InstallMethod::Scoop.label(), "Scoop");
     }
 
     #[test]
-    fn detects_scoop_apps_and_shims_paths() {
-        assert!(is_scoop_install_path(Path::new(
-            r"C:\Users\me\scoop\apps\rho\current\rho.exe"
-        )));
-        assert!(is_scoop_install_path(Path::new(
-            r"C:\Users\me\scoop\apps\rho\0.26.0\rho.exe"
-        )));
-        assert!(is_scoop_install_path(Path::new(
-            r"C:\Users\me\scoop\shims\rho.exe"
-        )));
-        assert!(is_scoop_install_path(Path::new(
-            "/home/me/scoop/apps/rho/current/rho"
-        )));
-        assert!(!is_scoop_install_path(Path::new(
-            r"C:\Users\me\AppData\Local\Programs\rho\bin\rho.exe"
-        )));
-        assert!(!is_scoop_install_path(Path::new(
-            r"C:\Users\me\scoop\apps\git\current\bin\git.exe"
-        )));
-        assert!(!is_scoop_install_path(Path::new(
-            r"C:\Users\me\.cargo\bin\rho.exe"
-        )));
+    fn scoop_global_update_command_uses_global_flag() {
+        assert_eq!(
+            scoop_update_command_display(ScoopInstallScope::Global),
+            "scoop update; scoop update -g rho"
+        );
+        assert_eq!(
+            InstallMethod::ScoopGlobal.update_command(),
+            "scoop update; scoop update -g rho"
+        );
+        assert_eq!(InstallMethod::ScoopGlobal.label(), "Scoop (global)");
+    }
+
+    #[test]
+    fn detects_user_and_global_scoop_install_paths() {
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\scoop\apps\rho\current\rho.exe"),
+                None::<&str>,
+            ),
+            Some(ScoopInstallScope::User)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\scoop\apps\rho\0.26.0\rho.exe"),
+                None::<&str>,
+            ),
+            Some(ScoopInstallScope::User)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\scoop\shims\rho.exe"),
+                None::<&str>,
+            ),
+            Some(ScoopInstallScope::User)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\ProgramData\scoop\apps\rho\current\rho.exe"),
+                None::<&str>,
+            ),
+            Some(ScoopInstallScope::Global)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\ProgramData\scoop\shims\rho.exe"),
+                None::<&str>,
+            ),
+            Some(ScoopInstallScope::Global)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"D:\tools\apps\rho\current\rho.exe"),
+                [r"D:\tools"],
+            ),
+            None
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"D:\tools\scoop\apps\rho\current\rho.exe"),
+                [r"D:\tools\scoop"],
+            ),
+            Some(ScoopInstallScope::Global)
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\AppData\Local\Programs\rho\bin\rho.exe"),
+                None::<&str>,
+            ),
+            None
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\scoop\apps\git\current\bin\git.exe"),
+                None::<&str>,
+            ),
+            None
+        );
+        assert_eq!(
+            scoop_install_scope_for_path(
+                Path::new(r"C:\Users\me\.cargo\bin\rho.exe"),
+                None::<&str>,
+            ),
+            None
+        );
     }
 
     #[test]
