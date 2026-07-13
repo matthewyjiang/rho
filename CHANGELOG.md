@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.24.1...rho-coding-agent-v0.25.0) (2026-07-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tools:** start_process, poll_process, write_process, stop_process, and list_processes are replaced by the process tool with start, poll, and stop actions. Process stdin writing and listing are no longer supported.
+
+### Features
+
+* **prompt:** strengthen coding agent guidance ([#209](https://github.com/matthewyjiang/rho/issues/209)) ([3056bcc](https://github.com/matthewyjiang/rho/commit/3056bccddbd416943b636ea40dfad3eee7723508))
+* **tui:** add OAuth usage limits command ([#210](https://github.com/matthewyjiang/rho/issues/210)) ([cef1f80](https://github.com/matthewyjiang/rho/commit/cef1f808a913a82161091aef5593ec6893d5fbe9))
+
+
+### Bug Fixes
+
+* address performance, rendering, and correctness audit ([#207](https://github.com/matthewyjiang/rho/issues/207)) ([28d4ac5](https://github.com/matthewyjiang/rho/commit/28d4ac56840ea67479e7ac292494f74495287837))
+
+
+### Code Refactoring
+
+* **tools:** collapse background process controls ([#205](https://github.com/matthewyjiang/rho/issues/205)) ([bfa31ae](https://github.com/matthewyjiang/rho/commit/bfa31ae744ff9d2a3dd45e083f912ebd9d8b5913))
+
 ## [0.24.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.24.0...rho-coding-agent-v0.24.1) (2026-07-12)
 
 
