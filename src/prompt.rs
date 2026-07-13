@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::{skills, tool::ToolSpec};
 
-pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
+pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace.
 
-Match actions to the request: for reviews or diagnoses, inspect and explain; for implementations or fixes, modify files. Continue until resolved. Make reasonable in-scope assumptions, but ask when a missing decision would materially affect the result or require new authority.
+Match actions to the request: for reviews or diagnoses, inspect and explain; for implementations or fixes, modify files. Use available tools as needed and continue until resolved. Make reasonable in-scope assumptions, but ask when a missing decision would materially affect the result or require new authority.
 
 During substantial work, give concise progress updates. Preserve existing work and unrelated changes. Never run destructive commands unless explicitly requested. Verify changes in proportion to risk, then report the outcome and any remaining concerns."#;
 
@@ -13,16 +13,21 @@ pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
     system_prompt_with_home(tools, cwd, home.as_deref())
 }
 
+pub fn system_prompt_with_model(tools: &[ToolSpec], cwd: &Path, model: &str) -> String {
+    system_prompt(tools, cwd).replacen(
+        "You are a coding agent",
+        &format!("You are {model}, a coding agent"),
+        1,
+    )
+}
+
 fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> String {
     let mut out = BASE_SYSTEM_PROMPT.to_string();
     out.push_str(
         r#"
-Use tools only when needed. For questions answerable from context, reply directly.
-Web access is available through tool schemas; invoke it only when needed and retrieve stored content handles selectively.
+For questions answerable from context, reply directly. Use web access only when needed and retrieve stored content selectively.
 
-Use structured tool calls when available. Do not write tool calls in prose.
-
-Do not invent tool results. When done, answer directly.
+Use structured tool calls, not prose. Do not invent tool results.
 "#,
     );
 
@@ -42,8 +47,8 @@ Do not invent tool results. When done, answer directly.
         Vec::new()
     };
     if !skills.is_empty() {
-        out.push_str("\nAvailable skills from skill files, in discovery order:\n");
-        out.push_str("Use the skill tool to load a skill when the task matches its description. If a skill references relative paths, resolve them against the skill directory.\n");
+        out.push_str("\nSkills available through the skill tool:\n");
+        out.push_str("Resolve relative paths against the skill directory.\n");
         out.push_str("<available_skills>\n");
         for skill in skills {
             out.push_str("  <skill>\n");
@@ -109,6 +114,17 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn includes_model_identity() {
+        let project = TempDir::new().unwrap();
+
+        let prompt = system_prompt_with_model(&[], project.path(), "gpt-test");
+
+        assert!(
+            prompt.starts_with("You are gpt-test, a coding agent in the rho coding-agent harness")
+        );
+    }
 
     #[test]
     fn includes_home_and_project_agents_files_in_order() {
@@ -195,7 +211,7 @@ mod tests {
 
         let prompt = system_prompt_with_home(&[], project.path(), None);
 
-        assert!(prompt.contains("Web access is available through tool schemas"));
+        assert!(prompt.contains("Use web access only when needed"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
         assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
     }
