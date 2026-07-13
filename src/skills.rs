@@ -4,12 +4,29 @@ use std::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkillSource {
+    BuiltIn,
+    File(PathBuf),
+}
+
+impl std::fmt::Display for SkillSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BuiltIn => formatter.write_str("built in to rho"),
+            Self::File(path) => path.display().fmt(formatter),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Skill {
     pub name: String,
     pub description: String,
-    pub path: PathBuf,
+    pub source: SkillSource,
     pub contents: String,
 }
+
+const RHO_DIAGNOSTICS_SKILL: &str = include_str!("builtin_skills/rho-diagnostics/SKILL.md");
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
     let home = crate::paths::home_dir();
@@ -30,10 +47,16 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     );
 
     let mut seen = HashSet::new();
-    roots
+    let mut discovered = vec![read_builtin_skill(RHO_DIAGNOSTICS_SKILL)
+        .expect("embedded rho-diagnostics skill must be valid")];
+    discovered.extend(
+        roots
+            .into_iter()
+            .flat_map(|root| skill_paths(&root))
+            .filter_map(|path| read_skill(&path).ok()),
+    );
+    discovered
         .into_iter()
-        .flat_map(|root| skill_paths(&root))
-        .filter_map(|path| read_skill(&path).ok())
         .filter(|skill| seen.insert(skill.name.clone()))
         .collect()
 }
@@ -60,7 +83,19 @@ fn skill_paths(root: &Path) -> Vec<PathBuf> {
 
 fn read_skill(path: &Path) -> anyhow::Result<Skill> {
     let contents = std::fs::read_to_string(path)?;
-    let frontmatter = parse_frontmatter(&contents)?;
+    parse_skill(&contents, SkillSource::File(path.to_path_buf()), Some(path))
+}
+
+fn read_builtin_skill(contents: &str) -> anyhow::Result<Skill> {
+    parse_skill(contents, SkillSource::BuiltIn, None)
+}
+
+fn parse_skill(
+    contents: &str,
+    source: SkillSource,
+    file_path: Option<&Path>,
+) -> anyhow::Result<Skill> {
+    let frontmatter = parse_frontmatter(contents)?;
     let name = frontmatter
         .iter()
         .find(|(key, _)| key == "name")
@@ -74,20 +109,22 @@ fn read_skill(path: &Path) -> anyhow::Result<Skill> {
 
     validate_name(&name)?;
     validate_description(&description)?;
-    let directory_name = path
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow::anyhow!("missing skill directory name"))?;
-    if name != directory_name {
-        anyhow::bail!("skill name must match directory name");
+    if let Some(path) = file_path {
+        let directory_name = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow::anyhow!("missing skill directory name"))?;
+        if name != directory_name {
+            anyhow::bail!("skill name must match directory name");
+        }
     }
 
     Ok(Skill {
         name,
         description,
-        path: path.to_path_buf(),
-        contents,
+        source,
+        contents: contents.into(),
     })
 }
 
@@ -195,6 +232,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn discovers_embedded_rho_diagnostics_skill() {
+        let root = TempDir::new().unwrap();
+
+        let skills = discover_with_home(root.path(), None);
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "rho-diagnostics")
+            .unwrap();
+
+        assert_eq!(skill.source, SkillSource::BuiltIn);
+        assert!(skill.contents.contains("Available actions:"));
+    }
+
+    #[test]
     fn discovers_valid_skills_in_order() {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
@@ -220,7 +271,15 @@ mod tests {
         let skills = discover_with_home(project.path(), Some(home.path()));
 
         let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
-        assert_eq!(names, ["rho-skill", "agent-skill", "project-skill"]);
+        assert_eq!(
+            names,
+            [
+                "rho-diagnostics",
+                "rho-skill",
+                "agent-skill",
+                "project-skill"
+            ]
+        );
     }
 
     #[test]
@@ -239,8 +298,7 @@ mod tests {
 
         let skills = discover_with_home(&child, Some(home.path()));
 
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "project-skill");
+        assert!(skills.iter().any(|skill| skill.name == "project-skill"));
     }
 
     #[test]
@@ -265,8 +323,11 @@ mod tests {
 
         let skills = discover_with_home(&child, Some(home.path()));
 
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].description, "child desc");
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "dup-skill")
+            .unwrap();
+        assert_eq!(skill.description, "child desc");
     }
 
     #[test]
@@ -278,7 +339,8 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert!(skills.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "rho-diagnostics");
     }
 
     #[test]
@@ -288,7 +350,8 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert!(skills.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "rho-diagnostics");
     }
 
     #[test]
@@ -298,7 +361,8 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert!(skills.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "rho-diagnostics");
     }
 
     #[test]
@@ -308,7 +372,8 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert!(skills.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "rho-diagnostics");
     }
 
     #[test]
@@ -324,7 +389,11 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills[0].description, "first line second line");
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "block-skill")
+            .unwrap();
+        assert_eq!(skill.description, "first line second line");
     }
 
     #[test]
@@ -340,7 +409,11 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills[0].description, "first line\nsecond line");
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "chomp-skill")
+            .unwrap();
+        assert_eq!(skill.description, "first line\nsecond line");
     }
 
     #[test]
@@ -362,8 +435,12 @@ mod tests {
 
         let skills = discover_with_home(project.path(), Some(home.path()));
 
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].description, "first desc");
+        let duplicates: Vec<_> = skills
+            .iter()
+            .filter(|skill| skill.name == "dup-skill")
+            .collect();
+        assert_eq!(duplicates.len(), 1);
+        assert_eq!(duplicates[0].description, "first desc");
     }
 
     fn write_skill(root: &Path, relative_dir: &str, name: &str, description: &str) {

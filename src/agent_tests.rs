@@ -508,7 +508,9 @@ fn load_skill_truncates_contents_before_persisting() {
     let skill = crate::skills::Skill {
         name: "long-skill".into(),
         description: "long skill".into(),
-        path: root.path().join(".agents/skills/long-skill/SKILL.md"),
+        source: crate::skills::SkillSource::File(
+            root.path().join(".agents/skills/long-skill/SKILL.md"),
+        ),
         contents: "abcdefghijklmnopqrstuvwxyz".into(),
     };
     let persisted = Arc::new(Mutex::new(Vec::new()));

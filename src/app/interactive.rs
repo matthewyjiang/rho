@@ -18,6 +18,7 @@ pub(super) struct Startup<'a> {
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
     pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
+    pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
 }
 
@@ -29,6 +30,7 @@ pub(super) async fn run(agent: &mut Agent, startup: Startup<'_>) -> anyhow::Resu
         cwd,
         missing_auth_error,
         pending_update_notice,
+        diagnostics,
         herdr,
     } = startup;
     let mut open_resume_picker = false;
@@ -75,6 +77,7 @@ pub(super) async fn run(agent: &mut Agent, startup: Startup<'_>) -> anyhow::Resu
             auth_unavailable: missing_auth_error,
             update_notice: None,
             pending_update_notice,
+            diagnostics,
             herdr,
         },
     )

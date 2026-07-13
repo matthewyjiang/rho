@@ -96,6 +96,7 @@ pub struct Agent {
     prompt_cache_key: Option<String>,
     compaction: CompactionConfig,
     context_tracker: ContextTracker,
+    diagnostics: Option<crate::diagnostics::RuntimeDiagnostics>,
 }
 
 impl Agent {
@@ -116,6 +117,7 @@ impl Agent {
             prompt_cache_key: None,
             compaction: CompactionConfig::default(),
             context_tracker: ContextTracker::default(),
+            diagnostics: None,
         }
     }
 
@@ -146,6 +148,10 @@ impl Agent {
 
     pub fn clear_history_sink(&mut self) {
         self.history_sink = None;
+    }
+
+    pub fn set_diagnostics(&mut self, diagnostics: crate::diagnostics::RuntimeDiagnostics) {
+        self.diagnostics = Some(diagnostics);
     }
 
     pub fn set_compaction_config(&mut self, compaction: CompactionConfig) {
@@ -205,7 +211,7 @@ impl Agent {
         self.push_message(Message::user_text(format!(
             "Loaded skill `{}` from {}:\n\n{}",
             skill.name,
-            skill.path.display(),
+            skill.source,
             truncate(skill.contents.clone(), self.ctx.max_output_bytes)
         )))
     }
@@ -295,6 +301,9 @@ impl Agent {
                 .context_tracker
                 .before_provider_request(request_estimate)
             {
+                if let Some(diagnostics) = &self.diagnostics {
+                    diagnostics.update_context(context_usage.clone());
+                }
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
             let response = match self
@@ -323,6 +332,9 @@ impl Agent {
                                 .context_tracker
                                 .record_provider_usage(&usage, request_estimate)
                             {
+                                if let Some(diagnostics) = &self.diagnostics {
+                                    diagnostics.update_context(context_usage.clone());
+                                }
                                 on_event(AgentEvent::ContextUsage(context_usage))?;
                             }
                             on_event(AgentEvent::Usage(usage))
@@ -706,6 +718,9 @@ impl Agent {
         self.context_tracker.history_replaced();
         self.persist_history_replacement()?;
         let context_usage = self.context_tracker.record_compaction();
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.update_context(context_usage.clone());
+        }
         on_event(AgentEvent::ContextUsage(context_usage))?;
         Ok(true)
     }

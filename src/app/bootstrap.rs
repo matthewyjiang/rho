@@ -4,8 +4,10 @@ use crate::{
     agent::Agent,
     cli::{Cli, Command},
     credentials::OsCredentialStore,
+    diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
     model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider},
+    prompt,
     tool::{ToolContext, ToolRegistry},
     tools, update,
 };
@@ -61,18 +63,23 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Err(error) => return Err(error.into()),
     };
+    let cwd = std::env::current_dir()?;
+    let diagnostics = RuntimeDiagnostics::new(&config, Vec::new(), Vec::new());
     let registry = if cli.no_tools {
         ToolRegistry::new()
     } else {
-        tools::registry(&config)
+        tools::registry(&config, diagnostics.clone())
     };
-    let cwd = std::env::current_dir()?;
+    let tool_specs = registry.specs();
+    diagnostics.update_tools(tool_specs.iter().map(|spec| spec.name.clone()).collect());
+    diagnostics.update_prompt_sources(prompt::prompt_sources(&tool_specs, &cwd));
     let context = ToolContext {
         cwd: cwd.clone(),
         max_output_bytes: config.max_output_bytes,
     };
     let herdr = HerdrReporter::from_env();
     let mut agent = Agent::new(provider, registry, context).with_history(Vec::new());
+    agent.set_diagnostics(diagnostics.clone());
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
     }
@@ -94,6 +101,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     cwd,
                     missing_auth_error,
                     pending_update_notice,
+                    diagnostics,
                     herdr,
                 },
             )

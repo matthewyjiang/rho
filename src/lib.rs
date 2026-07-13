@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod config_writer;
 mod credentials;
+mod diagnostics;
 mod herdr;
 mod keybindings;
 mod model;

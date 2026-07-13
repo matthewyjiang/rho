@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{skills, tool::ToolSpec};
+use crate::{diagnostics::PromptSource, skills, tool::ToolSpec};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -11,6 +11,38 @@ During substantial work, give concise progress updates. Preserve existing work a
 pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
     let home = crate::paths::home_dir();
     system_prompt_with_home(tools, cwd, home.as_deref())
+}
+
+pub fn prompt_sources(tools: &[ToolSpec], cwd: &Path) -> Vec<PromptSource> {
+    let home = crate::paths::home_dir();
+    let mut sources = vec![PromptSource {
+        kind: "base".into(),
+        path: None,
+        bytes: BASE_SYSTEM_PROMPT.len(),
+    }];
+    sources.extend(
+        agent_instruction_files(cwd, home.as_deref())
+            .into_iter()
+            .map(|(path, contents)| PromptSource {
+                kind: "agents".into(),
+                path: Some(path.display().to_string()),
+                bytes: contents.len(),
+            }),
+    );
+    if tools.iter().any(|tool| tool.name == "skill") {
+        let skills = skills::discover_with_home(cwd, home.as_deref());
+        if !skills.is_empty() {
+            sources.push(PromptSource {
+                kind: "skills".into(),
+                path: None,
+                bytes: skills
+                    .iter()
+                    .map(|skill| skill.name.len() + skill.description.len())
+                    .sum(),
+            });
+        }
+    }
+    sources
 }
 
 fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> String {
@@ -53,9 +85,9 @@ Do not invent tool results. When done, answer directly.
             out.push_str("    <description>");
             out.push_str(&skill.description);
             out.push_str("</description>\n");
-            out.push_str("    <path>");
-            out.push_str(&skill.path.display().to_string());
-            out.push_str("</path>\n");
+            out.push_str("    <source>");
+            out.push_str(&skill.source.to_string());
+            out.push_str("</source>\n");
             out.push_str("  </skill>\n");
         }
         out.push_str("</available_skills>\n");
@@ -183,7 +215,7 @@ mod tests {
         assert!(prompt.contains("<name>rho-skill</name>"));
         assert!(prompt.contains("<description>rho skill desc</description>"));
         assert!(prompt.contains(&format!(
-            "<path>{}</path>",
+            "<source>{}</source>",
             skill_dir.join("SKILL.md").display()
         )));
         assert!(!prompt.contains("rho skill rules"));

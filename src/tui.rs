@@ -153,6 +153,7 @@ pub struct TuiInfo {
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
+    pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
 pub struct TuiResult {
@@ -1322,6 +1323,7 @@ impl App {
                         )));
                     }
                 }
+                self.refresh_diagnostics_config()?;
                 self.status = "config saved".into();
                 Ok(true)
             }
@@ -2660,6 +2662,7 @@ impl App {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Info => self.execute_info_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
@@ -3380,6 +3383,7 @@ impl App {
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Info => self.execute_info_command(),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(),
@@ -4036,6 +4040,11 @@ impl App {
             agent.replace_provider(provider);
         }
         self.info.reasoning = reasoning;
+        self.info.diagnostics.update_identity(
+            &self.info.provider,
+            &self.info.model,
+            self.info.reasoning,
+        );
         let save_result = self.info.config_repository.update(|config| {
             config.reasoning = reasoning;
         });
@@ -4049,6 +4058,7 @@ impl App {
         }
         match save_result {
             Ok(()) => {
+                self.refresh_diagnostics_config()?;
                 self.status = format!("reasoning: {reasoning}");
             }
             Err(err) => {
@@ -4065,6 +4075,7 @@ impl App {
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.config_repository, ConfigToggle::CheckForUpdates) {
             Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
+                self.refresh_diagnostics_config()?;
                 if !check_for_updates {
                     self.info.update_notice = None;
                 }
@@ -4098,6 +4109,7 @@ impl App {
     fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.config_repository, ConfigToggle::AutoCompact) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
+                self.refresh_diagnostics_config()?;
                 self.status = if auto_compact {
                     "auto compact: on".into()
                 } else {
@@ -4131,6 +4143,7 @@ impl App {
             ConfigToggle::ShowReasoningOutput,
         ) {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
+                self.refresh_diagnostics_config()?;
                 self.info.show_reasoning_output = show_reasoning_output;
                 self.status = if show_reasoning_output {
                     "reasoning output: shown".into()
@@ -4167,6 +4180,7 @@ impl App {
         else {
             unreachable!("provider cycle returned a mismatched config mutation");
         };
+        self.refresh_diagnostics_config()?;
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.status = format!("web search: {provider}");
         Ok(())
@@ -4203,6 +4217,11 @@ impl App {
         self.info.model = model.clone();
         self.info.reasoning = reasoning;
         self.info.auth = auth.clone();
+        self.info.diagnostics.update_identity(
+            &self.info.provider,
+            &self.info.model,
+            self.info.reasoning,
+        );
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
@@ -4213,6 +4232,7 @@ impl App {
             config.auth = auth.clone();
         }) {
             Ok(()) => {
+                self.refresh_diagnostics_config()?;
                 self.insert_entry(&Entry::Notice(format!(
                         "model switched to {provider_model} with reasoning {reasoning} and saved to config"
                     )),
@@ -4260,6 +4280,12 @@ impl App {
         Ok(())
     }
 
+    fn refresh_diagnostics_config(&self) -> anyhow::Result<()> {
+        let config = self.info.config_repository.load()?;
+        self.info.diagnostics.update_config(&config);
+        Ok(())
+    }
+
     fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
@@ -4269,7 +4295,8 @@ impl App {
             config.provider = self.info.provider.clone();
             config.model = self.info.model.clone();
             config.auth = self.info.auth.clone();
-        })
+        })?;
+        self.refresh_diagnostics_config()
     }
 
     async fn execute_resume_command(
@@ -4388,11 +4415,22 @@ impl App {
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let config = self.info.config_repository.load()?;
+        self.info.diagnostics.update_config(&config);
         self.info.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.info.show_reasoning_output = config.show_reasoning_output;
         self.composer = ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
+        Ok(())
+    }
+
+    fn execute_info_command(&mut self) -> anyhow::Result<()> {
+        let identity = self.info.diagnostics.identity();
+        self.insert_entry(&Entry::Notice(format!(
+            "rho {}\nprovider: {}\nmodel: {}\nreasoning: {}",
+            identity.rho_version, identity.provider, identity.model, identity.reasoning
+        )));
+        self.status = "runtime info".into();
         Ok(())
     }
 
@@ -4424,8 +4462,7 @@ impl App {
         agent.load_skill(&skill)?;
         self.insert_entry(&Entry::Notice(format!(
             "loaded skill {} from {}",
-            skill.name,
-            skill.path.display()
+            skill.name, skill.source
         )));
         self.status = format!("loaded skill {}", skill.name);
         Ok(true)
@@ -5956,6 +5993,7 @@ mod tests {
                 auth_unavailable: None,
                 update_notice: None,
                 pending_update_notice: None,
+                diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
@@ -5963,6 +6001,23 @@ mod tests {
             },
             store,
         )
+    }
+
+    #[test]
+    fn info_command_uses_runtime_diagnostics() {
+        let mut app = test_app();
+
+        app.execute_info_command().unwrap();
+
+        assert!(matches!(
+            app.transcript.last(),
+            Some(Entry::Notice(message))
+                if message.contains("rho ")
+                    && message.contains("provider: openai")
+                    && message.contains("model: gpt-test")
+                    && message.contains("reasoning: medium")
+        ));
+        assert_eq!(app.status, "runtime info");
     }
 
     #[test]
@@ -7038,6 +7093,7 @@ mod tests {
                 auth_unavailable: None,
                 update_notice: None,
                 pending_update_notice: None,
+                diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
