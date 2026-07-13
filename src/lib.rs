@@ -23,6 +23,7 @@ mod tools;
 mod transcript;
 mod tui;
 mod update;
+mod usage_limits;
 mod workspace;
 
 pub use app::run;

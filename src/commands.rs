@@ -15,6 +15,7 @@ pub enum CommandId {
     Skills,
     Diff,
     Doctor,
+    Limits,
     Exit,
 }
 
@@ -118,6 +119,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "doctor",
         usage: "/doctor",
         description: "run local setup diagnostics",
+    },
+    CommandSpec {
+        id: CommandId::Limits,
+        name: "limits",
+        usage: "/limits",
+        description: "show connected OAuth usage limits",
     },
     CommandSpec {
         id: CommandId::Exit,

@@ -302,6 +302,10 @@ impl Theme {
         base.fg(Palette::current().error)
     }
 
+    pub(super) fn limits_block() -> Style {
+        Self::dim_block(Palette::current().neutral_tool_background)
+    }
+
     pub(super) fn tool_default() -> ToolStyle {
         let palette = Palette::current();
         ToolStyle::new(

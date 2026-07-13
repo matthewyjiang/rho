@@ -1,4 +1,5 @@
 use super::{
+    limits_command::usage_limit_lines,
     markdown::{render_markdown, MarkdownCodeBlock},
     theme::{Theme, ToolStyle},
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
@@ -535,6 +536,7 @@ fn render_non_assistant_entry(
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
+        Entry::UsageLimits(limits) => lines.extend(usage_limit_lines(limits, width)),
         Entry::Error(text) => {
             push_wrapped_text(lines, text, width, Theme::error(), LineFill::Natural)
         }
