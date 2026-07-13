@@ -421,7 +421,6 @@ fn model_cost_has_rates(cost: &ModelCost) -> bool {
         || cost.cache_read_micros_per_m.is_some()
         || cost.cache_write_micros_per_m.is_some()
 }
-}
 
 const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
 
@@ -786,6 +785,8 @@ mod tests {
                     cache_read_micros_per_m: Some(1_000_000),
                     cache_write_micros_per_m: None,
                 }),
+                supported_reasoning_levels: None,
+                reasoning_off_behavior: ReasoningOffBehavior::Omit,
             }
         );
         assert_eq!(
