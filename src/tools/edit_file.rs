@@ -31,12 +31,8 @@ impl Tool for EditFile {
     }
 
     fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
-        let paths = input_paths(args);
-        match paths.as_slice() {
-            [] => None,
-            [path] => Some(compact_display_path(&ctx.cwd, path)),
-            paths => Some(format!("{} files", paths.len())),
-        }
+        let paths = display_paths(args, ctx);
+        (!paths.is_empty()).then(|| paths.join(", "))
     }
 
     fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
@@ -58,7 +54,13 @@ impl Tool for EditFile {
                 .unwrap_or_else(|| result.content.clone())
         )];
         if result.ok {
-            if let Some(diff) = super::diff::compact_diff_for_display(&result.content) {
+            let paths = display_paths(args, ctx);
+            let diff = if paths.len() > 1 {
+                super::diff::compact_diff_for_display_with_file_headers(&result.content)
+            } else {
+                super::diff::compact_diff_for_display(&result.content)
+            };
+            if let Some(diff) = diff {
                 lines.push(diff);
             }
         }
@@ -144,6 +146,17 @@ impl Tool for EditFile {
             ),
         })
     }
+}
+
+fn display_paths(args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
+    let mut paths = Vec::new();
+    for path in input_paths(args) {
+        let path = compact_display_path(&ctx.cwd, path);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
 }
 
 fn input_paths(args: &serde_json::Value) -> Vec<&str> {

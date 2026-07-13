@@ -266,8 +266,29 @@ async fn display_lines_keep_the_first_context_line() {
     );
 }
 
+#[tokio::test]
+async fn display_lines_label_each_file_diff() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("first.txt"), "old one\n").unwrap();
+    std::fs::write(ctx.cwd.join("second.txt"), "old two\n").unwrap();
+    let args = json!({"edits": [
+        {"path": "first.txt", "old_string": "old", "new_string": "new"},
+        {"path": "second.txt", "old_string": "old", "new_string": "new"}
+    ]});
+
+    let result = call(args.clone(), ctx.clone()).await.unwrap();
+
+    assert_eq!(
+        EditFile.display_lines(&args, &ctx, &result),
+        vec![
+            "edit_file first.txt, second.txt",
+            "first.txt\n-old one\n+new one\n\nsecond.txt\n-old two\n+new two"
+        ]
+    );
+}
+
 #[test]
-fn display_content_reports_multiple_files() {
+fn display_content_lists_multiple_files() {
     let (_dir, ctx) = test_context();
     let args = json!({"edits": [
         {"path": "first.txt", "old_string": "a", "new_string": "b"},
@@ -277,7 +298,7 @@ fn display_content_reports_multiple_files() {
 
     assert_eq!(
         EditFile.display_content(&args, &ctx),
-        Some("2 files".into())
+        Some("first.txt, second.txt".into())
     );
 }
 
