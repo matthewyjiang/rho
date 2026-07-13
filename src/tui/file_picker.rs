@@ -105,6 +105,7 @@ fn matching_file_paths_with_home(cwd: &Path, query: &str, home: Option<&Path>) -
     Arc::new(fuzzy_matching_paths(paths.as_slice(), query))
 }
 
+#[cfg(test)]
 pub(super) fn workspace_file_paths(cwd: &Path) -> Arc<Vec<String>> {
     file_paths_for_root(cwd, /*include_hidden*/ false)
 }
