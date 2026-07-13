@@ -75,7 +75,7 @@ impl Tool for EditFile {
             ));
         }
         let path = resolve_path(&ctx.cwd, &args.path);
-        let content = std::fs::read_to_string(&path)?;
+        let content = tokio::fs::read_to_string(&path).await?;
         let spans = replacement_spans(&content, &args.old_string);
         let count = spans.len();
         if count == 0 {
@@ -94,7 +94,7 @@ impl Tool for EditFile {
             &compact_display_path(&ctx.cwd, &args.path),
             false,
         );
-        std::fs::write(&path, new_content)?;
+        tokio::fs::write(&path, new_content).await?;
         Ok(ToolResult {
             id,
             ok: true,

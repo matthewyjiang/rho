@@ -1,10 +1,14 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
+
+static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
+    OnceLock::new();
 
 use crate::model::Message;
 
@@ -20,6 +24,9 @@ pub(super) fn list_workspace_sessions(
 ) -> anyhow::Result<Vec<SessionSummary>> {
     sync_workspace(session_root, cwd)?;
     let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
@@ -38,6 +45,9 @@ pub(super) fn matching_session_paths(
     id_prefix: &str,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select path
@@ -58,6 +68,9 @@ pub(super) fn matching_session_paths(
 
 pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<()> {
     let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let dir = session_dir_in_root(session_root, cwd);
     let mut seen = HashSet::new();
@@ -90,8 +103,38 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
     Ok(())
 }
 
+pub(super) fn sync_session_file(
+    session_root: &Path,
+    cwd: &Path,
+    path: &Path,
+) -> anyhow::Result<()> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let id = session_id_from_path(path)
+        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
+    let workspace_key = workspace_key(cwd);
+    let (file_size, file_mtime) = session_file_stats(path);
+    if !indexed_file_is_current(
+        &connection,
+        &workspace_key,
+        &id,
+        path,
+        file_size,
+        file_mtime,
+    )? {
+        let record = summarize_session_file(path, cwd)?;
+        upsert_record(&connection, &workspace_key, &record)?;
+    }
+    Ok(())
+}
+
 pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let (file_size, file_mtime) = session_file_stats(&session.path);
     let record = SessionIndexRecord {
         summary: SessionSummary {
@@ -117,9 +160,12 @@ pub(super) fn set_title(
     id_prefix: &str,
     title: &str,
 ) -> anyhow::Result<()> {
-    let connection = open_index(session_root)?;
-    let workspace_key = workspace_key(cwd);
     let paths = matching_session_paths(session_root, cwd, id_prefix)?;
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let workspace_key = workspace_key(cwd);
     match paths.as_slice() {
         [] => anyhow::bail!("no session found matching '{id_prefix}'"),
         [path] => {
@@ -138,6 +184,9 @@ pub(super) fn set_title(
 
 pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let updated_at = clamp_u64_to_i64(unix_timestamp_secs());
     let user_message = user_message_text(message);
     let (file_size, file_mtime) = session_file_stats(&session.path);
@@ -168,14 +217,22 @@ pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Re
 
 pub(super) fn record_replaced(session: &Session) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
     let record = summarize_session_file(&session.path, &session.cwd)?;
     upsert_record(&connection, &session.workspace_key, &record)
 }
 
-fn open_index(session_root: &Path) -> anyhow::Result<Connection> {
+fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
+    let path = session_root.join("index.sqlite3");
+    let connections = INDEX_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut connections = connections.lock().expect("session index cache poisoned");
+    if let Some(connection) = connections.get(&path) {
+        return Ok(Arc::clone(connection));
+    }
     fs::create_dir_all(session_root)?;
     set_private_dir_permissions(session_root)?;
-    let path = session_root.join("index.sqlite3");
     let connection = Connection::open(&path)?;
     set_private_file_permissions(&path)?;
     connection.execute_batch(
@@ -201,6 +258,8 @@ fn open_index(session_root: &Path) -> anyhow::Result<Connection> {
     )?;
     ensure_column(&connection, "title text")?;
     ensure_column(&connection, "first_user_message text")?;
+    let connection = Arc::new(Mutex::new(connection));
+    connections.insert(path, Arc::clone(&connection));
     Ok(connection)
 }
 
@@ -373,6 +432,7 @@ mod tests {
     fn open_index_creates_schema() {
         let root = TempDir::new().unwrap();
         let connection = open_index(root.path()).unwrap();
+        let connection = connection.lock().unwrap();
 
         let table_count: i64 = connection
             .query_row(

@@ -143,13 +143,13 @@ impl Tool for Bash {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
-        process_group.disarm();
-        while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-            match kind {
-                StreamKind::Stdout => stdout.extend(bytes),
-                StreamKind::Stderr => stderr.extend(bytes),
-            }
-        }
+        process_group.kill();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
+        )
+        .await;
+        drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
 
         let elapsed_secs = start.elapsed().as_secs_f64();
         let exit_code = status
@@ -183,10 +183,6 @@ impl ProcessGroupGuard {
 
     fn kill(&mut self) {
         kill_process_group(self.pid.take());
-    }
-
-    fn disarm(&mut self) {
-        self.pid = None;
     }
 }
 
@@ -330,7 +326,7 @@ mod tests {
     async fn timeout_error_includes_partial_output() {
         let err = Bash::new(false)
             .call(
-                json!({"command": "printf 'started\\n'; sleep 10", "timeout_seconds": 2}),
+                json!({"command": "printf 'started\\n'; sleep 10", "timeout_seconds": 5}),
                 test_context(),
                 "call_1".into(),
             )
@@ -338,7 +334,7 @@ mod tests {
             .unwrap_err();
 
         let message = err.to_string();
-        assert!(message.contains("timed out after 2s"));
+        assert!(message.contains("timed out after 5s"));
         assert!(message.contains("started"));
     }
 
@@ -399,3 +395,7 @@ mod tests {
         assert!(!marker.exists(), "background process survived the timeout");
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "bash_output_tests.rs"]
+mod output_tests;

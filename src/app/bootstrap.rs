@@ -36,18 +36,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
     validate_terminal_mode(&cli)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
-    let update_notice = if cli.command.is_none() && config.check_for_updates {
-        update::update_notice(env!("CARGO_PKG_VERSION")).await
-    } else {
-        None
-    };
-
-    if config.provider == "anthropic"
+    if automation_prompt.is_some()
+        && config.provider == "anthropic"
         && cached_model_metadata(&config.provider, &config.model).is_none()
     {
         let _ =
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
+    let pending_update_notice = (cli.command.is_none() && config.check_for_updates)
+        .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
     let provider_result = build_provider(&config.provider, &config.model, config.reasoning);
     let missing_auth_error = provider_result
@@ -96,7 +93,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     config_repository,
                     cwd,
                     missing_auth_error,
-                    update_notice,
+                    pending_update_notice,
                     herdr,
                 },
             )

@@ -14,6 +14,15 @@ use super::{
     theme::Theme,
 };
 
+pub(super) fn update_code_block_state(text: &str, in_code_block: &mut bool) {
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            *in_code_block = !*in_code_block;
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn push_wrapped_markdown(
     lines: &mut Vec<Line<'static>>,
     text: &str,

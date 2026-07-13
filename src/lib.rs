@@ -5,7 +5,11 @@ mod cli;
 mod clipboard_image;
 mod commands;
 mod config;
+mod config_writer;
 mod credentials;
+#[cfg(test)]
+#[path = "fixes_validation_tests.rs"]
+mod fixes_validation_tests;
 mod herdr;
 mod keybindings;
 mod model;

@@ -6,6 +6,8 @@ use super::convert::{convert_content_blocks, usage_to_model_usage};
 use super::types::{AnthropicContentBlock, AnthropicUsage};
 use crate::provider_backend::line_decoder::LineDecoder;
 
+const MAX_STREAM_BLOCK_INDEX: usize = 4096;
+
 #[derive(Default)]
 pub(super) struct AnthropicSseState {
     blocks: Vec<StreamedBlock>,
@@ -199,11 +201,21 @@ pub(super) fn handle_anthropic_stream_line(
 }
 
 fn content_index(value: &serde_json::Value) -> Result<usize, ModelError> {
-    value
+    let index = value
         .get("index")
         .and_then(|index| index.as_u64())
-        .map(|index| index as usize)
-        .ok_or_else(|| ModelError::InvalidResponse("Anthropic stream event missing index".into()))
+        .ok_or_else(|| {
+            ModelError::InvalidResponse("Anthropic stream event missing index".into())
+        })?;
+    let index = usize::try_from(index).map_err(|_| {
+        ModelError::InvalidResponse(format!("stream block index {index} out of range"))
+    })?;
+    if index > MAX_STREAM_BLOCK_INDEX {
+        return Err(ModelError::InvalidResponse(format!(
+            "stream block index {index} out of range"
+        )));
+    }
+    Ok(index)
 }
 
 fn parse_usage(value: &serde_json::Value) -> Option<AnthropicUsage> {
@@ -370,3 +382,7 @@ mod tests {
         assert!(err.to_string().contains("bad request"));
     }
 }
+
+#[cfg(test)]
+#[path = "stream_index_tests.rs"]
+mod stream_index_tests;

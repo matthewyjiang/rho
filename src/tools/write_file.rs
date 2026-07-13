@@ -66,14 +66,15 @@ impl Tool for WriteFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
-        let (old_content, existing_file_is_unreadable) = match std::fs::read_to_string(&path) {
-            Ok(content) => (Some(content), false),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, false),
-            Err(_) => (None, true),
-        };
+        let (old_content, existing_file_is_unreadable) =
+            match tokio::fs::read_to_string(&path).await {
+                Ok(content) => (Some(content), false),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, false),
+                Err(_) => (None, true),
+            };
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         let diff = if existing_file_is_unreadable {
@@ -86,7 +87,7 @@ impl Tool for WriteFile {
                 old_content.is_none(),
             )
         };
-        std::fs::write(&path, args.content)?;
+        tokio::fs::write(&path, args.content).await?;
 
         let action = if old_content.is_some() || existing_file_is_unreadable {
             "wrote"

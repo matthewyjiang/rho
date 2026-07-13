@@ -46,8 +46,8 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
     let response = provider
         .send_turn_stream(
             ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &[Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: None,
             },
             &mut |event| {
@@ -67,4 +67,24 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
         events.as_slice(),
         [ModelEvent::OutputDelta(delta)] if delta == "hello"
     ));
+}
+
+#[test]
+fn rejects_out_of_range_tool_call_index() {
+    let mut text = String::new();
+    let mut tool_calls = Vec::new();
+    let err = super::stream::handle_openai_stream_line(
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":4000000000}]}}]}"#,
+        &mut text,
+        &mut tool_calls,
+        &mut |_| Ok(()),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        crate::model::ModelError::InvalidResponse(message)
+            if message == "stream block index 4000000000 out of range"
+    ));
+    assert!(tool_calls.is_empty());
 }

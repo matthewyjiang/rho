@@ -38,9 +38,8 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
-                let history_len = self.history_len(width, now);
                 let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
+                    self.visible_history_start(layout.history_len, layout.history.height as usize);
                 let targets = self.code_block_copy_targets(width);
                 let code_target =
                     code_block_copy_target_at(&targets, layout.history, history_start, column, row);
@@ -84,9 +83,8 @@ impl App {
                         self.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
                     }
                 } else {
-                    let history_len = self.history_len(width, now);
-                    let history_start =
-                        self.visible_history_start(history_len, layout.history.height as usize);
+                    let history_start = self
+                        .visible_history_start(layout.history_len, layout.history.height as usize);
                     let targets = self.code_block_copy_targets(width);
                     self.hovered_code_block_copy = code_block_copy_target_at(
                         &targets,
@@ -108,9 +106,8 @@ impl App {
                 let was_scrollbar_drag = self.history_scrollbar_drag.take().is_some();
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let history_len = self.history_len(width, now);
                 let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
+                    self.visible_history_start(layout.history_len, layout.history.height as usize);
                 let targets = self.code_block_copy_targets(width);
                 self.hovered_code_block_copy =
                     code_block_copy_target_at(&targets, layout.history, history_start, column, row)
@@ -137,16 +134,23 @@ impl App {
                     }
                 }
             }
+            MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
+                self.last_mouse_position = Some((column, row));
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let history_len = self.history_len(width, now);
                 let history_start =
-                    self.visible_history_start(history_len, layout.history.height as usize);
-                let targets = self.code_block_copy_targets(width);
-                self.hovered_code_block_copy =
+                    self.visible_history_start(layout.history_len, layout.history.height as usize);
+                self.hovered_code_block_copy = if layout
+                    .history
+                    .contains(ratatui::layout::Position { x: column, y: row })
+                {
+                    let targets = self.code_block_copy_targets(width);
                     code_block_copy_target_at(&targets, layout.history, history_start, column, row)
-                        .map(|target| target.line);
+                        .map(|target| target.line)
+                } else {
+                    None
+                };
             }
             MouseEventKind::Down(MouseButton::Right)
             | MouseEventKind::Down(MouseButton::Middle)

@@ -1,4 +1,33 @@
-use regex::RegexBuilder;
+use regex::{Regex, RegexBuilder};
+use std::{
+    cell::{Ref, RefCell},
+    ops::Deref,
+};
+
+#[derive(Debug)]
+pub(super) struct PickerMatches<'a>(Ref<'a, Vec<usize>>);
+
+impl Deref for PickerMatches<'_> {
+    type Target = Vec<usize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PartialEq<Vec<usize>> for PickerMatches<'_> {
+    fn eq(&self, other: &Vec<usize>) -> bool {
+        self.0.as_slice() == other.as_slice()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PickerMatchCache {
+    initialized: bool,
+    filter: String,
+    _regex: Option<Regex>,
+    indices: Vec<usize>,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct UiPicker {
@@ -8,6 +37,7 @@ pub(super) struct UiPicker {
     pub(super) selected: usize,
     pub(super) filter: String,
     pub(super) action: PickerAction,
+    matches: RefCell<PickerMatchCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,35 +105,42 @@ impl UiPicker {
             selected: 0,
             filter: String::new(),
             action,
+            matches: RefCell::default(),
         }
     }
 
     pub(super) fn select_previous(&mut self) {
-        let matches = self.matching_indices();
-        if matches.is_empty() {
-            return;
-        }
-        let position = matches
-            .iter()
-            .position(|index| *index == self.selected)
-            .unwrap_or(0);
-        self.selected = if position == 0 {
-            *matches.last().unwrap()
-        } else {
-            matches[position - 1]
+        let next = {
+            let matches = self.matching_indices();
+            if matches.is_empty() {
+                return;
+            }
+            let position = matches
+                .iter()
+                .position(|index| *index == self.selected)
+                .unwrap_or(0);
+            if position == 0 {
+                *matches.last().unwrap()
+            } else {
+                matches[position - 1]
+            }
         };
+        self.selected = next;
     }
 
     pub(super) fn select_next(&mut self) {
-        let matches = self.matching_indices();
-        if matches.is_empty() {
-            return;
-        }
-        let position = matches
-            .iter()
-            .position(|index| *index == self.selected)
-            .unwrap_or(0);
-        self.selected = matches[(position + 1) % matches.len()];
+        let next = {
+            let matches = self.matching_indices();
+            if matches.is_empty() {
+                return;
+            }
+            let position = matches
+                .iter()
+                .position(|index| *index == self.selected)
+                .unwrap_or(0);
+            matches[(position + 1) % matches.len()]
+        };
+        self.selected = next;
     }
 
     pub(super) fn push_filter_char(&mut self, ch: char) {
@@ -133,25 +170,60 @@ impl UiPicker {
     }
 
     pub(super) fn select_first_match(&mut self) {
-        if let Some(index) = self.matching_indices().first().copied() {
+        let first = self.matching_indices().first().copied();
+        if let Some(index) = first {
             self.selected = index;
         }
     }
 
-    pub(super) fn matching_indices(&self) -> Vec<usize> {
-        match self.action {
-            PickerAction::SelectModel
-            | PickerAction::SelectTitleModel
-            | PickerAction::InsertFilePath => {
-                fuzzy_picker_matching_indices(&self.items, &self.filter)
-            }
-            PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ResumeSession
-            | PickerAction::Config
-            | PickerAction::Doctor => picker_matching_indices(&self.items, &self.filter),
+    pub(super) fn matching_indices(&self) -> PickerMatches<'_> {
+        let stale = {
+            let cache = self.matches.borrow();
+            !cache.initialized || cache.filter != self.filter
+        };
+        if stale {
+            let filter = self.filter.trim();
+            let regex = match self.action {
+                PickerAction::SelectModel
+                | PickerAction::SelectTitleModel
+                | PickerAction::InsertFilePath => None,
+                PickerAction::LoginProvider
+                | PickerAction::LogoutProvider
+                | PickerAction::InsertSkillCommand
+                | PickerAction::ResumeSession
+                | PickerAction::Config
+                | PickerAction::Doctor => (!filter.is_empty())
+                    .then(|| {
+                        RegexBuilder::new(filter)
+                            .case_insensitive(true)
+                            .build()
+                            .ok()
+                    })
+                    .flatten(),
+            };
+            let indices = match self.action {
+                PickerAction::SelectModel
+                | PickerAction::SelectTitleModel
+                | PickerAction::InsertFilePath => {
+                    fuzzy_picker_matching_indices(&self.items, filter)
+                }
+                PickerAction::LoginProvider
+                | PickerAction::LogoutProvider
+                | PickerAction::InsertSkillCommand
+                | PickerAction::ResumeSession
+                | PickerAction::Config
+                | PickerAction::Doctor => {
+                    picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
+                }
+            };
+            *self.matches.borrow_mut() = PickerMatchCache {
+                initialized: true,
+                filter: self.filter.clone(),
+                _regex: regex,
+                indices,
+            };
         }
+        PickerMatches(Ref::map(self.matches.borrow(), |cache| &cache.indices))
     }
 
     pub(super) fn selected_item(&self) -> Option<&PickerItem> {
@@ -162,13 +234,15 @@ impl UiPicker {
     }
 }
 
-pub(super) fn picker_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
-    let filter = filter.trim();
+fn picker_matching_indices_with_regex(
+    items: &[PickerItem],
+    filter: &str,
+    regex: Option<&Regex>,
+) -> Vec<usize> {
     if filter.is_empty() {
         return (0..items.len()).collect();
     }
-
-    let Ok(regex) = RegexBuilder::new(filter).case_insensitive(true).build() else {
+    let Some(regex) = regex else {
         return Vec::new();
     };
 

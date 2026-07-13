@@ -59,13 +59,13 @@ pub struct ImageContent {
 }
 
 #[derive(Clone, Debug)]
-pub struct ModelRequest {
-    pub messages: Vec<Message>,
-    pub tools: Vec<ToolSpec>,
+pub struct ModelRequest<'a> {
+    pub messages: &'a [Message],
+    pub tools: &'a [ToolSpec],
     /// Provider-specific prompt cache key metadata.
     ///
     /// Providers must opt in explicitly when their API supports this field.
-    pub prompt_cache_key: Option<String>,
+    pub prompt_cache_key: Option<&'a str>,
 }
 
 #[derive(Clone, Debug)]
@@ -162,11 +162,11 @@ pub trait ModelProvider: Send + Sync {
         false
     }
 
-    async fn send_turn(&self, request: ModelRequest) -> Result<ModelResponse, ModelError>;
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError>;
 
     async fn send_turn_stream(
         &self,
-        request: ModelRequest,
+        request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
         let response = self.send_turn(request).await?;

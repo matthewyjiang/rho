@@ -373,6 +373,43 @@ pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) ->
     }
 }
 
+pub(super) fn char_prefix_display_width(value: &str, cursor: usize) -> usize {
+    value
+        .chars()
+        .take(cursor)
+        .map(char_display_width)
+        .sum::<usize>()
+}
+
+pub(super) fn input_cursor_index_on_visual_line(
+    input: &str,
+    visual_lines: &[String],
+    target_row: usize,
+    target_column: usize,
+) -> usize {
+    let mut line_start = 0;
+    for line in visual_lines.iter().take(target_row) {
+        line_start += line.chars().count();
+        if input.chars().nth(line_start) == Some('\n') {
+            line_start += 1;
+        }
+    }
+
+    let mut cursor = line_start;
+    let mut column = 0;
+    if let Some(line) = visual_lines.get(target_row) {
+        for ch in line.chars() {
+            let next_column = column + char_display_width(ch);
+            if next_column > target_column {
+                break;
+            }
+            column = next_column;
+            cursor += 1;
+        }
+    }
+    cursor
+}
+
 pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -394,6 +431,33 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
 pub(super) struct RenderedEntry {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) code_blocks: Vec<MarkdownCodeBlock>,
+}
+
+pub(super) fn tool_entry_lines(
+    tool: &super::ToolEntry,
+    width: usize,
+    max_tool_output_lines: usize,
+) -> Vec<Line<'static>> {
+    let inner_width = padded_inner_width(width);
+    let mut lines = Vec::new();
+    push_tool_block(
+        &mut lines,
+        &tool.display_lines,
+        tool.state,
+        inner_width,
+        max_tool_output_lines,
+        tool.expanded,
+    );
+    let style = lines
+        .first()
+        .and_then(|line| line.spans.first())
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut padded = Vec::with_capacity(lines.len() + 2);
+    padded.push(styled_blank_line(width, style));
+    padded.extend(lines.into_iter().map(pad_line));
+    padded.push(styled_blank_line(width, style));
+    padded
 }
 
 pub(super) fn entry_lines(

@@ -71,7 +71,7 @@ use config_editor::{
 };
 use copy_interaction::CodeBlockCopyTarget;
 use goal::GoalState;
-use markdown::{push_wrapped_markdown, push_wrapped_markdown_without_copy_button};
+use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use questionnaire::{
@@ -80,8 +80,9 @@ use questionnaire::{
     QuestionnaireResponseChannel,
 };
 use render::{
-    display_width, entry_lines, input_cursor_position, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
+    input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
+    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
@@ -150,6 +151,7 @@ pub struct TuiInfo {
     pub(crate) config_repository: ConfigRepository,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
+    pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub herdr: HerdrReporter,
 }
 pub struct TuiResult {
@@ -213,12 +215,19 @@ struct ScreenLayout {
     statusline: Rect,
     commands: Rect,
     composer_start: usize,
+    history_len: usize,
 }
 struct LiveStreamPreview {
     kind: StreamKind,
     text: String,
     include_leading_blank: bool,
 }
+struct SessionHeaderCache {
+    width: usize,
+    update_notice: Option<String>,
+    lines: Vec<Line<'static>>,
+}
+
 struct App {
     info: TuiInfo,
     statusline: StatusLine,
@@ -267,6 +276,7 @@ struct App {
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
     history_scroll: HistoryScroll,
@@ -277,6 +287,8 @@ struct App {
     text_selection: Option<TextSelection>,
     copy_notice: Option<CopyNotice>,
     clipboard: Box<dyn ClipboardWriter + Send>,
+    session_header_cache: Option<SessionHeaderCache>,
+    last_mouse_position: Option<(u16, u16)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -585,6 +597,7 @@ impl App {
             .map(|_| "no providers configured; run /login to sign in".into())
             .unwrap_or_else(|| "ready".into());
         let active_turn_show_reasoning_output = info.show_reasoning_output;
+        let pending_update_notice = info.pending_update_notice.take();
         let statusline = StatusLine::new(&info);
         Self {
             info,
@@ -634,6 +647,7 @@ impl App {
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_update_notice,
             pending_model_selection: None,
             pending_session_title: None,
             history_scroll: HistoryScroll::Bottom,
@@ -644,6 +658,8 @@ impl App {
             text_selection: None,
             copy_notice: None,
             clipboard: Box::new(TerminalClipboard),
+            session_header_cache: None,
+            last_mouse_position: None,
         }
     }
 
@@ -663,19 +679,48 @@ impl App {
                 "no providers configured. run /login to sign in.".into(),
             ));
         }
+        let mut needs_redraw = true;
         while !self.should_quit {
+            let background_ready = self
+                .pending_model_metadata
+                .as_ref()
+                .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_update_notice
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_oauth_login
+                    .as_ref()
+                    .is_some_and(|pending| pending.handle.is_finished());
             self.poll_model_metadata_fetch(agent);
-            self.poll_pending_session_title()?;
+            self.poll_update_notice();
+            needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
+            needs_redraw |= background_ready;
             if !event::poll(Duration::from_millis(0))? {
-                self.flush_due_paste_burst();
+                needs_redraw |= self.flush_due_paste_burst();
             }
-            terminal.draw(|frame| self.draw(frame))?;
-            if event::poll(self.event_poll_timeout(Duration::from_millis(100)))? {
+            if needs_redraw {
+                terminal.draw(|frame| self.draw(frame))?;
+                needs_redraw = false;
+            }
+            let idle_timeout = if self.pending_model_metadata.is_some()
+                || self.pending_update_notice.is_some()
+                || self.pending_session_title.is_some()
+                || self.pending_oauth_login.is_some()
+            {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(3600)
+            };
+            let redraw_on_timeout = self.animation_active(Instant::now());
+            if event::poll(self.event_poll_timeout(idle_timeout))? {
                 let mut event_count = 0;
                 loop {
                     let event = event::read()?;
                     self.handle_terminal_event(event, terminal, agent).await?;
+                    needs_redraw = true;
                     event_count += 1;
                     if self.should_quit
                         || event_count >= MAX_TERMINAL_EVENTS_PER_TICK
@@ -685,7 +730,8 @@ impl App {
                     }
                 }
             } else {
-                self.flush_due_paste_burst();
+                needs_redraw |= self.flush_due_paste_burst();
+                needs_redraw |= redraw_on_timeout;
             }
         }
         Ok(TuiResult {
@@ -749,9 +795,25 @@ impl App {
             .map_or(timeout, |remaining| remaining.min(timeout))
     }
 
-    fn flush_due_paste_burst(&mut self) {
+    fn animation_active(&self, now: Instant) -> bool {
+        self.loading_active()
+            || self
+                .copy_notice
+                .as_ref()
+                .is_some_and(|notice| now < notice.visible_until())
+            || self.history_scrollbar_hovered
+            || self.history_scrollbar_drag.is_some()
+            || self
+                .history_scrollbar_visible_until
+                .is_some_and(|until| now < until)
+    }
+
+    fn flush_due_paste_burst(&mut self) -> bool {
         if self.paste_burst.is_due(Instant::now()) {
             self.flush_pending_paste_burst();
+            true
+        } else {
+            false
         }
     }
 
@@ -1031,6 +1093,19 @@ impl App {
         Ok(())
     }
 
+    fn poll_update_notice(&mut self) {
+        let Some(handle) = self.pending_update_notice.as_mut() else {
+            return;
+        };
+        let Some(result) = handle.now_or_never() else {
+            return;
+        };
+        self.pending_update_notice = None;
+        if let Ok(Some(notice)) = result {
+            self.info.update_notice = Some(notice);
+        }
+    }
+
     fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
@@ -1065,26 +1140,26 @@ impl App {
         }
     }
 
-    fn poll_pending_session_title(&mut self) -> anyhow::Result<()> {
+    fn poll_pending_session_title(&mut self) -> anyhow::Result<bool> {
         let Some(future) = self.pending_session_title.as_mut() else {
-            return Ok(());
+            return Ok(false);
         };
         let waker = noop_waker_ref();
         let mut context = std::task::Context::from_waker(waker);
         let std::task::Poll::Ready(result) = future.as_mut().poll(&mut context) else {
-            return Ok(());
+            return Ok(false);
         };
         self.pending_session_title = None;
         let Ok(title) = result.title else {
-            return Ok(());
+            return Ok(false);
         };
         if Session::set_title(&self.info.cwd, &result.session_id, &title).is_err() {
-            return Ok(());
+            return Ok(false);
         }
         if self.info.session_id.as_deref() == Some(result.session_id.as_str()) {
             self.insert_entry(&Entry::Notice(format!("session titled: {title}")));
         }
-        Ok(())
+        Ok(true)
     }
 
     fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
@@ -1636,15 +1711,16 @@ impl App {
             return;
         }
 
-        let width = terminal_width.max(1);
-        match direction {
-            HistoryDirection::Previous => {
-                self.input_cursor = self.input_cursor.saturating_sub(width);
-            }
-            HistoryDirection::Next => {
-                self.input_cursor = (self.input_cursor + width).min(self.input_char_len());
-            }
-        }
+        let target_row = match direction {
+            HistoryDirection::Previous => cursor_position.y.saturating_sub(1) as usize,
+            HistoryDirection::Next => cursor_position.y as usize + 1,
+        };
+        self.input_cursor = input_cursor_index_on_visual_line(
+            &self.input,
+            &visual_lines,
+            target_row,
+            cursor_position.x as usize,
+        );
     }
 
     fn recall_last_queued_prompt(&mut self) -> bool {
@@ -3236,17 +3312,11 @@ impl App {
         fragment: StreamFragment,
         kind: StreamKind,
     ) -> std::io::Result<()> {
+        let _ = terminal;
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            let width = terminal.size()?.width as usize;
             if matches!(kind, StreamKind::Assistant) {
-                let mut text_lines = Vec::new();
-                push_wrapped_markdown(
-                    &mut text_lines,
-                    render_text,
-                    padded_content_width(width),
-                    &mut self.assistant_stream_in_code_block,
-                );
+                update_code_block_state(render_text, &mut self.assistant_stream_in_code_block);
             }
             self.last_inserted_was_tool = false;
         }
@@ -4471,7 +4541,10 @@ impl App {
         let now = Instant::now();
         let area = frame.area();
         let width = area.width as usize;
-        let history_len = self.history_len(width, now);
+        let live_history = self.history_live_lines(width, now);
+        let history_len = self
+            .history_static_len(width)
+            .saturating_add(live_history.len());
         let composer_lines = self.composer_lines(width);
         let command_lines = self.command_suggestion_lines(width);
         let layout = self.screen_layout_for_history_len(
@@ -4481,10 +4554,12 @@ impl App {
             command_lines.len(),
         );
         let history_start = self.visible_history_start(history_len, layout.history.height as usize);
-        let history_visible =
-            self.visible_history_lines(width, now, history_start, layout.history.height as usize);
-        let code_block_copy_targets = self.code_block_copy_targets(width);
-
+        let history_visible = self.visible_history_lines_with_live(
+            width,
+            history_start,
+            layout.history.height as usize,
+            &live_history,
+        );
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history,
@@ -4493,6 +4568,7 @@ impl App {
             highlight_selection(frame.buffer_mut(), layout.history, history_start, selection);
         }
         if let Some(hovered_line) = self.hovered_code_block_copy {
+            let code_block_copy_targets = self.code_block_copy_targets(width);
             if let Some(target) = code_block_copy_targets
                 .iter()
                 .find(|target| target.line == hovered_line)
@@ -4746,6 +4822,7 @@ impl App {
             statusline,
             commands,
             composer_start,
+            history_len,
         }
     }
 
@@ -4767,6 +4844,22 @@ impl App {
         self.visible_history_lines(width, now, 0, history_len)
     }
 
+    fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
+        let update_notice = self.info.update_notice.clone();
+        let stale = self
+            .session_header_cache
+            .as_ref()
+            .is_none_or(|cache| cache.width != width || cache.update_notice != update_notice);
+        if stale {
+            self.session_header_cache = Some(SessionHeaderCache {
+                width,
+                update_notice,
+                lines: session_header_lines(&self.info, width),
+            });
+        }
+        &self.session_header_cache.as_ref().unwrap().lines
+    }
+
     fn history_len(&mut self, width: usize, now: Instant) -> usize {
         self.history_static_len(width)
             .saturating_add(self.history_live_lines(width, now).len())
@@ -4779,12 +4872,23 @@ impl App {
         start: usize,
         count: usize,
     ) -> Vec<Line<'static>> {
+        let live = self.history_live_lines(width, now);
+        self.visible_history_lines_with_live(width, start, count, &live)
+    }
+
+    fn visible_history_lines_with_live(
+        &mut self,
+        width: usize,
+        start: usize,
+        count: usize,
+        live: &[Line<'static>],
+    ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if count == 0 {
             return lines;
         }
 
-        let header_lines = session_header_lines(&self.info, width);
+        let header_lines = self.session_header_lines(width).to_vec();
         let header_len = header_lines.len();
         if start < header_len {
             let header_count = count.min(header_len - start);
@@ -4808,17 +4912,17 @@ impl App {
         if lines.len() < count {
             let live_start = start.saturating_sub(static_len);
             lines.extend(
-                self.history_live_lines(width, now)
-                    .into_iter()
+                live.iter()
                     .skip(live_start)
-                    .take(count - lines.len()),
+                    .take(count - lines.len())
+                    .cloned(),
             );
         }
         lines
     }
 
     fn history_static_len(&mut self, width: usize) -> usize {
-        session_header_lines(&self.info, width)
+        self.session_header_lines(width)
             .len()
             .saturating_add(self.cached_transcript_line_count(width))
     }
@@ -4829,7 +4933,7 @@ impl App {
     }
 
     fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
-        let header_len = session_header_lines(&self.info, width).len();
+        let header_len = self.session_header_lines(width).len();
         self.history_lines
             .code_blocks(&self.transcript, width, self.info.max_tool_output_lines)
             .iter()
@@ -4847,8 +4951,8 @@ impl App {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
                 lines.push(Line::raw(""));
             }
-            lines.extend(entry_lines(
-                &Entry::Tool(pending.clone()),
+            lines.extend(tool_entry_lines(
+                pending,
                 width,
                 self.info.max_tool_output_lines,
             ));
@@ -4938,8 +5042,20 @@ impl App {
 
     fn scroll_history_lines(&mut self, width: usize, height: usize, now: Instant, delta: isize) {
         let history_len = self.history_len(width, now);
-        let reserved_height = self.history_height_for_screen(width, height, now, true);
-        let unreserved_height = self.history_height_for_screen(width, height, now, false);
+        let composer_line_count = self.composer_lines(width).len();
+        let command_line_count = self.command_suggestion_lines(width).len();
+        let reserved_height = self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+            /*include_jump_button*/ true,
+        );
+        let unreserved_height = self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+            /*include_jump_button*/ false,
+        );
         let max_start = history_len.saturating_sub(reserved_height);
         let current = self.visible_history_start(history_len, reserved_height);
         let next = current.saturating_add_signed(delta).min(max_start);
@@ -4983,8 +5099,20 @@ impl App {
             return;
         }
         let history_len = self.history_len(width, now);
-        let reserved_height = self.history_height_for_screen(width, height, now, true);
-        let unreserved_height = self.history_height_for_screen(width, height, now, false);
+        let composer_line_count = self.composer_lines(width).len();
+        let command_line_count = self.command_suggestion_lines(width).len();
+        let reserved_height = self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+            /*include_jump_button*/ true,
+        );
+        let unreserved_height = self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+            /*include_jump_button*/ false,
+        );
         let max_start = history_len.saturating_sub(reserved_height);
         if let HistoryScroll::Manual { top_line } = self.history_scroll {
             self.history_scroll =
@@ -5098,15 +5226,15 @@ impl App {
                 position
             }
             ComposerMode::SecretInput(secret) => Position {
-                x: secret.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&secret.value, secret.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::ConfigNumberInput(input) => Position {
-                x: input.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::ConfigTextInput(input) => Position {
-                x: input.cursor.min(width.max(1)) as u16,
+                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::Questionnaire(questionnaire) => {
@@ -5382,17 +5510,18 @@ async fn generate_session_title(
     first_user_message: String,
 ) -> anyhow::Result<String> {
     let provider = build_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let response = tokio::time::timeout(
-        Duration::from_secs(20),
-        provider.send_turn(ModelRequest {
-            messages: vec![
+    let request_messages = vec![
                 Message::System(
                     "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
                         .into(),
                 ),
                 Message::user_text(format!("First user message:\n\n{first_user_message}")),
-            ],
-            tools: Vec::new(),
+            ];
+    let response = tokio::time::timeout(
+        Duration::from_secs(20),
+        provider.send_turn(ModelRequest {
+            messages: &request_messages,
+            tools: &[],
             prompt_cache_key: None,
         }),
     )
@@ -5754,6 +5883,8 @@ mod tests {
     mod mouse_tests;
     #[path = "questionnaire_interaction_tests.rs"]
     mod questionnaire_interaction_tests;
+    #[path = "render_performance_tests.rs"]
+    mod render_performance_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;
@@ -5818,6 +5949,7 @@ mod tests {
                 config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
+                pending_update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
@@ -6047,7 +6179,7 @@ mod tests {
     }
 
     #[test]
-    fn single_character_fast_enter_is_not_treated_as_paste() {
+    fn single_character_fast_enter_is_buffered_as_paste() {
         let start = Instant::now();
         let mut app = test_app();
 
@@ -6055,12 +6187,12 @@ mod tests {
             KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
             start
         ));
-        assert!(!app.handle_paste_burst_key_at(
+        assert!(app.handle_paste_burst_key_at(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             start + Duration::from_millis(1)
         ));
 
-        assert_eq!(app.input, "y");
+        assert_eq!(app.input, "");
         assert!(app.paste_segments.is_empty());
     }
 
@@ -6899,6 +7031,7 @@ mod tests {
                 config_repository: ConfigRepository::new(None),
                 auth_unavailable: None,
                 update_notice: None,
+                pending_update_notice: None,
                 herdr: HerdrReporter::default(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),

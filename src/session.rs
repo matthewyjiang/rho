@@ -14,6 +14,9 @@ use uuid::Uuid;
 use crate::model::{ContentBlock, Message};
 
 mod index;
+#[cfg(test)]
+#[path = "session_version_tests.rs"]
+mod version_tests;
 
 const SESSION_VERSION: u32 = 1;
 
@@ -90,18 +93,16 @@ impl Session {
         Ok((session, histories.model))
     }
 
-    fn open_by_id_with_histories_in_root(
+    pub(crate) fn open_by_id_with_histories_in_root(
         session_root: &Path,
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<(Self, SessionHistories)> {
         let dir = ensure_session_dir(session_root, cwd)?;
-        let matches = match index::sync_workspace(session_root, cwd)
-            .and_then(|_| index::matching_session_paths(session_root, cwd, id_prefix))
-        {
-            Ok(paths) => paths,
-            Err(_) => matching_session_files(&dir, id_prefix)?,
-        };
+        let matches = matching_session_files(&dir, id_prefix)?;
+        for path in &matches {
+            let _ = index::sync_session_file(session_root, cwd, path);
+        }
         match matches.as_slice() {
             [] => anyhow::bail!("no session found matching '{id_prefix}'"),
             [path] => {
@@ -132,7 +133,10 @@ impl Session {
         id_prefix: &str,
         title: &str,
     ) -> anyhow::Result<()> {
-        index::sync_workspace(session_root, cwd)?;
+        let dir = ensure_session_dir(session_root, cwd)?;
+        for path in matching_session_files(&dir, id_prefix)? {
+            index::sync_session_file(session_root, cwd, &path)?;
+        }
         index::set_title(session_root, cwd, id_prefix, title)
     }
 
@@ -148,7 +152,7 @@ impl Session {
         Self::create_in_root(&session_root()?, cwd)
     }
 
-    fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
         let dir = ensure_session_dir(session_root, cwd)?;
         let id = Uuid::new_v4().to_string();
         let created_at = unix_timestamp_secs();
@@ -255,9 +259,27 @@ fn visit_entries(
         }
         let terminated = line.ends_with('\n');
         match serde_json::from_str::<SessionEntry>(&line) {
-            Ok(entry) => visit(entry)?,
+            Ok(entry) => {
+                if let SessionEntry::Session { version, .. } = &entry {
+                    validate_session_version(*version, path)?;
+                }
+                visit(entry)?;
+            }
             Err(err) if !terminated && err.is_eof() => return Ok(()),
             Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
+    match version {
+        0..=SESSION_VERSION => Ok(()),
+        _ => {
+            eprintln!(
+                "warning: skipping session {} with unsupported version {version} (maximum supported: {SESSION_VERSION})",
+                path.display()
+            );
+            anyhow::bail!("unsupported session version {version}")
         }
     }
 }

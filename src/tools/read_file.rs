@@ -1,6 +1,7 @@
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 
 pub struct ReadFile;
 #[derive(Deserialize)]
@@ -58,8 +59,13 @@ impl Tool for ReadFile {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
-        let content = std::fs::read_to_string(resolve_path(&ctx.cwd, &args.path))?;
-        let content = select_line_range(&content, args.offset, args.limit)?;
+        let path = resolve_path(&ctx.cwd, &args.path);
+        let content = if args.offset.is_none() && args.limit.is_none() {
+            tokio::fs::read_to_string(path).await?
+        } else {
+            let file = tokio::fs::File::open(path).await?;
+            read_line_range(BufReader::new(file), args.offset, args.limit).await?
+        };
         Ok(ToolResult {
             id,
             ok: true,
@@ -94,8 +100,8 @@ fn read_file_display_content(
     format!("{path}:{start}-{end}")
 }
 
-fn select_line_range(
-    content: &str,
+async fn read_line_range(
+    mut reader: impl AsyncBufRead + Unpin,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<String, ToolError> {
@@ -105,112 +111,34 @@ fn select_line_range(
     if limit == Some(0) {
         return Err(ToolError::Message("limit must be greater than 0".into()));
     }
-    if offset.is_none() && limit.is_none() {
-        return Ok(content.to_string());
-    }
 
     let start = offset.unwrap_or(1) - 1;
-    let total_lines = content.split_inclusive('\n').count();
-    if start > 0 && start >= total_lines {
-        return Err(ToolError::Message(format!(
-            "offset {} is past the end of the file ({total_lines} line(s))",
-            start + 1
-        )));
+    let mut line_number = 0;
+    let mut selected_lines = 0;
+    let mut selected = String::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).await? == 0 {
+            if start > 0 && start >= line_number {
+                return Err(ToolError::Message(format!(
+                    "offset {} is past the end of the file ({line_number} line(s))",
+                    start + 1
+                )));
+            }
+            return Ok(selected);
+        }
+        line_number += 1;
+        if line_number <= start {
+            continue;
+        }
+        selected.push_str(&line);
+        selected_lines += 1;
+        if limit == Some(selected_lines) {
+            return Ok(selected);
+        }
     }
-    let lines = content.split_inclusive('\n').skip(start);
-    let selected = match limit {
-        Some(limit) => lines.take(limit).collect(),
-        None => lines.collect(),
-    };
-    Ok(selected)
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use serde_json::json;
-    use tempfile::TempDir;
-
-    use super::*;
-
-    fn test_context() -> (TempDir, ToolContext) {
-        let dir = tempfile::tempdir().unwrap();
-        let ctx = ToolContext {
-            cwd: dir.path().to_path_buf(),
-            max_output_bytes: 12000,
-        };
-        (dir, ctx)
-    }
-
-    #[tokio::test]
-    async fn reads_selected_line_range() {
-        let (_dir, ctx) = test_context();
-        fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\nthree\nfour\n").unwrap();
-
-        let result = ReadFile
-            .call(
-                json!({"path": "sample.txt", "offset": 2, "limit": 2}),
-                ctx,
-                "call_1".into(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.content, "two\nthree\n");
-    }
-
-    #[tokio::test]
-    async fn rejects_offset_past_end_of_file() {
-        let (_dir, ctx) = test_context();
-        fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();
-
-        let err = ReadFile
-            .call(
-                json!({"path": "sample.txt", "offset": 5}),
-                ctx,
-                "call_1".into(),
-            )
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            err.to_string(),
-            "offset 5 is past the end of the file (2 line(s))"
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_zero_offset() {
-        let (_dir, ctx) = test_context();
-        fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
-
-        let err = ReadFile
-            .call(
-                json!({"path": "sample.txt", "offset": 0}),
-                ctx,
-                "call_1".into(),
-            )
-            .await
-            .unwrap_err();
-
-        assert_eq!(err.to_string(), "offset must be greater than 0");
-    }
-
-    #[tokio::test]
-    async fn rejects_zero_limit() {
-        let (_dir, ctx) = test_context();
-        fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
-
-        let err = ReadFile
-            .call(
-                json!({"path": "sample.txt", "limit": 0}),
-                ctx,
-                "call_1".into(),
-            )
-            .await
-            .unwrap_err();
-
-        assert_eq!(err.to_string(), "limit must be greater than 0");
-    }
-}
+#[path = "read_file_tests.rs"]
+mod tests;

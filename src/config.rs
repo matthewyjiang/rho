@@ -1,6 +1,5 @@
-use std::{fmt, fs, path::PathBuf, str::FromStr};
-
 use serde::{Deserialize, Serialize};
+use std::{fmt, fs, path::PathBuf, str::FromStr};
 
 use crate::{
     agent::CompactionConfig,
@@ -203,8 +202,8 @@ impl LegacyWebSearchCredentials {
 }
 
 fn write_config(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
-    fs::write(path, toml::to_string_pretty(&GroupedConfig::from(config))?)?;
-    Ok(())
+    let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
+    crate::config_writer::write_atomically(path, &serialized)
 }
 
 #[derive(Serialize)]
@@ -902,7 +901,7 @@ brave_api_key = "grouped-brave"
 
     #[cfg(unix)]
     #[test]
-    fn load_succeeds_when_migrated_credential_cleanup_cannot_be_written() {
+    fn migrated_credential_cleanup_atomically_replaces_read_only_config() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
@@ -927,7 +926,7 @@ brave_api_key = "grouped-brave"
             None
         );
         let saved = std::fs::read_to_string(&path).unwrap();
-        assert!(saved.contains("web_search_openai_api_key"), "{saved}");
+        assert!(!saved.contains("web_search_openai_api_key"), "{saved}");
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
@@ -976,3 +975,7 @@ brave_api_key = "grouped-brave"
         assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
     }
 }
+
+#[cfg(test)]
+#[path = "config_atomic_tests.rs"]
+mod atomic_tests;

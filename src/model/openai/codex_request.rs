@@ -43,17 +43,17 @@ impl CodexRequestMode {
 
 pub(super) fn build_codex_responses_body(
     model: &str,
-    request: ModelRequest,
+    request: ModelRequest<'_>,
     reasoning_effort: Option<&str>,
     reasoning_summary: Option<&str>,
 ) -> Result<Value, ModelError> {
     let mode = CodexRequestMode::for_model(model);
     let mut instructions = Vec::new();
-    let mut input = codex_input_items(request.messages, &mut instructions)?;
+    let mut input = codex_input_items(request.messages.to_vec(), &mut instructions)?;
     let tools = request
         .tools
-        .into_iter()
-        .map(|tool| responses_tool(mode, tool))
+        .iter()
+        .map(|tool| responses_tool(mode, tool.clone()))
         .collect::<Vec<_>>();
     let instructions = instructions.join("\n\n");
     let mut body = json!({
@@ -131,8 +131,8 @@ mod tests {
             let body = build_codex_responses_body(
                 model,
                 ModelRequest {
-                    messages: vec![Message::user_text("hello")],
-                    tools: vec![ToolSpec {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[ToolSpec {
                         name: "read_file".into(),
                         description: "read a file".into(),
                         input_schema: json!({"type": "object"}),
@@ -161,8 +161,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.6-terra",
             ModelRequest {
-                messages: vec![Message::user_text("hello")],
-                tools: Vec::new(),
+                messages: &[Message::user_text("hello")],
+                tools: &[],
                 prompt_cache_key: None,
             },
             Some("medium"),
@@ -181,11 +181,11 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.6-luna",
             ModelRequest {
-                messages: vec![
+                messages: &[
                     Message::System("follow the repository instructions".into()),
                     Message::user_text("fix the bug"),
                 ],
-                tools: vec![ToolSpec {
+                tools: &[ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),
@@ -232,8 +232,8 @@ mod tests {
         let body = build_codex_responses_body(
             "gpt-5.5",
             ModelRequest {
-                messages: vec![Message::user_text("find current docs")],
-                tools: vec![ToolSpec {
+                messages: &[Message::user_text("find current docs")],
+                tools: &[ToolSpec {
                     name: "web_search".into(),
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),

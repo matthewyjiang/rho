@@ -6,6 +6,8 @@ use crate::tool::ToolCall;
 use super::convert::{extract_response_text, ResponsesResponse};
 use crate::provider_backend::line_decoder::LineDecoder;
 
+const MAX_STREAM_BLOCK_INDEX: usize = 4096;
+
 #[derive(Default)]
 pub(crate) struct StreamedToolCall {
     id: Option<String>,
@@ -66,10 +68,22 @@ pub(crate) fn handle_openai_stream_line(
     };
 
     for delta in delta_tool_calls {
-        let index = delta
-            .get("index")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(tool_calls.len() as u64) as usize;
+        let index =
+            delta
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .map_or(Ok(tool_calls.len()), |index| {
+                    usize::try_from(index).map_err(|_| {
+                        ModelError::InvalidResponse(format!(
+                            "stream block index {index} out of range"
+                        ))
+                    })
+                })?;
+        if index > MAX_STREAM_BLOCK_INDEX {
+            return Err(ModelError::InvalidResponse(format!(
+                "stream block index {index} out of range"
+            )));
+        }
         while tool_calls.len() <= index {
             tool_calls.push(StreamedToolCall::default());
         }
