@@ -56,18 +56,34 @@ pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Li
         .max()
         .unwrap_or(0);
     let now = now_unix();
+    let block_style = Theme::limits_block();
     let mut lines = vec![
-        Line::styled("OAuth usage limits", Theme::text_strong()),
-        Line::raw(""),
-        Line::styled(limits.provider.clone(), Theme::text_strong()),
+        Line::from(Span::styled(
+            "OAuth usage limits",
+            block_style.add_modifier(ratatui::style::Modifier::BOLD),
+        )),
+        Line::from(Span::styled("", block_style)),
+        Line::from(Span::styled(
+            limits.provider.clone(),
+            block_style.add_modifier(ratatui::style::Modifier::BOLD),
+        )),
     ];
     lines.extend(
-        limits
-            .windows
-            .iter()
-            .flat_map(|window| usage_limit_window_lines(window, label_width, width, now)),
+        limits.windows.iter().flat_map(|window| {
+            usage_limit_window_lines(window, label_width, width, now, block_style)
+        }),
     );
     lines
+        .into_iter()
+        .map(|mut line| {
+            let padding = width.saturating_sub(line.width());
+            if padding > 0 {
+                line.spans
+                    .push(Span::styled(" ".repeat(padding), block_style));
+            }
+            line
+        })
+        .collect()
 }
 
 fn usage_limit_window_lines(
@@ -75,10 +91,11 @@ fn usage_limit_window_lines(
     label_width: usize,
     width: usize,
     now: i64,
+    block_style: Style,
 ) -> Vec<Line<'static>> {
     let remaining = window.remaining_percent.round() as u8;
     let filled = (usize::from(remaining) * BAR_WIDTH + 50) / 100;
-    let bar_style = remaining_style(remaining);
+    let bar_style = block_style.patch(remaining_style(remaining));
     let reset = format!("resets {}", format_reset(window, now));
     let prefix = format!("  {:label_width$}   ", window.label);
     let percent = format!("  {remaining}% left");
@@ -87,20 +104,32 @@ fn usage_limit_window_lines(
         prefix.chars().count() + BAR_WIDTH + percent.chars().count() + reset_suffix.chars().count()
             <= width;
     let main_line = Line::from(vec![
-        Span::raw(prefix),
+        Span::styled(prefix, block_style),
         Span::styled("█".repeat(filled), bar_style),
-        Span::styled("░".repeat(BAR_WIDTH - filled), Theme::dim()),
-        Span::raw(percent),
-        Span::raw(if show_reset {
-            reset_suffix.clone()
-        } else {
-            String::new()
-        }),
+        Span::styled(
+            "░".repeat(BAR_WIDTH - filled),
+            block_style.patch(Theme::dim()),
+        ),
+        Span::styled(percent, block_style),
+        Span::styled(
+            if show_reset {
+                reset_suffix.clone()
+            } else {
+                String::new()
+            },
+            block_style,
+        ),
     ]);
     if show_reset {
         vec![main_line]
     } else {
-        vec![main_line, Line::styled(format!("  {reset}"), Theme::dim())]
+        vec![
+            main_line,
+            Line::from(Span::styled(
+                format!("  {reset}"),
+                block_style.patch(Theme::dim()),
+            )),
+        ]
     }
 }
 
