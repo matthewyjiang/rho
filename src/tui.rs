@@ -5801,6 +5801,16 @@ fn disable_bracketed_paste() -> std::io::Result<()> {
 }
 
 fn enable_keyboard_enhancements() -> std::io::Result<()> {
+    // On Windows, Rho reads KEY_EVENT records from ConPTY. Kitty keyboard
+    // enhancements cause multiplexers such as Herdr to re-encode Shift+Tab as
+    // CSI u (`\x1b[9;2u`), which ConPTY does not reverse-translate. Legacy
+    // `\x1b[Z` is reverse-mapped to VK_TAB+SHIFT and reaches Rho as BackTab.
+    if cfg!(windows) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "keyboard enhancements are disabled on Windows so Shift+Tab remains representable under ConPTY",
+        ));
+    }
     execute!(
         std::io::stdout(),
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
