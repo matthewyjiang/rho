@@ -45,7 +45,6 @@ pub(crate) fn codex_reasoning_param(
     effort: Option<&str>,
     summary: Option<&str>,
 ) -> Option<serde_json::Value> {
-    let effort = effort.filter(|value| !value.eq_ignore_ascii_case("none"));
     let summary = summary.filter(|value| !value.eq_ignore_ascii_case("none"));
     if effort.is_none() && summary.is_none() {
         return None;

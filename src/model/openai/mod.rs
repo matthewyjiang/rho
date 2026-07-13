@@ -81,7 +81,11 @@ impl ModelProvider for OpenAiProvider {
         let supported_reasoning =
             crate::model::models_dev::cached_reasoning_levels(self.provider, &self.model);
         let reasoning = reasoning.normalize(supported_reasoning.as_deref());
-        self.reasoning_effort = reasoning.effort().map(str::to_string);
+        self.reasoning_effort = crate::model::models_dev::cached_reasoning_effort(
+            self.provider,
+            &self.model,
+            reasoning,
+        );
         self.reasoning_summary = reasoning.summary().map(str::to_string);
         true
     }
@@ -374,8 +378,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn codex_reasoning_param_omits_none_values() {
-        assert!(codex_reasoning_param(Some("none"), Some("none")).is_none());
+    fn codex_reasoning_param_preserves_none_effort() {
+        assert_eq!(
+            codex_reasoning_param(Some("none"), None).unwrap(),
+            json!({"effort":"none"})
+        );
+        assert!(codex_reasoning_param(None, Some("none")).is_none());
         assert_eq!(
             codex_reasoning_param(Some("low"), Some("auto")).unwrap(),
             json!({"effort":"low","summary":"auto"})

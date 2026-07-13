@@ -4,7 +4,7 @@ use crate::{
     auth::github_copilot_token::GitHubCopilotAuthManager,
     credentials::{load_provider_api_key, OsCredentialStore},
     model::{
-        models_dev::cached_reasoning_levels,
+        models_dev::{cached_reasoning_effort, cached_reasoning_levels},
         openai::auth::{load_api_key_auth, load_codex_auth},
         registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
         AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
@@ -21,7 +21,7 @@ pub fn build_provider(
 ) -> Result<DynModelProvider, ModelError> {
     let supported_reasoning = cached_reasoning_levels(provider, model);
     let reasoning = reasoning.normalize(supported_reasoning.as_deref());
-    let reasoning_effort = reasoning.effort().map(str::to_string);
+    let reasoning_effort = cached_reasoning_effort(provider, model, reasoning);
     let reasoning_summary = reasoning.summary().map(str::to_string);
     let runtime = provider_runtime(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;

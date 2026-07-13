@@ -1138,6 +1138,41 @@ impl App {
         if let Some(handle) = self.pending_model_metadata.take() {
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
                 agent.set_context_window(metadata.display_context_window());
+                let reasoning = self
+                    .info
+                    .reasoning
+                    .normalize(metadata.supported_reasoning_levels.as_deref());
+                let provider_updated = if agent.set_provider_reasoning(reasoning) {
+                    true
+                } else {
+                    match build_provider(&self.info.provider, &self.info.model, reasoning) {
+                        Ok(provider) => {
+                            agent.replace_provider(provider);
+                            true
+                        }
+                        Err(err) => {
+                            self.insert_entry(&Entry::Error(format!(
+                                "could not apply model reasoning metadata: {err}"
+                            )));
+                            false
+                        }
+                    }
+                };
+                if provider_updated && reasoning != self.info.reasoning {
+                    self.info.reasoning = reasoning;
+                    self.info.diagnostics.update_identity(
+                        &self.info.provider,
+                        &self.info.model,
+                        reasoning,
+                    );
+                    if let Err(err) = self.info.config_repository.update(|config| {
+                        config.reasoning = reasoning;
+                    }) {
+                        self.insert_entry(&Entry::Error(format!(
+                            "could not save normalized reasoning: {err}"
+                        )));
+                    }
+                }
                 self.model_metadata = Some(metadata);
             }
         }
@@ -6002,6 +6037,75 @@ mod tests {
             },
             store,
         )
+    }
+
+    #[derive(Debug)]
+    struct ReasoningRecordingProvider {
+        levels: Arc<Mutex<Vec<ReasoningLevel>>>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl crate::model::ModelProvider for ReasoningRecordingProvider {
+        fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
+            self.levels.lock().unwrap().push(reasoning);
+            true
+        }
+
+        async fn send_turn(
+            &self,
+            _request: ModelRequest<'_>,
+        ) -> Result<ModelResponse, crate::model::ModelError> {
+            unreachable!("metadata tests do not send model requests")
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_fetch_completion_normalizes_active_provider_reasoning() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let config = crate::config::Config {
+            reasoning: ReasoningLevel::Max,
+            ..crate::config::Config::default()
+        };
+        config.save(Some(config_path.clone())).unwrap();
+
+        let mut app = test_app();
+        app.info.reasoning = ReasoningLevel::Max;
+        app.info.config_repository = ConfigRepository::new(Some(config_path.clone()));
+        app.pending_model_metadata = Some(tokio::spawn(async {
+            Some(ModelMetadata {
+                supported_reasoning_levels: Some(vec![
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Low,
+                    ReasoningLevel::High,
+                ]),
+                ..ModelMetadata::default()
+            })
+        }));
+        let recorded_levels = Arc::new(Mutex::new(Vec::new()));
+        let provider = ReasoningRecordingProvider {
+            levels: Arc::clone(&recorded_levels),
+        };
+        let mut agent = Agent::new(
+            Box::new(provider),
+            crate::tool::ToolRegistry::new(),
+            crate::tool::ToolContext {
+                cwd: temp_dir.path().into(),
+                max_output_bytes: 12_000,
+            },
+        );
+        tokio::task::yield_now().await;
+
+        app.poll_model_metadata_fetch(&mut agent);
+
+        assert_eq!(app.info.reasoning, ReasoningLevel::High);
+        assert_eq!(*recorded_levels.lock().unwrap(), vec![ReasoningLevel::High]);
+        assert_eq!(
+            crate::config::Config::load(Some(config_path))
+                .unwrap()
+                .reasoning,
+            ReasoningLevel::High
+        );
     }
 
     #[test]
