@@ -16,13 +16,15 @@ Rho's implemented providers are:
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
 | `xai` | `xai-oauth` | [xAI](/providers/xai) |
 
+OpenAI, Anthropic, and GitHub Copilot expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched with `/refresh-model-list`.
+
 Each provider page documents its `/login` flow, `/logout` behavior, environment override, and how to select its models.
 
 ## Where credentials live
 
 Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
 
-For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads.
+For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation, and flags that select provider, model, auth, or reasoning also become the saved default.
 
 ## Login and provider switching
 
@@ -37,8 +39,8 @@ Successful login normally stores credentials only. It does not switch the active
 Use `/model provider/model` to switch explicitly, including to another provider:
 
 ```text
-/model openai/gpt-5.5
-/model openai-codex/gpt-5.5
+/model openai/gpt-5.6-sol
+/model openai-codex/gpt-5.6-sol
 /model anthropic/claude-sonnet-4-5
 /model github-copilot/gpt-4.1
 /model xai/grok-4.5
@@ -46,11 +48,11 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, and GitHub Copilot can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead.
+OpenAI, Anthropic, and GitHub Copilot can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
 
 ## Model metadata
 
-Rho uses cached model metadata and built-in overrides to choose effective context windows for status display and [auto compaction](/configuration#auto-compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), allowing the TUI to skip unsupported choices without model-name allowlists. Pricing-sensitive models such as `openai/gpt-5.5` and `openai-codex/gpt-5.5` use safer effective windows below their advertised maximums.
+Rho uses cached model metadata and built-in overrides to choose effective context windows for status display and [auto compaction](/configuration#auto-compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), allowing the TUI to skip unsupported choices without model-name allowlists. Pricing-sensitive models such as `openai/gpt-5.6-sol` and `openai-codex/gpt-5.6-sol` use safer effective windows below their advertised maximums.
 
 For subscription auth modes such as Codex OAuth and xAI OAuth, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
 

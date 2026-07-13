@@ -63,8 +63,8 @@ Managed processes use standard output and error pipes, with standard input close
 
 File write results include a unified diff so the model and transcript can inspect what changed. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
 
-## Sandbox and approvals
+## Security and workspace boundaries
 
-Rho does not currently sandbox or prompt for approval before tool calls. Run Rho only in workspaces where you are comfortable allowing file changes and shell commands.
+Rho does not currently sandbox or prompt for approval before tool calls. Tools run with the current user's permissions and can read or modify files and execute shell commands in the current workspace. Run Rho only in workspaces where you are comfortable allowing those actions.
 
 For session storage separate from the workspace, see [sessions](/sessions). For output-size settings, see [configuration](/configuration#tool-output-limit).
