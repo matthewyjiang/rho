@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.26.0...rho-coding-agent-v0.27.0) (2026-07-13)
+
+
+### Features
+
+* **reasoning:** use model-supported effort levels ([#221](https://github.com/matthewyjiang/rho/issues/221)) ([54a5190](https://github.com/matthewyjiang/rho/commit/54a51908ae0b9664db1991c30857a35aa0f2d584))
+* **xai:** add OAuth provider support ([#220](https://github.com/matthewyjiang/rho/issues/220)) ([b053c99](https://github.com/matthewyjiang/rho/commit/b053c9993e0df57fd27c07c191a4fbf594acc51b))
+
 ## [0.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.25.0...rho-coding-agent-v0.26.0) (2026-07-13)
 
 
