@@ -48,7 +48,8 @@ fn renders_session_metadata_and_title() {
     assert!(html.contains("<title>Fix the login bug</title>"));
     assert!(html.contains("<h1>Fix the login bug</h1>"));
     assert!(html.contains(SESSION_ID));
-    assert!(html.contains("/tmp/example-workspace"));
+    assert!(html.contains("<dd>example-workspace</dd>"));
+    assert!(!html.contains("/tmp/example-workspace"));
     assert!(html.contains(concat!("rho v", env!("CARGO_PKG_VERSION"))));
 }
 
@@ -178,6 +179,63 @@ fn long_tool_output_starts_collapsed() {
 }
 
 #[test]
+fn tool_preview_shows_primary_string_argument() {
+    let export = export_with_messages(vec![message(tool_call(
+        "call-1",
+        "bash",
+        serde_json::json!({"command": "cargo test --workspace"}),
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<span class=\"tool-preview\">cargo test --workspace</span>"));
+}
+
+#[test]
+fn tool_preview_falls_back_to_compact_json() {
+    let export = export_with_messages(vec![message(tool_call(
+        "call-1",
+        "edit",
+        serde_json::json!({"old": "a", "new": "b"}),
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("&quot;old&quot;"));
+}
+
+#[test]
+fn consecutive_same_role_messages_share_one_role_head() {
+    let export = export_with_messages(vec![
+        message(Message::assistant_text("first thought")),
+        message(Message::assistant_text("second thought")),
+    ]);
+
+    let html = render_html(&export);
+
+    assert_eq!(html.matches("<span class=\"role\">rho</span>").count(), 1);
+    assert_eq!(
+        html.matches("<section class=\"entry assistant cont\">")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn role_head_returns_after_speaker_changes() {
+    let export = export_with_messages(vec![
+        message(Message::user_text("question one")),
+        message(Message::assistant_text("answer")),
+        message(Message::user_text("question two")),
+    ]);
+
+    let html = render_html(&export);
+
+    assert_eq!(html.matches("<span class=\"role\">you</span>").count(), 2);
+    assert_eq!(html.matches("<span class=\"role\">rho</span>").count(), 1);
+}
+
+#[test]
 fn system_prompt_renders_in_collapsed_details() {
     let export = export_with_messages(vec![message(Message::System(
         "You are a helpful agent.".into(),
@@ -264,4 +322,12 @@ fn write_export_html_creates_parent_directories_and_writes_file() {
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.starts_with("<!DOCTYPE html>"));
     assert!(written.contains("hello"));
+}
+
+#[test]
+#[ignore]
+fn regenerate_committed_sample() {
+    let cwd = PathBuf::from("/home/emgym/.herdr/worktrees/rho/worktree-calm-field-1191");
+    let path = write_session_html(&cwd, "8bba3778", "rho-session-8bba3778.html").unwrap();
+    println!("wrote {}", path.display());
 }
