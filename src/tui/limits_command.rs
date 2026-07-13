@@ -133,7 +133,7 @@ fn format_reset(window: &UsageLimitWindow, now: i64) -> String {
         .map(|reset| {
             reset
                 .with_timezone(&chrono::Local)
-                .format("%a at %-I:%M %p")
+                .format("%B %d at %-I:%M %p")
                 .to_string()
         })
         .unwrap_or_else(|| format!("at Unix time {}", window.resets_at_unix))
