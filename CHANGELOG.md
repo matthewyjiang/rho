@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.27.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.27.0...rho-coding-agent-v0.27.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **reasoning:** rehydrate incomplete model effort metadata ([#224](https://github.com/matthewyjiang/rho/issues/224)) ([85405ad](https://github.com/matthewyjiang/rho/commit/85405ad69411485121ce1a7c32ff72cb2ca4d28b))
+* **tui:** keep shift+tab on windows under conpty ([#226](https://github.com/matthewyjiang/rho/issues/226)) ([69fc13c](https://github.com/matthewyjiang/rho/commit/69fc13ccb25d1fab2f1da5eb410bd64b97473db5))
+* **update:** detect Scoop installs on Windows ([#225](https://github.com/matthewyjiang/rho/issues/225)) ([f9c50ec](https://github.com/matthewyjiang/rho/commit/f9c50ec3b52c003fa38e5695e6ee6435e6658bbf))
+
 ## [0.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.26.0...rho-coding-agent-v0.27.0) (2026-07-13)
 
 
