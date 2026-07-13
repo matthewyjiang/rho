@@ -4024,10 +4024,14 @@ impl App {
     }
 
     fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+        let supported_reasoning = crate::model::models_dev::cached_reasoning_levels(
+            &self.info.provider,
+            &self.info.model,
+        );
         let reasoning = self
             .info
             .reasoning
-            .next_for_model(&self.info.provider, &self.info.model);
+            .next_supported(supported_reasoning.as_deref());
         if !agent.set_provider_reasoning(reasoning) {
             let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
                 Ok(provider) => provider,
@@ -4200,7 +4204,12 @@ impl App {
         let model = selection.model;
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
-        let reasoning = self.info.reasoning.for_model(&provider, &model);
+        let supported_reasoning =
+            crate::model::models_dev::cached_reasoning_levels(&provider, &model);
+        let reasoning = self
+            .info
+            .reasoning
+            .normalize(supported_reasoning.as_deref());
         let new_provider = match build_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {

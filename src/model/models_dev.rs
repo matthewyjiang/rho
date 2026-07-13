@@ -4,6 +4,8 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::reasoning::ReasoningLevel;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
     pub advertised_context_window: Option<u64>,
@@ -13,6 +15,7 @@ pub struct ModelMetadata {
     pub max_output_tokens: Option<u64>,
     pub cost_default: Option<ModelCost>,
     pub cost_long_context: Option<ModelCost>,
+    pub supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
 }
 
 impl ModelMetadata {
@@ -40,6 +43,10 @@ pub struct ModelCost {
     pub output_micros_per_m: Option<u64>,
     pub cache_read_micros_per_m: Option<u64>,
     pub cache_write_micros_per_m: Option<u64>,
+}
+
+pub fn cached_reasoning_levels(provider: &str, model: &str) -> Option<Vec<ReasoningLevel>> {
+    cached_model_metadata(provider, model)?.supported_reasoning_levels
 }
 
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -94,6 +101,7 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.max_output_tokens.is_some()
         || metadata.cost_default.is_some()
         || metadata.cost_long_context.is_some()
+        || metadata.supported_reasoning_levels.is_some()
 }
 
 async fn fetch_models_dev_api() -> Option<Value> {
@@ -138,7 +146,22 @@ fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMe
             |row| row.get(0),
         )
         .ok()?;
-    serde_json::from_str(&contents).ok()
+    let cached_value: Value = serde_json::from_str(&contents).ok()?;
+    let reasoning_levels_cached = cached_value.get("supported_reasoning_levels").is_some();
+    let cached: ModelMetadata = serde_json::from_value(cached_value).ok()?;
+    if reasoning_levels_cached {
+        return Some(cached);
+    }
+
+    let refreshed = read_cached_api()
+        .as_ref()
+        .and_then(|api| model_metadata_from_api(api, upstream_provider, model));
+    if let Some(refreshed) = refreshed {
+        write_cached_upstream_model_metadata(provider, model, &refreshed);
+        Some(refreshed)
+    } else {
+        Some(cached)
+    }
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
@@ -248,7 +271,47 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
                 .and_then(cost_micros_per_million),
         }),
         cost_long_context: None,
+        supported_reasoning_levels: supported_reasoning_levels(model),
     })
+}
+
+fn supported_reasoning_levels(model: &Value) -> Option<Vec<ReasoningLevel>> {
+    let supports_reasoning = model.get("reasoning")?.as_bool()?;
+    let reasoning_options = model.get("reasoning_options").and_then(Value::as_array);
+    if reasoning_options.is_some_and(Vec::is_empty) {
+        return Some(vec![ReasoningLevel::Off]);
+    }
+    let effort_values = reasoning_options.and_then(|options| {
+        options.iter().find_map(|option| {
+            (option.get("type").and_then(Value::as_str) == Some("effort"))
+                .then(|| option.get("values").and_then(Value::as_array))
+                .flatten()
+        })
+    });
+    let Some(effort_values) = effort_values else {
+        return if supports_reasoning {
+            None
+        } else {
+            Some(vec![ReasoningLevel::Off])
+        };
+    };
+
+    let mut levels = effort_values
+        .iter()
+        .filter_map(|value| match value.as_str()? {
+            "none" => Some(ReasoningLevel::Off),
+            "minimal" => Some(ReasoningLevel::Minimal),
+            "low" => Some(ReasoningLevel::Low),
+            "medium" => Some(ReasoningLevel::Medium),
+            "high" => Some(ReasoningLevel::High),
+            "xhigh" => Some(ReasoningLevel::Xhigh),
+            "max" => Some(ReasoningLevel::Max),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    levels.sort_unstable();
+    levels.dedup();
+    (!levels.is_empty()).then_some(levels)
 }
 
 const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
@@ -318,7 +381,26 @@ fn merge_toml_override(
     metadata.cost_default = toml_cost(table, "cost_default").or(metadata.cost_default);
     metadata.cost_long_context =
         toml_cost(table, "cost_long_context").or(metadata.cost_long_context);
+    if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
+        metadata.supported_reasoning_levels = Some(levels);
+    }
     metadata
+}
+
+fn toml_reasoning_levels(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Option<Vec<ReasoningLevel>> {
+    let mut levels = table
+        .get(key)?
+        .as_array()?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .filter_map(|value| value.parse().ok())
+        .collect::<Vec<_>>();
+    levels.sort_unstable();
+    levels.dedup();
+    Some(levels)
 }
 
 fn toml_u64(table: &toml::map::Map<String, toml::Value>, key: &str) -> Option<u64> {
@@ -366,6 +448,103 @@ fn cost_micros_per_million(value: &Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_reasoning_effort_options() {
+        let api = serde_json::json!({
+            "openai": {
+                "models": {
+                    "gpt-test": {
+                        "reasoning": true,
+                        "reasoning_options": [{
+                            "type": "effort",
+                            "values": ["none", "low", "high", "xhigh"]
+                        }]
+                    }
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
+
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![
+                ReasoningLevel::Off,
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+                ReasoningLevel::Xhigh,
+            ])
+        );
+    }
+
+    #[test]
+    fn unknown_effort_values_do_not_restrict_reasoning() {
+        let api = serde_json::json!({
+            "openai": {
+                "models": {
+                    "gpt-test": {
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "effort", "values": ["default"]}]
+                    }
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
+
+        assert_eq!(metadata.supported_reasoning_levels, None);
+    }
+
+    #[test]
+    fn models_without_effort_choices_only_expose_off() {
+        let api = serde_json::json!({
+            "openai": {
+                "models": {
+                    "gpt-test": {"reasoning": true, "reasoning_options": []}
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
+
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![ReasoningLevel::Off])
+        );
+    }
+
+    #[test]
+    fn leaves_unknown_reasoning_option_schemas_unrestricted() {
+        let api = serde_json::json!({
+            "anthropic": {
+                "models": {
+                    "claude-test": {
+                        "reasoning": true,
+                        "reasoning_options": [{"type": "budget_tokens", "min": 1024}]
+                    }
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "anthropic", "claude-test").unwrap();
+
+        assert_eq!(metadata.supported_reasoning_levels, None);
+    }
+
+    #[test]
+    fn non_reasoning_models_only_support_off() {
+        let api = serde_json::json!({
+            "openai": {"models": {"gpt-test": {"reasoning": false}}}
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
+
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![ReasoningLevel::Off])
+        );
+    }
 
     #[test]
     fn builtin_gpt_56_codex_overrides_use_temporary_context_limit() {

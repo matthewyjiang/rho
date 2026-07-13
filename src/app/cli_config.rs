@@ -45,7 +45,9 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         config.reasoning = reasoning;
         save_config = true;
     }
-    let reasoning = config.reasoning.for_model(&config.provider, &config.model);
+    let supported_reasoning =
+        crate::model::models_dev::cached_reasoning_levels(&config.provider, &config.model);
+    let reasoning = config.reasoning.normalize(supported_reasoning.as_deref());
     if reasoning != config.reasoning {
         config.reasoning = reasoning;
         save_config = true;

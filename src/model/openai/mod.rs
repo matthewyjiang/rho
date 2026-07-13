@@ -78,7 +78,9 @@ impl OpenAiProvider {
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for OpenAiProvider {
     fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
-        let reasoning = reasoning.for_model(self.provider, &self.model);
+        let supported_reasoning =
+            crate::model::models_dev::cached_reasoning_levels(self.provider, &self.model);
+        let reasoning = reasoning.normalize(supported_reasoning.as_deref());
         self.reasoning_effort = reasoning.effort().map(str::to_string);
         self.reasoning_summary = reasoning.summary().map(str::to_string);
         true
@@ -393,7 +395,7 @@ mod tests {
                 crate::reasoning::ReasoningLevel::Minimal.summary()
             )
             .unwrap(),
-            json!({"effort":"low","summary":"auto"})
+            json!({"effort":"minimal","summary":"auto"})
         );
         assert_eq!(
             codex_reasoning_param(

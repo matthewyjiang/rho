@@ -122,7 +122,9 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 
 ## Reasoning options
 
-`reasoning` is the user-facing thinking level. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. For supported OpenAI Responses providers, `off` omits the reasoning object. Other levels send `reasoning.summary = "auto"`; `minimal` maps to effort `low`, while the remaining levels map to matching effort values. Codex applies model-specific support: GPT-5.6 models accept `max`, while older Codex models such as GPT-5.5 stop at `xhigh`.
+`reasoning` is the user-facing thinking level. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. For supported OpenAI Responses providers, `off` omits the reasoning object and other levels send `reasoning.summary = "auto"` with the matching effort value.
+
+Rho reads each model's available effort values from cached [models.dev](https://models.dev/) metadata. The interactive reasoning control skips levels the current model does not advertise, so models without `minimal`, `xhigh`, or `max` do not expose those choices. Switching models also normalizes an unavailable selection to the closest lower supported level. When capability metadata is unavailable or uses an unsupported reasoning scheme, Rho preserves the full level list rather than guessing. You can override metadata locally with `supported_reasoning_levels = ["off", "low", "medium", "high"]` in a model entry in `~/.rho/models.toml` (or the file selected by `RHO_MODELS_PATH`).
 
 `show_reasoning_output` controls whether streamed reasoning text is displayed and stored in the TUI transcript. It defaults to `true`. Changing it from `/config` applies to the next model call.
 
