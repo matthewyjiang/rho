@@ -141,6 +141,15 @@ async fn refresh_tokens(
         return Err(ModelError::HttpStatus { status, body });
     }
     let response = response.json::<RefreshResponse>().await?;
+    merge_refreshed_tokens(response, refresh_token, previous, now_unix())
+}
+
+fn merge_refreshed_tokens(
+    response: RefreshResponse,
+    previous_refresh_token: &str,
+    previous: &XaiTokens,
+    now_unix: Option<i64>,
+) -> Result<XaiTokens, ModelError> {
     let access_token = response.access_token.ok_or_else(|| {
         ModelError::InvalidResponse("xAI refresh response missing access_token".into())
     })?;
@@ -149,18 +158,18 @@ async fn refresh_tokens(
         refresh_token: Some(
             response
                 .refresh_token
-                .unwrap_or_else(|| refresh_token.to_string()),
+                .unwrap_or_else(|| previous_refresh_token.to_string()),
         ),
-        expires_at_unix: response
-            .expires_in
-            .and_then(|expires| {
-                now_unix().and_then(|now| {
-                    i64::try_from(expires)
-                        .ok()
-                        .map(|expires| now.saturating_add(expires))
-                })
+        // Clear expiry when the refresh response omits expires_in. Carrying the
+        // previous timestamp forward can leave an already-stale expiry and force
+        // a refresh on every subsequent request.
+        expires_at_unix: response.expires_in.and_then(|expires| {
+            now_unix.and_then(|now| {
+                i64::try_from(expires)
+                    .ok()
+                    .map(|expires| now.saturating_add(expires))
             })
-            .or(previous.expires_at_unix),
+        }),
         id_token: response.id_token.or_else(|| previous.id_token.clone()),
     })
 }
@@ -178,3 +187,7 @@ fn now_unix() -> Option<i64> {
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }
+
+#[cfg(test)]
+#[path = "xai_token_tests.rs"]
+mod tests;
