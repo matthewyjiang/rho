@@ -18,6 +18,11 @@ pub struct ModelMetadata {
     pub supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
     #[serde(default)]
     pub reasoning_off_behavior: ReasoningOffBehavior,
+    /// True once models.dev has been parsed far enough to know whether this
+    /// model exposes a finite effort list. False/missing means the row still
+    /// needs rehydration or a live refresh.
+    #[serde(default)]
+    pub reasoning_capabilities_known: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -94,7 +99,9 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     if let Some(response) = fetch_models_dev_api().await {
         write_cached_api(&response);
         if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
-            write_cached_upstream_model_metadata(provider, model, &metadata);
+            if metadata.reasoning_capabilities_known {
+                write_cached_upstream_model_metadata(provider, model, &metadata);
+            }
             return Some(apply_overrides(provider, model, metadata));
         }
     }
@@ -103,7 +110,9 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         .as_ref()
         .and_then(|api| upstream_metadata_from_api(api, provider, model))
     {
-        write_cached_upstream_model_metadata(provider, model, &metadata);
+        if metadata.reasoning_capabilities_known {
+            write_cached_upstream_model_metadata(provider, model, &metadata);
+        }
         return Some(apply_overrides(provider, model, metadata));
     }
 
@@ -169,8 +178,9 @@ fn write_cached_api(value: &Value) {
 }
 
 /// Bump when the models.dev parser gains fields that older cache rows omit.
-/// Rows written with a lower version are treated as misses and re-fetched.
-const MODEL_METADATA_CACHE_VERSION: i64 = 2;
+/// Rows written with a lower version are rehydrated from the cached models.dev
+/// api.json when available, otherwise treated as misses for a live refetch.
+const MODEL_METADATA_CACHE_VERSION: i64 = 3;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     let upstream_provider = upstream_provider(provider);
@@ -183,10 +193,33 @@ fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMe
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .ok()?;
-    if cache_version < MODEL_METADATA_CACHE_VERSION {
-        return None;
+    let cached: ModelMetadata = serde_json::from_str(&contents).ok()?;
+    if !should_rehydrate_cached_metadata(cache_version, &cached) {
+        return Some(cached);
     }
-    serde_json::from_str(&contents).ok()
+
+    // Older or incomplete sqlite rows can predate reasoning capability fields.
+    // Prefer the local models.dev snapshot so interactive reasoning cycling works
+    // immediately without waiting for a live network refresh.
+    if let Some(refreshed) = read_cached_api()
+        .as_ref()
+        .and_then(|api| model_metadata_from_api(api, upstream_provider, model))
+    {
+        if refreshed.reasoning_capabilities_known {
+            write_cached_upstream_model_metadata(provider, model, &refreshed);
+            return Some(refreshed);
+        }
+        // Local api.json also lacks a reasoning capability signal. Do not seal
+        // that incomplete parse as current; fall through so a live fetch can run.
+    }
+
+    // Incomplete reasoning metadata is a miss so fetch_model_metadata can still
+    // pull a live models.dev snapshot instead of trusting a sealed null forever.
+    None
+}
+
+fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) -> bool {
+    cache_version < MODEL_METADATA_CACHE_VERSION || !cached.reasoning_capabilities_known
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
@@ -301,7 +334,23 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
         } else {
             ReasoningOffBehavior::Omit
         },
+        reasoning_capabilities_known: reasoning_capabilities_known(model),
     })
+}
+
+fn reasoning_capabilities_known(model: &Value) -> bool {
+    let Some(supports_reasoning) = model.get("reasoning").and_then(Value::as_bool) else {
+        // Missing capability signal: keep the row incomplete so a fresher
+        // models.dev snapshot can still be fetched.
+        return false;
+    };
+    if !supports_reasoning {
+        return true;
+    }
+    // Current models.dev schema advertises reasoning_options for reasoning
+    // models, including empty arrays and non-effort schemes. Absence usually
+    // means a stale snapshot rather than an intentional unrestricted model.
+    model.get("reasoning_options").is_some()
 }
 
 fn advertised_none_effort(model: &Value) -> bool {
@@ -555,253 +604,5 @@ fn cost_micros_per_million(value: &Value) -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    #[test]
-    fn parses_reasoning_effort_options() {
-        let api = serde_json::json!({
-            "openai": {
-                "models": {
-                    "gpt-test": {
-                        "reasoning": true,
-                        "reasoning_options": [{
-                            "type": "effort",
-                            "values": ["none", "low", "high", "xhigh"]
-                        }]
-                    }
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-        assert_eq!(
-            metadata.reasoning_off_behavior,
-            ReasoningOffBehavior::EffortNone
-        );
-        assert_eq!(metadata.reasoning_effort(ReasoningLevel::Off), Some("none"));
-        assert_eq!(
-            metadata.supported_reasoning_levels,
-            Some(vec![
-                ReasoningLevel::Off,
-                ReasoningLevel::Low,
-                ReasoningLevel::High,
-                ReasoningLevel::Xhigh,
-            ])
-        );
-    }
-
-    #[test]
-    fn effort_options_without_none_still_support_off_by_omission() {
-        let api = serde_json::json!({
-            "openai": {
-                "models": {
-                    "gpt-test": {
-                        "reasoning": true,
-                        "reasoning_options": [{
-                            "type": "effort",
-                            "values": ["low", "medium", "high", "xhigh"]
-                        }]
-                    }
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-        assert_eq!(metadata.reasoning_off_behavior, ReasoningOffBehavior::Omit);
-        assert_eq!(metadata.reasoning_effort(ReasoningLevel::Off), None);
-        assert_eq!(
-            metadata.supported_reasoning_levels,
-            Some(vec![
-                ReasoningLevel::Off,
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::Xhigh,
-            ])
-        );
-    }
-
-    #[test]
-    fn unknown_effort_values_do_not_restrict_reasoning() {
-        let api = serde_json::json!({
-            "openai": {
-                "models": {
-                    "gpt-test": {
-                        "reasoning": true,
-                        "reasoning_options": [{"type": "effort", "values": ["default"]}]
-                    }
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-        assert_eq!(metadata.supported_reasoning_levels, None);
-    }
-
-    #[test]
-    fn models_without_effort_choices_only_expose_off() {
-        let api = serde_json::json!({
-            "openai": {
-                "models": {
-                    "gpt-test": {"reasoning": true, "reasoning_options": []}
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-        assert_eq!(
-            metadata.supported_reasoning_levels,
-            Some(vec![ReasoningLevel::Off])
-        );
-    }
-
-    #[test]
-    fn leaves_unknown_reasoning_option_schemas_unrestricted() {
-        let api = serde_json::json!({
-            "anthropic": {
-                "models": {
-                    "claude-test": {
-                        "reasoning": true,
-                        "reasoning_options": [{"type": "budget_tokens", "min": 1024}]
-                    }
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "anthropic", "claude-test").unwrap();
-
-        assert_eq!(metadata.supported_reasoning_levels, None);
-    }
-
-    #[test]
-    fn non_reasoning_models_only_support_off() {
-        let api = serde_json::json!({
-            "openai": {"models": {"gpt-test": {"reasoning": false}}}
-        });
-
-        let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-        assert_eq!(
-            metadata.supported_reasoning_levels,
-            Some(vec![ReasoningLevel::Off])
-        );
-    }
-
-    #[test]
-    fn builtin_gpt_56_codex_overrides_use_temporary_context_limit() {
-        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-            let metadata = apply_builtin_overrides("openai-codex", model, ModelMetadata::default());
-
-            assert_eq!(metadata.effective_context_window, Some(272_000));
-            assert_eq!(metadata.usable_context_window, Some(272_000));
-            assert_eq!(metadata.display_context_window(), Some(272_000));
-        }
-    }
-
-    #[test]
-    fn builtin_gpt_55_overrides_use_safer_effective_windows() {
-        let upstream = ModelMetadata {
-            advertised_context_window: Some(1_050_000),
-            effective_context_window: Some(922_000),
-            max_output_tokens: Some(128_000),
-            cost_default: Some(ModelCost {
-                input_micros_per_m: Some(5_000_000),
-                output_micros_per_m: Some(30_000_000),
-                cache_read_micros_per_m: Some(500_000),
-                cache_write_micros_per_m: None,
-            }),
-            ..ModelMetadata::default()
-        };
-        let openai = apply_builtin_overrides("openai", "gpt-5.5", upstream.clone());
-        let codex = apply_builtin_overrides("openai-codex", "gpt-5.5", upstream);
-
-        assert_eq!(openai.display_context_window(), Some(272_000));
-        assert_eq!(openai.effective_context_window, Some(922_000));
-        assert_eq!(codex.display_context_window(), Some(272_000));
-        assert_eq!(codex.effective_context_window, Some(400_000));
-        assert_eq!(codex.advertised_context_window, Some(1_050_000));
-        assert_eq!(codex.long_context_threshold, Some(272_000));
-        assert_eq!(codex.max_output_tokens, Some(128_000));
-        assert_eq!(
-            codex.cost_default.unwrap().input_micros_per_m,
-            Some(5_000_000)
-        );
-    }
-
-    #[test]
-    fn models_dev_parses_long_context_cost_tiers() {
-        let api = json!({
-            "xai": {
-                "models": {
-                    "grok-4.5": {
-                        "limit": { "context": 500000, "output": 500000 },
-                        "cost": {
-                            "input": 2.0,
-                            "output": 6.0,
-                            "cache_read": 0.5,
-                            "tiers": [{
-                                "input": 4.0,
-                                "output": 12.0,
-                                "cache_read": 1.0,
-                                "tier": { "type": "context", "size": 200000 }
-                            }],
-                            "context_over_200k": {
-                                "input": 4.0,
-                                "output": 12.0,
-                                "cache_read": 1.0
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        let metadata = model_metadata_from_api(&api, "xai", "grok-4.5").unwrap();
-
-        assert_eq!(
-            metadata,
-            ModelMetadata {
-                advertised_context_window: Some(500_000),
-                effective_context_window: Some(500_000),
-                usable_context_window: None,
-                long_context_threshold: Some(200_000),
-                max_output_tokens: Some(500_000),
-                cost_default: Some(ModelCost {
-                    input_micros_per_m: Some(2_000_000),
-                    output_micros_per_m: Some(6_000_000),
-                    cache_read_micros_per_m: Some(500_000),
-                    cache_write_micros_per_m: None,
-                }),
-                cost_long_context: Some(ModelCost {
-                    input_micros_per_m: Some(4_000_000),
-                    output_micros_per_m: Some(12_000_000),
-                    cache_read_micros_per_m: Some(1_000_000),
-                    cache_write_micros_per_m: None,
-                }),
-                supported_reasoning_levels: None,
-                reasoning_off_behavior: ReasoningOffBehavior::Omit,
-            }
-        );
-        assert_eq!(
-            metadata
-                .cost_for_input_tokens(200_001)
-                .unwrap()
-                .input_micros_per_m,
-            Some(4_000_000)
-        );
-        assert_eq!(
-            metadata
-                .cost_for_input_tokens(200_000)
-                .unwrap()
-                .input_micros_per_m,
-            Some(2_000_000)
-        );
-    }
-}
+#[path = "models_dev_tests.rs"]
+mod tests;
