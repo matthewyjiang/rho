@@ -1,6 +1,6 @@
 # Maintainer: Matthew Jiang <matthewyjiang@gmail.com>
 pkgname=rho-coding-agent
-pkgver=0.27.0 # x-release-please-version
+pkgver=0.27.1 # x-release-please-version
 pkgrel=1
 pkgdesc="A lightweight agent harness inspired by Pi"
 arch=('x86_64')
