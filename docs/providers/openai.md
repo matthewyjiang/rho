@@ -31,16 +31,16 @@ Environment variables are CI/development escape hatches and override stored cred
 OpenAI can refresh its provider model list with `/refresh-model-list openai`. Switch to an OpenAI model with:
 
 ```text
-/model openai/gpt-5.5
+/model openai/gpt-5.6-sol
 ```
 
 Or from the CLI, which also updates the persistent default:
 
 ```bash
-rho --provider openai --auth api-key --model gpt-5.5
+rho --provider openai --auth api-key --model gpt-5.6-sol
 ```
 
 ## Notes
 
 - OpenAI API-key requests use the Chat Completions API and do not currently send a [reasoning](/configuration#reasoning-options) configuration.
-- Pricing-sensitive models such as `openai/gpt-5.5` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.
+- Pricing-sensitive models such as `openai/gpt-5.6-sol` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.

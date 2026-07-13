@@ -5,8 +5,8 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 ```toml
 [model]
 provider = "openai"
-model = "gpt-5.5"
-auth = "api-key" # or "codex", "anthropic-api-key", or "github-copilot"
+model = "gpt-5.6-sol"
+auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", or "xai-oauth"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
 
@@ -24,7 +24,7 @@ compact_target_percent = 50
 
 [title]
 # provider = "openai"
-# model = "gpt-5.5"
+# model = "gpt-5.6-sol"
 # auth = "api-key"
 
 [web_search]
@@ -80,7 +80,7 @@ Inline config templates override files with the same name. Typing `/prompt:revie
 Passing `--provider`, `--model`, `--auth`, or `--reasoning` updates the config file and makes the choice the future default.
 
 ```bash
-rho --provider openai --auth api-key --model gpt-5.5
+rho --provider openai --auth api-key --model gpt-5.6-sol
 rho --reasoning high
 ```
 
@@ -96,11 +96,10 @@ rho --config ~/.rho/config.toml
 
 ## Title model
 
-Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Use `/title-model` in the TUI to choose from available catalog and cached models, or pass a direct provider/model name:
+Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Use `/title-model` in the TUI to choose from available catalog and cached models, or pass a direct provider/model name:
 
 ```text
-/title-model openai/gpt-5.5
-/title-model anthropic/claude-sonnet-4-5
+/title-model openai/gpt-5.6-luna
 ```
 
 If no title model settings are present, Rho falls back to the active provider, model, and auth.
@@ -145,4 +144,4 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 Auto compaction affects only future model context. Session files remain append-only and keep the original transcript entries, then append a replacement-history entry used for resume. It is not a privacy or deletion feature.
 
-Model metadata supplies the effective context window when available. Pricing-sensitive models such as `openai/gpt-5.5` and `openai-codex/gpt-5.5` use safer effective windows below the advertised maximum to avoid long-context pricing thresholds.
+Model metadata supplies the effective context window when available. Pricing-sensitive models such as `openai/gpt-5.6-sol` and `openai-codex/gpt-5.6-sol` use safer effective windows below the advertised maximum to avoid long-context pricing thresholds.

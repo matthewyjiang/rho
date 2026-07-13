@@ -6,7 +6,7 @@ Run `rho` in a terminal to start an interactive coding session in the current di
 rho
 ```
 
-The TUI is the main way to use Rho. Ask it to inspect files, explain code, make changes, run commands, or iterate on a task with you. Rho uses the current directory as its [workspace](/tools-workspace).
+The TUI is the main way to use Rho. Ask it to inspect files, explain code, make changes, run commands, or iterate on a task with you. Rho uses the current directory as its [workspace](/tools-workspace). Tool access and command execution follow the workspace and security behavior described in [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
 ## Start a session
 
@@ -86,8 +86,8 @@ The model picker is populated from Rho's static catalog entries and cached dynam
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 
 ```text
-/model openai/gpt-5.5
-/model openai-codex/gpt-5.5
+/model openai/gpt-5.6-sol
+/model openai-codex/gpt-5.6-sol
 /model anthropic/claude-sonnet-4-5
 /model github-copilot/gpt-4.1
 ```

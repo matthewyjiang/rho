@@ -39,9 +39,3 @@ Or from the CLI, which also updates the persistent default:
 ```bash
 rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5
 ```
-
-Anthropic is also a common choice for the separate [title-generation model](/configuration#title-model):
-
-```text
-/title-model anthropic/claude-sonnet-4-5
-```

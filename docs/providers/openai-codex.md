@@ -38,17 +38,17 @@ Environment variables are CI/development escape hatches and override stored cred
 Codex OAuth uses a static model allowlist rather than a refreshable API list. Switch to a Codex model with:
 
 ```text
-/model openai-codex/gpt-5.5
+/model openai-codex/gpt-5.6-sol
 ```
 
 Or from the CLI, which also updates the persistent default:
 
 ```bash
-rho --provider openai-codex --auth codex --model gpt-5.5
+rho --provider openai-codex --auth codex --model gpt-5.6-sol
 ```
 
 ## Notes
 
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
-- Pricing-sensitive models such as `openai-codex/gpt-5.5` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.
+- Pricing-sensitive models such as `openai-codex/gpt-5.6-sol` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.

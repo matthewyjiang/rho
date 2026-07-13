@@ -12,29 +12,47 @@ Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Us
 
 ## CLI reference
 
-```text
-Usage: rho [OPTIONS] [COMMAND]
+Rho accepts global options before an optional subcommand. Provider, model, auth, and reasoning selections update the saved defaults; security and session-control switches apply only to the current invocation.
 
-Commands:
-  run     Run one non-interactive automation prompt and print the final answer
-  update  Update rho using the detected installation method
-  help    Print this message or the help of the given subcommand(s)
+### Global options
 
-Options:
-      --provider <PROVIDER>
-      --model <MODEL>
-      --config <CONFIG>
-      --auth <AUTH>            [possible values: api-key, codex, anthropic-api-key, github-copilot]
-      --no-system-prompt       Do not send rho's system prompt, including AGENTS.md and skill context
-      --no-tools               Do not expose any tools to the model
-      --reasoning <REASONING>  Override reasoning level: off, minimal, low, medium, high, xhigh, or max
-  -R, --resume [<ID>]          Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker
-  -h, --help                   Print help
+| Option | Description |
+| --- | --- |
+| `--provider <PROVIDER>` | Select the provider for the current session or run. |
+| `--model <MODEL>` | Select a model. A provider/model name can be used when switching providers. |
+| `--config <CONFIG>` | Read and save configuration at a specific path instead of `~/.rho/config.toml`. |
+| `--auth <AUTH>` | Select an auth mode: `api-key`, `codex`, `anthropic-api-key`, `github-copilot`, or `xai-oauth`. |
+| `--reasoning <LEVEL>` | Select a reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
+| `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. |
+| `--no-tools` | Do not expose tools to the model. Current invocation only. |
+| `-R`, `--resume [<ID>]` | Resume a session by UUID or UUID prefix. Without an ID, open a picker. Interactive sessions only. |
+| `-h`, `--help` | Show help for Rho or a subcommand. |
+
+### Commands
+
+| Command | Description |
+| --- | --- |
+| `rho` | Start an interactive TUI session in the current working directory. |
+| `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Add `--device-auth` for remote or headless sessions. |
+| `rho update` | Update Rho using the detected installation method. |
+| `rho help [COMMAND]` | Show help for Rho or a subcommand. |
+
+Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers) — for example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
+
+`--no-system-prompt` and `--no-tools` only affect the current invocation and are not written to config. `--resume` cannot be combined with a subcommand such as `run` or `update`.
+
+## `rho login`
+
+Log in to a provider from the command line. Browser-based providers open a local browser flow; use `--device-auth` on remote or headless systems:
+
+```bash
+rho login openai-codex
+rho login openai-codex --device-auth
+rho login xai --device-auth
 ```
 
-Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration). For the exact flags and any automation caveats each provider needs, see its [provider page](/authentication-and-models#providers) — for example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
-
-`--no-system-prompt` and `--no-tools` only affect the current run and are not written to config.
+API-key providers are usually easier to configure interactively with `/login` in the TUI or with their documented environment-variable override. See [authentication and models](/authentication-and-models) for provider-specific details.
 
 ## `rho update`
 
