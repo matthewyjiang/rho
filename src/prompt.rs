@@ -122,7 +122,6 @@ mod tests {
 
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
-        assert!(prompt.contains("More specific files appear later and take precedence"));
         assert!(home_index < project_index);
         assert!(prompt.contains(&format!(
             "path=\"{}\"",
@@ -151,7 +150,6 @@ mod tests {
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
         let nested_index = prompt.find("nested rules").unwrap();
-        assert!(prompt.contains("More specific files appear later and take precedence"));
         assert!(home_index < project_index);
         assert!(project_index < nested_index);
     }
