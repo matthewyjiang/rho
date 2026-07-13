@@ -72,8 +72,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         max_output_bytes: config.max_output_bytes,
     };
     let herdr = HerdrReporter::from_env();
-    let mut agent =
-        Agent::new_with_model(provider, registry, context, &config.model).with_history(Vec::new());
+    let mut agent = Agent::new(provider, registry, context, &config.model).with_history(Vec::new());
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
     }

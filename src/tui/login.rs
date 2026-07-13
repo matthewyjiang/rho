@@ -363,7 +363,7 @@ impl App {
                 }
             };
 
-        agent.replace_provider(new_provider);
+        agent.replace_provider(new_provider, &self.info.model);
         self.info.auth = target.auth.clone();
         self.info.auth_unavailable = None;
         self.status = "login saved".into();
@@ -396,7 +396,7 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider);
+        agent.replace_provider(new_provider, &model);
         self.info.provider = target.provider.clone();
         self.info.auth = target.auth.clone();
         self.info.model = model;
@@ -486,7 +486,7 @@ impl App {
         let error = registry::missing_credentials_error(&target.provider);
         self.info.auth_unavailable = Some(error.to_string());
         self.using_unavailable_provider = true;
-        agent.replace_provider(Box::new(UnavailableProvider::new(error)));
+        agent.replace_provider(Box::new(UnavailableProvider::new(error)), &self.info.model);
         self.status = "no providers configured; run /login".into();
         true
     }

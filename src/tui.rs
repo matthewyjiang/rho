@@ -4033,7 +4033,7 @@ impl App {
                     return Ok(());
                 }
             };
-            agent.replace_provider(provider);
+            agent.replace_provider(provider, &self.info.model);
         }
         self.info.reasoning = reasoning;
         let save_result = self.info.config_repository.update(|config| {
@@ -4198,7 +4198,7 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider);
+        agent.replace_provider(new_provider, &model);
         self.info.provider = provider.clone();
         self.info.model = model.clone();
         self.info.reasoning = reasoning;

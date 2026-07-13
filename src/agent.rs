@@ -24,7 +24,7 @@ use crate::model::{
     openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage, DynModelProvider,
     Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
 };
-use crate::prompt::{system_prompt, system_prompt_with_model};
+use crate::prompt::system_prompt_with_model;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
 pub type QuestionnaireFuture =
@@ -103,7 +103,7 @@ impl Agent {
         self.tools.shutdown().await;
     }
 
-    pub fn new_with_model(
+    pub fn new(
         provider: DynModelProvider,
         tools: ToolRegistry,
         ctx: ToolContext,
@@ -114,20 +114,6 @@ impl Agent {
             &ctx.cwd,
             model,
         )));
-        Self::with_initial_system_message(provider, tools, ctx, initial_system_message)
-    }
-
-    pub fn new(provider: DynModelProvider, tools: ToolRegistry, ctx: ToolContext) -> Self {
-        let initial_system_message = Some(Message::System(system_prompt(&tools.specs(), &ctx.cwd)));
-        Self::with_initial_system_message(provider, tools, ctx, initial_system_message)
-    }
-
-    fn with_initial_system_message(
-        provider: DynModelProvider,
-        tools: ToolRegistry,
-        ctx: ToolContext,
-        initial_system_message: Option<Message>,
-    ) -> Self {
         let messages = initial_system_message.iter().cloned().collect();
         Self {
             provider,
@@ -185,8 +171,21 @@ impl Agent {
             .and_then(prompt_cache_key_from_session_id);
     }
 
-    pub fn replace_provider(&mut self, provider: DynModelProvider) {
+    pub fn replace_provider(&mut self, provider: DynModelProvider, model: &str) {
         self.provider = provider;
+        if self.initial_system_message.is_some() {
+            let system_message = Message::System(system_prompt_with_model(
+                &self.tools.specs(),
+                &self.ctx.cwd,
+                model,
+            ));
+            self.initial_system_message = Some(system_message.clone());
+            if let Some(message) = self.messages.first_mut() {
+                if matches!(message, Message::System(_)) {
+                    *message = system_message;
+                }
+            }
+        }
         self.context_tracker.replace_provider();
     }
 

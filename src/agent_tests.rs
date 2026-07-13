@@ -88,6 +88,7 @@ fn test_agent_with_tools(provider: impl ModelProvider + 'static, tools: ToolRegi
             cwd: std::env::current_dir().unwrap(),
             max_output_bytes: 12000,
         },
+        "test-model",
     )
 }
 
@@ -419,6 +420,7 @@ async fn does_not_retry_non_recoverable_provider_errors() {
             cwd: std::env::current_dir().unwrap(),
             max_output_bytes: 12000,
         },
+        "test-model",
     );
 
     let err = agent.run("hello".into()).await.unwrap_err();
@@ -445,6 +447,7 @@ async fn does_not_retry_provider_errors_after_streaming_output() {
             cwd: std::env::current_dir().unwrap(),
             max_output_bytes: 12000,
         },
+        "test-model",
     );
 
     let err = agent.run("hello".into()).await.unwrap_err();
@@ -469,6 +472,7 @@ async fn retries_recoverable_invalid_response_errors() {
             cwd: std::env::current_dir().unwrap(),
             max_output_bytes: 12000,
         },
+        "test-model",
     );
 
     let output = agent.run("hello".into()).await.unwrap();
@@ -490,6 +494,7 @@ async fn stops_retrying_persistently_invalid_responses() {
             cwd: std::env::current_dir().unwrap(),
             max_output_bytes: 12000,
         },
+        "test-model",
     );
 
     let err = agent.run("hello".into()).await.unwrap_err();
@@ -519,6 +524,7 @@ fn load_skill_truncates_contents_before_persisting() {
             cwd: root.path().to_path_buf(),
             max_output_bytes: 8,
         },
+        "test-model",
     );
     agent.set_history_sink(RecordingHistorySink::append_target(persisted.clone()));
 
@@ -1505,6 +1511,33 @@ fn replace_history_without_system_prompt_keeps_history_only() {
 
     assert_eq!(agent.messages().len(), 1);
     assert!(matches!(agent.messages()[0], Message::User(_)));
+}
+
+#[test]
+fn replacing_provider_updates_active_and_reset_model_identity() {
+    let mut agent = test_agent(RecordingProvider::default());
+
+    agent.replace_provider(Box::new(RecordingProvider::default()), "new-model");
+
+    assert!(matches!(
+        agent.messages().first(),
+        Some(Message::System(prompt)) if prompt.starts_with("You are new-model, a coding agent")
+    ));
+    agent.reset();
+    assert!(matches!(
+        agent.messages().first(),
+        Some(Message::System(prompt)) if prompt.starts_with("You are new-model, a coding agent")
+    ));
+}
+
+#[test]
+fn replacing_provider_preserves_disabled_system_prompt() {
+    let mut agent = test_agent(RecordingProvider::default()).without_system_prompt();
+
+    agent.replace_provider(Box::new(RecordingProvider::default()), "new-model");
+    agent.reset();
+
+    assert!(agent.messages().is_empty());
 }
 
 #[tokio::test]
