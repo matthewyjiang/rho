@@ -233,6 +233,7 @@ fn directory_display_prefix(directory_query: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn path_to_unix_string(path: &Path) -> String {
     let mut parts = Vec::new();
     for component in path.components() {
