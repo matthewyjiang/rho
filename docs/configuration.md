@@ -99,8 +99,7 @@ rho --config ~/.rho/config.toml
 Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Use `/title-model` in the TUI to choose from available catalog and cached models, or pass a direct provider/model name:
 
 ```text
-/title-model openai/gpt-5.5
-/title-model anthropic/claude-sonnet-4-5
+/title-model openai/gpt-5.6-luna
 ```
 
 If no title model settings are present, Rho falls back to the active provider, model, and auth.
