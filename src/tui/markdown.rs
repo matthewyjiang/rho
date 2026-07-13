@@ -22,16 +22,6 @@ pub(super) fn update_code_block_state(text: &str, in_code_block: &mut bool) {
     }
 }
 
-#[cfg(test)]
-pub(super) fn push_wrapped_markdown(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    in_code_block: &mut bool,
-) {
-    lines.extend(render_markdown(text, width, in_code_block).lines);
-}
-
 pub(super) fn push_wrapped_markdown_without_copy_button(
     lines: &mut Vec<Line<'static>>,
     text: &str,

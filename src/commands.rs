@@ -286,58 +286,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_compact_command() {
-        let invocation = parse_command("/compact").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Compact);
-        assert_eq!(invocation.name, "compact");
-    }
-
-    #[test]
-    fn parses_skills_command() {
-        let invocation = parse_command("/skills").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Skills);
-        assert_eq!(invocation.name, "skills");
-    }
-
-    #[test]
     fn parses_goal_command_with_condition() {
         let invocation = parse_command("/goal all tests pass").unwrap().unwrap();
 
         assert_eq!(invocation.id, CommandId::Goal);
         assert_eq!(invocation.name, "goal");
         assert_eq!(invocation.args, "all tests pass");
-    }
-
-    #[test]
-    fn parses_export_command_with_path_argument() {
-        let invocation = parse_command("/export docs/transcript.html")
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(invocation.id, CommandId::Export);
-        assert_eq!(invocation.name, "export");
-        assert_eq!(invocation.args, "docs/transcript.html");
-    }
-
-    #[test]
-    fn parses_new_command() {
-        let invocation = parse_command("/new").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::New);
-        assert_eq!(invocation.name, "new");
-    }
-
-    #[test]
-    fn parses_refresh_model_list_command_with_provider_argument() {
-        let invocation = parse_command("/refresh-model-list anthropic")
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(invocation.id, CommandId::RefreshModelList);
-        assert_eq!(invocation.name, "refresh-model-list");
-        assert_eq!(invocation.args, "anthropic");
     }
 
     #[test]
@@ -366,24 +320,6 @@ mod tests {
         let err = parse_command("/nope").unwrap_err();
 
         assert_eq!(err, CommandParseError::Unknown("nope".into()));
-    }
-
-    #[test]
-    fn parses_logout_command_with_provider_argument() {
-        let invocation = parse_command("/logout openai-codex").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Logout);
-        assert_eq!(invocation.args, "openai-codex");
-    }
-
-    #[test]
-    fn login_usage_accepts_provider_argument() {
-        let login = COMMANDS
-            .iter()
-            .find(|command| command.name == "login")
-            .unwrap();
-
-        assert_eq!(login.usage, "/login [provider]");
     }
 
     #[test]

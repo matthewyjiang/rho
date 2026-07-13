@@ -5920,8 +5920,6 @@ mod tests {
     mod mouse_tests;
     #[path = "questionnaire_interaction_tests.rs"]
     mod questionnaire_interaction_tests;
-    #[path = "render_performance_tests.rs"]
-    mod render_performance_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;

@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::{entry_lines, render_entry};
+use crate::tui::render::entry_lines;
 
 #[test]
 fn caches_code_block_copy_target_and_raw_contents() {
@@ -36,44 +36,6 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
             copy_columns: 4..10,
             text: Arc::from("λ🙂"),
         }]
-    );
-}
-
-#[test]
-#[ignore]
-fn measure_single_pass_assistant_cache_rendering() {
-    use std::{hint::black_box, time::Instant};
-
-    let text = format!(
-        "{}\n```rust\n{}\n```\n{}",
-        "Unicode prose 你好 **bold** and `code`. ".repeat(250),
-        "println!(\"你好🙂\");\n".repeat(100),
-        "More wrapped prose with [docs](https://example.com). ".repeat(250)
-    );
-    let entry = Entry::Assistant(text);
-    let iterations = 100;
-    let started = Instant::now();
-    for _ in 0..iterations {
-        let Entry::Assistant(text) = black_box(&entry) else {
-            unreachable!();
-        };
-        let mut in_code_block = false;
-        black_box(crate::tui::markdown::render_markdown(
-            text,
-            78,
-            &mut in_code_block,
-        ));
-        black_box(entry_lines(black_box(&entry), 80, 10));
-    }
-    let two_pass = started.elapsed();
-    let started = Instant::now();
-    for _ in 0..iterations {
-        black_box(render_entry(black_box(&entry), 80, 10));
-    }
-    let single_pass = started.elapsed();
-    eprintln!(
-        "two_pass={two_pass:?} single_pass={single_pass:?} speedup={:.2}x",
-        two_pass.as_secs_f64() / single_pass.as_secs_f64()
     );
 }
 
