@@ -119,6 +119,67 @@ async fn applies_same_file_edits_across_path_aliases() {
 }
 
 #[tokio::test]
+async fn applies_ordered_edits_across_hard_links() {
+    let (_dir, ctx) = test_context();
+    let original = ctx.cwd.join("original.txt");
+    let alias = ctx.cwd.join("alias.txt");
+    std::fs::write(&original, "alpha beta").unwrap();
+    std::fs::hard_link(&original, &alias).unwrap();
+
+    let result = call(
+        json!({"edits": [
+            {"path": "original.txt", "old_string": "alpha", "new_string": "gamma"},
+            {"path": "alias.txt", "old_string": "gamma beta", "new_string": "done"}
+        ]}),
+        ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(original).unwrap(), "done");
+    assert_eq!(std::fs::read_to_string(alias).unwrap(), "done");
+    assert!(result
+        .content
+        .contains("edited 1 file(s); applied 2 edit(s)"));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn rolls_back_earlier_file_when_a_later_write_fails() {
+    fn file_changes(path: &std::path::Path, original: &str, updated: &str) -> FileChanges {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        FileChanges {
+            path: path.to_path_buf(),
+            file: tokio::fs::File::from_std(file.try_clone().unwrap()),
+            identity: Handle::from_file(file).unwrap(),
+            display_path: path.display().to_string(),
+            original: original.into(),
+            updated: updated.into(),
+        }
+    }
+
+    let (root, _ctx) = test_context();
+    let first_path = root.path().join("first.txt");
+    std::fs::write(&first_path, "original").unwrap();
+    let mut files = vec![
+        file_changes(&first_path, "original", "updated"),
+        file_changes(std::path::Path::new("/dev/full"), "", "cannot write"),
+    ];
+
+    let error = write_all_or_rollback(&mut files).await.unwrap_err();
+
+    assert_eq!(std::fs::read_to_string(first_path).unwrap(), "original");
+    assert!(error.to_string().contains("failed to write /dev/full"));
+    assert!(error
+        .to_string()
+        .contains("rollback also failed for /dev/full"));
+}
+
+#[tokio::test]
 async fn writes_nothing_when_a_later_edit_is_missing() {
     let (_dir, ctx) = test_context();
     std::fs::write(ctx.cwd.join("first.txt"), "old").unwrap();

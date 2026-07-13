@@ -44,6 +44,29 @@ fn compact_diff_for_display_impl(diff: &str, include_file_headers: bool) -> Opti
     let mut lines = Vec::new();
 
     for line in diff.lines() {
+        if in_hunk {
+            if line.is_empty() {
+                in_hunk = false;
+                continue;
+            }
+            if line.starts_with("@@") {
+                continue;
+            }
+            if line.starts_with('\\') {
+                continue;
+            }
+
+            let Some(content) = line.get(1..) else {
+                continue;
+            };
+            match &line[..1] {
+                "+" | "-" => lines.push(line.to_string()),
+                " " => lines.push(content.to_string()),
+                _ => {}
+            }
+            continue;
+        }
+
         if let Some(path) = line.strip_prefix("+++ b/") {
             if include_file_headers {
                 if !lines.is_empty() {
@@ -53,25 +76,8 @@ fn compact_diff_for_display_impl(diff: &str, include_file_headers: bool) -> Opti
             }
             continue;
         }
-        if line.starts_with("--- ") {
-            in_hunk = false;
-            continue;
-        }
         if line.starts_with("@@") {
             in_hunk = true;
-            continue;
-        }
-        if !in_hunk || line.starts_with('\\') {
-            continue;
-        }
-
-        let Some(content) = line.get(1..) else {
-            continue;
-        };
-        match &line[..1] {
-            "+" | "-" => lines.push(line.to_string()),
-            " " => lines.push(content.to_string()),
-            _ => {}
         }
     }
 
@@ -94,6 +100,21 @@ mod tests {
         assert_eq!(
             compact_diff_for_display(&diff).unwrap(),
             "keep\n-old\n+new\nafter"
+        );
+    }
+
+    #[test]
+    fn preserves_deleted_lines_that_begin_with_diff_header_markers() {
+        let diff = unified_diff(
+            "before\n-- option\nafter\n",
+            "before\nafter\n",
+            "cli.md",
+            false,
+        );
+
+        assert_eq!(
+            compact_diff_for_display(&diff).unwrap(),
+            "before\n--- option\nafter"
         );
     }
 

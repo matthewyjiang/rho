@@ -5,12 +5,20 @@ use crate::{
         edit_file_args::{edit_error, input_schema, Args},
     },
 };
-use std::{ops::Range, path::PathBuf};
+use same_file::Handle;
+use std::{
+    fs::OpenOptions,
+    io::{Seek, SeekFrom, Write},
+    ops::Range,
+};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 pub struct EditFile;
 
 struct FileChanges {
-    path: PathBuf,
+    path: std::path::PathBuf,
+    file: tokio::fs::File,
+    identity: Handle,
     display_path: String,
     original: String,
     updated: String,
@@ -90,14 +98,33 @@ impl Tool for EditFile {
                         format!("could not resolve file: {error}"),
                     )
                 })?;
-            let file_index = match files.iter().position(|file| file.path == path) {
+            let mut file = tokio::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .await
+                .map_err(|error| {
+                    edit_error(index, &edit.path, format!("could not open file: {error}"))
+                })?;
+            let identity =
+                Handle::from_file(file.try_clone().await?.into_std().await).map_err(|error| {
+                    edit_error(
+                        index,
+                        &edit.path,
+                        format!("could not identify file: {error}"),
+                    )
+                })?;
+            let file_index = match files.iter().position(|file| file.identity == identity) {
                 Some(file_index) => file_index,
                 None => {
-                    let content = tokio::fs::read_to_string(&path).await.map_err(|error| {
+                    let mut content = String::new();
+                    file.read_to_string(&mut content).await.map_err(|error| {
                         edit_error(index, &edit.path, format!("could not read file: {error}"))
                     })?;
                     files.push(FileChanges {
                         path,
+                        file,
+                        identity,
                         display_path: compact_display_path(&ctx.cwd, &edit.path),
                         original: content.clone(),
                         updated: content,
@@ -114,8 +141,10 @@ impl Tool for EditFile {
             replacement_count += spans.len();
         }
 
-        for file in &files {
-            let current = tokio::fs::read_to_string(&file.path).await?;
+        for file in &mut files {
+            file.file.rewind().await?;
+            let mut current = String::new();
+            file.file.read_to_string(&mut current).await?;
             if current != file.original {
                 return Err(ToolError::Message(format!(
                     "{} changed while edits were being validated; no files were modified",
@@ -129,9 +158,7 @@ impl Tool for EditFile {
             .map(|file| unified_diff(&file.original, &file.updated, &file.display_path, false))
             .collect::<Vec<_>>()
             .join("\n\n");
-        for file in &files {
-            tokio::fs::write(&file.path, &file.updated).await?;
-        }
+        write_all_or_rollback(&mut files).await?;
 
         Ok(ToolResult {
             id,
@@ -146,6 +173,76 @@ impl Tool for EditFile {
             ),
         })
     }
+}
+
+async fn write_all_or_rollback(files: &mut [FileChanges]) -> Result<(), ToolError> {
+    let writes = files
+        .iter()
+        .map(|file| {
+            (
+                OpenOptions::new().read(true).write(true).open(&file.path),
+                file.updated.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let originals = files
+        .iter()
+        .map(|file| file.original.clone())
+        .collect::<Vec<_>>();
+    let display_paths = files
+        .iter()
+        .map(|file| file.display_path.clone())
+        .collect::<Vec<_>>();
+
+    tokio::task::spawn_blocking(move || {
+        for index in 0..writes.len() {
+            let write_result = writes[index]
+                .0
+                .as_ref()
+                .map_err(clone_io_error)
+                .and_then(|file| write_content(file, &writes[index].1));
+            if let Err(write_error) = write_result {
+                let mut rollback_failures = Vec::new();
+                for rollback_index in (0..=index).rev() {
+                    let rollback_result = writes[rollback_index]
+                        .0
+                        .as_ref()
+                        .map_err(clone_io_error)
+                        .and_then(|file| write_content(file, &originals[rollback_index]));
+                    if let Err(error) = rollback_result {
+                        rollback_failures
+                            .push(format!("{}: {error}", display_paths[rollback_index]));
+                    }
+                }
+                let mut message =
+                    format!("failed to write {}: {write_error}", display_paths[index]);
+                if rollback_failures.is_empty() {
+                    message.push_str("; all writes were rolled back");
+                } else {
+                    message.push_str(&format!(
+                        "; rollback also failed for {}",
+                        rollback_failures.join(", ")
+                    ));
+                }
+                return Err(ToolError::Message(message));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| ToolError::Message(format!("file write task failed: {error}")))?
+}
+
+fn write_content(file: &std::fs::File, content: &str) -> std::io::Result<()> {
+    let mut file = file;
+    file.seek(SeekFrom::Start(0))?;
+    file.set_len(0)?;
+    file.write_all(content.as_bytes())?;
+    file.flush()
+}
+
+fn clone_io_error(error: &std::io::Error) -> std::io::Error {
+    std::io::Error::new(error.kind(), error.to_string())
 }
 
 fn display_paths(args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
