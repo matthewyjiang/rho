@@ -37,6 +37,7 @@ mod config_picker;
 mod copy_interaction;
 mod doctor;
 mod event_batch;
+mod file_palette;
 mod file_picker;
 mod goal;
 mod goal_command;
@@ -267,7 +268,10 @@ struct App {
     command_selection: usize,
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
-    file_picker_context: Option<FilePickerContext>,
+    file_selection: usize,
+    file_query: Option<String>,
+    file_palette_dismissed: bool,
+    file_match_cache: Option<FileMatchCache>,
     composer: ComposerMode,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
@@ -345,10 +349,10 @@ struct InputDraft {
     submission_mode: InputSubmissionMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct FilePickerContext {
-    start: usize,
-    end: usize,
+#[derive(Clone, Debug)]
+struct FileMatchCache {
+    query: String,
+    matches: std::sync::Arc<Vec<String>>,
 }
 
 impl From<&str> for QueuedPrompt {
@@ -640,7 +644,10 @@ impl App {
             command_selection: 0,
             command_prefix: None,
             command_palette_dismissed: false,
-            file_picker_context: None,
+            file_selection: 0,
+            file_query: None,
+            file_palette_dismissed: false,
+            file_match_cache: None,
             composer: ComposerMode::Input,
             credential_store,
             available_auths,
@@ -758,11 +765,7 @@ impl App {
             Event::Paste(text) => {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
-                let opens_file_picker = text.contains('@');
                 self.insert_paste(&text);
-                if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
-                    self.open_file_picker();
-                }
                 self.paste_burst.clear();
             }
             Event::Resize(_, _) => {
@@ -829,11 +832,7 @@ impl App {
             return;
         };
         let text = normalize_paste(&text);
-        let opens_file_picker = text.contains('@');
         self.insert_paste(&text);
-        if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
-            self.open_file_picker();
-        }
     }
 
     fn handle_paste_burst_key(&mut self, key: KeyEvent) -> bool {
@@ -888,14 +887,6 @@ impl App {
     }
 
     fn paste_burst_key(&self, key: KeyEvent) -> Option<PasteBurstKey> {
-        if matches!(
-            (key.modifiers, key.code),
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char('@'))
-        ) && matches!(self.composer, ComposerMode::Input)
-        {
-            return None;
-        }
-
         match (key.modifiers, key.code) {
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
@@ -986,6 +977,10 @@ impl App {
             .handle_command_palette_key(key, terminal, agent)
             .await?
         {
+            return Ok(());
+        }
+
+        if self.handle_file_palette_key(key)? {
             return Ok(());
         }
 
@@ -1086,9 +1081,6 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
-                if ch == '@' {
-                    self.open_file_picker();
-                }
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -1097,6 +1089,7 @@ impl App {
             }
         }
         self.clamp_command_selection();
+        self.clamp_file_selection();
         Ok(())
     }
 
@@ -1540,23 +1533,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                let selected_file = match &self.composer {
-                    ComposerMode::Picker(picker)
-                        if picker.action == PickerAction::InsertFilePath =>
-                    {
-                        picker.selected_item().map(|item| item.value.clone())
-                    }
-                    ComposerMode::Picker(_) => None,
-                    ComposerMode::Input
-                    | ComposerMode::SecretInput(_)
-                    | ComposerMode::ConfigNumberInput(_)
-                    | ComposerMode::ConfigTextInput(_)
-                    | ComposerMode::OAuthPending(_)
-                    | ComposerMode::Questionnaire(_) => None,
-                };
-                if let Some(path) = selected_file {
-                    self.insert_selected_file_path(&path, /*running*/ false);
-                } else if let ComposerMode::Picker(picker) = &mut self.composer {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.complete_filter();
                 }
                 self.paste_burst.clear();
@@ -1779,24 +1756,6 @@ impl App {
         true
     }
 
-    fn open_file_picker(&mut self) {
-        let Some(mention) = file_picker::active_file_mention(&self.input, self.input_cursor) else {
-            return;
-        };
-        let picker = file_picker::file_path_picker(&self.info.cwd, &mention.query);
-        let has_items = !picker.items.is_empty();
-        self.file_picker_context = Some(FilePickerContext {
-            start: mention.start,
-            end: mention.end,
-        });
-        self.composer = ComposerMode::Picker(picker);
-        self.status = if has_items {
-            "select workspace file".into()
-        } else {
-            "no workspace files found".into()
-        };
-    }
-
     fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
         self.reset_input_history_navigation();
         self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
@@ -1805,24 +1764,6 @@ impl App {
         self.input.replace_range(start_byte..end_byte, text);
         self.input_cursor = start + text.chars().count();
         self.input_changed();
-    }
-
-    fn insert_selected_file_path(&mut self, path: &str, running: bool) {
-        let Some(context) = self.file_picker_context.take() else {
-            self.composer = ComposerMode::Input;
-            self.status = if running { "running" } else { "ready" }.into();
-            return;
-        };
-        let mention = format!("@{path}");
-        self.composer = ComposerMode::Input;
-        self.replace_input_range(context.start, context.end, &mention);
-        self.status = "file path inserted".into();
-    }
-
-    fn cancel_file_picker(&mut self, running: bool) {
-        self.file_picker_context = None;
-        self.composer = ComposerMode::Input;
-        self.status = if running { "running" } else { "ready" }.into();
     }
 
     fn insert_input_char(&mut self, ch: char) {
@@ -1930,7 +1871,9 @@ impl App {
 
     fn input_changed(&mut self) {
         self.command_palette_dismissed = false;
+        self.file_palette_dismissed = false;
         self.clamp_command_selection();
+        self.clamp_file_selection();
     }
 
     fn parse_input_command(
@@ -2438,6 +2381,9 @@ impl App {
         if self.handle_running_command_palette_key(key, terminal)? {
             return Ok(());
         }
+        if self.handle_running_file_palette_key(key)? {
+            return Ok(());
+        }
         if self.handle_configurable_running_key(key, terminal)? {
             return Ok(());
         }
@@ -2532,9 +2478,6 @@ impl App {
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.insert_input_char(ch);
-                if ch == '@' {
-                    self.open_file_picker();
-                }
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -2543,6 +2486,7 @@ impl App {
             }
         }
         self.clamp_command_selection();
+        self.clamp_file_selection();
         Ok(())
     }
 
@@ -2798,23 +2742,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                let selected_file = match &self.composer {
-                    ComposerMode::Picker(picker)
-                        if picker.action == PickerAction::InsertFilePath =>
-                    {
-                        picker.selected_item().map(|item| item.value.clone())
-                    }
-                    ComposerMode::Picker(_) => None,
-                    ComposerMode::Input
-                    | ComposerMode::SecretInput(_)
-                    | ComposerMode::ConfigNumberInput(_)
-                    | ComposerMode::ConfigTextInput(_)
-                    | ComposerMode::OAuthPending(_)
-                    | ComposerMode::Questionnaire(_) => None,
-                };
-                if let Some(path) = selected_file {
-                    self.insert_selected_file_path(&path, /*running*/ true);
-                } else if let ComposerMode::Picker(picker) = &mut self.composer {
+                if let ComposerMode::Picker(picker) = &mut self.composer {
                     picker.complete_filter();
                 }
                 Ok(true)
@@ -2853,19 +2781,12 @@ impl App {
 
     fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            if matches!(
-                &self.composer,
-                ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
-            ) {
-                self.cancel_file_picker(/*running*/ true);
-            } else {
-                self.composer = ComposerMode::Input;
-                self.status = "running".into();
-            }
+            self.composer = ComposerMode::Input;
+            self.status = "running".into();
             return Ok(());
         };
 
-        if !matches!(action, PickerAction::Config | PickerAction::InsertFilePath) {
+        if !matches!(action, PickerAction::Config) {
             self.composer = ComposerMode::Input;
         }
         match action {
@@ -2874,9 +2795,6 @@ impl App {
                 self.input_cursor = self.input_char_len();
                 self.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
-            }
-            PickerAction::InsertFilePath => {
-                self.insert_selected_file_path(&value, /*running*/ true);
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::Doctor => {
@@ -3087,12 +3005,8 @@ impl App {
                 }
                 Event::Paste(text) if input_mode == RunningInputMode::Turn => {
                     let text = normalize_paste(&text);
-                    let opens_file_picker = text.contains('@');
                     self.flush_pending_paste_burst();
                     self.insert_paste(&text);
-                    if opens_file_picker && matches!(self.composer, ComposerMode::Input) {
-                        self.open_file_picker();
-                    }
                     self.paste_burst.clear();
                 }
                 Event::Resize(_, _) => {
@@ -3119,7 +3033,9 @@ impl App {
     }
 
     fn running_escape_has_overlay_target(&self) -> bool {
-        self.command_palette_visible() || !matches!(self.composer, ComposerMode::Input)
+        self.command_palette_visible()
+            || self.file_palette_visible()
+            || !matches!(self.composer, ComposerMode::Input)
     }
 
     fn request_running_interrupt(
@@ -3720,19 +3636,12 @@ impl App {
         agent: &mut Agent,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            if matches!(
-                &self.composer,
-                ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
-            ) {
-                self.cancel_file_picker(/*running*/ false);
-            } else {
-                self.composer = ComposerMode::Input;
-                self.status = "ready".into();
-            }
+            self.composer = ComposerMode::Input;
+            self.status = "ready".into();
             return Ok(());
         };
 
-        if !matches!(action, PickerAction::Config | PickerAction::InsertFilePath) {
+        if !matches!(action, PickerAction::Config) {
             self.composer = ComposerMode::Input;
         }
         match action {
@@ -3778,10 +3687,6 @@ impl App {
                 self.input_cursor = self.input_char_len();
                 self.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
-                Ok(())
-            }
-            PickerAction::InsertFilePath => {
-                self.insert_selected_file_path(&value, /*running*/ false);
                 Ok(())
             }
             PickerAction::ResumeSession => {
@@ -3921,16 +3826,9 @@ impl App {
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
-        if matches!(
-            &self.composer,
-            ComposerMode::Picker(picker) if picker.action == PickerAction::InsertFilePath
-        ) {
-            self.cancel_file_picker(running);
-            Ok(())
-        } else if self.web_search_config_picker_is_open() {
+        if self.web_search_config_picker_is_open() {
             self.open_main_config_picker_selected(config_picker::WEB_SEARCH_VALUE)
         } else {
-            self.file_picker_context = None;
             self.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
             Ok(())
@@ -4008,7 +3906,6 @@ impl App {
             PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
-            | PickerAction::InsertFilePath
             | PickerAction::ResumeSession
             | PickerAction::Config
             | PickerAction::Doctor => return Ok(()),
@@ -5335,38 +5232,83 @@ impl App {
     }
 
     fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
-        if !self.command_palette_visible() {
+        if self.command_palette_visible() {
+            let matches = self.command_matches();
+            let selected_index = self.command_selection.min(matches.len().saturating_sub(1));
+            let start = selected_index
+                .saturating_add(1)
+                .saturating_sub(MAX_COMMAND_SUGGESTIONS);
+
+            return matches
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(MAX_COMMAND_SUGGESTIONS)
+                .map(|(index, command)| {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let usage_width = 16usize.min(width.saturating_sub(5).max(1));
+                    let description_width = width.saturating_sub(usage_width + 3).max(1);
+                    let usage = truncate_one_line(&command.usage, usage_width);
+                    let description = truncate_one_line(&command.description, description_width);
+                    let usage_padding =
+                        " ".repeat(usage_width.saturating_sub(display_width(&usage)));
+                    let text = format!("{marker} {usage}{usage_padding} {description}");
+                    let style = if selected {
+                        Theme::brand()
+                    } else {
+                        Theme::dim()
+                    };
+                    styled_line(text, width.max(1), style, LineFill::Natural)
+                })
+                .collect();
+        }
+
+        if !self.file_palette_visible() {
             return Vec::new();
         }
 
-        let matches = self.command_matches();
-        let selected_index = self.command_selection.min(matches.len().saturating_sub(1));
-        let start = selected_index
-            .saturating_add(1)
-            .saturating_sub(MAX_COMMAND_SUGGESTIONS);
+        let matches = self.file_matches();
+        let selected_index = self.file_selection.min(matches.len().saturating_sub(1));
+        let (start, above, below) = file_picker::file_palette_scroll_counts(
+            matches.len(),
+            selected_index,
+            MAX_COMMAND_SUGGESTIONS,
+        );
 
-        matches
-            .into_iter()
+        let mut lines = matches
+            .iter()
             .enumerate()
             .skip(start)
             .take(MAX_COMMAND_SUGGESTIONS)
-            .map(|(index, command)| {
+            .map(|(index, path)| {
                 let selected = index == selected_index;
                 let marker = if selected { ">" } else { " " };
-                let usage_width = 16usize.min(width.saturating_sub(5).max(1));
-                let description_width = width.saturating_sub(usage_width + 3).max(1);
-                let usage = truncate_one_line(&command.usage, usage_width);
-                let description = truncate_one_line(&command.description, description_width);
-                let usage_padding = " ".repeat(usage_width.saturating_sub(display_width(&usage)));
-                let text = format!("{marker} {usage}{usage_padding} {description}");
+                let text = format!("{marker} @{path}");
                 let style = if selected {
                     Theme::brand()
                 } else {
                     Theme::dim()
                 };
-                styled_line(text, width.max(1), style, LineFill::Natural)
+                styled_line(
+                    truncate_one_line(&text, width.max(1)),
+                    width.max(1),
+                    style,
+                    LineFill::Natural,
+                )
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        if let Some(footer) = file_picker::file_palette_scroll_footer(above, below, matches.len()) {
+            lines.push(styled_line(
+                truncate_one_line(&footer, width.max(1)),
+                width.max(1),
+                Theme::dim(),
+                LineFill::Natural,
+            ));
+        }
+
+        lines
     }
 
     fn insert_session_intro(&self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
@@ -7030,6 +6972,107 @@ mod tests {
     }
 
     #[test]
+    fn file_palette_stays_inline_with_input_and_inserts_selected_path() {
+        use std::fs;
+
+        use tempfile::tempdir;
+
+        file_picker::clear_workspace_file_path_cache();
+        let workspace = tempdir().unwrap();
+        fs::create_dir_all(workspace.path().join("src")).unwrap();
+        fs::write(workspace.path().join("src/lib.rs"), "").unwrap();
+        fs::write(workspace.path().join("README.md"), "").unwrap();
+
+        let mut app = test_app();
+        app.info.cwd = workspace.path().to_path_buf();
+        app.input = "review @slr".into();
+        app.input_cursor = app.input_char_len();
+        app.clamp_file_selection();
+
+        assert!(app.file_palette_visible());
+        assert!(!matches!(app.composer, ComposerMode::Picker(_)));
+        assert_eq!(app.selected_file_path().as_deref(), Some("src/lib.rs"));
+
+        let rendered = app
+            .active_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("> @src/lib.rs"), "{rendered}");
+        assert!(rendered.contains("review @slr"), "{rendered}");
+
+        app.insert_selected_file_path("src/lib.rs");
+        assert_eq!(app.input, "review @src/lib.rs ");
+        assert!(!app.file_palette_visible());
+    }
+
+    #[test]
+    fn file_palette_arrow_keys_scroll_beyond_visible_window() {
+        use std::fs;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use tempfile::tempdir;
+
+        file_picker::clear_workspace_file_path_cache();
+        let workspace = tempdir().unwrap();
+        for index in 0..8 {
+            fs::write(workspace.path().join(format!("file-{index}.txt")), "").unwrap();
+        }
+
+        let mut app = test_app();
+        app.info.cwd = workspace.path().to_path_buf();
+        app.input = "@".into();
+        app.input_cursor = 1;
+        app.clamp_file_selection();
+
+        let matches = app.file_matches();
+        assert!(matches.len() > MAX_COMMAND_SUGGESTIONS, "{matches:?}");
+
+        let top_rendered = app
+            .command_suggestion_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            top_rendered.contains("↓ 3 more · 8 total"),
+            "{top_rendered}"
+        );
+        assert!(!top_rendered.contains("↑"), "{top_rendered}");
+
+        for _ in 0..MAX_COMMAND_SUGGESTIONS {
+            app.handle_file_palette_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .unwrap();
+        }
+
+        assert_eq!(app.file_selection, MAX_COMMAND_SUGGESTIONS);
+        assert_eq!(
+            app.selected_file_path().as_deref(),
+            Some(matches[MAX_COMMAND_SUGGESTIONS].as_str())
+        );
+
+        let rendered = app
+            .command_suggestion_lines(60)
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rendered.contains(&format!("> @{}", matches[MAX_COMMAND_SUGGESTIONS])),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains(&format!("@{}", matches[0])),
+            "expected window to scroll past first match: {rendered}"
+        );
+        assert!(
+            rendered.contains("↑ 1 more · ↓ 2 more · 8 total"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn command_palette_rendering_shows_selected_match() {
         let mut app = test_app();
         app.input = "/m".into();
@@ -7268,35 +7311,6 @@ mod tests {
         );
         picker.complete_filter();
         assert_eq!(picker.filter, "openai-codex/gpt-5.4-mini");
-    }
-
-    #[test]
-    fn file_picker_fuzzy_matching_prefers_path_component_boundaries() {
-        let picker = UiPicker::new(
-            "workspace files",
-            "type fuzzy search",
-            vec![
-                PickerItem {
-                    label: "src/tui/model_picker.rs".into(),
-                    detail: None,
-                    preview: None,
-                    badge: None,
-                    value: "src/tui/model_picker.rs".into(),
-                },
-                PickerItem {
-                    label: "AGENTS.md".into(),
-                    detail: None,
-                    preview: None,
-                    badge: None,
-                    value: "AGENTS.md".into(),
-                },
-            ],
-            PickerAction::InsertFilePath,
-        );
-        let mut picker = picker;
-        picker.filter = "tmd".into();
-
-        assert_eq!(picker.matching_indices(), vec![0, 1]);
     }
 
     #[test]

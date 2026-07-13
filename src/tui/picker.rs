@@ -70,7 +70,6 @@ pub(super) enum PickerAction {
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
-    InsertFilePath,
     ResumeSession,
     Config,
     Doctor,
@@ -85,7 +84,6 @@ impl PickerAction {
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
-            | PickerAction::InsertFilePath
             | PickerAction::ResumeSession => false,
         }
     }
@@ -156,9 +154,7 @@ impl UiPicker {
     pub(super) fn complete_filter(&mut self) {
         if let Some(item) = self.selected_item() {
             self.filter = match self.action {
-                PickerAction::SelectModel
-                | PickerAction::SelectTitleModel
-                | PickerAction::InsertFilePath => item.value.clone(),
+                PickerAction::SelectModel | PickerAction::SelectTitleModel => item.value.clone(),
                 PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
@@ -184,9 +180,7 @@ impl UiPicker {
         if stale {
             let filter = self.filter.trim();
             let regex = match self.action {
-                PickerAction::SelectModel
-                | PickerAction::SelectTitleModel
-                | PickerAction::InsertFilePath => None,
+                PickerAction::SelectModel | PickerAction::SelectTitleModel => None,
                 PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
@@ -202,9 +196,7 @@ impl UiPicker {
                     .flatten(),
             };
             let indices = match self.action {
-                PickerAction::SelectModel
-                | PickerAction::SelectTitleModel
-                | PickerAction::InsertFilePath => {
+                PickerAction::SelectModel | PickerAction::SelectTitleModel => {
                     fuzzy_picker_matching_indices(&self.items, filter)
                 }
                 PickerAction::LoginProvider
@@ -292,7 +284,7 @@ fn picker_haystack(item: &PickerItem) -> String {
     )
 }
 
-fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
+pub(super) fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
     let haystack = haystack.to_lowercase();
     let needle = needle.to_lowercase();
     let haystack_chars = haystack.chars().collect::<Vec<_>>();
