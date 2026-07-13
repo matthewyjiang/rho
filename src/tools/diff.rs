@@ -35,6 +35,10 @@ pub(super) fn compact_diff_for_display(diff: &str) -> Option<String> {
     let mut lines = Vec::new();
 
     for line in diff.lines() {
+        if line.starts_with("--- ") {
+            in_hunk = false;
+            continue;
+        }
         if line.starts_with("@@") {
             in_hunk = true;
             continue;
@@ -72,6 +76,20 @@ mod tests {
         assert_eq!(
             compact_diff_for_display(&diff).unwrap(),
             "keep\n-old\n+new\nafter"
+        );
+    }
+
+    #[test]
+    fn compacts_multiple_file_diffs_without_headers() {
+        let diff = [
+            unified_diff("old one\n", "new one\n", "one.txt", false),
+            unified_diff("old two\n", "new two\n", "two.txt", false),
+        ]
+        .join("\n\n");
+
+        assert_eq!(
+            compact_diff_for_display(&diff).unwrap(),
+            "-old one\n+new one\n-old two\n+new two"
         );
     }
 

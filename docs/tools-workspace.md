@@ -28,6 +28,28 @@ Web access tools keep normal prompts small. They return concise previews, snippe
 
 These tools can read and modify files, run shell commands in the working directory, and fetch external or local content when invoked.
 
+## Atomic file edits
+
+`edit_file` accepts either the existing single-edit arguments or an `edits` array for several exact replacements across one or more files. Array edits run in order, including when several edits target the same file. Each edit may set `expected_match_count` (default `1`); the edit fails as missing when fewer matches are found or ambiguous when more matches are found. Rho validates every replacement against in-memory file contents before writing any file, so a validation failure leaves all targeted files unchanged.
+
+```json
+{
+  "edits": [
+    {
+      "path": "src/first.rs",
+      "old_string": "old_name",
+      "new_string": "new_name",
+      "expected_match_count": 2
+    },
+    {
+      "path": "src/second.rs",
+      "old_string": "old call",
+      "new_string": "new call"
+    }
+  ]
+}
+```
+
 ## Managed background processes
 
 The `process` tool has three actions. `start` launches a background shell command and returns its process ID; it accepts an optional timeout. `poll` requires a process ID and returns retained stdout and stderr, optionally continuing from a cursor or waiting briefly for changes. Continue from the returned `next_cursor` to avoid duplicate output. Retention is bounded, so sufficiently old output can be discarded; poll results report when a requested cursor predates the retained range. `stop` requires a process ID and terminates the managed process tree.
