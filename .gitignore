@@ -1,6 +1,7 @@
 /target
 /node_modules
 /docs/.vitepress/dist
+/docs/.vitepress/cache
 /plans
 .env
 .claude/

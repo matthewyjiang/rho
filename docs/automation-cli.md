@@ -32,7 +32,7 @@ Options:
   -h, --help                   Print help
 ```
 
-Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration). For GitHub Copilot automation, use `/login github-copilot` in the TUI first or provide `GITHUB_COPILOT_TOKEN` as a bearer-token override, then select models as `github-copilot/<model>`.
+Provider, model, auth, and reasoning override options affect [authentication and models](/authentication-and-models) and persistent [configuration](/configuration). For the exact flags and any automation caveats each provider needs, see its [provider page](/authentication-and-models#providers) — for example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
 `--no-system-prompt` and `--no-tools` only affect the current run and are not written to config.
 
