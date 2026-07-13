@@ -6,11 +6,13 @@ use super::*;
 fn renders_only_available_windows_with_remaining_bar() {
     let lines = usage_limit_lines(
         &ProviderLimits {
-            provider: "Codex".into(),
-            windows: vec![UsageLimitWindow {
-                label: "Weekly".into(),
-                remaining_percent: 69.0,
-                resets_at_unix: now_unix() + 2 * 60 * 60 + 14 * 60,
+            providers: vec![ProviderUsageLimits {
+                provider: "Codex".into(),
+                windows: vec![UsageLimitWindow {
+                    label: "Weekly".into(),
+                    remaining_percent: 69.0,
+                    resets_at_unix: now_unix() + 2 * 60 * 60 + 14 * 60,
+                }],
             }],
         },
         80,
@@ -36,6 +38,46 @@ fn renders_only_available_windows_with_remaining_bar() {
     assert!(lines.iter().all(|line| {
         line.style.bg.is_some() || line.spans.iter().all(|span| span.style.bg.is_some())
     }));
+}
+
+#[test]
+fn renders_multiple_connected_providers() {
+    let lines = usage_limit_lines(
+        &ProviderLimits {
+            providers: vec![
+                ProviderUsageLimits {
+                    provider: "Codex".into(),
+                    windows: vec![UsageLimitWindow {
+                        label: "Weekly".into(),
+                        remaining_percent: 69.0,
+                        resets_at_unix: now_unix() + 2 * 60 * 60 + 14 * 60,
+                    }],
+                },
+                ProviderUsageLimits {
+                    provider: "xAI".into(),
+                    windows: vec![UsageLimitWindow {
+                        label: "Weekly".into(),
+                        remaining_percent: 97.0,
+                        resets_at_unix: now_unix() + 3 * 24 * 60 * 60,
+                    }],
+                },
+            ],
+        },
+        80,
+    );
+    let text = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(text[2].trim_end(), "Codex");
+    assert!(text.iter().any(|line| line.trim_end() == "xAI"));
+    assert!(text.iter().any(|line| line.contains("97% left")));
 }
 
 #[test]
@@ -79,4 +121,32 @@ fn formats_reset_relative_only_within_one_day() {
     };
     assert_eq!(format_reset(&window, 200_000 - 90 * 60), "in 1h 30m");
     assert!(!format_reset(&window, 0).starts_with("in "));
+}
+
+#[test]
+fn formats_provider_names_for_empty_window_notice() {
+    assert_eq!(
+        provider_names(&ProviderLimits {
+            providers: vec![ProviderUsageLimits {
+                provider: "xAI".into(),
+                windows: vec![],
+            }],
+        }),
+        "xAI"
+    );
+    assert_eq!(
+        provider_names(&ProviderLimits {
+            providers: vec![
+                ProviderUsageLimits {
+                    provider: "Codex".into(),
+                    windows: vec![],
+                },
+                ProviderUsageLimits {
+                    provider: "xAI".into(),
+                    windows: vec![],
+                },
+            ],
+        }),
+        "Codex and xAI"
+    );
 }
