@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::{skills, tool::ToolSpec};
 
-pub const BASE_SYSTEM_PROMPT: &str = "You are an expert coding assistant operating inside rho, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent working with the user in a shared workspace.
+
+Match your actions to the request: inspect and explain when asked to review or diagnose; modify files when asked to implement or fix. Continue until the request is resolved, making reasonable in-scope assumptions unless a missing decision would materially affect the result or require new authority.
+
+Keep the user informed with concise updates during substantial work. Preserve existing work and unrelated changes. Never use destructive commands unless explicitly requested. Prefer `rg` and `rg --files` when searching. After making changes, verify them in proportion to their risk, then report the outcome and any remaining concerns."#;
 
 pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
     let home = crate::paths::home_dir();
@@ -24,7 +28,9 @@ Do not invent tool results. When done, answer directly.
 
     let agent_instructions = agent_instruction_files(cwd, home);
     if !agent_instructions.is_empty() {
-        out.push_str("\nAdditional instructions from AGENTS.md files, in precedence order:\n");
+        out.push_str(
+            "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
+        );
         for (path, contents) in agent_instructions {
             push_context_file(&mut out, "agents_instructions", &path, &contents);
         }
@@ -116,6 +122,7 @@ mod tests {
 
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
+        assert!(prompt.contains("More specific files appear later and take precedence"));
         assert!(home_index < project_index);
         assert!(prompt.contains(&format!(
             "path=\"{}\"",
@@ -144,6 +151,7 @@ mod tests {
         let home_index = prompt.find("home rules").unwrap();
         let project_index = prompt.find("project rules").unwrap();
         let nested_index = prompt.find("nested rules").unwrap();
+        assert!(prompt.contains("More specific files appear later and take precedence"));
         assert!(home_index < project_index);
         assert!(project_index < nested_index);
     }
