@@ -776,6 +776,9 @@ impl App {
                 self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
             }
             Event::FocusGained => {
+                // Some Windows hosts drop application mouse tracking on focus
+                // changes; re-assert so wheel scrolling keeps working.
+                mouse_capture::reassert();
                 self.statusline.refresh_git_branch();
             }
             Event::FocusLost | Event::Key(_) => {}
@@ -3105,6 +3108,7 @@ impl App {
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
                 Event::FocusGained => {
+                    mouse_capture::reassert();
                     self.statusline.refresh_git_branch();
                 }
                 _ => {}
