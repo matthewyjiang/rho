@@ -42,5 +42,5 @@ rho --provider openai --auth api-key --model gpt-5.5
 
 ## Notes
 
-- OpenAI is a supported OpenAI Responses provider, so [reasoning](/configuration#reasoning-options) level `off` omits the reasoning object and other levels send `reasoning.summary = "auto"` with the matching effort value.
+- OpenAI API-key requests use the Chat Completions API and do not currently send a [reasoning](/configuration#reasoning-options) configuration.
 - Pricing-sensitive models such as `openai/gpt-5.5` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.
