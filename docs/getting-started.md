@@ -16,6 +16,6 @@ Rho is a lightweight agent harness for interactive coding sessions and one-shot 
 
 ## After the first run
 
-Rho stores persistent [configuration](/configuration) in `~/.rho/config.toml`. The [model catalog](/authentication-and-models#providers-and-model-catalog) and `/model` command can update the active provider and model from inside the [interactive TUI](/interactive-tui#commands).
+Rho stores persistent [configuration](/configuration) in `~/.rho/config.toml`. The [model catalog](/authentication-and-models#selecting-models) and `/model` command can update the active provider and model from inside the [interactive TUI](/interactive-tui#commands).
 
 For local project work, see [development](/development).

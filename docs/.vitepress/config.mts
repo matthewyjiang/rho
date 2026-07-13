@@ -20,6 +20,17 @@ export default defineConfig({
           { text: 'Getting started', link: '/getting-started' },
           { text: 'Installation', link: '/installation' },
           { text: 'Authentication and models', link: '/authentication-and-models' },
+          {
+            text: 'Providers',
+            collapsed: false,
+            items: [
+              { text: 'OpenAI', link: '/providers/openai' },
+              { text: 'OpenAI (Codex OAuth)', link: '/providers/openai-codex' },
+              { text: 'Anthropic', link: '/providers/anthropic' },
+              { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+              { text: 'xAI', link: '/providers/xai' }
+            ]
+          },
           { text: 'Interactive TUI', link: '/interactive-tui' },
           { text: 'Automation and CLI', link: '/automation-cli' },
           { text: 'Configuration', link: '/configuration' },

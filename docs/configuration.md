@@ -81,14 +81,10 @@ Passing `--provider`, `--model`, `--auth`, or `--reasoning` updates the config f
 
 ```bash
 rho --provider openai --auth api-key --model gpt-5.5
-rho --provider openai-codex --auth codex --model gpt-5.5
-rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5
-rho --provider github-copilot --auth github-copilot --model gpt-4.1
-rho --provider xai --auth xai-oauth --model grok-4.5
 rho --reasoning high
 ```
 
-These values select [authentication and models](/authentication-and-models).
+These values select [authentication and models](/authentication-and-models). For the exact `--provider`/`--auth`/`--model` combination each provider expects, see its [provider page](/authentication-and-models#providers).
 
 You can load and save a specific config file with:
 
@@ -119,7 +115,7 @@ Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_sear
 
 In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
-[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's static [model catalog](/authentication-and-models#providers-and-model-catalog) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. GitHub Copilot uses `github-copilot/<model>` names from the refreshed Copilot API model list.
+[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
 ## Reasoning options
 
