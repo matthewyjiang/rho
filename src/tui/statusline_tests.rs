@@ -91,6 +91,76 @@ fn cache_hit_percentage_uses_latest_usage_prompt_tokens() {
 }
 
 #[test]
+fn subscription_statusline_shows_equivalent_api_cost() {
+    let usage = ModelUsage {
+        input_tokens: Some(100_000),
+        output_tokens: Some(50_000),
+        ..ModelUsage::default()
+    };
+    let mut state = test_state(usage);
+    state.provider = "xai".into();
+    state.model = "grok-4.5".into();
+    state.billing = BillingInfo::Subscription;
+    state.model_metadata = Some(ModelMetadata {
+        cost_default: Some(ModelCost {
+            input_micros_per_m: Some(2_000_000),
+            output_micros_per_m: Some(6_000_000),
+            cache_read_micros_per_m: Some(500_000),
+            cache_write_micros_per_m: None,
+        }),
+        long_context_threshold: Some(200_000),
+        cost_long_context: Some(ModelCost {
+            input_micros_per_m: Some(4_000_000),
+            output_micros_per_m: Some(12_000_000),
+            cache_read_micros_per_m: Some(1_000_000),
+            cache_write_micros_per_m: None,
+        }),
+        ..ModelMetadata::default()
+    });
+
+    let formatted = format_usage(&state);
+
+    // 100k input * $2/M + 50k output * $6/M = $0.500 equivalent API cost.
+    assert!(formatted.contains("$0.500"), "{formatted}");
+    assert!(formatted.contains("(sub)"), "{formatted}");
+}
+
+#[test]
+fn grok_long_context_uses_higher_equivalent_api_rates() {
+    let usage = ModelUsage {
+        input_tokens: Some(250_000),
+        output_tokens: Some(10_000),
+        ..ModelUsage::default()
+    };
+    let mut state = test_state(usage);
+    state.provider = "xai".into();
+    state.model = "grok-4.5".into();
+    state.billing = BillingInfo::Subscription;
+    state.model_metadata = Some(ModelMetadata {
+        cost_default: Some(ModelCost {
+            input_micros_per_m: Some(2_000_000),
+            output_micros_per_m: Some(6_000_000),
+            cache_read_micros_per_m: Some(500_000),
+            cache_write_micros_per_m: None,
+        }),
+        long_context_threshold: Some(200_000),
+        cost_long_context: Some(ModelCost {
+            input_micros_per_m: Some(4_000_000),
+            output_micros_per_m: Some(12_000_000),
+            cache_read_micros_per_m: Some(1_000_000),
+            cache_write_micros_per_m: None,
+        }),
+        ..ModelMetadata::default()
+    });
+
+    let formatted = format_usage(&state);
+
+    // 250k input * $4/M + 10k output * $12/M = $1.120 equivalent API cost.
+    assert!(formatted.contains("$1.120"), "{formatted}");
+    assert!(formatted.contains("(sub)"), "{formatted}");
+}
+
+#[test]
 fn cache_hit_percentage_uses_latest_usage_not_cumulative_totals() {
     let mut state = test_state(ModelUsage {
         input_tokens: Some(1_000_000),
