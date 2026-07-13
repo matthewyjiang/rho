@@ -18,6 +18,18 @@ fn finds_mention_at_cursor() {
 }
 
 #[test]
+fn mention_at_mid_token_replaces_through_token_end() {
+    assert_eq!(
+        active_file_mention("review @src/lib.rs later", 11),
+        Some(FileMention {
+            start: 7,
+            end: 18,
+            query: "src".into(),
+        })
+    );
+}
+
+#[test]
 fn mention_starts_after_newline() {
     assert_eq!(
         active_file_mention("review\n@src", 11),
@@ -56,6 +68,25 @@ fn matching_paths_respect_gitignore_and_fuzzy_rank() {
 
     let paths = workspace_file_paths(workspace.path());
     assert_eq!(paths.as_slice(), ["src/lib.rs", "src/nested/mod.rs"]);
+}
+
+#[test]
+fn expired_workspace_cache_discovers_new_files() {
+    clear_workspace_file_path_cache();
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("old.rs"), "").unwrap();
+
+    assert_eq!(
+        workspace_file_paths(workspace.path()).as_slice(),
+        ["old.rs"]
+    );
+    fs::write(workspace.path().join("new.rs"), "").unwrap();
+
+    expire_workspace_file_path_cache();
+    assert_eq!(
+        workspace_file_paths(workspace.path()).as_slice(),
+        ["new.rs", "old.rs"]
+    );
 }
 
 #[test]
@@ -205,6 +236,36 @@ fn relative_directory_prefix_scopes_search_to_that_directory() {
 
     let residual = matching_file_paths(workspace.path(), "src/lib");
     assert_eq!(residual.as_slice(), ["src/lib.rs"]);
+}
+
+#[test]
+fn relative_directory_prefix_stays_relative_inside_home() {
+    clear_workspace_file_path_cache();
+    let home = tempdir().unwrap();
+    let workspace = home.path().join("project");
+    fs::create_dir_all(workspace.join("src")).unwrap();
+    fs::write(workspace.join("src/lib.rs"), "").unwrap();
+
+    let matches = matching_file_paths_with_home_for_test(&workspace, "src/", Some(home.path()));
+    assert_eq!(matches.as_slice(), ["src/lib.rs"]);
+}
+
+#[test]
+fn absolute_directory_prefix_stays_absolute() {
+    clear_workspace_file_path_cache();
+    let root = tempdir().unwrap();
+    let workspace = root.path().join("project");
+    let logs = root.path().join("logs");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(logs.join("app.log"), "").unwrap();
+
+    let query = format!("{}/", path_to_unix_string(&logs));
+    let matches = matching_file_paths_with_home_for_test(&workspace, &query, None);
+    assert_eq!(
+        matches.as_slice(),
+        [format!("{}/app.log", path_to_unix_string(&logs))]
+    );
 }
 
 #[test]

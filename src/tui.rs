@@ -353,6 +353,7 @@ struct InputDraft {
 struct FileMatchCache {
     query: String,
     matches: std::sync::Arc<Vec<String>>,
+    refreshed_at: Instant,
 }
 
 impl From<&str> for QueuedPrompt {
@@ -7005,6 +7006,12 @@ mod tests {
         app.insert_selected_file_path("src/lib.rs");
         assert_eq!(app.input, "review @src/lib.rs ");
         assert!(!app.file_palette_visible());
+
+        app.input = "review @src/lib.rs later".into();
+        app.input_cursor = 11;
+        app.input_changed();
+        app.insert_selected_file_path("src/main.rs");
+        assert_eq!(app.input, "review @src/main.rs later");
     }
 
     #[test]

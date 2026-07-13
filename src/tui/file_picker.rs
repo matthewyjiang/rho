@@ -11,6 +11,7 @@ use crate::paths::home_dir;
 
 const MAX_FILE_PATHS: usize = 100_000;
 const FILE_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(750);
+pub(super) const FILE_PATH_CACHE_TTL: Duration = Duration::from_secs(2);
 /// Keep navigation bounded so weak queries stay interactive in large repos.
 const MAX_RANKED_FILE_MATCHES: usize = 500;
 
@@ -37,12 +38,14 @@ struct FilePathCacheKey {
 struct FilePathCache {
     key: Option<FilePathCacheKey>,
     paths: Arc<Vec<String>>,
+    cached_at: Instant,
 }
 
 static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
     Mutex::new(FilePathCache {
         key: None,
         paths: Arc::new(Vec::new()),
+        cached_at: Instant::now(),
     })
 });
 
@@ -53,15 +56,19 @@ pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMent
         .iter()
         .rposition(|ch| ch.is_whitespace())
         .map_or(0, |index| index + 1);
-    let token = chars[start..cursor].iter().collect::<String>();
-    let query = token.strip_prefix('@')?;
+    let token_prefix = chars[start..cursor].iter().collect::<String>();
+    let query = token_prefix.strip_prefix('@')?;
     if query.contains('@') {
         return None;
     }
+    let end = chars[cursor..]
+        .iter()
+        .position(|ch| ch.is_whitespace())
+        .map_or(chars.len(), |offset| cursor + offset);
 
     Some(FileMention {
         start,
-        end: cursor,
+        end,
         query: query.to_string(),
     })
 }
@@ -121,7 +128,7 @@ fn file_paths_for_root(root: &Path, include_hidden: bool) -> Arc<Vec<String>> {
         include_hidden,
     };
     if let Ok(cache) = FILE_PATH_CACHE.lock() {
-        if cache.key.as_ref() == Some(&key) {
+        if cache.key.as_ref() == Some(&key) && cache.cached_at.elapsed() < FILE_PATH_CACHE_TTL {
             return Arc::clone(&cache.paths);
         }
     }
@@ -137,6 +144,7 @@ fn file_paths_for_root(root: &Path, include_hidden: bool) -> Arc<Vec<String>> {
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
         cache.key = Some(key);
         cache.paths = Arc::clone(&paths);
+        cache.cached_at = Instant::now();
     }
     paths
 }
@@ -146,6 +154,14 @@ pub(super) fn clear_workspace_file_path_cache() {
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
         cache.key = None;
         cache.paths = Arc::new(Vec::new());
+        cache.cached_at = Instant::now();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn expire_workspace_file_path_cache() {
+    if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
+        cache.cached_at = Instant::now() - FILE_PATH_CACHE_TTL;
     }
 }
 
@@ -174,7 +190,7 @@ fn directory_scope(
 
     let root = resolve_user_path(cwd, directory_query, home);
     let root = normalize_existing_dir(&root)?;
-    let display_prefix = display_dir_prefix(cwd, &root, home);
+    let display_prefix = directory_display_prefix(directory_query);
     Some((
         DirectoryScope {
             root,
@@ -209,62 +225,11 @@ fn normalize_existing_dir(path: &Path) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-fn display_dir_prefix(cwd: &Path, dir: &Path, home: Option<&Path>) -> String {
-    // Prefer home-relative display for ~/ scopes even when a cwd-relative path exists.
-    if let Some(home) = home.and_then(|home| home.canonicalize().ok()) {
-        if let Ok(relative) = dir.strip_prefix(&home) {
-            let relative = path_to_unix_string(relative);
-            if relative.is_empty() {
-                return "~/".into();
-            }
-            return format!("~/{relative}/");
-        }
-    }
-
-    if let Some(relative) = relative_path(cwd, dir) {
-        if relative == "." {
-            return String::new();
-        }
-        return format!("{relative}/");
-    }
-
-    let mut absolute = path_to_unix_string(dir);
-    if !absolute.ends_with('/') {
-        absolute.push('/');
-    }
-    absolute
-}
-
-fn relative_path(from: &Path, to: &Path) -> Option<String> {
-    let from = from.canonicalize().ok()?;
-    let to = to.canonicalize().ok()?;
-    let from_components = from.components().collect::<Vec<_>>();
-    let to_components = to.components().collect::<Vec<_>>();
-
-    let mut shared = 0;
-    while shared < from_components.len()
-        && shared < to_components.len()
-        && from_components[shared] == to_components[shared]
-    {
-        shared += 1;
-    }
-
-    let mut parts = Vec::new();
-    for _ in shared..from_components.len() {
-        parts.push(String::from(".."));
-    }
-    for component in &to_components[shared..] {
-        match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-
-    if parts.is_empty() {
-        Some(String::from("."))
+fn directory_display_prefix(directory_query: &str) -> String {
+    if directory_query == "/" {
+        "/".into()
     } else {
-        Some(parts.join("/"))
+        format!("{directory_query}/")
     }
 }
 

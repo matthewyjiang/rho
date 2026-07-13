@@ -56,7 +56,16 @@ impl App {
         let Some(mention) = file_picker::active_file_mention(&self.input, self.input_cursor) else {
             return;
         };
-        let insertion = format!("@{path} ");
+        let insertion = if self
+            .input
+            .chars()
+            .nth(mention.end)
+            .is_some_and(char::is_whitespace)
+        {
+            format!("@{path}")
+        } else {
+            format!("@{path} ")
+        };
         self.replace_input_range(mention.start, mention.end, &insertion);
         self.file_palette_dismissed = true;
         self.file_selection = 0;
@@ -68,7 +77,9 @@ impl App {
             return Arc::new(Vec::new());
         };
         if let Some(cache) = &self.file_match_cache {
-            if cache.query == mention.query {
+            if cache.query == mention.query
+                && cache.refreshed_at.elapsed() < file_picker::FILE_PATH_CACHE_TTL
+            {
                 return std::sync::Arc::clone(&cache.matches);
             }
         }
@@ -80,16 +91,16 @@ impl App {
             self.file_match_cache = None;
             return;
         };
-        if self
-            .file_match_cache
-            .as_ref()
-            .is_some_and(|cache| cache.query == mention.query)
-        {
+        if self.file_match_cache.as_ref().is_some_and(|cache| {
+            cache.query == mention.query
+                && cache.refreshed_at.elapsed() < file_picker::FILE_PATH_CACHE_TTL
+        }) {
             return;
         }
         self.file_match_cache = Some(FileMatchCache {
             query: mention.query.clone(),
             matches: file_picker::matching_file_paths(&self.info.cwd, &mention.query),
+            refreshed_at: std::time::Instant::now(),
         });
     }
 
