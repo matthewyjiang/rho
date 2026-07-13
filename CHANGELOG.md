@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.25.0...rho-coding-agent-v0.26.0) (2026-07-13)
+
+
+### Features
+
+* **diagnostics:** add rho runtime introspection ([#215](https://github.com/matthewyjiang/rho/issues/215)) ([6ff60f6](https://github.com/matthewyjiang/rho/commit/6ff60f62d452debf8d4adc1e76128142a84bcaa9))
+* **tools:** add atomic multi-file edits ([#217](https://github.com/matthewyjiang/rho/issues/217)) ([f0318e0](https://github.com/matthewyjiang/rho/commit/f0318e03cc597c5cb535c41945a3440d9aed17e3))
+* **tui:** add /export HTML session transcript command ([#216](https://github.com/matthewyjiang/rho/issues/216)) ([c0abace](https://github.com/matthewyjiang/rho/commit/c0abacec3b775ada2111e4a13dc664e72f539041))
+
+
+### Bug Fixes
+
+* **models:** reduce GPT-5.6 context limits ([#213](https://github.com/matthewyjiang/rho/issues/213)) ([2f52408](https://github.com/matthewyjiang/rho/commit/2f524085743293dd540ac9b530c08175d4bdc9a2))
+
 ## [0.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.24.1...rho-coding-agent-v0.25.0) (2026-07-13)
 
 
