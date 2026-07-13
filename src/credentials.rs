@@ -15,6 +15,7 @@ const OPENAI_API_KEY_ACCOUNT: &str = provider::OPENAI_API_KEY_ACCOUNT;
 const ANTHROPIC_API_KEY_ACCOUNT: &str = provider::ANTHROPIC_API_KEY_ACCOUNT;
 const CODEX_TOKENS_ACCOUNT: &str = provider::CODEX_TOKENS_ACCOUNT;
 const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = provider::GITHUB_COPILOT_TOKENS_ACCOUNT;
+const XAI_TOKENS_ACCOUNT: &str = provider::XAI_TOKENS_ACCOUNT;
 const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
 const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
 const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
@@ -47,9 +48,17 @@ pub struct GitHubCopilotTokens {
     pub copilot_models_endpoint: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct XaiTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at_unix: Option<i64>,
+    pub id_token: Option<String>,
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_ACCESS_TOKEN, or GITHUB_COPILOT_TOKEN.")]
+    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, or XAI_ACCESS_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -561,6 +570,21 @@ pub fn save_codex_tokens(
     store.set_secret(CODEX_TOKENS_ACCOUNT, &secret)
 }
 
+pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<XaiTokens>> {
+    let Some(secret) = store.get_secret(XAI_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored xAI token JSON: {err}"))
+    })
+}
+
+pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
+}
+
 #[allow(dead_code)]
 pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
     store.delete_secret(CODEX_TOKENS_ACCOUNT)
@@ -632,6 +656,7 @@ pub fn provider_has_credentials(
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
             Ok(load_github_copilot_tokens(store)?.is_some())
         }
+        Some(ProviderAuthKind::XaiOAuth { .. }) => Ok(load_xai_tokens(store)?.is_some()),
         None => Ok(false),
     }
 }
@@ -708,11 +733,14 @@ mod tests {
         store
             .set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, "not-json")
             .unwrap();
+        store.set_secret(XAI_TOKENS_ACCOUNT, "not-json").unwrap();
 
         assert!(provider_has_stored_credentials(&store, "openai-codex").unwrap());
         assert!(provider_has_stored_credentials(&store, "github-copilot").unwrap());
+        assert!(provider_has_stored_credentials(&store, "xai").unwrap());
         assert!(provider_has_credentials(&store, "openai-codex").is_err());
         assert!(provider_has_credentials(&store, "github-copilot").is_err());
+        assert!(provider_has_credentials(&store, "xai").is_err());
     }
 
     #[test]
@@ -746,6 +774,25 @@ mod tests {
                 account_id: None,
             })
         );
+    }
+
+    #[test]
+    fn xai_tokens_round_trip_with_optional_fields() {
+        let store = MemoryCredentialStore::default();
+        let tokens = XaiTokens {
+            access_token: "access".into(),
+            refresh_token: Some("refresh".into()),
+            expires_at_unix: Some(2_500),
+            id_token: Some("id".into()),
+        };
+
+        save_xai_tokens(&store, &tokens).unwrap();
+
+        assert_eq!(load_xai_tokens(&store).unwrap(), Some(tokens));
+        assert!(provider_has_credentials(&store, "xai").unwrap());
+        assert!(available_auth_modes(&store).contains(&"xai-oauth".into()));
+        assert!(delete_provider_credentials(&store, "xai").unwrap());
+        assert_eq!(load_xai_tokens(&store).unwrap(), None);
     }
 
     #[test]

@@ -88,6 +88,17 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(apply_overrides(provider, model, metadata));
     }
 
+    // Prefer a live models.dev snapshot for newly seen models. A stale local
+    // api.json can predate a provider/model and would otherwise hide pricing
+    // until the cache is manually cleared.
+    if let Some(response) = fetch_models_dev_api().await {
+        write_cached_api(&response);
+        if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
+            write_cached_upstream_model_metadata(provider, model, &metadata);
+            return Some(apply_overrides(provider, model, metadata));
+        }
+    }
+
     if let Some(metadata) = read_cached_api()
         .as_ref()
         .and_then(|api| upstream_metadata_from_api(api, provider, model))
@@ -96,14 +107,6 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(apply_overrides(provider, model, metadata));
     }
 
-    let Some(response) = fetch_models_dev_api().await else {
-        return override_metadata(provider, model);
-    };
-    write_cached_api(&response);
-    if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
-        write_cached_upstream_model_metadata(provider, model, &metadata);
-        return Some(apply_overrides(provider, model, metadata));
-    }
     override_metadata(provider, model)
 }
 
@@ -165,33 +168,25 @@ fn write_cached_api(value: &Value) {
     }
 }
 
+/// Bump when the models.dev parser gains fields that older cache rows omit.
+/// Rows written with a lower version are treated as misses and re-fetched.
+const MODEL_METADATA_CACHE_VERSION: i64 = 2;
+
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     let upstream_provider = upstream_provider(provider);
     let connection = open_models_dev_cache().ok()?;
-    let contents: String = connection
+    let (contents, cache_version): (String, i64) = connection
         .query_row(
-            "select metadata_json from model_metadata where provider = ?1 and model = ?2",
+            "select metadata_json, cache_version from model_metadata
+             where provider = ?1 and model = ?2",
             params![upstream_provider, model],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .ok()?;
-    let cached_value: Value = serde_json::from_str(&contents).ok()?;
-    let reasoning_metadata_cached = cached_value.get("supported_reasoning_levels").is_some()
-        && cached_value.get("reasoning_off_behavior").is_some();
-    let cached: ModelMetadata = serde_json::from_value(cached_value).ok()?;
-    if reasoning_metadata_cached {
-        return Some(cached);
+    if cache_version < MODEL_METADATA_CACHE_VERSION {
+        return None;
     }
-
-    let refreshed = read_cached_api()
-        .as_ref()
-        .and_then(|api| model_metadata_from_api(api, upstream_provider, model));
-    if let Some(refreshed) = refreshed {
-        write_cached_upstream_model_metadata(provider, model, &refreshed);
-        Some(refreshed)
-    } else {
-        Some(cached)
-    }
+    serde_json::from_str(&contents).ok()
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
@@ -203,12 +198,18 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
         return;
     };
     let _ = connection.execute(
-        "insert into model_metadata (provider, model, metadata_json, updated_at)
-         values (?1, ?2, ?3, strftime('%s', 'now'))
+        "insert into model_metadata (provider, model, metadata_json, updated_at, cache_version)
+         values (?1, ?2, ?3, strftime('%s', 'now'), ?4)
          on conflict(provider, model) do update set
            metadata_json = excluded.metadata_json,
-           updated_at = excluded.updated_at",
-        params![upstream_provider, model, contents],
+           updated_at = excluded.updated_at,
+           cache_version = excluded.cache_version",
+        params![
+            upstream_provider,
+            model,
+            contents,
+            MODEL_METADATA_CACHE_VERSION
+        ],
     );
 }
 
@@ -224,9 +225,14 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             model text not null,
             metadata_json text not null,
             updated_at integer not null,
+            cache_version integer not null default 1,
             primary key (provider, model)
         );",
     )?;
+    let _ = connection.execute(
+        "alter table model_metadata add column cache_version integer not null default 1",
+        [],
+    );
     Ok(connection)
 }
 
@@ -274,6 +280,7 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
     })?;
     let limit = model.get("limit");
     let cost = model.get("cost");
+    let (long_context_threshold, cost_long_context) = long_context_cost_from_api(cost);
     Some(ModelMetadata {
         advertised_context_window: limit
             .and_then(|limit| limit.get("context"))
@@ -282,25 +289,12 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
             .and_then(|limit| limit.get("input").or_else(|| limit.get("context")))
             .and_then(|value| value.as_u64()),
         usable_context_window: None,
-        long_context_threshold: None,
+        long_context_threshold,
         max_output_tokens: limit
             .and_then(|limit| limit.get("output"))
             .and_then(|value| value.as_u64()),
-        cost_default: Some(ModelCost {
-            input_micros_per_m: cost
-                .and_then(|cost| cost.get("input"))
-                .and_then(cost_micros_per_million),
-            output_micros_per_m: cost
-                .and_then(|cost| cost.get("output"))
-                .and_then(cost_micros_per_million),
-            cache_read_micros_per_m: cost
-                .and_then(|cost| cost.get("cache_read"))
-                .and_then(cost_micros_per_million),
-            cache_write_micros_per_m: cost
-                .and_then(|cost| cost.get("cache_write"))
-                .and_then(cost_micros_per_million),
-        }),
-        cost_long_context: None,
+        cost_default: model_cost_from_api(cost),
+        cost_long_context,
         supported_reasoning_levels: supported_reasoning_levels(model),
         reasoning_off_behavior: if advertised_none_effort(model) {
             ReasoningOffBehavior::EffortNone
@@ -359,6 +353,73 @@ fn supported_reasoning_levels(model: &Value) -> Option<Vec<ReasoningLevel>> {
     levels.sort_unstable();
     levels.dedup();
     (!levels.is_empty()).then_some(levels)
+}
+
+fn model_cost_from_api(cost: Option<&Value>) -> Option<ModelCost> {
+    let cost = cost?;
+    let model_cost = ModelCost {
+        input_micros_per_m: cost.get("input").and_then(cost_micros_per_million),
+        output_micros_per_m: cost.get("output").and_then(cost_micros_per_million),
+        cache_read_micros_per_m: cost.get("cache_read").and_then(cost_micros_per_million),
+        cache_write_micros_per_m: cost.get("cache_write").and_then(cost_micros_per_million),
+    };
+    model_cost_has_rates(&model_cost).then_some(model_cost)
+}
+
+fn long_context_cost_from_api(cost: Option<&Value>) -> (Option<u64>, Option<ModelCost>) {
+    let Some(cost) = cost else {
+        return (None, None);
+    };
+
+    if let Some(tiers) = cost.get("tiers").and_then(Value::as_array) {
+        for tier in tiers {
+            let Some(threshold) = tier
+                .get("tier")
+                .and_then(|tier| tier.get("size"))
+                .and_then(Value::as_u64)
+            else {
+                continue;
+            };
+            let Some(model_cost) = model_cost_from_api(Some(tier)) else {
+                continue;
+            };
+            return (Some(threshold), Some(model_cost));
+        }
+    }
+
+    let Some(object) = cost.as_object() else {
+        return (None, None);
+    };
+    for (key, value) in object {
+        let Some(threshold) = context_over_threshold(key) else {
+            continue;
+        };
+        let Some(model_cost) = model_cost_from_api(Some(value)) else {
+            continue;
+        };
+        return (Some(threshold), Some(model_cost));
+    }
+
+    (None, None)
+}
+
+fn context_over_threshold(key: &str) -> Option<u64> {
+    let rest = key.strip_prefix("context_over_")?;
+    let (amount, unit) = rest.split_at(rest.find(|c: char| !c.is_ascii_digit())?);
+    let amount = amount.parse::<u64>().ok()?;
+    let multiplier = match unit {
+        "k" | "K" => 1_000,
+        "m" | "M" => 1_000_000,
+        _ => return None,
+    };
+    amount.checked_mul(multiplier)
+}
+
+fn model_cost_has_rates(cost: &ModelCost) -> bool {
+    cost.input_micros_per_m.is_some()
+        || cost.output_micros_per_m.is_some()
+        || cost.cache_read_micros_per_m.is_some()
+        || cost.cache_write_micros_per_m.is_some()
 }
 
 const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
@@ -496,6 +557,8 @@ fn cost_micros_per_million(value: &Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
 
     #[test]
     fn parses_reasoning_effort_options() {
@@ -669,6 +732,76 @@ mod tests {
         assert_eq!(
             codex.cost_default.unwrap().input_micros_per_m,
             Some(5_000_000)
+        );
+    }
+
+    #[test]
+    fn models_dev_parses_long_context_cost_tiers() {
+        let api = json!({
+            "xai": {
+                "models": {
+                    "grok-4.5": {
+                        "limit": { "context": 500000, "output": 500000 },
+                        "cost": {
+                            "input": 2.0,
+                            "output": 6.0,
+                            "cache_read": 0.5,
+                            "tiers": [{
+                                "input": 4.0,
+                                "output": 12.0,
+                                "cache_read": 1.0,
+                                "tier": { "type": "context", "size": 200000 }
+                            }],
+                            "context_over_200k": {
+                                "input": 4.0,
+                                "output": 12.0,
+                                "cache_read": 1.0
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let metadata = model_metadata_from_api(&api, "xai", "grok-4.5").unwrap();
+
+        assert_eq!(
+            metadata,
+            ModelMetadata {
+                advertised_context_window: Some(500_000),
+                effective_context_window: Some(500_000),
+                usable_context_window: None,
+                long_context_threshold: Some(200_000),
+                max_output_tokens: Some(500_000),
+                cost_default: Some(ModelCost {
+                    input_micros_per_m: Some(2_000_000),
+                    output_micros_per_m: Some(6_000_000),
+                    cache_read_micros_per_m: Some(500_000),
+                    cache_write_micros_per_m: None,
+                }),
+                cost_long_context: Some(ModelCost {
+                    input_micros_per_m: Some(4_000_000),
+                    output_micros_per_m: Some(12_000_000),
+                    cache_read_micros_per_m: Some(1_000_000),
+                    cache_write_micros_per_m: None,
+                }),
+                supported_reasoning_levels: None,
+                reasoning_off_behavior: ReasoningOffBehavior::Omit,
+            }
+        );
+        assert_eq!(
+            metadata
+                .cost_for_input_tokens(200_001)
+                .unwrap()
+                .input_micros_per_m,
+            Some(4_000_000)
+        );
+        assert_eq!(
+            metadata
+                .cost_for_input_tokens(200_000)
+                .unwrap()
+                .input_micros_per_m,
+            Some(2_000_000)
         );
     }
 }

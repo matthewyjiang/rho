@@ -7,6 +7,7 @@ pub const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 pub const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
+pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
@@ -14,6 +15,7 @@ pub enum ProviderId {
     OpenAiCodex,
     Anthropic,
     GithubCopilot,
+    Xai,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +47,10 @@ pub enum ProviderAuthKind {
         env_var: &'static str,
         account: &'static str,
     },
+    XaiOAuth {
+        env_var: &'static str,
+        account: &'static str,
+    },
 }
 
 impl ProviderAuthKind {
@@ -52,7 +58,8 @@ impl ProviderAuthKind {
         match self {
             Self::ApiKey { env_var, .. }
             | Self::CodexOAuth { env_var, .. }
-            | Self::GithubCopilotDevice { env_var, .. } => env_var,
+            | Self::GithubCopilotDevice { env_var, .. }
+            | Self::XaiOAuth { env_var, .. } => env_var,
         }
     }
 
@@ -60,7 +67,8 @@ impl ProviderAuthKind {
         match self {
             Self::ApiKey { account, .. }
             | Self::CodexOAuth { account, .. }
-            | Self::GithubCopilotDevice { account, .. } => account,
+            | Self::GithubCopilotDevice { account, .. }
+            | Self::XaiOAuth { account, .. } => account,
         }
     }
 }
@@ -144,6 +152,20 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         metadata_upstream: "github-copilot",
+    },
+    ProviderDescriptor {
+        id: ProviderId::Xai,
+        name: "xai",
+        display_name: "xAI",
+        auth: "xai-oauth",
+        login_label: "xAI OAuth",
+        auth_kind: ProviderAuthKind::XaiOAuth {
+            env_var: "XAI_ACCESS_TOKEN",
+            account: XAI_TOKENS_ACCOUNT,
+        },
+        model_source: ProviderModelSource::StaticCatalog,
+        model_refresh: None,
+        metadata_upstream: "xai",
     },
 ];
 

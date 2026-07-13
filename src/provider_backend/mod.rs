@@ -122,6 +122,8 @@ pub enum ModelError {
     MissingAnthropicApiKey,
     #[error("missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override")]
     MissingGithubCopilotAuth,
+    #[error("missing xAI OAuth credentials; run /login xai in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override")]
+    MissingXaiAuth,
     #[error("credential store error: {0}")]
     Credentials(String),
     #[error("request failed: {0}")]

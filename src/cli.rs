@@ -13,7 +13,7 @@ pub struct Cli {
     pub model: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "github-copilot"])]
+    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "github-copilot", "xai-oauth"])]
     pub auth: Option<String>,
     /// Do not send rho's system prompt, including AGENTS.md and skill context.
     #[arg(long)]
@@ -47,7 +47,7 @@ pub enum Command {
         /// Provider to authenticate, for example openai-codex or github-copilot.
         #[arg(value_name = "PROVIDER")]
         provider: String,
-        /// Use Codex OAuth device-code login instead of opening a local browser callback.
+        /// Use device-code login instead of opening a local browser callback.
         #[arg(long)]
         device_auth: bool,
     },

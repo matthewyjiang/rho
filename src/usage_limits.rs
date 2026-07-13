@@ -4,15 +4,27 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    credentials::{load_codex_tokens, CodexTokens, CredentialStore},
+    auth::xai_token::refresh_xai_tokens,
+    credentials::{
+        load_codex_tokens, load_xai_tokens, save_xai_tokens, CodexTokens, CredentialStore,
+        XaiTokens,
+    },
     model::openai::auth::{refresh_codex_token, CodexAuthSource},
 };
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_ACCOUNT_HEADER: &str = "ChatGPT-Account-Id";
+const XAI_BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const XAI_TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
+const XAI_CLIENT_VERSION: &str = "0.2.93";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderLimits {
+    pub providers: Vec<ProviderUsageLimits>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProviderUsageLimits {
     pub provider: String,
     pub windows: Vec<UsageLimitWindow>,
 }
@@ -28,12 +40,22 @@ pub struct UsageLimitWindow {
 pub enum UsageLimitsError {
     #[error("could not load credentials: {0}")]
     Credentials(#[from] crate::credentials::CredentialError),
-    #[error("Codex usage request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("could not refresh Codex OAuth credentials: {0}")]
-    Refresh(String),
-    #[error("Codex OAuth credentials are no longer valid; run /login openai-codex")]
-    Unauthorized,
+    #[error("{provider} usage request failed: {source}")]
+    Request {
+        provider: &'static str,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("could not refresh {provider} OAuth credentials: {detail}")]
+    Refresh {
+        provider: &'static str,
+        detail: String,
+    },
+    #[error("{provider} OAuth credentials are no longer valid; run {login}")]
+    Unauthorized {
+        provider: &'static str,
+        login: &'static str,
+    },
 }
 
 /// Supplies normalized OAuth usage windows for one connected provider.
@@ -44,7 +66,9 @@ pub trait UsageLimitsSource {
     fn fetch<'a>(
         &'a self,
         store: &'a dyn CredentialStore,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<ProviderLimits>, UsageLimitsError>> + Send + 'a>>;
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
+    >;
 }
 
 pub struct CodexUsageLimitsSource {
@@ -102,24 +126,50 @@ impl CodexUsageLimitsSource {
         store: &dyn CredentialStore,
         mut tokens: CodexTokens,
         source: CodexAuthSource,
-    ) -> Result<ProviderLimits, UsageLimitsError> {
-        let mut response = self.request(&tokens).await?;
+    ) -> Result<ProviderUsageLimits, UsageLimitsError> {
+        let mut response =
+            self.request(&tokens)
+                .await
+                .map_err(|source| UsageLimitsError::Request {
+                    provider: "Codex",
+                    source,
+                })?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             if let Some(refresh_token) = tokens.refresh_token.clone() {
                 tokens = refresh_codex_token(&self.client, store, &refresh_token, source, &tokens)
                     .await
-                    .map_err(|err| UsageLimitsError::Refresh(err.to_string()))?;
-                response = self.request(&tokens).await?;
+                    .map_err(|err| UsageLimitsError::Refresh {
+                        provider: "Codex",
+                        detail: err.to_string(),
+                    })?;
+                response =
+                    self.request(&tokens)
+                        .await
+                        .map_err(|source| UsageLimitsError::Request {
+                            provider: "Codex",
+                            source,
+                        })?;
             }
         }
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(UsageLimitsError::Unauthorized);
+            return Err(UsageLimitsError::Unauthorized {
+                provider: "Codex",
+                login: "/login openai-codex",
+            });
         }
         let payload = response
-            .error_for_status()?
+            .error_for_status()
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "Codex",
+                source,
+            })?
             .json::<CodexUsagePayload>()
-            .await?;
-        Ok(ProviderLimits {
+            .await
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "Codex",
+                source,
+            })?;
+        Ok(ProviderUsageLimits {
             provider: "Codex".into(),
             windows: payload
                 .rate_limit
@@ -136,8 +186,9 @@ impl UsageLimitsSource for CodexUsageLimitsSource {
     fn fetch<'a>(
         &'a self,
         store: &'a dyn CredentialStore,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<ProviderLimits>, UsageLimitsError>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
+    > {
         Box::pin(async move {
             let Some((tokens, source)) = Self::configured_tokens(store)? else {
                 return Ok(None);
@@ -147,6 +198,188 @@ impl UsageLimitsSource for CodexUsageLimitsSource {
                 .map(Some)
         })
     }
+}
+
+pub struct XaiUsageLimitsSource {
+    client: reqwest::Client,
+    endpoint: String,
+}
+
+impl XaiUsageLimitsSource {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: XAI_BILLING_URL.into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_endpoint(endpoint: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint,
+        }
+    }
+
+    fn configured_tokens(
+        store: &dyn CredentialStore,
+    ) -> Result<Option<(XaiTokens, XaiAuthSource)>, UsageLimitsError> {
+        Self::configured_tokens_from(store, std::env::var("XAI_ACCESS_TOKEN").ok())
+    }
+
+    fn configured_tokens_from(
+        store: &dyn CredentialStore,
+        env_access_token: Option<String>,
+    ) -> Result<Option<(XaiTokens, XaiAuthSource)>, UsageLimitsError> {
+        if let Some(access_token) = env_access_token.filter(|token| !token.trim().is_empty()) {
+            return Ok(Some((
+                XaiTokens {
+                    access_token,
+                    refresh_token: None,
+                    expires_at_unix: None,
+                    id_token: None,
+                },
+                XaiAuthSource::Env,
+            )));
+        }
+        Ok(load_xai_tokens(store)?.map(|tokens| (tokens, XaiAuthSource::Store)))
+    }
+
+    async fn request(&self, tokens: &XaiTokens) -> Result<reqwest::Response, reqwest::Error> {
+        self.client
+            .get(&self.endpoint)
+            .bearer_auth(&tokens.access_token)
+            .header("x-xai-token-auth", XAI_TOKEN_AUTH_HEADER)
+            .header("x-grok-client-version", XAI_CLIENT_VERSION)
+            .header(
+                reqwest::header::USER_AGENT,
+                format!(
+                    "rho/{}/grok-shell/{XAI_CLIENT_VERSION}",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+    }
+
+    async fn fetch_with_tokens(
+        &self,
+        store: &dyn CredentialStore,
+        mut tokens: XaiTokens,
+        source: XaiAuthSource,
+    ) -> Result<ProviderUsageLimits, UsageLimitsError> {
+        let mut response =
+            self.request(&tokens)
+                .await
+                .map_err(|source| UsageLimitsError::Request {
+                    provider: "xAI",
+                    source,
+                })?;
+        if (response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN)
+            && source == XaiAuthSource::Store
+        {
+            if let Some(refresh_token) = tokens.refresh_token.clone() {
+                tokens = refresh_xai_token(&self.client, store, &refresh_token, &tokens)
+                    .await
+                    .map_err(|detail| UsageLimitsError::Refresh {
+                        provider: "xAI",
+                        detail,
+                    })?;
+                response =
+                    self.request(&tokens)
+                        .await
+                        .map_err(|source| UsageLimitsError::Request {
+                            provider: "xAI",
+                            source,
+                        })?;
+            }
+        }
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            return Err(UsageLimitsError::Unauthorized {
+                provider: "xAI",
+                login: "/login xai",
+            });
+        }
+        let payload = response
+            .error_for_status()
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "xAI",
+                source,
+            })?
+            .json::<XaiBillingPayload>()
+            .await
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "xAI",
+                source,
+            })?;
+        Ok(ProviderUsageLimits {
+            provider: "xAI".into(),
+            windows: payload.windows(),
+        })
+    }
+}
+
+impl UsageLimitsSource for XaiUsageLimitsSource {
+    fn fetch<'a>(
+        &'a self,
+        store: &'a dyn CredentialStore,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let Some((tokens, source)) = Self::configured_tokens(store)? else {
+                return Ok(None);
+            };
+            self.fetch_with_tokens(store, tokens, source)
+                .await
+                .map(Some)
+        })
+    }
+}
+
+pub async fn fetch_connected_usage_limits(
+    store: &dyn CredentialStore,
+) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
+    let mut providers = Vec::new();
+    let mut errors = Vec::new();
+    let mut saw_connected = false;
+    for source in connected_sources() {
+        match source.fetch(store).await {
+            Ok(None) => {}
+            Ok(Some(limits)) => {
+                saw_connected = true;
+                providers.push(limits);
+            }
+            Err(error) => {
+                saw_connected = true;
+                errors.push(error);
+            }
+        }
+    }
+    if !saw_connected {
+        return Ok((ProviderLimits { providers }, errors));
+    }
+    if providers.is_empty() {
+        return Err(errors.into_iter().next().expect("connected provider error"));
+    }
+    Ok((ProviderLimits { providers }, errors))
+}
+
+fn connected_sources() -> Vec<Box<dyn UsageLimitsSource + Send + Sync>> {
+    vec![
+        Box::new(CodexUsageLimitsSource::new()),
+        Box::new(XaiUsageLimitsSource::new()),
+    ]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XaiAuthSource {
+    Env,
+    Store,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +408,89 @@ impl From<CodexLimitWindow> for UsageLimitWindow {
             resets_at_unix: window.reset_at,
         }
     }
+}
+
+#[derive(Deserialize)]
+struct XaiBillingPayload {
+    config: Option<XaiBillingConfig>,
+    #[serde(flatten)]
+    root: XaiBillingConfig,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XaiBillingConfig {
+    credit_usage_percent: Option<f64>,
+    current_period: Option<XaiBillingPeriod>,
+    billing_period_end: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct XaiBillingPeriod {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    end: Option<String>,
+}
+
+impl XaiBillingPayload {
+    fn windows(self) -> Vec<UsageLimitWindow> {
+        let config = self.config.unwrap_or(self.root);
+        let Some(used_percent) = config.credit_usage_percent else {
+            return Vec::new();
+        };
+        let period = config.current_period;
+        let label = period
+            .as_ref()
+            .and_then(|period| period.kind.as_deref())
+            .map(xai_period_label)
+            .unwrap_or("Usage");
+        let Some(resets_at_unix) = period
+            .and_then(|period| period.end)
+            .or(config.billing_period_end)
+            .and_then(|value| parse_unix_timestamp(&value))
+        else {
+            return Vec::new();
+        };
+        vec![UsageLimitWindow {
+            label: label.into(),
+            remaining_percent: (100.0 - used_percent).clamp(0.0, 100.0),
+            resets_at_unix,
+        }]
+    }
+}
+
+fn xai_period_label(kind: &str) -> &'static str {
+    match kind {
+        "USAGE_PERIOD_TYPE_WEEKLY" => "Weekly",
+        "USAGE_PERIOD_TYPE_MONTHLY" => "Monthly",
+        "USAGE_PERIOD_TYPE_DAILY" => "Daily",
+        _ => "Usage",
+    }
+}
+
+async fn refresh_xai_token(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    refresh_token: &str,
+    previous: &XaiTokens,
+) -> Result<XaiTokens, String> {
+    let refreshed = refresh_xai_tokens(client, refresh_token, previous)
+        .await
+        .map_err(|err| err.to_string())?;
+    save_xai_tokens(store, &refreshed).map_err(|err| err.to_string())?;
+    Ok(refreshed)
+}
+
+fn parse_unix_timestamp(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|value| value.timestamp())
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.fZ")
+                .ok()
+                .map(|value| value.and_utc().timestamp())
+        })
 }
 
 fn window_label(seconds: i64) -> String {

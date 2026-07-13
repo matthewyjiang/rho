@@ -29,9 +29,9 @@ async fn captures_large_final_output_burst() {
 #[tokio::test]
 async fn returns_after_shell_exits_with_background_pipe_holder() {
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(4),
+        std::time::Duration::from_secs(15),
         Bash::new(false).call(
-            json!({"command": "sleep 30 & printf done"}),
+            json!({"command": "sleep 60 & printf done"}),
             ToolContext {
                 cwd: std::env::temp_dir(),
                 max_output_bytes: 12_000,

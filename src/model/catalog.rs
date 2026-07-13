@@ -49,6 +49,7 @@ pub enum ModelSelectionError {
 #[derive(Deserialize)]
 struct ModelCatalogFile {
     openai_codex_models: Vec<String>,
+    xai_oauth_models: Vec<String>,
 }
 
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
@@ -131,7 +132,9 @@ pub fn resolve_model_selection_for_auths(
 fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
-    model_entries("openai-codex", "codex", file.openai_codex_models)
+    let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
+    entries.extend(model_entries("xai", "xai-oauth", file.xai_oauth_models));
+    entries
 }
 
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {
@@ -273,6 +276,16 @@ fn resolve_model_selection_from(
             if let Some(entry) = provider_models::cached_provider_model(provider, model) {
                 return Ok(selection_from_provider_model(provider, &entry));
             }
+            if builtin_default_model(provider).as_deref() == Some(model) {
+                return Ok(ModelSelection {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    auth: provider_default_auth(provider)
+                        .unwrap_or("api-key")
+                        .to_string(),
+                    from_catalog: true,
+                });
+            }
             return Err(unavailable_model_error(provider, model));
         }
         if let Some(entry) = catalog
@@ -391,9 +404,65 @@ mod tests {
         assert!(catalog
             .iter()
             .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.3-codex-spark"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-4.5"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-build-0.1"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-composer-2.5-fast"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-4.3"));
         assert!(!catalog
             .iter()
             .any(|entry| entry.provider == "github-copilot"));
+    }
+
+    #[test]
+    fn available_models_includes_xai_static_catalog() {
+        let models = available_models_for_auths(&["xai-oauth".into()]);
+
+        assert!(models.iter().all(|entry| entry.provider == "xai"));
+        assert_eq!(
+            models
+                .iter()
+                .map(|entry| entry.model.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "grok-4.3",
+                "grok-4.5",
+                "grok-build-0.1",
+                "grok-composer-2.5-fast",
+            ]
+        );
+        assert_eq!(
+            default_model_for_provider("xai").as_deref(),
+            Some("grok-4.5")
+        );
+    }
+
+    #[test]
+    fn resolves_xai_static_catalog_selection() {
+        let selection = resolve_model_selection_for_auths(
+            "xai/grok-4.5",
+            "openai",
+            "api-key",
+            &["xai-oauth".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "xai".into(),
+                model: "grok-4.5".into(),
+                auth: "xai-oauth".into(),
+                from_catalog: true,
+            }
+        );
     }
 
     #[test]
@@ -432,9 +501,12 @@ mod tests {
         assert_eq!(targets[2].auth, "anthropic-api-key");
         assert_eq!(targets[3].provider, "github-copilot");
         assert_eq!(targets[3].auth, "github-copilot");
+        assert_eq!(targets[4].provider, "xai");
+        assert_eq!(targets[4].auth, "xai-oauth");
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());
+        assert!(login_target_for_provider("xai-oauth").is_none());
     }
 
     #[test]

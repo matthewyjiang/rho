@@ -97,14 +97,14 @@ use theme::Theme;
 use crate::{
     agent::{Agent, AgentEvent, QuestionnaireRequest, SessionHistorySink},
     app::config_repository::ConfigRepository,
-    auth::{codex_oauth, github_copilot_device},
+    auth::{codex_oauth, github_copilot_device, xai_oauth},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
-        save_github_copilot_tokens, save_provider_api_key, CodexTokens, CredentialStore,
-        GitHubCopilotTokens, OsCredentialStore,
+        save_github_copilot_tokens, save_provider_api_key, save_xai_tokens, CodexTokens,
+        CredentialStore, GitHubCopilotTokens, OsCredentialStore, XaiTokens,
     },
     herdr::{HerdrReporter, HerdrState},
     keybindings::Keybindings,
@@ -371,6 +371,7 @@ impl PasteSegment {
 enum PendingOAuthResult {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
+    Xai(XaiTokens),
 }
 
 #[derive(Debug)]

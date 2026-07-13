@@ -47,8 +47,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 | Command | Action |
 | --- | --- |
-| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
-| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
+| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, `github-copilot`, and `xai`. |
+| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, `github-copilot`, and `xai`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
 | `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
@@ -60,7 +60,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
-| `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth is currently supported; absent windows are omitted. |
+| `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth and xAI OAuth are supported when logged in; absent windows are omitted. |
 | `/exit` | Quit the TUI. |
 
 Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending.
@@ -73,7 +73,7 @@ Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use
 
 ## Login and logout
 
-`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. `/login xai` opens browser-based xAI OAuth, or automatically uses xAI's device-code flow in SSH and headless environments. Credentials are stored in the native OS credential store, not in config or transcripts.
 
 `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
 
@@ -83,7 +83,7 @@ Logging in does not normally switch provider/model. Use `/model` to switch model
 
 ## Model picker
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, `github-copilot` uses GitHub Copilot models, and `xai` uses SuperGrok / X Premium+ OAuth models from a static allowlist. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 

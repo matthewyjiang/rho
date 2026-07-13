@@ -14,6 +14,7 @@ pub enum ProviderRuntime {
     OpenAi { auth_mode: AuthMode },
     Anthropic,
     GithubCopilot,
+    Xai,
 }
 
 pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
@@ -27,6 +28,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
         },
         provider::ProviderId::Anthropic => ProviderRuntime::Anthropic,
         provider::ProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
+        provider::ProviderId::Xai => ProviderRuntime::Xai,
     })
 }
 
@@ -42,6 +44,7 @@ pub fn missing_credentials_error(provider_name: &str) -> ModelError {
         Some(ProviderAuthKind::ApiKey { missing, .. }) => missing_credential_error(missing),
         Some(ProviderAuthKind::CodexOAuth { .. }) => ModelError::MissingCodexAuth,
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => ModelError::MissingGithubCopilotAuth,
+        Some(ProviderAuthKind::XaiOAuth { .. }) => ModelError::MissingXaiAuth,
         None => ModelError::UnsupportedProvider(provider_name.to_string()),
     }
 }

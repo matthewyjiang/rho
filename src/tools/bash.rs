@@ -4,6 +4,8 @@ use serde_json::json;
 use std::{process::Stdio, time::Instant};
 use tokio::{io::AsyncReadExt, process::Command};
 
+const FINAL_OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
 pub struct Bash {
     rtk_enabled: bool,
 }
@@ -105,47 +107,49 @@ impl Tool for Bash {
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let mut last_update = Instant::now();
+        let mut output_open = true;
         let timeout = args.timeout_seconds.map(std::time::Duration::from_secs);
+        let mut timeout_sleep = Box::pin(tokio::time::sleep(
+            timeout.unwrap_or(std::time::Duration::MAX),
+        ));
+        let mut update_tick = tokio::time::interval(std::time::Duration::from_millis(50));
+        update_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        update_tick.tick().await;
         let status = loop {
-            while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-                match kind {
-                    StreamKind::Stdout => stdout.extend(bytes),
-                    StreamKind::Stderr => stderr.extend(bytes),
+            tokio::select! {
+                status = child.wait() => break status?,
+                chunk = chunk_rx.recv(), if output_open => {
+                    match chunk {
+                        Some((kind, bytes)) => {
+                            append_stream_chunk(kind, bytes, &mut stdout, &mut stderr);
+                        }
+                        None => output_open = false,
+                    }
+                }
+                _ = update_tick.tick() => {
+                    on_update(display_lines_with_content(
+                        &raw_args,
+                        &running_content(&stdout, &stderr),
+                    ));
+                }
+                _ = &mut timeout_sleep, if timeout.is_some() => {
+                    process_group.kill();
+                    let _ = child.start_kill();
+                    drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
+                    let _ = child.wait().await;
+                    drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+                    let secs = args.timeout_seconds.unwrap_or_default();
+                    return Err(ToolError::Message(truncate(
+                        timeout_content(&stdout, &stderr, secs),
+                        ctx.max_output_bytes,
+                    )));
                 }
             }
-
-            if last_update.elapsed() >= std::time::Duration::from_millis(50) {
-                on_update(display_lines_with_content(
-                    &raw_args,
-                    &running_content(&stdout, &stderr),
-                ));
-                last_update = Instant::now();
-            }
-
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
-
-            if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
-                process_group.kill();
-                let _ = child.start_kill();
-                drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
-                let _ = child.wait().await;
-                drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-                let secs = args.timeout_seconds.unwrap_or_default();
-                return Err(ToolError::Message(truncate(
-                    timeout_content(&stdout, &stderr, secs),
-                    ctx.max_output_bytes,
-                )));
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         };
 
         process_group.kill();
         let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
+            FINAL_OUTPUT_GRACE,
             drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
         )
         .await;
@@ -219,16 +223,25 @@ async fn read_stream<R>(
     }
 }
 
+fn append_stream_chunk(
+    kind: StreamKind,
+    bytes: Vec<u8>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+) {
+    match kind {
+        StreamKind::Stdout => stdout.extend(bytes),
+        StreamKind::Stderr => stderr.extend(bytes),
+    }
+}
+
 fn drain_ready_stream_chunks(
     chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
     stdout: &mut Vec<u8>,
     stderr: &mut Vec<u8>,
 ) {
     while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-        match kind {
-            StreamKind::Stdout => stdout.extend(bytes),
-            StreamKind::Stderr => stderr.extend(bytes),
-        }
+        append_stream_chunk(kind, bytes, stdout, stderr);
     }
 }
 
@@ -238,10 +251,7 @@ async fn drain_stream_chunks(
     stderr: &mut Vec<u8>,
 ) {
     while let Some((kind, bytes)) = chunk_rx.recv().await {
-        match kind {
-            StreamKind::Stdout => stdout.extend(bytes),
-            StreamKind::Stderr => stderr.extend(bytes),
-        }
+        append_stream_chunk(kind, bytes, stdout, stderr);
     }
 }
 

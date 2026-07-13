@@ -7,7 +7,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::credentials::CredentialResult;
+use crate::credentials::{save_xai_tokens, CredentialResult};
 
 #[derive(Default)]
 struct TestStore {
@@ -73,6 +73,96 @@ fn labels_returned_windows_by_duration_instead_of_position() {
     assert_eq!(window_label(172_800), "2-day");
 }
 
+#[test]
+fn parses_only_weekly_window_reported_by_xai_billing() {
+    let payload: XaiBillingPayload = serde_json::from_value(serde_json::json!({
+        "config": {
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                "start": "2026-07-04T02:57:36.331252+00:00",
+                "end": "2026-07-11T02:57:36.331252+00:00"
+            },
+            "creditUsagePercent": 3.0,
+            "productUsage": [
+                {"product": "GrokBuild", "usagePercent": 2.0},
+                {"product": "GrokChat", "usagePercent": 1.0}
+            ]
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        payload.windows(),
+        vec![UsageLimitWindow {
+            label: "Weekly".into(),
+            remaining_percent: 97.0,
+            resets_at_unix: chrono::DateTime::parse_from_rfc3339(
+                "2026-07-11T02:57:36.331252+00:00"
+            )
+            .unwrap()
+            .timestamp(),
+        }]
+    );
+}
+
+#[test]
+fn omits_xai_window_when_credit_usage_is_absent() {
+    let payload: XaiBillingPayload = serde_json::from_value(serde_json::json!({
+        "config": {
+            "currentPeriod": {
+                "end": "2026-07-11T02:57:36.331252+00:00"
+            }
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(payload.windows(), Vec::<UsageLimitWindow>::new());
+}
+
+#[test]
+fn blank_xai_env_token_falls_back_to_stored_oauth_tokens() {
+    let store = TestStore::default();
+    save_xai_tokens(
+        &store,
+        &XaiTokens {
+            access_token: "stored-access".into(),
+            refresh_token: Some("refresh".into()),
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        XaiUsageLimitsSource::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        Some((
+            XaiTokens {
+                access_token: "stored-access".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at_unix: None,
+                id_token: None,
+            },
+            XaiAuthSource::Store,
+        ))
+    );
+}
+
+#[test]
+fn labels_xai_window_from_reported_period_type() {
+    let payload: XaiBillingPayload = serde_json::from_value(serde_json::json!({
+        "config": {
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_MONTHLY",
+                "end": "2026-07-11T02:57:36Z"
+            },
+            "creditUsagePercent": 25.0
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(payload.windows()[0].label, "Monthly");
+}
+
 #[tokio::test]
 async fn codex_source_sends_oauth_and_account_headers() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -115,12 +205,71 @@ async fn codex_source_sends_oauth_and_account_headers() {
 
     assert_eq!(
         limits,
-        ProviderLimits {
+        ProviderUsageLimits {
             provider: "Codex".into(),
             windows: vec![UsageLimitWindow {
                 label: "5-hour".into(),
                 remaining_percent: 75.0,
                 resets_at_unix: 1_800_000_000,
+            }],
+        }
+    );
+}
+
+#[tokio::test]
+async fn xai_source_sends_oauth_cli_headers() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "http://{}/billing?format=credits",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let count = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+        assert!(request.contains("authorization: bearer access-token"));
+        assert!(request.contains("x-xai-token-auth: xai-grok-cli"));
+        assert!(request.contains("x-grok-client-version: 0.2.93"));
+        let body = r#"{"config":{"creditUsagePercent":12.5,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-07-11T02:57:36Z"}}}"#;
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let source = XaiUsageLimitsSource::with_endpoint(endpoint);
+    let limits = source
+        .fetch_with_tokens(
+            &TestStore::default(),
+            XaiTokens {
+                access_token: "access-token".into(),
+                refresh_token: None,
+                expires_at_unix: None,
+                id_token: None,
+            },
+            XaiAuthSource::Store,
+        )
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    assert_eq!(
+        limits,
+        ProviderUsageLimits {
+            provider: "xAI".into(),
+            windows: vec![UsageLimitWindow {
+                label: "Weekly".into(),
+                remaining_percent: 87.5,
+                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-07-11T02:57:36Z")
+                    .unwrap()
+                    .timestamp(),
             }],
         }
     );
