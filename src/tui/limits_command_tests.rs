@@ -35,6 +35,37 @@ fn renders_only_available_windows_with_remaining_bar() {
 }
 
 #[test]
+fn narrow_layout_wraps_reset_instead_of_hiding_it() {
+    let lines = usage_limit_window_lines(
+        &UsageLimitWindow {
+            label: "Weekly".into(),
+            remaining_percent: 93.0,
+            resets_at_unix: 10_000,
+        },
+        6,
+        43,
+        10_000 - 2 * 60 * 60 - 14 * 60,
+    );
+    let text = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        text,
+        vec![
+            "  Weekly   █████████░  93% left".to_string(),
+            "  resets in 2h 14m".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn formats_reset_relative_only_within_one_day() {
     let window = UsageLimitWindow {
         label: "Weekly".into(),

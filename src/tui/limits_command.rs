@@ -65,17 +65,17 @@ pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Li
         limits
             .windows
             .iter()
-            .map(|window| usage_limit_line(window, label_width, width, now)),
+            .flat_map(|window| usage_limit_window_lines(window, label_width, width, now)),
     );
     lines
 }
 
-fn usage_limit_line(
+fn usage_limit_window_lines(
     window: &UsageLimitWindow,
     label_width: usize,
     width: usize,
     now: i64,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     let remaining = window.remaining_percent.round() as u8;
     let filled = (usize::from(remaining) * BAR_WIDTH + 50) / 100;
     let bar_style = remaining_style(remaining);
@@ -86,16 +86,22 @@ fn usage_limit_line(
     let show_reset =
         prefix.chars().count() + BAR_WIDTH + percent.chars().count() + reset_suffix.chars().count()
             <= width;
-    let mut spans = vec![
+    let main_line = Line::from(vec![
         Span::raw(prefix),
         Span::styled("█".repeat(filled), bar_style),
         Span::styled("░".repeat(BAR_WIDTH - filled), Theme::dim()),
         Span::raw(percent),
-    ];
+        Span::raw(if show_reset {
+            reset_suffix.clone()
+        } else {
+            String::new()
+        }),
+    ]);
     if show_reset {
-        spans.push(Span::raw(reset_suffix));
+        vec![main_line]
+    } else {
+        vec![main_line, Line::styled(format!("  {reset}"), Theme::dim())]
     }
-    Line::from(spans)
 }
 
 fn remaining_style(remaining: u8) -> Style {
