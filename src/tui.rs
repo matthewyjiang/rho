@@ -42,6 +42,7 @@ mod goal;
 mod goal_command;
 mod history_cache;
 mod keybindings;
+mod limits_command;
 mod local_commands;
 mod local_diff;
 mod login;
@@ -473,6 +474,7 @@ enum Entry {
     Reasoning(String),
     Tool(ToolEntry),
     Notice(String),
+    UsageLimits(crate::usage_limits::ProviderLimits),
     Error(String),
 }
 
@@ -2666,6 +2668,7 @@ impl App {
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::New
             | CommandId::Compact
+            | CommandId::Limits
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
@@ -3382,6 +3385,7 @@ impl App {
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
+            CommandId::Limits => self.execute_limits_command(terminal).await,
         }
     }
 
@@ -5318,6 +5322,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,
         });
@@ -5351,6 +5356,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,
         };
