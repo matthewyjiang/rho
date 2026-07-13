@@ -78,6 +78,20 @@ fn renders_assistant_text_as_markdown() {
 }
 
 #[test]
+fn escapes_raw_html_in_assistant_markdown() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "before <img src=x onerror=\"alert('x')\"> after\n\n<script>alert('x')</script>",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("&lt;img src=x onerror=\"alert('x')\"&gt;"));
+    assert!(html.contains("&lt;script&gt;alert('x')&lt;/script&gt;"));
+    assert!(!html.contains("<img src=x"));
+    assert!(!html.contains("<script>alert"));
+}
+
+#[test]
 fn renders_user_text_as_escaped_plain_text() {
     let export = export_with_messages(vec![message(Message::user_text(
         "compare a < b && c > d with **no** markdown",
@@ -322,6 +336,29 @@ fn write_export_html_creates_parent_directories_and_writes_file() {
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.starts_with("<!DOCTYPE html>"));
     assert!(written.contains("hello"));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_export_html_sets_private_permissions_for_new_and_existing_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let export = export_with_messages(vec![]);
+    let path = dir.path().join("transcript.html");
+
+    write_export_html(dir.path(), "transcript.html", &export).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    write_export_html(dir.path(), "transcript.html", &export).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[test]

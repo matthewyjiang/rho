@@ -9,6 +9,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Write as _,
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -47,8 +48,31 @@ pub(crate) fn write_export_html(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, render_html(export))?;
+    let rendered = render_html(export);
+    let mut options = fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    set_private_file_permissions(&file)?;
+    file.write_all(rendered.as_bytes())?;
     Ok(path)
+}
+
+fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_output_path(cwd: &Path, path_arg: &str, session_id: &str) -> PathBuf {
@@ -352,13 +376,16 @@ fn argument_preview(call: &ToolCall) -> String {
 }
 
 fn markdown_to_html(text: &str) -> String {
-    use pulldown_cmark::{html, Options, Parser};
+    use pulldown_cmark::{html, Event, Options, Parser};
 
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(text, options);
+    let parser = Parser::new_ext(text, options).map(|event| match event {
+        Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
+        event => event,
+    });
     let mut rendered = String::new();
     html::push_html(&mut rendered, parser);
     rendered
