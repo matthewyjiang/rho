@@ -25,7 +25,6 @@ pub(crate) enum XaiAuthSource {
 #[derive(Clone, Debug)]
 pub(crate) struct XaiAuthMaterial {
     pub access_token: String,
-    pub source: XaiAuthSource,
 }
 
 pub(crate) struct XaiAuthManager {
@@ -41,72 +40,6 @@ struct RefreshResponse {
     refresh_token: Option<String>,
     id_token: Option<String>,
     expires_in: Option<u64>,
-}
-
-pub(crate) async fn auth_material_with_store(
-    client: &reqwest::Client,
-    store: &dyn CredentialStore,
-) -> Result<XaiAuthMaterial, ModelError> {
-    let descriptor = provider::provider_descriptor_by_id(ProviderId::Xai);
-    if let Ok(access_token) = std::env::var(descriptor.auth_kind.env_var()) {
-        if !access_token.trim().is_empty() {
-            return Ok(XaiAuthMaterial {
-                access_token,
-                source: XaiAuthSource::Env,
-            });
-        }
-    }
-    let tokens = load_xai_tokens(store)?.ok_or(ModelError::MissingXaiAuth)?;
-    if token_is_expiring(&tokens) {
-        let _guard = REFRESH_LOCK.lock().await;
-        let current = load_xai_tokens(store)?.ok_or(ModelError::MissingXaiAuth)?;
-        if current.access_token != tokens.access_token || !token_is_expiring(&current) {
-            return Ok(XaiAuthMaterial {
-                access_token: current.access_token,
-                source: XaiAuthSource::Store,
-            });
-        }
-        let refresh_token = current
-            .refresh_token
-            .as_deref()
-            .ok_or(ModelError::MissingXaiAuth)?;
-        let refreshed = refresh_tokens(client, refresh_token, &current).await?;
-        save_xai_tokens(store, &refreshed)?;
-        Ok(XaiAuthMaterial {
-            access_token: refreshed.access_token,
-            source: XaiAuthSource::Store,
-        })
-    } else {
-        Ok(XaiAuthMaterial {
-            access_token: tokens.access_token,
-            source: XaiAuthSource::Store,
-        })
-    }
-}
-
-pub(crate) async fn force_refresh_auth_material_with_store(
-    client: &reqwest::Client,
-    store: &dyn CredentialStore,
-    failed_access_token: &str,
-) -> Result<Option<XaiAuthMaterial>, ModelError> {
-    let _guard = REFRESH_LOCK.lock().await;
-    let current = load_xai_tokens(store)?.ok_or(ModelError::MissingXaiAuth)?;
-    if current.access_token != failed_access_token {
-        return Ok(Some(XaiAuthMaterial {
-            access_token: current.access_token,
-            source: XaiAuthSource::Store,
-        }));
-    }
-    let refresh_token = current
-        .refresh_token
-        .as_deref()
-        .ok_or(ModelError::MissingXaiAuth)?;
-    let refreshed = refresh_tokens(client, refresh_token, &current).await?;
-    save_xai_tokens(store, &refreshed)?;
-    Ok(Some(XaiAuthMaterial {
-        access_token: refreshed.access_token,
-        source: XaiAuthSource::Store,
-    }))
 }
 
 impl XaiAuthManager {
@@ -142,7 +75,6 @@ impl XaiAuthManager {
         } else {
             Ok(XaiAuthMaterial {
                 access_token: tokens.access_token,
-                source: self.source,
             })
         }
     }
@@ -175,7 +107,6 @@ impl XaiAuthManager {
         if current.access_token != failed_access_token {
             return Ok(XaiAuthMaterial {
                 access_token: current.access_token,
-                source: self.source,
             });
         }
         let refresh_token = current
@@ -186,7 +117,6 @@ impl XaiAuthManager {
         save_xai_tokens(self.store.as_ref(), &refreshed)?;
         Ok(XaiAuthMaterial {
             access_token: refreshed.access_token,
-            source: self.source,
         })
     }
 }

@@ -29,7 +29,6 @@ pub enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
     GithubCopilot,
-    Xai,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,8 +163,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "XAI_ACCESS_TOKEN",
             account: XAI_TOKENS_ACCOUNT,
         },
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::Xai),
+        model_source: ProviderModelSource::StaticCatalog,
+        model_refresh: None,
         metadata_upstream: "xai",
     },
 ];

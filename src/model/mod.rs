@@ -8,7 +8,6 @@ pub mod openai;
 pub mod provider;
 pub mod provider_models;
 pub mod xai;
-mod xai_models;
 
 pub mod registry;
 

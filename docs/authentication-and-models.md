@@ -75,7 +75,7 @@ Rho's implemented providers are:
 | `github-copilot` | `github-copilot` | GitHub Copilot models |
 | `xai` | `xai-oauth` | xAI models available to a SuperGrok or X Premium+ subscription |
 
-OpenAI, Anthropic, GitHub Copilot, and xAI can refresh provider model lists with `/refresh-model-list [provider]`. xAI refreshes from the authenticated account's language-model catalog, including aliases, so newly available text models appear without a Rho release. `grok-4.5` remains available as the built-in fallback before the first refresh.
+OpenAI, Anthropic, and GitHub Copilot can refresh provider model lists with `/refresh-model-list [provider]`. xAI OAuth uses a static allowlist (`grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, `grok-4.3`), similar to Codex OAuth.
 
 GitHub Copilot support uses GitHub Copilot endpoints, not GitHub Models endpoints.
 

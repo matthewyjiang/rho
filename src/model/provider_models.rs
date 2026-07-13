@@ -17,7 +17,7 @@ use crate::{
         GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
     },
     credentials::{load_provider_api_key, CredentialStore},
-    model::{registry::missing_credential_error, xai_models, ModelError},
+    model::{registry::missing_credential_error, ModelError},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
 
@@ -83,7 +83,6 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             fetch_github_copilot_models(provider, store).await?
         }
-        Some(ProviderModelRefreshKind::Xai) => xai_models::fetch_models(provider, store).await?,
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
     replace_cached_provider_models(provider, &models)?;

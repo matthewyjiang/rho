@@ -49,6 +49,7 @@ pub enum ModelSelectionError {
 #[derive(Deserialize)]
 struct ModelCatalogFile {
     openai_codex_models: Vec<String>,
+    xai_oauth_models: Vec<String>,
 }
 
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
@@ -109,7 +110,6 @@ fn static_catalog_default_model(provider: &str) -> Option<String> {
 fn builtin_default_model(provider: &str) -> Option<String> {
     match provider {
         "anthropic" => Some("claude-sonnet-4-5".into()),
-        "xai" => Some("grok-4.5".into()),
         _ => None,
     }
 }
@@ -132,7 +132,9 @@ pub fn resolve_model_selection_for_auths(
 fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
-    model_entries("openai-codex", "codex", file.openai_codex_models)
+    let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
+    entries.extend(model_entries("xai", "xai-oauth", file.xai_oauth_models));
+    entries
 }
 
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {
@@ -402,9 +404,65 @@ mod tests {
         assert!(catalog
             .iter()
             .any(|entry| entry.provider == "openai-codex" && entry.model == "gpt-5.3-codex-spark"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-4.5"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-build-0.1"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-composer-2.5-fast"));
+        assert!(catalog
+            .iter()
+            .any(|entry| entry.provider == "xai" && entry.model == "grok-4.3"));
         assert!(!catalog
             .iter()
             .any(|entry| entry.provider == "github-copilot"));
+    }
+
+    #[test]
+    fn available_models_includes_xai_static_catalog() {
+        let models = available_models_for_auths(&["xai-oauth".into()]);
+
+        assert!(models.iter().all(|entry| entry.provider == "xai"));
+        assert_eq!(
+            models
+                .iter()
+                .map(|entry| entry.model.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "grok-4.3",
+                "grok-4.5",
+                "grok-build-0.1",
+                "grok-composer-2.5-fast",
+            ]
+        );
+        assert_eq!(
+            default_model_for_provider("xai").as_deref(),
+            Some("grok-4.5")
+        );
+    }
+
+    #[test]
+    fn resolves_xai_static_catalog_selection() {
+        let selection = resolve_model_selection_for_auths(
+            "xai/grok-4.5",
+            "openai",
+            "api-key",
+            &["xai-oauth".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection,
+            ModelSelection {
+                provider: "xai".into(),
+                model: "grok-4.5".into(),
+                auth: "xai-oauth".into(),
+                from_catalog: true,
+            }
+        );
     }
 
     #[test]

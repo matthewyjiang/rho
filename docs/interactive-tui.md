@@ -83,7 +83,7 @@ Logging in does not normally switch provider/model. Use `/model` to switch model
 
 ## Model picker
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, and `github-copilot` uses GitHub Copilot models. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. `openai` uses API-key auth models, `openai-codex` uses Codex auth models, `anthropic` uses Anthropic API-key models, `github-copilot` uses GitHub Copilot models, and `xai` uses SuperGrok / X Premium+ OAuth models from a static allowlist. Run `/refresh-model-list github-copilot` to fetch Copilot models when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 
