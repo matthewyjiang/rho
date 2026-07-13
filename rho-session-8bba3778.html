@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why Prefer sed Over read_file</title>
+<style>
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card-bg: #ffffff;
+  --text: #1c2128;
+  --muted: #59636e;
+  --border: #d8dee4;
+  --code-bg: #eef1f4;
+  --user-accent: #0969da;
+  --assistant-accent: #8250df;
+  --tool-accent: #57606a;
+  --ok: #1a7f37;
+  --err: #cf222e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --card-bg: #1d2229;
+    --text: #e6e9ec;
+    --muted: #9aa4af;
+    --border: #333b45;
+    --code-bg: #14181d;
+    --user-accent: #539bf5;
+    --assistant-accent: #b083f0;
+    --tool-accent: #909aa4;
+    --ok: #57ab5a;
+    --err: #f47067;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+  max-width: 56rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header h1 { margin: 0 0 0.75rem; font-size: 1.5rem; }
+dl.meta {
+  margin: 0 0 2rem;
+  padding: 1rem 1.25rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.25rem 1.5rem;
+  font-size: 0.875rem;
+}
+dl.meta div { display: flex; gap: 0.5rem; min-width: 0; }
+dl.meta dt { color: var(--muted); flex: none; width: 6rem; }
+dl.meta dd { margin: 0; overflow-wrap: anywhere; }
+main { display: flex; flex-direction: column; gap: 1rem; }
+.entry {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem 1rem;
+}
+.entry.user { border-left: 3px solid var(--user-accent); }
+.entry.assistant { border-left: 3px solid var(--assistant-accent); }
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+.entry-head .role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.entry.user .role { color: var(--user-accent); }
+.entry.assistant .role { color: var(--assistant-accent); }
+.entry-head time { font-size: 0.75rem; color: var(--muted); }
+.plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+img.attachment {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  font: 0.8125rem/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+code {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.125rem 0.3rem;
+  font: 0.875em ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+pre code { background: none; padding: 0; }
+details.system, details.tool {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+details.system > summary, details.tool > summary {
+  cursor: pointer;
+  padding: 0.6rem 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+details.tool { border-left: 3px solid var(--tool-accent); margin: 0.5rem 0; }
+details.tool > summary .tool-name {
+  font: 600 0.8125rem ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--text);
+}
+details.tool > summary .tool-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 0.75rem ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+details.tool > summary .status {
+  flex: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }
+.status.pending { color: var(--muted); }
+.tool-body { padding: 0 1.25rem 0.75rem; }
+.tool-section {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0.5rem 0 0.25rem;
+}
+.tool-output.empty { color: var(--muted); font-style: italic; }
+details.system > pre { margin: 0 1.25rem 0.75rem; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 1.25rem 0 0.5rem; line-height: 1.3; }
+.markdown h1 { font-size: 1.25rem; }
+.markdown h2 { font-size: 1.125rem; }
+.markdown h3 { font-size: 1rem; }
+.markdown blockquote {
+  margin: 0.5rem 0;
+  padding: 0.25rem 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 0.375rem 0.75rem; }
+.markdown th { background: var(--code-bg); }
+.markdown a { color: var(--user-accent); }
+.markdown hr { border: none; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+<h1>Why Prefer sed Over read_file</h1>
+<dl class="meta">
+<div><dt>Session</dt><dd>8bba3778-4188-47a7-afb5-a14760807395</dd></div>
+<div><dt>Workspace</dt><dd>/home/emgym/.herdr/worktrees/rho/worktree-calm-field-1191</dd></div>
+<div><dt>Created</dt><dd>2026-07-12 22:56:44</dd></div>
+<div><dt>Updated</dt><dd>2026-07-12 22:57:46</dd></div>
+<div><dt>Messages</dt><dd>4</dd></div>
+<div><dt>Exported</dt><dd>2026-07-12 22:58:06 by rho v0.25.0</dd></div>
+</dl>
+</header>
+<main>
+<section class="entry user">
+<div class="entry-head"><span class="role">You</span><time title="2026-07-12 22:56:44">22:56:44</time></div>
+<div class="plain">why do yo uprefer to use sed to inspect files rather than the read_file tool?</div>
+</section>
+<section class="entry assistant">
+<div class="entry-head"><span class="role">Assistant</span><time title="2026-07-12 22:56:51">22:56:51</time></div>
+<div class="markdown"><p>I do not inherently prefer <code>sed</code>. In this harness, <code>read_file</code> is usually the better default because it is structured, supports offsets and limits, and avoids shell quoting issues.</p>
+<p>I may use <code>sed</code> when:</p>
+<ul>
+<li>I am already running a shell pipeline.</li>
+<li>I need line numbering or filtering alongside other shell tools.</li>
+<li>I want several noncontiguous ranges in one command.</li>
+<li>I need to inspect generated output or apply shell-specific transformations.</li>
+<li>A file-reading tool is unavailable or insufficient.</li>
+</ul>
+<p>For straightforward file inspection here, I should generally use <code>read_file</code>. If I used <code>sed</code> without one of those reasons, that was habit rather than a technical advantage.</p>
+</div>
+</section>
+<section class="entry user">
+<div class="entry-head"><span class="role">You</span><time title="2026-07-12 22:57:15">22:57:15</time></div>
+<div class="plain">how could we improve the read file tool then?</div>
+</section>
+<section class="entry assistant">
+<div class="entry-head"><span class="role">Assistant</span><time title="2026-07-12 22:57:46">22:57:46</time></div>
+<div class="markdown"><p>The best improvement would be to cover the common inspection tasks that currently make <code>sed</code>, <code>tail</code>, <code>nl</code>, and <code>grep</code> convenient, while keeping <code>read_file</code> structured and predictable.</p>
+<h2>Highest-value improvements</h2>
+<ol>
+<li><strong>Always return line numbers and range metadata</strong></li>
+</ol>
+<pre><code class="language-text">path: src/main.rs
+lines: 120-179 of 642
+truncated_before: true
+truncated_after: true
+</code></pre>
+<p>Line numbers make follow-up reads, edits, and explanations much easier.</p>
+<ol start="2">
+<li><strong>Support explicit end lines</strong></li>
+</ol>
+<p>The current <code>offset + limit</code> interface requires arithmetic. Allowing <code>start_line</code> and <code>end_line</code> would better match how people discuss source code:</p>
+<pre><code class="language-json">{
+  "path": "src/main.rs",
+  "start_line": 120,
+  "end_line": 180
+}
+</code></pre>
+<ol start="3">
+<li><strong>Support multiple ranges in one call</strong></li>
+</ol>
+<p>This would replace many <code>sed -n '1,40p;180,240p'</code> calls:</p>
+<pre><code class="language-json">{
+  "path": "src/main.rs",
+  "ranges": [
+    { "start": 1, "end": 40 },
+    { "start": 180, "end": 240 }
+  ]
+}
+</code></pre>
+<ol start="4">
+<li><strong>Add head and tail modes</strong></li>
+</ol>
+<p>Tail is especially useful for logs, manifests, and recently appended files:</p>
+<pre><code class="language-json">{ "path": "/tmp/test.log", "tail_lines": 100 }
+</code></pre>
+<ol start="5">
+<li><strong>Return continuation information</strong></li>
+</ol>
+<p>For large files, responses should provide an unambiguous next request:</p>
+<pre><code class="language-json">{
+  "returned_lines": [120, 179],
+  "total_lines": 642,
+  "next_offset": 180
+}
+</code></pre>
+<p>A continuation token would be even safer if files can change between reads.</p>
+<ol start="6">
+<li><strong>Allow contextual matching</strong></li>
+</ol>
+<p>A lightweight query mode could replace basic <code>grep -n -C</code> usage:</p>
+<pre><code class="language-json">{
+  "path": "src/main.rs",
+  "query": "handle_event",
+  "context_lines": 5,
+  "max_matches": 10
+}
+</code></pre>
+<p>For regexes or repository-wide searches, a dedicated <code>search_file</code> or <code>search_files</code> tool would be cleaner than turning <code>read_file</code> into a shell substitute.</p>
+<h2>Robustness improvements</h2>
+<ul>
+<li>Return file size, modification time, and a content hash.</li>
+<li>Indicate whether the file changed between paginated reads.</li>
+<li>Detect binary files and avoid emitting raw binary data.</li>
+<li>Enforce a character or byte limit in addition to a line limit, since one line can be enormous.</li>
+<li>Clearly represent tabs, invalid UTF-8, missing final newlines, and unusually long lines.</li>
+<li>Distinguish an empty file from an offset beyond the end of the file.</li>
+<li>Optionally read several files in one structured call.</li>
+</ul>
+<h2>A cleaner proposed interface</h2>
+<pre><code class="language-json">{
+  "path": "src/main.rs",
+  "selection": {
+    "ranges": [
+      { "start_line": 1, "end_line": 80 },
+      { "start_line": 240, "end_line": 300 }
+    ]
+  },
+  "line_numbers": true,
+  "max_characters": 30000
+}
+</code></pre>
+<p>Or for matching:</p>
+<pre><code class="language-json">{
+  "path": "src/main.rs",
+  "selection": {
+    "matches": {
+      "query": "handle_event",
+      "mode": "literal",
+      "context_lines": 4,
+      "max_matches": 20
+    }
+  },
+  "line_numbers": true
+}
+</code></pre>
+<p>The three improvements that would eliminate most unnecessary <code>sed</code> usage are <strong>line-numbered output, multiple ranges, and tail support</strong>. Contextual matching would eliminate most remaining inspection pipelines.</p>
+</div>
+</section>
+</main>
+</body>
+</html>

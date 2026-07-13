@@ -17,6 +17,7 @@ pub enum CommandId {
     Diff,
     Doctor,
     Limits,
+    Export,
     Exit,
 }
 
@@ -132,6 +133,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "limits",
         usage: "/limits",
         description: "show connected OAuth usage limits",
+    },
+    CommandSpec {
+        id: CommandId::Export,
+        name: "export",
+        usage: "/export [path]",
+        description: "export the session transcript to an HTML file",
     },
     CommandSpec {
         id: CommandId::Exit,
@@ -301,6 +308,17 @@ mod tests {
         assert_eq!(invocation.id, CommandId::Goal);
         assert_eq!(invocation.name, "goal");
         assert_eq!(invocation.args, "all tests pass");
+    }
+
+    #[test]
+    fn parses_export_command_with_path_argument() {
+        let invocation = parse_command("/export docs/transcript.html")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(invocation.id, CommandId::Export);
+        assert_eq!(invocation.name, "export");
+        assert_eq!(invocation.args, "docs/transcript.html");
     }
 
     #[test]
