@@ -42,9 +42,12 @@ Provider, model, auth, and reasoning override options affect [authentication and
 
 - Cargo installs run `cargo install rho-coding-agent --locked`, adding `--root <cargo-root>` when the current executable is from a non-default Cargo install root.
 - pacman installs run `sudo pacman -Syu rho-coding-agent` so pacman can refresh package databases and prompt for your password.
+- Scoop installs show `scoop update rho`.
 - install-script installs download the official install script to a temporary file and run it with `RHO_INSTALL_DIR` set to the current executable directory.
 
-Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, or `script` to override detection.
+On Windows, `rho update` prints the detected update command instead of running it automatically.
+
+Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, or `script` to override detection.
 
 ## `rho run`
 

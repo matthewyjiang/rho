@@ -15,6 +15,7 @@ use tokio::process::Command;
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases/latest";
 const CRATE_NAME: &str = "rho-coding-agent";
 const PACMAN_PACKAGE: &str = "rho-coding-agent";
+const SCOOP_PACKAGE: &str = "rho";
 #[cfg(not(windows))]
 const SCRIPT_INSTALL_SH_COMMAND: &str = "tmp=$(mktemp) || exit; curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh -o \"$tmp\"; status=$?; if [ $status -eq 0 ]; then sh \"$tmp\"; status=$?; fi; rm -f \"$tmp\"; exit $status";
 #[cfg(windows)]
@@ -34,6 +35,7 @@ pub struct UpdateInfo {
 pub enum InstallMethod {
     Cargo,
     Pacman,
+    Scoop,
     Script,
 }
 
@@ -42,6 +44,7 @@ impl InstallMethod {
         match self {
             Self::Cargo => "Cargo",
             Self::Pacman => "pacman",
+            Self::Scoop => "Scoop",
             Self::Script => "install script",
         }
     }
@@ -50,6 +53,7 @@ impl InstallMethod {
         match self {
             Self::Cargo => cargo_update_command_display(),
             Self::Pacman => pacman_update_command_display(),
+            Self::Scoop => scoop_update_command_display(),
             Self::Script => script_update_command_display(),
         }
     }
@@ -177,6 +181,11 @@ fn update_command(method: InstallMethod) -> Command {
             command.args(["pacman", "-Syu", PACMAN_PACKAGE]);
             command
         }
+        InstallMethod::Scoop => {
+            let mut command = Command::new("scoop");
+            command.args(["update", SCOOP_PACKAGE]);
+            command
+        }
         InstallMethod::Script => script_update_command(),
     }
 }
@@ -192,6 +201,10 @@ fn cargo_update_command_display() -> String {
 
 fn pacman_update_command_display() -> String {
     format!("sudo pacman -Syu {PACMAN_PACKAGE}")
+}
+
+fn scoop_update_command_display() -> String {
+    format!("scoop update {SCOOP_PACKAGE}")
 }
 
 #[cfg(windows)]
@@ -235,6 +248,7 @@ pub fn detect_install_method() -> InstallMethod {
         match method.trim().to_ascii_lowercase().as_str() {
             "cargo" => return InstallMethod::Cargo,
             "pacman" => return InstallMethod::Pacman,
+            "scoop" => return InstallMethod::Scoop,
             "script" | "install-script" => return InstallMethod::Script,
             _ => {}
         }
@@ -249,6 +263,9 @@ pub fn detect_install_method() -> InstallMethod {
     }
     if current_exe.as_deref().is_some_and(is_pacman_owned) {
         return InstallMethod::Pacman;
+    }
+    if current_exe.as_deref().is_some_and(is_scoop_install_path) {
+        return InstallMethod::Scoop;
     }
     InstallMethod::Script
 }
@@ -350,6 +367,14 @@ fn is_pacman_owned(_path: &Path) -> bool {
     false
 }
 
+fn is_scoop_install_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    lower.contains("/scoop/apps/rho/")
+        || lower.ends_with("/scoop/shims/rho")
+        || lower.ends_with("/scoop/shims/rho.exe")
+}
+
 async fn latest_release_tag() -> anyhow::Result<String> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("rho-coding-agent"));
@@ -412,7 +437,8 @@ mod tests {
 
     use super::{
         cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
-        pacman_update_command_display, release_tag_to_version, version_is_newer, InstallMethod,
+        is_scoop_install_path, pacman_update_command_display, release_tag_to_version,
+        scoop_update_command_display, version_is_newer, InstallMethod,
     };
 
     #[test]
@@ -469,6 +495,38 @@ mod tests {
             pacman_update_command_display(),
             "sudo pacman -Syu rho-coding-agent"
         );
+    }
+
+    #[test]
+    fn scoop_update_command_updates_rho_package() {
+        assert_eq!(scoop_update_command_display(), "scoop update rho");
+        assert_eq!(InstallMethod::Scoop.update_command(), "scoop update rho");
+        assert_eq!(InstallMethod::Scoop.label(), "Scoop");
+    }
+
+    #[test]
+    fn detects_scoop_apps_and_shims_paths() {
+        assert!(is_scoop_install_path(Path::new(
+            r"C:\Users\me\scoop\apps\rho\current\rho.exe"
+        )));
+        assert!(is_scoop_install_path(Path::new(
+            r"C:\Users\me\scoop\apps\rho\0.26.0\rho.exe"
+        )));
+        assert!(is_scoop_install_path(Path::new(
+            r"C:\Users\me\scoop\shims\rho.exe"
+        )));
+        assert!(is_scoop_install_path(Path::new(
+            "/home/me/scoop/apps/rho/current/rho"
+        )));
+        assert!(!is_scoop_install_path(Path::new(
+            r"C:\Users\me\AppData\Local\Programs\rho\bin\rho.exe"
+        )));
+        assert!(!is_scoop_install_path(Path::new(
+            r"C:\Users\me\scoop\apps\git\current\bin\git.exe"
+        )));
+        assert!(!is_scoop_install_path(Path::new(
+            r"C:\Users\me\.cargo\bin\rho.exe"
+        )));
     }
 
     #[test]
