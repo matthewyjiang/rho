@@ -360,11 +360,3 @@ fn write_export_html_sets_private_permissions_for_new_and_existing_files() {
         0o600
     );
 }
-
-#[test]
-#[ignore]
-fn regenerate_committed_sample() {
-    let cwd = PathBuf::from("/home/emgym/.herdr/worktrees/rho/worktree-calm-field-1191");
-    let path = write_session_html(&cwd, "8bba3778", "rho-session-8bba3778.html").unwrap();
-    println!("wrote {}", path.display());
-}

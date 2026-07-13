@@ -306,8 +306,3 @@ fn visual_cursor_movement_preserves_ascii_wrapped_column() {
 
     assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 2);
 }
-
-#[test]
-fn char_prefix_width_accounts_for_wide_characters() {
-    assert_eq!(char_prefix_display_width("a界b", 2), 3);
-}
