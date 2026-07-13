@@ -35,7 +35,7 @@ pub(crate) struct XaiAuthManager {
 }
 
 #[derive(Debug, Deserialize)]
-struct RefreshResponse {
+struct XaiRefreshResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
     id_token: Option<String>,
@@ -113,7 +113,7 @@ impl XaiAuthManager {
             .refresh_token
             .clone()
             .ok_or(ModelError::MissingXaiAuth)?;
-        let refreshed = refresh_tokens(&self.client, &refresh_token, &current).await?;
+        let refreshed = refresh_xai_tokens(&self.client, &refresh_token, &current).await?;
         save_xai_tokens(self.store.as_ref(), &refreshed)?;
         Ok(XaiAuthMaterial {
             access_token: refreshed.access_token,
@@ -121,7 +121,7 @@ impl XaiAuthManager {
     }
 }
 
-async fn refresh_tokens(
+pub(crate) async fn refresh_xai_tokens(
     client: &reqwest::Client,
     refresh_token: &str,
     previous: &XaiTokens,
@@ -140,12 +140,12 @@ async fn refresh_tokens(
         let body = response.text().await.unwrap_or_default();
         return Err(ModelError::HttpStatus { status, body });
     }
-    let response = response.json::<RefreshResponse>().await?;
+    let response = response.json::<XaiRefreshResponse>().await?;
     merge_refreshed_tokens(response, refresh_token, previous, now_unix())
 }
 
 fn merge_refreshed_tokens(
-    response: RefreshResponse,
+    response: XaiRefreshResponse,
     previous_refresh_token: &str,
     previous: &XaiTokens,
     now_unix: Option<i64>,

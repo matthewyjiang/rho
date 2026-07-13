@@ -7,7 +7,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::credentials::CredentialResult;
+use crate::credentials::{save_xai_tokens, CredentialResult};
 
 #[derive(Default)]
 struct TestStore {
@@ -117,6 +117,50 @@ fn omits_xai_window_when_credit_usage_is_absent() {
     .unwrap();
 
     assert_eq!(payload.windows(), Vec::<UsageLimitWindow>::new());
+}
+
+#[test]
+fn blank_xai_env_token_falls_back_to_stored_oauth_tokens() {
+    let store = TestStore::default();
+    save_xai_tokens(
+        &store,
+        &XaiTokens {
+            access_token: "stored-access".into(),
+            refresh_token: Some("refresh".into()),
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        XaiUsageLimitsSource::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        Some((
+            XaiTokens {
+                access_token: "stored-access".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at_unix: None,
+                id_token: None,
+            },
+            XaiAuthSource::Store,
+        ))
+    );
+}
+
+#[test]
+fn labels_xai_window_from_reported_period_type() {
+    let payload: XaiBillingPayload = serde_json::from_value(serde_json::json!({
+        "config": {
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_MONTHLY",
+                "end": "2026-07-11T02:57:36Z"
+            },
+            "creditUsagePercent": 25.0
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(payload.windows()[0].label, "Monthly");
 }
 
 #[tokio::test]

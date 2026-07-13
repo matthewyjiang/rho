@@ -52,6 +52,7 @@ pub fn build_provider(
         ProviderRuntime::Xai => Ok(Box::new(XaiProvider::new(
             model.to_string(),
             Arc::new(OsCredentialStore),
+            reasoning,
         )?) as DynModelProvider),
     }
 }

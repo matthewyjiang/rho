@@ -1,23 +1,20 @@
 use std::sync::Arc;
 
-use futures_util::StreamExt;
 use reqwest::StatusCode;
+use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
     credentials::CredentialStore,
     model::{
         openai::{
-            convert::{convert_openai_response, to_openai_message, to_openai_tool},
-            stream::{convert_streamed_response, handle_openai_stream_line, invalid_stream_utf8},
-            types::{ChatRequest, ChatResponse, ChatStreamOptions},
+            convert::{codex_input_items, to_responses_lite_tool},
+            stream::collect_codex_sse_response,
         },
         ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
     },
-    provider_backend::{
-        line_decoder::LineDecoder,
-        stream_timeout::{provider_client, StreamIdleDeadline},
-    },
+    provider_backend::stream_timeout::provider_client,
+    reasoning::ReasoningLevel,
 };
 
 const API_BASE: &str = "https://api.x.ai/v1";
@@ -26,45 +23,41 @@ pub struct XaiProvider {
     client: reqwest::Client,
     model: String,
     auth: XaiAuthManager,
+    api_base: String,
+    reasoning_effort: Option<String>,
 }
 
 impl XaiProvider {
-    pub(crate) fn new(model: String, store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
+    pub(crate) fn new(
+        model: String,
+        store: Arc<dyn CredentialStore>,
+        reasoning: ReasoningLevel,
+    ) -> Result<Self, ModelError> {
+        Self::new_with_api_base(model, store, reasoning, API_BASE.into())
+    }
+
+    fn new_with_api_base(
+        model: String,
+        store: Arc<dyn CredentialStore>,
+        reasoning: ReasoningLevel,
+        api_base: String,
+    ) -> Result<Self, ModelError> {
+        let reasoning_effort = xai_reasoning_effort(&model, reasoning).map(str::to_string);
         Ok(Self {
             client: provider_client(),
             model,
             auth: XaiAuthManager::new(store)?,
+            api_base,
+            reasoning_effort,
         })
     }
 
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
-        stream: bool,
     ) -> Result<reqwest::Response, ModelError> {
-        let messages = request
-            .messages
-            .iter()
-            .cloned()
-            .map(to_openai_message)
-            .collect::<Result<Vec<_>, _>>()?;
-        let tools = request
-            .tools
-            .iter()
-            .cloned()
-            .map(to_openai_tool)
-            .collect::<Vec<_>>();
-        let has_tools = !tools.is_empty();
-        let body = ChatRequest {
-            model: self.model.clone(),
-            messages,
-            tools: has_tools.then_some(tools),
-            tool_choice: has_tools.then_some("auto"),
-            stream,
-            stream_options: stream.then_some(ChatStreamOptions {
-                include_usage: true,
-            }),
-        };
+        let body =
+            build_xai_responses_body(&self.model, request, self.reasoning_effort.as_deref())?;
         let auth = self.auth.auth_material().await?;
         let response = self
             .send_request_with_token(&body, &auth.access_token)
@@ -81,30 +74,45 @@ impl XaiProvider {
 
     async fn send_request_with_token(
         &self,
-        body: &ChatRequest,
+        body: &Value,
         access_token: &str,
     ) -> Result<reqwest::Response, ModelError> {
         Ok(self
             .client
-            .post(format!("{API_BASE}/chat/completions"))
+            .post(format!("{}/responses", self.api_base.trim_end_matches('/')))
             .bearer_auth(access_token)
             .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
             .json(body)
             .send()
             .await?)
     }
-}
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for XaiProvider {
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, false).await?;
+    async fn send_responses_turn(
+        &self,
+        request: ModelRequest<'_>,
+        mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.send_request(request).await?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(ModelError::HttpStatus { status, body });
         }
-        convert_openai_response(response.json::<ChatResponse>().await?)
+        collect_codex_sse_response(response, &mut on_event)
+            .await
+            .map(|output| output.response)
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ModelProvider for XaiProvider {
+    fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
+        self.reasoning_effort = xai_reasoning_effort(&self.model, reasoning).map(str::to_string);
+        true
+    }
+
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        self.send_responses_turn(request, None).await
     }
 
     async fn send_turn_stream(
@@ -112,31 +120,64 @@ impl ModelProvider for XaiProvider {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, true).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::HttpStatus { status, body });
-        }
-        let mut text = String::new();
-        let mut tool_calls = Vec::new();
-        let mut decoder = LineDecoder::default();
-        let mut stream = response.bytes_stream();
-        let mut idle_deadline = StreamIdleDeadline::new();
-        loop {
-            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-                break;
-            };
-            decoder.push(&chunk?);
-            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
-                    idle_deadline.record_activity();
-                }
-            }
-        }
-        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-            handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
-        }
-        convert_streamed_response(text, tool_calls)
+        self.send_responses_turn(request, Some(on_event)).await
     }
 }
+
+fn build_xai_responses_body(
+    model: &str,
+    request: ModelRequest<'_>,
+    reasoning_effort: Option<&str>,
+) -> Result<Value, ModelError> {
+    let mut instructions = Vec::new();
+    let input = codex_input_items(request.messages.to_vec(), &mut instructions)?;
+    let tools = request
+        .tools
+        .iter()
+        .cloned()
+        .map(to_responses_lite_tool)
+        .collect::<Vec<_>>();
+    let mut body = json!({
+        "model": model,
+        "input": input,
+        "store": false,
+        "stream": true,
+    });
+    let instructions = instructions.join("\n\n");
+    if !instructions.is_empty() {
+        body["instructions"] = json!(instructions);
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+        body["tool_choice"] = json!("auto");
+    }
+    if let Some(prompt_cache_key) = request.prompt_cache_key {
+        body["prompt_cache_key"] = json!(prompt_cache_key);
+    }
+    if let Some(effort) = reasoning_effort {
+        body["reasoning"] = json!({ "effort": effort });
+    }
+    Ok(body)
+}
+
+fn xai_reasoning_effort(model: &str, reasoning: ReasoningLevel) -> Option<&'static str> {
+    match model {
+        "grok-4.5" => match reasoning {
+            ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
+            ReasoningLevel::Medium => Some("medium"),
+            ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => Some("high"),
+        },
+        "grok-4.3" => match reasoning {
+            ReasoningLevel::Off => Some("none"),
+            ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
+            ReasoningLevel::Medium => Some("medium"),
+            ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => Some("high"),
+        },
+        "grok-build-0.1" | "grok-composer-2.5-fast" => None,
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "xai_tests.rs"]
+mod tests;

@@ -23,6 +23,7 @@ const CALLBACK_HOST: &str = "127.0.0.1";
 const CALLBACK_PORT: u16 = 56121;
 const CALLBACK_PATH: &str = "/callback";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_DEVICE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
@@ -193,14 +194,22 @@ async fn wait_for_callback(
     listener: &TcpListener,
     expected_state: &str,
 ) -> Result<CallbackOutcome, XaiOAuthError> {
+    wait_for_callback_with_read_timeout(listener, expected_state, CALLBACK_READ_TIMEOUT).await
+}
+
+async fn wait_for_callback_with_read_timeout(
+    listener: &TcpListener,
+    expected_state: &str,
+    read_timeout: Duration,
+) -> Result<CallbackOutcome, XaiOAuthError> {
     // Browsers and OS networking stacks often open probe connections (empty
     // reads, favicon, TLS probes) before or alongside the real OAuth redirect.
     // Keep accepting until we see a real callback request; do not fail the flow
     // on the first non-callback connection.
     loop {
         let (mut stream, _) = listener.accept().await.map_err(XaiOAuthError::CallbackIo)?;
-        let request = match read_http_request(&mut stream).await {
-            Ok(request) if !request.trim().is_empty() => request,
+        let request = match timeout(read_timeout, read_http_request(&mut stream)).await {
+            Ok(Ok(request)) if !request.trim().is_empty() => request,
             _ => {
                 let _ = write_callback_response(&mut stream, CallbackResponseKind::Ignored).await;
                 continue;

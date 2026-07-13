@@ -213,6 +213,31 @@ async fn wait_for_callback_skips_probes_until_valid_get() {
     assert_eq!(outcome, CallbackOutcome::Code("ok".into()));
 }
 
+#[tokio::test]
+async fn wait_for_callback_times_out_stalled_probe_and_accepts_redirect() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let state = "state".to_string();
+    let waiter = tokio::spawn(async move {
+        wait_for_callback_with_read_timeout(&listener, &state, std::time::Duration::from_millis(25))
+            .await
+    });
+
+    let _stalled_probe = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /callback?code=ok&state=state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        waiter.await.unwrap().unwrap(),
+        CallbackOutcome::Code("ok".into())
+    );
+}
+
 #[test]
 fn token_response_records_expiry() {
     let before = SystemTime::now()

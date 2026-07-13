@@ -4,7 +4,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    auth::xai_oauth::{CLIENT_ID, TOKEN_URL},
+    auth::xai_token::refresh_xai_tokens,
     credentials::{
         load_codex_tokens, load_xai_tokens, save_xai_tokens, CodexTokens, CredentialStore,
         XaiTokens,
@@ -224,7 +224,14 @@ impl XaiUsageLimitsSource {
     fn configured_tokens(
         store: &dyn CredentialStore,
     ) -> Result<Option<(XaiTokens, XaiAuthSource)>, UsageLimitsError> {
-        if let Ok(access_token) = std::env::var("XAI_ACCESS_TOKEN") {
+        Self::configured_tokens_from(store, std::env::var("XAI_ACCESS_TOKEN").ok())
+    }
+
+    fn configured_tokens_from(
+        store: &dyn CredentialStore,
+        env_access_token: Option<String>,
+    ) -> Result<Option<(XaiTokens, XaiAuthSource)>, UsageLimitsError> {
+        if let Some(access_token) = env_access_token.filter(|token| !token.trim().is_empty()) {
             return Ok(Some((
                 XaiTokens {
                     access_token,
@@ -269,24 +276,24 @@ impl XaiUsageLimitsSource {
                     provider: "xAI",
                     source,
                 })?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
+        if (response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN)
+            && source == XaiAuthSource::Store
         {
-            if source == XaiAuthSource::Store {
-                if let Some(refresh_token) = tokens.refresh_token.clone() {
-                    tokens = refresh_xai_token(&self.client, store, &refresh_token, &tokens)
+            if let Some(refresh_token) = tokens.refresh_token.clone() {
+                tokens = refresh_xai_token(&self.client, store, &refresh_token, &tokens)
+                    .await
+                    .map_err(|detail| UsageLimitsError::Refresh {
+                        provider: "xAI",
+                        detail,
+                    })?;
+                response =
+                    self.request(&tokens)
                         .await
-                        .map_err(|detail| UsageLimitsError::Refresh {
-                            provider: "xAI",
-                            detail,
-                        })?;
-                    response = self.request(&tokens).await.map_err(|source| {
-                        UsageLimitsError::Request {
+                        .map_err(|source| UsageLimitsError::Request {
                             provider: "xAI",
                             source,
-                        }
-                    })?;
-                }
+                        })?;
             }
         }
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
@@ -421,6 +428,8 @@ struct XaiBillingConfig {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct XaiBillingPeriod {
+    #[serde(rename = "type")]
+    kind: Option<String>,
     end: Option<String>,
 }
 
@@ -430,8 +439,13 @@ impl XaiBillingPayload {
         let Some(used_percent) = config.credit_usage_percent else {
             return Vec::new();
         };
-        let Some(resets_at_unix) = config
-            .current_period
+        let period = config.current_period;
+        let label = period
+            .as_ref()
+            .and_then(|period| period.kind.as_deref())
+            .map(xai_period_label)
+            .unwrap_or("Usage");
+        let Some(resets_at_unix) = period
             .and_then(|period| period.end)
             .or(config.billing_period_end)
             .and_then(|value| parse_unix_timestamp(&value))
@@ -439,19 +453,20 @@ impl XaiBillingPayload {
             return Vec::new();
         };
         vec![UsageLimitWindow {
-            label: "Weekly".into(),
+            label: label.into(),
             remaining_percent: (100.0 - used_percent).clamp(0.0, 100.0),
             resets_at_unix,
         }]
     }
 }
 
-#[derive(Deserialize)]
-struct XaiRefreshResponse {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    id_token: Option<String>,
-    expires_in: Option<u64>,
+fn xai_period_label(kind: &str) -> &'static str {
+    match kind {
+        "USAGE_PERIOD_TYPE_WEEKLY" => "Weekly",
+        "USAGE_PERIOD_TYPE_MONTHLY" => "Monthly",
+        "USAGE_PERIOD_TYPE_DAILY" => "Daily",
+        _ => "Usage",
+    }
 }
 
 async fn refresh_xai_token(
@@ -460,45 +475,9 @@ async fn refresh_xai_token(
     refresh_token: &str,
     previous: &XaiTokens,
 ) -> Result<XaiTokens, String> {
-    let response = client
-        .post(TOKEN_URL)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", CLIENT_ID),
-        ])
-        .send()
+    let refreshed = refresh_xai_tokens(client, refresh_token, previous)
         .await
         .map_err(|err| err.to_string())?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {body}"));
-    }
-    let response = response
-        .json::<XaiRefreshResponse>()
-        .await
-        .map_err(|err| err.to_string())?;
-    let access_token = response
-        .access_token
-        .ok_or_else(|| "xAI refresh response missing access_token".to_string())?;
-    let refreshed = XaiTokens {
-        access_token,
-        refresh_token: Some(
-            response
-                .refresh_token
-                .unwrap_or_else(|| refresh_token.to_string()),
-        ),
-        expires_at_unix: response
-            .expires_in
-            .and_then(|expires| {
-                i64::try_from(expires)
-                    .ok()
-                    .map(|expires| now_unix().saturating_add(expires))
-            })
-            .or(previous.expires_at_unix),
-        id_token: response.id_token.or_else(|| previous.id_token.clone()),
-    };
     save_xai_tokens(store, &refreshed).map_err(|err| err.to_string())?;
     Ok(refreshed)
 }

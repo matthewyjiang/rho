@@ -13,7 +13,7 @@ fn previous_tokens() -> XaiTokens {
 #[test]
 fn refresh_without_expires_in_clears_stale_expiry() {
     let refreshed = merge_refreshed_tokens(
-        RefreshResponse {
+        XaiRefreshResponse {
             access_token: Some("new-access".into()),
             refresh_token: Some("new-refresh".into()),
             id_token: Some("new-id".into()),
@@ -40,7 +40,7 @@ fn refresh_without_expires_in_clears_stale_expiry() {
 #[test]
 fn refresh_with_expires_in_sets_absolute_expiry() {
     let refreshed = merge_refreshed_tokens(
-        RefreshResponse {
+        XaiRefreshResponse {
             access_token: Some("new-access".into()),
             refresh_token: None,
             id_token: None,
