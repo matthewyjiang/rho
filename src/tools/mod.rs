@@ -7,14 +7,15 @@ pub mod list_dir;
 pub mod powershell;
 mod process;
 pub mod read_file;
+pub mod rho;
 pub mod rtk;
 pub mod skill;
 pub mod web;
 pub mod write_file;
 
-use crate::{config::Config, tool::ToolRegistry};
+use crate::{config::Config, diagnostics::RuntimeDiagnostics, tool::ToolRegistry};
 
-pub fn registry(config: &Config) -> ToolRegistry {
+pub fn registry(config: &Config, diagnostics: RuntimeDiagnostics) -> ToolRegistry {
     let mut r = ToolRegistry::new();
     r.register(list_dir::ListDir);
     r.register(read_file::ReadFile);
@@ -29,6 +30,7 @@ pub fn registry(config: &Config) -> ToolRegistry {
     #[cfg(windows)]
     r.register(powershell::PowerShell::new(rtk_enabled));
     r.register(skill::Skill);
+    r.register(rho::Rho::new(diagnostics));
     let (web_search, fetch_content) = web::access_tools(config);
     if web_search.is_available() {
         r.register(web_search);
@@ -43,8 +45,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registry_includes_rho_diagnostics_tool() {
+        let registry = registry(
+            &Config::default(),
+            crate::diagnostics::test_diagnostics("openai", "gpt-test"),
+        );
+
+        assert!(registry.get("rho").is_some());
+    }
+
+    #[test]
     fn registry_includes_available_web_access_tools() {
-        let registry = registry(&Config::default());
+        let registry = registry(
+            &Config::default(),
+            crate::diagnostics::test_diagnostics("openai", "gpt-test"),
+        );
         let names = registry
             .specs()
             .into_iter()
@@ -72,11 +87,14 @@ mod tests {
             web_search_provider: crate::config::SearchProvider::Disabled,
             ..Config::default()
         };
-        let names = registry(&config)
-            .specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect::<Vec<_>>();
+        let names = registry(
+            &config,
+            crate::diagnostics::test_diagnostics("openai", "gpt-test"),
+        )
+        .specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
 
         assert!(!names.contains(&"web_search".to_string()));
         assert!(names.contains(&"fetch_content".to_string()));

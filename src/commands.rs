@@ -10,6 +10,7 @@ pub enum CommandId {
     RefreshModelList,
     Resume,
     Config,
+    Info,
     Compact,
     Goal,
     Skills,
@@ -89,6 +90,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+    },
+    CommandSpec {
+        id: CommandId::Info,
+        name: "info",
+        usage: "/info",
+        description: "show rho runtime identity",
     },
     CommandSpec {
         id: CommandId::Compact,

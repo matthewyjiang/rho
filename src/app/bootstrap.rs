@@ -4,6 +4,7 @@ use crate::{
     agent::Agent,
     cli::{Cli, Command},
     credentials::OsCredentialStore,
+    diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
     model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider},
     tool::{ToolContext, ToolRegistry},
@@ -61,12 +62,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Err(error) => return Err(error.into()),
     };
+    let cwd = std::env::current_dir()?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
     let registry = if cli.no_tools {
         ToolRegistry::new()
     } else {
-        tools::registry(&config)
+        tools::registry(&config, diagnostics.clone())
     };
-    let cwd = std::env::current_dir()?;
     let context = ToolContext {
         cwd: cwd.clone(),
         max_output_bytes: config.max_output_bytes,
@@ -76,6 +78,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
     }
+    agent.set_diagnostics(diagnostics.clone());
     agent.set_compaction_config((&config).into());
     agent.set_context_window(
         cached_model_metadata(&config.provider, &config.model)
@@ -94,6 +97,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     cwd,
                     missing_auth_error,
                     pending_update_notice,
+                    diagnostics,
                     herdr,
                 },
             )

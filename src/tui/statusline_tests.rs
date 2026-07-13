@@ -173,6 +173,7 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         auth_unavailable: None,
         update_notice: None,
         pending_update_notice: None,
+        diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
         herdr: HerdrReporter::default(),
     }
 }

@@ -400,6 +400,11 @@ impl App {
         self.info.provider = target.provider.clone();
         self.info.auth = target.auth.clone();
         self.info.model = model;
+        self.info.diagnostics.update_identity(
+            &self.info.provider,
+            &self.info.model,
+            self.info.reasoning,
+        );
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
         match self.save_current_config() {
