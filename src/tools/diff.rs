@@ -26,30 +26,58 @@ pub(super) fn unified_diff(old: &str, new: &str, display_path: &str, created: bo
         .to_string()
 }
 
+/// Converts unified diffs into a compact display while preserving file names.
+pub(super) fn compact_diff_for_display_with_file_headers(diff: &str) -> Option<String> {
+    compact_diff_for_display_impl(diff, true)
+}
+
 /// Converts a unified diff into the compact form rendered for file tools.
 ///
 /// File names, hunk metadata, and diff markers for unchanged lines are omitted
 /// because the tool entry already identifies the operation and file.
 pub(super) fn compact_diff_for_display(diff: &str) -> Option<String> {
+    compact_diff_for_display_impl(diff, false)
+}
+
+fn compact_diff_for_display_impl(diff: &str, include_file_headers: bool) -> Option<String> {
     let mut in_hunk = false;
     let mut lines = Vec::new();
 
     for line in diff.lines() {
-        if line.starts_with("@@") {
-            in_hunk = true;
-            continue;
-        }
-        if !in_hunk || line.starts_with('\\') {
+        if in_hunk {
+            if line.is_empty() {
+                in_hunk = false;
+                continue;
+            }
+            if line.starts_with("@@") {
+                continue;
+            }
+            if line.starts_with('\\') {
+                continue;
+            }
+
+            let Some(content) = line.get(1..) else {
+                continue;
+            };
+            match &line[..1] {
+                "+" | "-" => lines.push(line.to_string()),
+                " " => lines.push(content.to_string()),
+                _ => {}
+            }
             continue;
         }
 
-        let Some(content) = line.get(1..) else {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            if include_file_headers {
+                if !lines.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push(path.to_string());
+            }
             continue;
-        };
-        match &line[..1] {
-            "+" | "-" => lines.push(line.to_string()),
-            " " => lines.push(content.to_string()),
-            _ => {}
+        }
+        if line.starts_with("@@") {
+            in_hunk = true;
         }
     }
 
@@ -72,6 +100,49 @@ mod tests {
         assert_eq!(
             compact_diff_for_display(&diff).unwrap(),
             "keep\n-old\n+new\nafter"
+        );
+    }
+
+    #[test]
+    fn preserves_deleted_lines_that_begin_with_diff_header_markers() {
+        let diff = unified_diff(
+            "before\n-- option\nafter\n",
+            "before\nafter\n",
+            "cli.md",
+            false,
+        );
+
+        assert_eq!(
+            compact_diff_for_display(&diff).unwrap(),
+            "before\n--- option\nafter"
+        );
+    }
+
+    #[test]
+    fn compacts_multiple_file_diffs_without_headers() {
+        let diff = [
+            unified_diff("old one\n", "new one\n", "one.txt", false),
+            unified_diff("old two\n", "new two\n", "two.txt", false),
+        ]
+        .join("\n\n");
+
+        assert_eq!(
+            compact_diff_for_display(&diff).unwrap(),
+            "-old one\n+new one\n-old two\n+new two"
+        );
+    }
+
+    #[test]
+    fn compacts_multiple_file_diffs_with_file_headers() {
+        let diff = [
+            unified_diff("old one\n", "new one\n", "one.txt", false),
+            unified_diff("old two\n", "new two\n", "nested/two.txt", false),
+        ]
+        .join("\n\n");
+
+        assert_eq!(
+            compact_diff_for_display_with_file_headers(&diff).unwrap(),
+            "one.txt\n-old one\n+new one\n\nnested/two.txt\n-old two\n+new two"
         );
     }
 

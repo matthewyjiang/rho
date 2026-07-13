@@ -2,6 +2,7 @@
 pub mod bash;
 mod diff;
 pub mod edit_file;
+mod edit_file_args;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;

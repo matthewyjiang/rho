@@ -40,6 +40,7 @@ libc = "0.2"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 similar = "2"
+same-file = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 
