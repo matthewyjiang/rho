@@ -109,6 +109,7 @@ fn static_catalog_default_model(provider: &str) -> Option<String> {
 fn builtin_default_model(provider: &str) -> Option<String> {
     match provider {
         "anthropic" => Some("claude-sonnet-4-5".into()),
+        "xai" => Some("grok-4.5".into()),
         _ => None,
     }
 }
@@ -273,6 +274,16 @@ fn resolve_model_selection_from(
             if let Some(entry) = provider_models::cached_provider_model(provider, model) {
                 return Ok(selection_from_provider_model(provider, &entry));
             }
+            if builtin_default_model(provider).as_deref() == Some(model) {
+                return Ok(ModelSelection {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    auth: provider_default_auth(provider)
+                        .unwrap_or("api-key")
+                        .to_string(),
+                    from_catalog: true,
+                });
+            }
             return Err(unavailable_model_error(provider, model));
         }
         if let Some(entry) = catalog
@@ -432,9 +443,12 @@ mod tests {
         assert_eq!(targets[2].auth, "anthropic-api-key");
         assert_eq!(targets[3].provider, "github-copilot");
         assert_eq!(targets[3].auth, "github-copilot");
+        assert_eq!(targets[4].provider, "xai");
+        assert_eq!(targets[4].auth, "xai-oauth");
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());
+        assert!(login_target_for_provider("xai-oauth").is_none());
     }
 
     #[test]

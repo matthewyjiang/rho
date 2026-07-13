@@ -7,6 +7,8 @@ pub mod models_dev;
 pub mod openai;
 pub mod provider;
 pub mod provider_models;
+pub mod xai;
+mod xai_models;
 
 pub mod registry;
 
@@ -20,6 +22,7 @@ pub use image::image_summary;
 pub use models_dev::ModelMetadata;
 pub use openai::OpenAiProvider;
 pub use provider::{build_provider, UnavailableProvider};
+pub use xai::XaiProvider;
 
 impl From<crate::credentials::CredentialError> for ModelError {
     fn from(error: crate::credentials::CredentialError) -> Self {

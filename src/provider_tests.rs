@@ -39,4 +39,15 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
             ..
         }
     ));
+
+    let xai = super::provider_descriptor_by_id(ProviderId::Xai);
+    assert_eq!(xai.auth_kind.env_var(), "XAI_ACCESS_TOKEN");
+    assert_eq!(xai.auth_kind.account(), super::XAI_TOKENS_ACCOUNT);
+    assert!(matches!(
+        xai.auth_kind,
+        ProviderAuthKind::XaiOAuth {
+            account: super::XAI_TOKENS_ACCOUNT,
+            ..
+        }
+    ));
 }

@@ -47,8 +47,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 | Command | Action |
 | --- | --- |
-| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
-| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, and `github-copilot`. |
+| `/login [provider]` | Log in with a provider. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, `github-copilot`, and `xai`. |
+| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args support `openai`, `openai-codex`, `anthropic`, `github-copilot`, and `xai`. |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
 | `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
@@ -73,7 +73,7 @@ Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use
 
 ## Login and logout
 
-`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login` opens a provider picker. `/login openai` and `/login anthropic` open masked API-key entry boxes. `/login openai-codex` starts Rho's browser-based Codex OAuth flow. `/login github-copilot` starts GitHub device code login for GitHub Copilot. `/login xai` opens browser-based xAI OAuth, or automatically uses xAI's device-code flow in SSH and headless environments. Credentials are stored in the native OS credential store, not in config or transcripts.
 
 `GITHUB_COPILOT_TOKEN` can be used as a CI/development bearer-token override without storing credentials.
 

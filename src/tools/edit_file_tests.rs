@@ -4,6 +4,18 @@ use tempfile::TempDir;
 
 use super::*;
 
+#[test]
+fn schema_root_union_contains_only_object_branches() {
+    let schema = EditFile.spec().input_schema;
+
+    assert_eq!(schema["type"], "object");
+    assert!(schema["anyOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|branch| branch["type"] == "object"));
+}
+
 fn test_context() -> (TempDir, ToolContext) {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ToolContext {

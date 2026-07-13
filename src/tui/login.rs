@@ -74,6 +74,7 @@ impl App {
                 self.start_github_copilot_login(target, terminal, agent)
                     .await
             }
+            ProviderAuthKind::XaiOAuth { .. } => self.start_xai_login(target, terminal).await,
         }
     }
 
@@ -172,6 +173,71 @@ impl App {
         Ok(())
     }
 
+    async fn start_xai_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        if self.pending_oauth_login.is_some() {
+            self.insert_entry(&Entry::Notice(
+                "OAuth login is already in progress. Press esc to cancel.".into(),
+            ));
+            return Ok(());
+        }
+
+        if std::env::var_os("SSH_CONNECTION").is_some()
+            || std::env::var_os("SSH_TTY").is_some()
+            || std::env::var_os("HERDR_ENV").is_some()
+        {
+            self.status = "starting xAI device login".into();
+            terminal.draw(|frame| self.draw(frame))?;
+            let login = match xai_oauth::start_xai_device_login().await {
+                Ok(login) => login,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(err.to_string()));
+                    self.status = "login failed".into();
+                    return Ok(());
+                }
+            };
+            self.insert_entry(&Entry::Notice(format!(
+                "xAI login: visit {} and enter code {}",
+                login.verification_uri, login.user_code
+            )));
+            if let Some(uri) = &login.verification_uri_complete {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Or open this URL to continue: {uri}"
+                )));
+            }
+            self.status = "waiting for xAI device login; press esc to cancel".into();
+            self.composer = ComposerMode::OAuthPending(target.clone());
+            self.pending_oauth_login = Some(PendingOAuthLogin {
+                target,
+                handle: tokio::spawn(async move {
+                    xai_oauth::complete_xai_device_login(login)
+                        .await
+                        .map(PendingOAuthResult::Xai)
+                        .map_err(|err| err.to_string())
+                }),
+            });
+        } else {
+            self.status = "waiting for xAI login; press esc to cancel".into();
+            self.composer = ComposerMode::OAuthPending(target.clone());
+            self.pending_oauth_login = Some(PendingOAuthLogin {
+                target,
+                handle: tokio::spawn(async {
+                    xai_oauth::run_xai_oauth_flow()
+                        .await
+                        .map(PendingOAuthResult::Xai)
+                        .map_err(|err| err.to_string())
+                }),
+            });
+            self.insert_entry(&Entry::Notice(
+                "opening browser for xAI login. Press esc to cancel.".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn start_github_copilot_login(
         &mut self,
         target: LoginTarget,
@@ -242,6 +308,9 @@ impl App {
                     }
                     PendingOAuthResult::GithubCopilot(tokens) => {
                         save_github_copilot_tokens(self.credential_store.as_ref(), &tokens)
+                    }
+                    PendingOAuthResult::Xai(tokens) => {
+                        save_xai_tokens(self.credential_store.as_ref(), &tokens)
                     }
                 };
                 match saved {

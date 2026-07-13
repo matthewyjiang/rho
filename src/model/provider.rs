@@ -8,7 +8,7 @@ use crate::{
         openai::auth::{load_api_key_auth, load_codex_auth},
         registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
         AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
-        ModelRequest, ModelResponse, OpenAiProvider,
+        ModelRequest, ModelResponse, OpenAiProvider, XaiProvider,
     },
     provider::{self, ProviderAuthKind},
     reasoning::ReasoningLevel,
@@ -48,6 +48,10 @@ pub fn build_provider(
         ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
             model.to_string(),
             GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
+        )?) as DynModelProvider),
+        ProviderRuntime::Xai => Ok(Box::new(XaiProvider::new(
+            model.to_string(),
+            Arc::new(OsCredentialStore),
         )?) as DynModelProvider),
     }
 }
@@ -103,6 +107,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
         ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
         ModelError::MissingGithubCopilotAuth => ModelError::MissingGithubCopilotAuth,
+        ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
         ModelError::UnsupportedProvider(provider) => {
             ModelError::UnsupportedProvider(provider.clone())

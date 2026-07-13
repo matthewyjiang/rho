@@ -70,8 +70,8 @@ pub(super) fn input_schema() -> Value {
             }
         },
         "anyOf": [
-            {"required": ["edits"]},
-            {"required": ["path", "old_string", "new_string"]}
+            {"type": "object", "required": ["edits"]},
+            {"type": "object", "required": ["path", "old_string", "new_string"]}
         ]
     })
 }

@@ -84,6 +84,7 @@ rho --provider openai --auth api-key --model gpt-5.5
 rho --provider openai-codex --auth codex --model gpt-5.5
 rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5
 rho --provider github-copilot --auth github-copilot --model gpt-4.1
+rho --provider xai --auth xai-oauth --model grok-4.5
 rho --reasoning high
 ```
 
