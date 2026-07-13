@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     time::{sleep, timeout, Instant},
 };
 use url::Url;
@@ -193,55 +193,187 @@ async fn wait_for_callback(
     listener: &TcpListener,
     expected_state: &str,
 ) -> Result<CallbackOutcome, XaiOAuthError> {
-    let (mut stream, _) = listener.accept().await.map_err(XaiOAuthError::CallbackIo)?;
-    let mut buffer = vec![0_u8; 8192];
-    let len = stream
-        .read(&mut buffer)
-        .await
-        .map_err(XaiOAuthError::CallbackIo)?;
-    let request = String::from_utf8_lossy(&buffer[..len]);
-    let outcome =
-        parse_callback_request_line(request.lines().next().unwrap_or_default(), expected_state);
-    let body = match &outcome {
-        Ok(CallbackOutcome::Code(_)) => "xAI login complete. You can return to Rho.",
-        Ok(CallbackOutcome::Error(_)) | Err(_) => {
-            "xAI login failed. You can return to Rho for details."
+    // Browsers and OS networking stacks often open probe connections (empty
+    // reads, favicon, TLS probes) before or alongside the real OAuth redirect.
+    // Keep accepting until we see a real callback request; do not fail the flow
+    // on the first non-callback connection.
+    loop {
+        let (mut stream, _) = listener.accept().await.map_err(XaiOAuthError::CallbackIo)?;
+        let request = match read_http_request(&mut stream).await {
+            Ok(request) if !request.trim().is_empty() => request,
+            _ => {
+                let _ = write_callback_response(&mut stream, CallbackResponseKind::Ignored).await;
+                continue;
+            }
+        };
+
+        match parse_callback_http_request(&request, expected_state) {
+            CallbackParse::Outcome(outcome) => {
+                let kind = match &outcome {
+                    CallbackOutcome::Code(_) => CallbackResponseKind::Success,
+                    CallbackOutcome::Error(_) => CallbackResponseKind::Failure,
+                };
+                let _ = write_callback_response(&mut stream, kind).await;
+                return Ok(outcome);
+            }
+            CallbackParse::Ignored => {
+                let _ = write_callback_response(&mut stream, CallbackResponseKind::Ignored).await;
+            }
+            CallbackParse::Invalid(err) => {
+                let _ = write_callback_response(&mut stream, CallbackResponseKind::Failure).await;
+                return Err(err);
+            }
         }
-    };
-    let response = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-    outcome
+    }
 }
 
-pub fn parse_callback_request_line(
-    request_line: &str,
-    expected_state: &str,
-) -> Result<CallbackOutcome, XaiOAuthError> {
+#[derive(Clone, Copy)]
+enum CallbackResponseKind {
+    Success,
+    Failure,
+    Ignored,
+}
+
+async fn write_callback_response(
+    stream: &mut TcpStream,
+    kind: CallbackResponseKind,
+) -> std::io::Result<()> {
+    let (status, body) = match kind {
+        CallbackResponseKind::Success => ("200 OK", "xAI login complete. You can return to Rho."),
+        CallbackResponseKind::Failure => (
+            "400 Bad Request",
+            "xAI login failed. You can return to Rho for details.",
+        ),
+        CallbackResponseKind::Ignored => ("404 Not Found", "Not found"),
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len(),
+    );
+    stream.write_all(response.as_bytes()).await
+}
+
+async fn read_http_request(stream: &mut TcpStream) -> Result<String, XaiOAuthError> {
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 2048];
+    loop {
+        let len = stream
+            .read(&mut chunk)
+            .await
+            .map_err(XaiOAuthError::CallbackIo)?;
+        if len == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..len]);
+        if let Some(header_end) = find_http_header_end(&buffer) {
+            let content_length = content_length_from_headers(&buffer[..header_end]).unwrap_or(0);
+            let total = header_end.saturating_add(4).saturating_add(content_length);
+            while buffer.len() < total {
+                let len = stream
+                    .read(&mut chunk)
+                    .await
+                    .map_err(XaiOAuthError::CallbackIo)?;
+                if len == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..len]);
+                if buffer.len() > 128 * 1024 {
+                    break;
+                }
+            }
+            break;
+        }
+        if buffer.len() > 128 * 1024 {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+fn find_http_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn content_length_from_headers(headers: &[u8]) -> Option<usize> {
+    let headers = std::str::from_utf8(headers).ok()?;
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse().ok())
+            .flatten()
+    })
+}
+
+#[derive(Debug)]
+enum CallbackParse {
+    Outcome(CallbackOutcome),
+    Ignored,
+    Invalid(XaiOAuthError),
+}
+
+/// Parse a full HTTP request (request line + headers + optional body).
+///
+/// Non-callback probes return [`CallbackParse::Ignored`] so the listener can
+/// keep waiting. Real `/callback` requests with mismatched state or missing
+/// code are fatal.
+fn parse_callback_http_request(request: &str, expected_state: &str) -> CallbackParse {
+    let (header_section, body) = match request.split_once("\r\n\r\n") {
+        Some(parts) => parts,
+        None => match request.split_once("\n\n") {
+            Some(parts) => parts,
+            None => (request, ""),
+        },
+    };
+    let request_line = header_section.lines().next().unwrap_or_default().trim();
+    if request_line.is_empty() {
+        return CallbackParse::Ignored;
+    }
+
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
-    if method != "GET" || target.is_empty() {
-        return Err(XaiOAuthError::InvalidCallback(
-            "expected GET callback request".into(),
-        ));
+    if target.is_empty() {
+        return CallbackParse::Ignored;
     }
-    let url = Url::parse(&format!("http://{CALLBACK_HOST}{target}")).map_err(|err| {
-        XaiOAuthError::InvalidCallback(format!("callback URL could not be parsed: {err}"))
-    })?;
+
+    let url = match Url::parse(&format!("http://{CALLBACK_HOST}{target}")) {
+        Ok(url) => url,
+        Err(_) => return CallbackParse::Ignored,
+    };
     if url.path() != CALLBACK_PATH {
-        return Err(XaiOAuthError::InvalidCallback(format!(
-            "callback path was not {CALLBACK_PATH}"
-        )));
+        return CallbackParse::Ignored;
     }
-    let query = url
+
+    let method = method.to_ascii_uppercase();
+    let mut params = url
         .query_pairs()
         .into_owned()
         .collect::<std::collections::HashMap<_, _>>();
-    let state = query
+    match method.as_str() {
+        "GET" | "HEAD" => {}
+        "POST" => {
+            for (key, value) in url::form_urlencoded::parse(body.as_bytes()) {
+                params.insert(key.into_owned(), value.into_owned());
+            }
+        }
+        _ => {
+            return CallbackParse::Invalid(XaiOAuthError::InvalidCallback(format!(
+                "expected GET or POST callback request, got {method}"
+            )));
+        }
+    }
+
+    match outcome_from_callback_params(&params, expected_state) {
+        Ok(outcome) => CallbackParse::Outcome(outcome),
+        Err(err) => CallbackParse::Invalid(err),
+    }
+}
+
+fn outcome_from_callback_params(
+    params: &std::collections::HashMap<String, String>,
+    expected_state: &str,
+) -> Result<CallbackOutcome, XaiOAuthError> {
+    let state = params
         .get("state")
         .ok_or_else(|| XaiOAuthError::InvalidCallback("callback was missing state".into()))?;
     if state != expected_state {
@@ -249,15 +381,15 @@ pub fn parse_callback_request_line(
             "callback state did not match".into(),
         ));
     }
-    if let Some(error) = query.get("error") {
+    if let Some(error) = params.get("error") {
         return Ok(CallbackOutcome::Error(
-            query
+            params
                 .get("error_description")
                 .cloned()
                 .unwrap_or_else(|| error.clone()),
         ));
     }
-    query
+    params
         .get("code")
         .filter(|code| !code.is_empty())
         .cloned()

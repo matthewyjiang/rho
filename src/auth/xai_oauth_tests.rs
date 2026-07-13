@@ -122,26 +122,95 @@ async fn device_setup_sends_client_and_offline_scopes() {
 
 #[test]
 fn callback_requires_matching_state() {
-    assert_eq!(
-        parse_callback_request_line("GET /callback?code=ok&state=state HTTP/1.1", "state").unwrap(),
-        CallbackOutcome::Code("ok".into())
-    );
     assert!(matches!(
-        parse_callback_request_line("GET /callback?code=ok&state=wrong HTTP/1.1", "state"),
-        Err(XaiOAuthError::InvalidCallback(_))
+        parse_callback_http_request("GET /callback?code=ok&state=state HTTP/1.1", "state"),
+        CallbackParse::Outcome(CallbackOutcome::Code(code)) if code == "ok"
+    ));
+    assert!(matches!(
+        parse_callback_http_request("GET /callback?code=ok&state=wrong HTTP/1.1", "state"),
+        CallbackParse::Invalid(XaiOAuthError::InvalidCallback(_))
     ));
 }
 
 #[test]
 fn callback_preserves_oauth_error_description() {
-    assert_eq!(
-        parse_callback_request_line(
+    assert!(matches!(
+        parse_callback_http_request(
             "GET /callback?error=access_denied&error_description=not+allowed&state=state HTTP/1.1",
             "state"
-        )
-        .unwrap(),
-        CallbackOutcome::Error("not allowed".into())
-    );
+        ),
+        CallbackParse::Outcome(CallbackOutcome::Error(message)) if message == "not allowed"
+    ));
+}
+
+#[test]
+fn callback_accepts_form_post_body() {
+    let request = "POST /callback HTTP/1.1\r\n\
+content-type: application/x-www-form-urlencoded\r\n\
+content-length: 27\r\n\
+\r\n\
+code=ok&state=state";
+    match parse_callback_http_request(request, "state") {
+        CallbackParse::Outcome(CallbackOutcome::Code(code)) => assert_eq!(code, "ok"),
+        other => panic!("expected code outcome, got {other:?}"),
+    }
+}
+
+#[test]
+fn callback_ignores_probes_and_non_callback_paths() {
+    assert!(matches!(
+        parse_callback_http_request("", "state"),
+        CallbackParse::Ignored
+    ));
+    assert!(matches!(
+        parse_callback_http_request("GET /favicon.ico HTTP/1.1\r\n\r\n", "state"),
+        CallbackParse::Ignored
+    ));
+    assert!(matches!(
+        parse_callback_http_request("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "state"),
+        CallbackParse::Ignored
+    ));
+}
+
+#[tokio::test]
+async fn wait_for_callback_skips_probes_until_valid_get() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let state = "state".to_string();
+    let waiter = tokio::spawn(async move { wait_for_callback(&listener, &state).await });
+
+    // Empty probe connection — must not abort the flow.
+    {
+        let _probe = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Non-callback path probe.
+    {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0_u8; 256];
+        let _ = stream.read(&mut buf).await;
+    }
+
+    // Real OAuth redirect.
+    {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /callback?code=ok&state=state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0_u8; 256];
+        let len = stream.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..len]);
+        assert!(response.contains("login complete"), "{response}");
+    }
+
+    let outcome = waiter.await.unwrap().unwrap();
+    assert_eq!(outcome, CallbackOutcome::Code("ok".into()));
 }
 
 #[test]
