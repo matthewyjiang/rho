@@ -368,13 +368,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_gpt_56_codex_overrides_match_upstream_catalog() {
+    fn builtin_gpt_56_codex_overrides_use_temporary_context_limit() {
         for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
             let metadata = apply_builtin_overrides("openai-codex", model, ModelMetadata::default());
 
-            assert_eq!(metadata.effective_context_window, Some(372_000));
-            assert_eq!(metadata.usable_context_window, Some(372_000));
-            assert_eq!(metadata.display_context_window(), Some(372_000));
+            assert_eq!(metadata.effective_context_window, Some(272_000));
+            assert_eq!(metadata.usable_context_window, Some(272_000));
+            assert_eq!(metadata.display_context_window(), Some(272_000));
         }
     }
 
