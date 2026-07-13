@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::{skills, tool::ToolSpec};
 
-pub const BASE_SYSTEM_PROMPT: &str = "You are an expert coding assistant operating inside rho, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
+
+Match actions to the request: for reviews or diagnoses, inspect and explain; for implementations or fixes, modify files. Continue until resolved. Make reasonable in-scope assumptions, but ask when a missing decision would materially affect the result or require new authority.
+
+During substantial work, give concise progress updates. Preserve existing work and unrelated changes. Never run destructive commands unless explicitly requested. Verify changes in proportion to risk, then report the outcome and any remaining concerns."#;
 
 pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> String {
     let home = crate::paths::home_dir();
@@ -24,7 +28,9 @@ Do not invent tool results. When done, answer directly.
 
     let agent_instructions = agent_instruction_files(cwd, home);
     if !agent_instructions.is_empty() {
-        out.push_str("\nAdditional instructions from AGENTS.md files, in precedence order:\n");
+        out.push_str(
+            "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
+        );
         for (path, contents) in agent_instructions {
             push_context_file(&mut out, "agents_instructions", &path, &contents);
         }
