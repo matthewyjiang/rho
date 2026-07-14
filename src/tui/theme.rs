@@ -471,9 +471,10 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     use std::io::stdout;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode,
-        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
+        STD_INPUT_HANDLE,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -517,100 +518,27 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
             break;
         }
 
-        let mut records = [INPUT_RECORD::default(); 128];
+        let mut buffer = [0u8; 1024];
         let mut count = 0;
         if unsafe {
-            ReadConsoleInputW(
+            ReadFile(
                 input,
-                records.as_mut_ptr(),
-                records.len() as u32,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
                 &mut count,
+                std::ptr::null_mut(),
             )
         } == 0
         {
             return Err(std::io::Error::last_os_error());
         }
-        for record in &records[..count as usize] {
-            if u32::from(record.EventType) != KEY_EVENT {
-                continue;
-            }
-            let key = unsafe { record.Event.KeyEvent };
-            if key.bKeyDown == 0 {
-                continue;
-            }
-            let character = unsafe { key.uChar.UnicodeChar };
-            if character != 0 {
-                bytes.extend_from_slice(String::from_utf16_lossy(&[character]).as_bytes());
-            }
-        }
+        bytes.extend_from_slice(&buffer[..count as usize]);
         if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
             return Ok(Some(palette));
         }
     }
 
-    let fallback = query_windows_console_palette()?;
-    let Some(fallback) = fallback else {
-        return Ok(None);
-    };
-    Ok(parse_palette_response_with_background(
-        &String::from_utf8_lossy(&bytes),
-        Some(fallback.background),
-    )
-    .or(Some(fallback)))
-}
-
-#[cfg(windows)]
-fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
-    use windows_sys::Win32::System::Console::{
-        GetConsoleScreenBufferInfoEx, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFOEX, STD_OUTPUT_HANDLE,
-    };
-
-    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
-    if output.is_null() || output == -1isize as _ {
-        return Ok(None);
-    }
-
-    let mut info = CONSOLE_SCREEN_BUFFER_INFOEX {
-        cbSize: std::mem::size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as u32,
-        ..Default::default()
-    };
-    if unsafe { GetConsoleScreenBufferInfoEx(output, &mut info) } == 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(windows_console_palette(
-        &info.ColorTable,
-        info.wAttributes,
-    )))
-}
-
-#[cfg(any(windows, test))]
-fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> TerminalPalette {
-    // Win32's table uses attribute-bit order (blue, green, red), not ANSI order.
-    const COLORS: [(AnsiColor, usize); 7] = [
-        (AnsiColor::Red, 4),
-        (AnsiColor::Green, 2),
-        (AnsiColor::Yellow, 6),
-        (AnsiColor::Blue, 1),
-        (AnsiColor::Magenta, 5),
-        (AnsiColor::Cyan, 3),
-        (AnsiColor::Gray, 7),
-    ];
-    let ansi = COLORS
-        .into_iter()
-        .map(|(color, index)| (color, rgb_from_colorref(color_table[index])))
-        .collect();
-    let background_index = usize::from((attributes >> 4) & 0x0f);
-
-    TerminalPalette {
-        background: rgb_from_colorref(color_table[background_index]),
-        ansi,
-    }
-}
-
-#[cfg(any(windows, test))]
-fn rgb_from_colorref(color: u32) -> Rgb {
-    Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
+    Ok(None)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -620,13 +548,6 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
-    parse_palette_response_with_background(response, None)
-}
-
-fn parse_palette_response_with_background(
-    response: &str,
-    fallback_background: Option<Rgb>,
-) -> Option<TerminalPalette> {
     let mut background = None;
     let mut ansi = HashMap::new();
 
@@ -649,7 +570,7 @@ fn parse_palette_response_with_background(
     }
 
     Some(TerminalPalette {
-        background: background.or(fallback_background)?,
+        background: background?,
         ansi,
     })
     .filter(|palette| palette.ansi.len() >= 7)
@@ -726,32 +647,6 @@ mod tests {
 
         assert_eq!(palette.background, Rgb::new(0, 0, 0));
         assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
-    }
-
-    #[test]
-    fn uses_fallback_background_with_osc_palette_response() {
-        let response = "\x1b]4;1;rgb:ffff/0000/0000\x1b\\\x1b]4;2;rgb:0000/ffff/0000\x1b\\\x1b]4;3;rgb:ffff/ffff/0000\x1b\\\x1b]4;4;rgb:0000/0000/ffff\x1b\\\x1b]4;5;rgb:ffff/0000/ffff\x1b\\\x1b]4;6;rgb:0000/ffff/ffff\x1b\\\x1b]4;7;rgb:ffff/ffff/ffff\x1b\\";
-
-        let palette = parse_palette_response_with_background(response, Some(Rgb::new(12, 34, 56)))
-            .expect("palette");
-
-        assert_eq!(palette.background, Rgb::new(12, 34, 56));
-        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
-    }
-
-    #[test]
-    fn resolves_windows_console_palette_in_attribute_bit_order() {
-        let color_table = [
-            0x000000, 0x110000, 0x001100, 0x111100, 0x000011, 0x110011, 0x001111, 0x111111,
-            0x222222, 0x330000, 0x003300, 0x333300, 0x000033, 0x330033, 0x003333, 0x333333,
-        ];
-
-        let palette = windows_console_palette(&color_table, 0x20);
-
-        assert_eq!(palette.background, Rgb::new(0, 17, 0));
-        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(17, 0, 0));
-        assert_eq!(palette.ansi[&AnsiColor::Blue], Rgb::new(0, 0, 17));
-        assert_eq!(palette.ansi[&AnsiColor::Gray], Rgb::new(17, 17, 17));
     }
 
     #[test]
