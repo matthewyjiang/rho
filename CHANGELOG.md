@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.28.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.28.0...rho-coding-agent-v0.28.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **process:** render structured output ([#247](https://github.com/matthewyjiang/rho/issues/247)) ([2f422a3](https://github.com/matthewyjiang/rho/commit/2f422a3d81dbd9db4a57bacb8d2c34a352d4726a))
+* **tui:** read Windows OSC palette responses ([#249](https://github.com/matthewyjiang/rho/issues/249)) ([51a3af3](https://github.com/matthewyjiang/rho/commit/51a3af37715e940724d66bc5588909410a402440))
+* **tui:** reset jump button background ([#251](https://github.com/matthewyjiang/rho/issues/251)) ([45bc28c](https://github.com/matthewyjiang/rho/commit/45bc28cbd14c304cafbc77dee8e9fd54fff5df02))
+
 ## [0.28.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.27.1...rho-coding-agent-v0.28.0) (2026-07-14)
 
 
