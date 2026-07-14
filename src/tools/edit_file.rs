@@ -43,6 +43,10 @@ impl Tool for EditFile {
         (!paths.is_empty()).then(|| paths.join(", "))
     }
 
+    fn preview_mode(&self) -> ToolPreviewMode {
+        ToolPreviewMode::NameOnly
+    }
+
     fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
         vec![format!(
             "edit_file {}",

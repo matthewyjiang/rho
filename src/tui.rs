@@ -3068,6 +3068,7 @@ impl App {
                 if matches!(
                     other,
                     AgentEvent::StepStarted(_)
+                        | AgentEvent::ToolCallUpdated { .. }
                         | AgentEvent::ToolStarted { .. }
                         | AgentEvent::ToolFinished { .. }
                 ) {
@@ -4476,23 +4477,15 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { name, arguments } => {
-                let mut display_lines = Vec::new();
-                if let Some(name) = name.filter(|name| !name.is_empty()) {
-                    display_lines.push(format!("preparing {name}"));
-                } else {
-                    display_lines.push("preparing tool call".into());
-                }
-                if !arguments.is_empty() {
-                    display_lines.push(arguments);
-                }
-                self.pending_tool_call = Some(ToolEntry {
+            AgentEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
+                self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
                 });
                 None
             }
+            AgentEvent::ToolCallUpdated { .. } => None,
             AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
             AgentEvent::ContextUsage(usage) => {
                 self.current_context = Some(usage);

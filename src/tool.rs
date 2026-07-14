@@ -13,6 +13,12 @@ use crate::cancellation::RunCancellation;
 pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolPreviewMode {
+    Arguments,
+    NameOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolDisplayStyle {
     DefaultTool,
     FileOrCommand,
@@ -90,6 +96,11 @@ pub trait Tool: Send + Sync {
         ToolDisplayStyle::for_tool_name(&self.spec().name)
     }
 
+    /// Controls whether streamed previews need parsed argument values.
+    fn preview_mode(&self) -> ToolPreviewMode {
+        ToolPreviewMode::Arguments
+    }
+
     fn display_command(&self, _args: &Value) -> Option<String> {
         None
     }
@@ -112,6 +123,12 @@ pub trait Tool: Send + Sync {
             lines.push(content);
         }
         lines
+    }
+
+    /// Formats incomplete streamed arguments before tool execution starts.
+    /// Implementors should return stable summary text and avoid result-only content.
+    fn display_preview_lines(&self, args: &Value, ctx: &ToolContext) -> Vec<String> {
+        self.display_start_lines(args, ctx)
     }
 
     fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {

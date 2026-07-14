@@ -32,6 +32,10 @@ impl Tool for WriteFile {
             .map(|path| compact_display_path(&ctx.cwd, path))
     }
 
+    fn preview_mode(&self) -> ToolPreviewMode {
+        ToolPreviewMode::NameOnly
+    }
+
     fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
         vec![format!(
             "write_file {}",
