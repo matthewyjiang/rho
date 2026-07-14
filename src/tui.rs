@@ -67,6 +67,7 @@ mod stream;
 mod text_selection;
 mod theme;
 mod tool_diff;
+mod turn_prompt;
 
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -96,9 +97,10 @@ use text_selection::{
     TextSelection,
 };
 use theme::Theme;
+use turn_prompt::TurnPrompt;
 
 use crate::{
-    agent::{Agent, AgentEvent, QuestionnaireRequest, SessionHistorySink},
+    agent::{Agent, AgentEvent, ModelAndDisplayContent, QuestionnaireRequest, SessionHistorySink},
     app::config_repository::ConfigRepository,
     auth::{codex_oauth, github_copilot_device, xai_oauth},
     clipboard_image::read_clipboard_image,
@@ -249,6 +251,7 @@ struct App {
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
     active_turn_show_reasoning_output: bool,
+    hidden_reasoning_active: bool,
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
@@ -626,6 +629,7 @@ impl App {
             live_stream_preview: None,
             current_turn_start: None,
             active_turn_show_reasoning_output,
+            hidden_reasoning_active: false,
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
@@ -2040,7 +2044,12 @@ impl App {
         self.input_cursor = 0;
         self.clamp_command_selection();
         let mut outcome = self
-            .run_prompt_turn(prompt, display_prompt, images, terminal, agent)
+            .run_prompt_turn(
+                TurnPrompt::standard(prompt, display_prompt),
+                images,
+                terminal,
+                agent,
+            )
             .await?;
         while matches!(outcome, TurnOutcome::Completed) && !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
@@ -2048,8 +2057,7 @@ impl App {
             };
             outcome = self
                 .run_prompt_turn(
-                    prompt.prompt,
-                    prompt.display_prompt,
+                    TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
                     Vec::new(),
                     terminal,
                     agent,
@@ -2064,14 +2072,13 @@ impl App {
 
     async fn run_prompt_turn(
         &mut self,
-        prompt: String,
-        display_prompt: String,
+        prompt: TurnPrompt,
         images: Vec<ImageContent>,
         terminal: &mut DefaultTerminal,
         agent: &mut Agent,
     ) -> anyhow::Result<TurnOutcome> {
-        if !prompt.is_empty() {
-            self.push_input_history(&prompt);
+        if !prompt.history.is_empty() {
+            self.push_input_history(&prompt.history);
         }
         self.reset_input_history_navigation();
         self.ensure_session(agent)?;
@@ -2084,12 +2091,13 @@ impl App {
             .iter()
             .any(|message| matches!(message, Message::User(_)))
         {
-            self.start_session_title_generation(prompt.clone());
+            self.start_session_title_generation(prompt.history.clone());
         }
-        self.insert_entry(&Entry::User(render_user_entry(&display_prompt, &images)));
+        self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
+        self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
         self.info
@@ -2118,10 +2126,23 @@ impl App {
             let run_steering_prompts = Arc::clone(&steering_prompts);
             let (question_tx, mut question_rx) = mpsc::unbounded_channel::<QuestionAnswerRequest>();
             let mut content = Vec::with_capacity(1 + images.len());
-            if !prompt.is_empty() {
-                content.push(ContentBlock::Text(prompt));
+            if !prompt.model.is_empty() {
+                content.push(ContentBlock::Text(prompt.model));
             }
+            let display_content = prompt.persisted_display.map(|display| {
+                let mut display_content = Vec::with_capacity(1 + images.len());
+                display_content.push(ContentBlock::Text(display));
+                display_content.extend(images.iter().cloned().map(ContentBlock::Image));
+                display_content
+            });
             content.extend(images.into_iter().map(ContentBlock::Image));
+            let user_content = match display_content {
+                Some(display) => ModelAndDisplayContent::Separate {
+                    model: content,
+                    display,
+                },
+                None => ModelAndDisplayContent::Same(content),
+            };
             let question_request_tx = question_tx.clone();
             let mut ask_questionnaire =
                 move |request: QuestionnaireRequest| -> crate::agent::QuestionnaireFuture {
@@ -2159,8 +2180,8 @@ impl App {
                 .questionnaire_enabled
                 .then_some(&mut ask_questionnaire as crate::agent::QuestionnaireHandler<'_>);
             let mut run_future = Box::pin(
-                agent.run_with_content_and_events_questionnaire_and_steering(
-                    content,
+                agent.run_with_model_and_display_content_events_questionnaire_and_steering(
+                    user_content,
                     move |event| {
                         match &event {
                             AgentEvent::ToolStarted { .. } => {
@@ -2954,6 +2975,7 @@ impl App {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
+        self.hidden_reasoning_active = false;
     }
 
     fn loading_active(&self) -> bool {
@@ -3065,6 +3087,7 @@ impl App {
     ) -> std::io::Result<bool> {
         match event {
             AgentEvent::OutputDelta(text) => {
+                self.hidden_reasoning_active = false;
                 let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
@@ -3073,7 +3096,8 @@ impl App {
             }
             AgentEvent::ReasoningDelta(text) => {
                 if !self.active_turn_show_reasoning_output {
-                    return Ok(false);
+                    self.hidden_reasoning_active = true;
+                    return Ok(true);
                 }
                 let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
                 self.reasoning_stream.push_delta(&text);
@@ -3088,6 +3112,7 @@ impl App {
                         | AgentEvent::ToolStarted { .. }
                         | AgentEvent::ToolFinished { .. }
                 ) {
+                    self.hidden_reasoning_active = false;
                     self.finish_streams(terminal)?;
                 }
                 if let Some(entry) = self.record_agent_event(other) {
@@ -4463,6 +4488,7 @@ impl App {
         match event {
             AgentEvent::StepStarted(step) => {
                 self.reset_streams();
+                self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
                 self.active_tool_call = false;
                 self.pending_tool_call = None;
@@ -4965,6 +4991,15 @@ impl App {
         }
         if let Some(preview) = &self.live_stream_preview {
             lines.extend(self.render_stream_preview_lines(preview, width));
+        }
+        if self.hidden_reasoning_active {
+            lines.push(Line::raw(""));
+            lines.push(pad_display_line(styled_line(
+                "Thinking...".into(),
+                padded_content_width(width),
+                StreamKind::Reasoning.style(),
+                LineFill::Natural,
+            )));
         }
         if self.loading_active() {
             lines.push(Line::raw(""));

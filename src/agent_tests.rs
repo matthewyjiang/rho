@@ -40,6 +40,15 @@ impl HistorySink for RecordingHistorySink {
         Ok(())
     }
 
+    fn append_message_with_display(
+        &mut self,
+        message: &Message,
+        _display_message: &Message,
+    ) -> anyhow::Result<()> {
+        self.appended.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+
     fn replace_history(&mut self, messages: &[Message]) -> anyhow::Result<()> {
         self.replaced
             .lock()

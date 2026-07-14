@@ -96,8 +96,7 @@ impl App {
         let images = std::mem::take(&mut self.pending_images);
         let outcome = self
             .run_prompt_turn(
-                condition.to_string(),
-                condition.to_string(),
+                TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
                 images,
                 terminal,
                 agent,
@@ -210,8 +209,7 @@ impl App {
             );
             let outcome = self
                 .run_prompt_turn(
-                    continuation,
-                    "continuing active goal".into(),
+                    TurnPrompt::standard(continuation, "continuing active goal".into()),
                     Vec::new(),
                     terminal,
                     agent,
@@ -227,6 +225,12 @@ impl App {
     }
 }
 
+fn initial_goal_prompt(condition: &str) -> String {
+    format!(
+        "The user invoked Rho's `/goal` command to set the following completion goal. Treat this as a goal-setting action, not as an ordinary conversational message or a claim that the goal is already complete.\n\nGoal:\n{condition}\n\nBegin working toward the goal now. Make concrete progress, use tools as needed, and verify the completion condition before stopping."
+    )
+}
+
 pub(super) fn is_goal_clear_alias(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -238,6 +242,32 @@ pub(super) fn is_goal_clear_alias(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::tui::tests::test_app;
+
+    #[test]
+    fn initial_prompt_identifies_goal_setting_action() {
+        assert_eq!(
+            initial_goal_prompt("all tests pass"),
+            "The user invoked Rho's `/goal` command to set the following completion goal. Treat this as a goal-setting action, not as an ordinary conversational message or a claim that the goal is already complete.\n\nGoal:\nall tests pass\n\nBegin working toward the goal now. Make concrete progress, use tools as needed, and verify the completion condition before stopping."
+        );
+    }
+
+    #[test]
+    fn goal_turn_preserves_command_for_display_history_and_persistence() {
+        let turn = TurnPrompt::command(
+            initial_goal_prompt("all tests pass"),
+            "/goal all tests pass".into(),
+        );
+
+        assert_eq!(turn.display, "/goal all tests pass");
+        assert_eq!(turn.history, "/goal all tests pass");
+        assert_eq!(
+            turn.persisted_display.as_deref(),
+            Some("/goal all tests pass")
+        );
+        assert!(turn
+            .model
+            .starts_with("The user invoked Rho's `/goal` command"));
+    }
 
     #[test]
     fn clear_aliases_are_case_insensitive() {

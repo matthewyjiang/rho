@@ -164,6 +164,14 @@ impl Drop for AbortOnDrop {
     }
 }
 
+pub(crate) enum ModelAndDisplayContent {
+    Same(Vec<ContentBlock>),
+    Separate {
+        model: Vec<ContentBlock>,
+        display: Vec<ContentBlock>,
+    },
+}
+
 pub struct Agent {
     provider: DynModelProvider,
     tools: ToolRegistry,
@@ -319,12 +327,25 @@ impl Agent {
         )))
     }
 
-    fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
+    fn push_message_with_display(
+        &mut self,
+        message: Message,
+        display_message: Option<&Message>,
+    ) -> Result<(), AgentError> {
         if let Some(sink) = &mut self.history_sink {
-            sink.append_message(&message)?;
+            match display_message {
+                Some(display_message) => {
+                    sink.append_message_with_display(&message, display_message)?
+                }
+                None => sink.append_message(&message)?,
+            }
         }
         self.messages.push(message);
         Ok(())
+    }
+
+    fn push_message(&mut self, message: Message) -> Result<(), AgentError> {
+        self.push_message_with_display(message, None)
     }
 
     pub async fn run_with_events(
@@ -370,6 +391,26 @@ impl Agent {
     pub async fn run_with_content_and_events_questionnaire_and_steering(
         &mut self,
         user_content: Vec<ContentBlock>,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        ask_questionnaire: Option<QuestionnaireHandler<'_>>,
+        cancellation: RunCancellation,
+        interrupt_requested: impl FnMut() -> bool,
+        next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
+    ) -> Result<String, AgentError> {
+        self.run_with_model_and_display_content_events_questionnaire_and_steering(
+            ModelAndDisplayContent::Same(user_content),
+            on_event,
+            ask_questionnaire,
+            cancellation,
+            interrupt_requested,
+            next_steer,
+        )
+        .await
+    }
+
+    pub(crate) async fn run_with_model_and_display_content_events_questionnaire_and_steering(
+        &mut self,
+        user_content: ModelAndDisplayContent,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
         mut ask_questionnaire: Option<QuestionnaireHandler<'_>>,
         cancellation: RunCancellation,
@@ -383,7 +424,13 @@ impl Agent {
         if let Some(diagnostics) = &self.diagnostics {
             diagnostics.update_tools(&specs);
         }
-        self.push_message(Message::User(user_content))?;
+        let (user_message, display_message) = match user_content {
+            ModelAndDisplayContent::Same(content) => (Message::User(content), None),
+            ModelAndDisplayContent::Separate { model, display } => {
+                (Message::User(model), Some(Message::User(display)))
+            }
+        };
+        self.push_message_with_display(user_message, display_message.as_ref())?;
 
         let mut step = 1usize;
         let mut invalid_response_retries = 0usize;
