@@ -249,6 +249,7 @@ struct App {
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
     active_turn_show_reasoning_output: bool,
+    hidden_reasoning_active: bool,
     running: bool,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
@@ -626,6 +627,7 @@ impl App {
             live_stream_preview: None,
             current_turn_start: None,
             active_turn_show_reasoning_output,
+            hidden_reasoning_active: false,
             running: false,
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
@@ -2093,6 +2095,7 @@ impl App {
         self.current_turn_start = Some(self.transcript.len());
         self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
         self.reset_streams();
+        self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
         self.info
@@ -2962,6 +2965,7 @@ impl App {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
+        self.hidden_reasoning_active = false;
     }
 
     fn loading_active(&self) -> bool {
@@ -3073,6 +3077,7 @@ impl App {
     ) -> std::io::Result<bool> {
         match event {
             AgentEvent::OutputDelta(text) => {
+                self.hidden_reasoning_active = false;
                 let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
@@ -3081,7 +3086,8 @@ impl App {
             }
             AgentEvent::ReasoningDelta(text) => {
                 if !self.active_turn_show_reasoning_output {
-                    return Ok(false);
+                    self.hidden_reasoning_active = true;
+                    return Ok(true);
                 }
                 let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
                 self.reasoning_stream.push_delta(&text);
@@ -3096,6 +3102,7 @@ impl App {
                         | AgentEvent::ToolStarted { .. }
                         | AgentEvent::ToolFinished { .. }
                 ) {
+                    self.hidden_reasoning_active = false;
                     self.finish_streams(terminal)?;
                 }
                 if let Some(entry) = self.record_agent_event(other) {
@@ -4471,6 +4478,7 @@ impl App {
         match event {
             AgentEvent::StepStarted(step) => {
                 self.reset_streams();
+                self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
                 self.active_tool_call = false;
                 self.pending_tool_call = None;
@@ -4956,6 +4964,15 @@ impl App {
         }
         if let Some(preview) = &self.live_stream_preview {
             lines.extend(self.render_stream_preview_lines(preview, width));
+        }
+        if self.hidden_reasoning_active {
+            lines.push(Line::raw(""));
+            lines.push(pad_display_line(styled_line(
+                "Thinking...".into(),
+                padded_content_width(width),
+                StreamKind::Reasoning.style(),
+                LineFill::Natural,
+            )));
         }
         if self.loading_active() {
             lines.push(Line::raw(""));
@@ -7655,6 +7672,21 @@ mod tests {
 
         assert_eq!(input, "/skill:caveman");
         assert_eq!(cursor, 14);
+    }
+
+    #[test]
+    fn hidden_reasoning_shows_thinking_placeholder() {
+        let mut app = test_app();
+        app.active_turn_show_reasoning_output = false;
+        app.record_agent_event(AgentEvent::StepStarted(1));
+        let thinking = app
+            .history_live_lines(60, Instant::now())
+            .into_iter()
+            .find(|line| line_text(line).contains("Thinking..."))
+            .unwrap();
+        assert_eq!(thinking.spans[1].style, StreamKind::Reasoning.style());
+        app.reset_streams();
+        assert!(!app.hidden_reasoning_active);
     }
 
     #[test]
