@@ -992,7 +992,7 @@ async fn preserves_history_across_runs() {
         matches!(requests[1][1], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "first"))
     );
     assert!(
-        matches!(requests[1][2], Message::Assistant(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "ok"))
+        matches!(requests[1][2], Message::EnrichedAssistant(ref message) if matches!(message.content.as_slice(), [ContentBlock::Text(s)] if s == "ok"))
     );
     assert!(
         matches!(requests[1][3], Message::User(ref blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(s)] if s == "second"))

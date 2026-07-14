@@ -1,13 +1,13 @@
 use crate::protocol::openai_chat::{
     convert_openai_response, convert_streamed_response, handle_openai_stream_line,
-    invalid_stream_utf8, to_openai_message, to_openai_tool,
+    invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
 };
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
-    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
     provider_backend::{
         line_decoder::LineDecoder,
@@ -55,11 +55,14 @@ impl GitHubCopilotProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<ChatRequest, ModelError> {
+        let target = self
+            .identity()
+            .expect("GitHub Copilot provider has an identity");
         let messages = request
             .messages
             .iter()
             .cloned()
-            .map(to_openai_message)
+            .map(|message| to_openai_message_for_target(message, Some(&target)))
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
@@ -129,6 +132,14 @@ impl GitHubCopilotProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for GitHubCopilotProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        Some(ModelIdentity::new(
+            "github-copilot",
+            "openai-chat-completions",
+            &self.model,
+        ))
+    }
+
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;

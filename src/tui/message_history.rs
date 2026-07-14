@@ -29,6 +29,17 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
+            Message::EnrichedAssistant(message) => {
+                let blocks = &message.content;
+                let text = super::text_blocks(blocks);
+                if !text.is_empty() {
+                    entries.push(Entry::Assistant(text));
+                }
+                pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
+                    ContentBlock::ToolCall(call) => Some(call.name.clone()),
+                    ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+                }));
+            }
             Message::AbortedAssistant(message) => {
                 let text = super::text_blocks(&message.content);
                 if !text.is_empty() {

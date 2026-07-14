@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tool::ToolSpec;
 
-use super::{ContentBlock, Message, ModelUsage};
+use super::{ContentBlock, Message, ModelUsage, ProviderContextBlock};
 
 const REQUEST_OVERHEAD_TOKENS: u64 = 3;
 const MESSAGE_OVERHEAD_TOKENS: u64 = 4;
@@ -73,17 +73,35 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
         Message::System(text) => MESSAGE_OVERHEAD_TOKENS.saturating_add(text_tokens(text)),
         Message::User(blocks) | Message::Assistant(blocks) => MESSAGE_OVERHEAD_TOKENS
             .saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>()),
-        Message::AbortedAssistant(message) => MESSAGE_OVERHEAD_TOKENS.saturating_add(
-            message
-                .content
-                .iter()
-                .map(content_block_tokens)
-                .sum::<u64>(),
+        Message::EnrichedAssistant(message) => assistant_message_tokens(
+            &message.content,
+            message.reasoning_summary.as_deref(),
+            &message.provider_context,
+        ),
+        Message::AbortedAssistant(message) => assistant_message_tokens(
+            &message.content,
+            message.reasoning_summary.as_deref(),
+            &message.provider_context,
         ),
         Message::ToolResult(result) => {
             TOOL_RESULT_OVERHEAD_TOKENS.saturating_add(json_tokens(result))
         }
     }
+}
+
+fn assistant_message_tokens(
+    content: &[ContentBlock],
+    reasoning_summary: Option<&str>,
+    provider_context: &[ProviderContextBlock],
+) -> u64 {
+    let summary_tokens = reasoning_summary.map(text_tokens).unwrap_or_default();
+    let replay_tokens = provider_context
+        .iter()
+        .map(|block| json_tokens(&block.data))
+        .sum::<u64>();
+    MESSAGE_OVERHEAD_TOKENS
+        .saturating_add(content.iter().map(content_block_tokens).sum::<u64>())
+        .saturating_add(summary_tokens.max(replay_tokens))
 }
 
 fn content_block_tokens(block: &ContentBlock) -> u64 {
@@ -163,6 +181,32 @@ mod tests {
                 + json_tokens(&call)
                 + TOOL_RESULT_OVERHEAD_TOKENS
                 + json_tokens(&result)
+        );
+    }
+
+    #[test]
+    fn includes_provider_replay_context() {
+        let identity =
+            super::super::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let context = super::super::ProviderContextBlock {
+            identity: identity.clone(),
+            kind: "openai_response_output_item".into(),
+            position: Some(0),
+            data: json!({"type": "reasoning", "encrypted_content": "x".repeat(400)}),
+        };
+        let message = Message::assistant(super::super::AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(identity),
+            reasoning_summary: None,
+            provider_context: vec![context.clone()],
+        });
+
+        assert_eq!(
+            estimate_message_tokens(&message),
+            MESSAGE_OVERHEAD_TOKENS
+                + CONTENT_BLOCK_OVERHEAD_TOKENS
+                + text_tokens("answer")
+                + json_tokens(&context.data)
         );
     }
 

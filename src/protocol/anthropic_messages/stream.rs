@@ -20,6 +20,9 @@ struct StreamedBlock {
     tool_id: Option<String>,
     tool_name: Option<String>,
     tool_input: String,
+    thinking: String,
+    signature: String,
+    redacted_thinking: Option<String>,
 }
 
 impl AnthropicSseState {
@@ -38,6 +41,15 @@ impl AnthropicSseState {
                     text: block.text,
                     cache_control: None,
                 });
+            }
+            if !block.thinking.is_empty() || !block.signature.is_empty() {
+                blocks.push(AnthropicContentBlock::Thinking {
+                    thinking: block.thinking,
+                    signature: block.signature,
+                });
+            }
+            if let Some(data) = block.redacted_thinking {
+                blocks.push(AnthropicContentBlock::RedactedThinking { data });
             }
             if let Some(id) = block.tool_id {
                 let name = block.tool_name.ok_or_else(|| {
@@ -130,35 +142,52 @@ pub(crate) fn handle_anthropic_stream_line(
         Some("content_block_start") => {
             let index = content_index(&value)?;
             let block = state.ensure_block(index);
-            if value
-                .get("content_block")
-                .and_then(|content_block| content_block.get("type"))
-                .and_then(|kind| kind.as_str())
-                == Some("tool_use")
-            {
-                let content_block = &value["content_block"];
-                if let Some(id) = content_block.get("id").and_then(|id| id.as_str()) {
-                    block.tool_id = Some(id.to_string());
+            let content_block = &value["content_block"];
+            match content_block.get("type").and_then(|kind| kind.as_str()) {
+                Some("thinking") => {
+                    block.thinking = content_block
+                        .get("thinking")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    block.signature = content_block
+                        .get("signature")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                 }
-                if let Some(name) = content_block.get("name").and_then(|name| name.as_str()) {
-                    block.tool_name = Some(name.to_string());
+                Some("redacted_thinking") => {
+                    block.redacted_thinking = content_block
+                        .get("data")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string);
                 }
-                if let Some(input) = content_block.get("input").filter(|input| !input.is_null()) {
-                    let initial = serde_json::to_string(input).map_err(|err| {
-                        ModelError::InvalidResponse(format!(
-                            "invalid streamed tool_use input JSON: {err}"
-                        ))
-                    })?;
-                    if initial != "{}" {
-                        block.tool_input.push_str(&initial);
+                Some("tool_use") => {
+                    if let Some(id) = content_block.get("id").and_then(|id| id.as_str()) {
+                        block.tool_id = Some(id.to_string());
                     }
+                    if let Some(name) = content_block.get("name").and_then(|name| name.as_str()) {
+                        block.tool_name = Some(name.to_string());
+                    }
+                    if let Some(input) = content_block.get("input").filter(|input| !input.is_null())
+                    {
+                        let initial = serde_json::to_string(input).map_err(|err| {
+                            ModelError::InvalidResponse(format!(
+                                "invalid streamed tool_use input JSON: {err}"
+                            ))
+                        })?;
+                        if initial != "{}" {
+                            block.tool_input.push_str(&initial);
+                        }
+                    }
+                    on_event(ModelEvent::ToolCallDelta {
+                        index,
+                        id: block.tool_id.clone(),
+                        name: block.tool_name.clone(),
+                        arguments: block.tool_input.clone(),
+                    })?;
                 }
-                on_event(ModelEvent::ToolCallDelta {
-                    index,
-                    id: block.tool_id.clone(),
-                    name: block.tool_name.clone(),
-                    arguments: block.tool_input.clone(),
-                })?;
+                Some(_) | None => {}
             }
         }
         Some("content_block_delta") => {
@@ -186,6 +215,18 @@ pub(crate) fn handle_anthropic_stream_line(
                         })?;
                     }
                 }
+                Some("thinking_delta") => {
+                    if let Some(thinking) = delta.get("thinking").and_then(|value| value.as_str()) {
+                        block.thinking.push_str(thinking);
+                        on_event(ModelEvent::ReasoningDelta(thinking.to_string()))?;
+                    }
+                }
+                Some("signature_delta") => {
+                    if let Some(signature) = delta.get("signature").and_then(|value| value.as_str())
+                    {
+                        block.signature.push_str(signature);
+                    }
+                }
                 Some(_) | None => {}
             }
         }
@@ -206,7 +247,33 @@ pub(crate) fn handle_anthropic_stream_line(
                 .unwrap_or("Anthropic stream returned an error");
             return Err(ModelError::InvalidResponse(message.to_string()));
         }
-        Some("content_block_stop") | Some("message_stop") | Some("ping") | None => {}
+        Some("content_block_stop") => {
+            let index = content_index(&value)?;
+            let block = state.ensure_block(index);
+            let provider_block = if !block.thinking.is_empty() || !block.signature.is_empty() {
+                Some(AnthropicContentBlock::Thinking {
+                    thinking: block.thinking.clone(),
+                    signature: block.signature.clone(),
+                })
+            } else {
+                block
+                    .redacted_thinking
+                    .clone()
+                    .map(|data| AnthropicContentBlock::RedactedThinking { data })
+            };
+            if let Some(provider_block) = provider_block {
+                on_event(ModelEvent::ProviderContext {
+                    kind: "anthropic_content_block".into(),
+                    position: Some(index),
+                    data: serde_json::to_value(provider_block).map_err(|err| {
+                        ModelError::InvalidResponse(format!(
+                            "could not retain Anthropic thinking block: {err}"
+                        ))
+                    })?,
+                })?;
+            }
+        }
+        Some("message_stop") | Some("ping") | None => {}
         Some(_) => {}
     }
     Ok(true)
@@ -299,6 +366,8 @@ mod tests {
                 .filter_map(|event| match event {
                     ModelEvent::OutputDelta(delta) => Some(delta.as_str()),
                     ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::Usage(_)
                     | ModelEvent::ToolCallDelta { .. } => None,
@@ -309,6 +378,37 @@ mod tests {
         let ModelResponse::Assistant(blocks) = state.into_response().unwrap();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(&blocks[0], ContentBlock::Text(text) if text == "hello"));
+    }
+
+    #[test]
+    fn streams_and_retains_signed_thinking_context() {
+        let mut state = AnthropicSseState::default();
+        let mut events = Vec::new();
+        let mut on_event = |event| {
+            events.push(event);
+            Ok(())
+        };
+
+        for line in [
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"private"}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed"}}"#,
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}"#,
+        ] {
+            handle_anthropic_stream_line(line, &mut state, &mut on_event).unwrap();
+        }
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ModelEvent::ProviderContext { kind, position: Some(0), data }
+                if kind == "anthropic_content_block"
+                    && data["thinking"] == "private"
+                    && data["signature"] == "signed"
+        )));
+        let ModelResponse::Assistant(blocks) = state.into_response().unwrap();
+        assert!(matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "answer"));
     }
 
     #[test]
@@ -339,6 +439,8 @@ mod tests {
                 ModelEvent::Usage(usage) => Some(usage),
                 ModelEvent::OutputDelta(_)
                 | ModelEvent::ReasoningDelta(_)
+                | ModelEvent::ReasoningSummaryDelta(_)
+                | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
                 | ModelEvent::ToolCallDelta { .. } => None,
             })

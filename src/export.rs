@@ -167,6 +167,13 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                     }
                 }
             }
+            Message::EnrichedAssistant(message) => {
+                for block in &message.content {
+                    if let ContentBlock::ToolCall(call) = block {
+                        called_ids.insert(call.id.as_str());
+                    }
+                }
+            }
             Message::AbortedAssistant(_) => {}
             Message::System(_) | Message::User(_) => {}
         }
@@ -189,6 +196,17 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
             Message::Assistant(blocks) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(html, entry.timestamp, blocks, &results_by_id, continuation);
+                previous_role = Some("assistant");
+            }
+            Message::EnrichedAssistant(message) => {
+                let continuation = previous_role == Some("assistant");
+                push_assistant(
+                    html,
+                    entry.timestamp,
+                    &message.content,
+                    &results_by_id,
+                    continuation,
+                );
                 previous_role = Some("assistant");
             }
             Message::AbortedAssistant(message) => {

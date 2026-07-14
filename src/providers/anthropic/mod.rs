@@ -1,8 +1,10 @@
 use crate::{
+    model::ModelIdentity,
     protocol::anthropic_messages::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
         to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
         AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+        AnthropicThinkingConfig,
     },
     provider_backend::{
         stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
@@ -13,6 +15,7 @@ use crate::{
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
@@ -20,6 +23,7 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
+    thinking_budget_tokens: Option<u32>,
 }
 
 impl AnthropicProvider {
@@ -30,6 +34,7 @@ impl AnthropicProvider {
             api_base: ANTHROPIC_API_BASE.into(),
             model,
             max_tokens,
+            thinking_budget_tokens: None,
         }
     }
 
@@ -38,7 +43,8 @@ impl AnthropicProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let (system, mut messages) = split_system_and_messages(request.messages.to_vec())?;
+        let target = self.identity().expect("Anthropic provider has an identity");
+        let (system, mut messages) = split_system_and_messages(request.messages.to_vec(), &target)?;
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools
@@ -49,9 +55,17 @@ impl AnthropicProvider {
         if let Some(tool) = tools.last_mut() {
             tool.cache_control = Some(AnthropicCacheControl::ephemeral());
         }
+        let max_tokens = (self.max_tokens)(&self.model);
+        let thinking = self.thinking_budget_tokens.and_then(|budget_tokens| {
+            let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
+            (available >= 1_024).then_some(AnthropicThinkingConfig {
+                kind: "enabled",
+                budget_tokens: budget_tokens.min(available),
+            })
+        });
         Ok(AnthropicRequest {
             model: self.model.clone(),
-            max_tokens: (self.max_tokens)(&self.model),
+            max_tokens,
             system: system.map(|text| {
                 vec![AnthropicSystemBlock::text(
                     text,
@@ -61,6 +75,7 @@ impl AnthropicProvider {
             messages,
             tools: (!tools.is_empty()).then_some(tools),
             cache_control: None,
+            thinking,
             stream,
         })
     }
@@ -148,6 +163,27 @@ async fn error_for_status_with_body(
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for AnthropicProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        Some(ModelIdentity::new(
+            "anthropic",
+            "anthropic-messages",
+            &self.model,
+        ))
+    }
+
+    fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        self.thinking_budget_tokens = match reasoning {
+            crate::reasoning::ReasoningLevel::Off => None,
+            crate::reasoning::ReasoningLevel::Minimal => Some(1_024),
+            crate::reasoning::ReasoningLevel::Low => Some(2_048),
+            crate::reasoning::ReasoningLevel::Medium => Some(4_096),
+            crate::reasoning::ReasoningLevel::High => Some(8_192),
+            crate::reasoning::ReasoningLevel::Xhigh => Some(16_384),
+            crate::reasoning::ReasoningLevel::Max => Some(32_768),
+        };
+        true
+    }
+
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.send_messages(request).await
     }
@@ -179,6 +215,7 @@ mod tests {
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),
             max_tokens: |_| DEFAULT_MAX_TOKENS,
+            thinking_budget_tokens: None,
         }
     }
 
@@ -226,6 +263,33 @@ mod tests {
         assert!(value.get("cache_control").is_none());
         assert!(value.get("prompt_cache_key").is_none());
         assert_eq!(value["messages"][1]["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn thinking_budget_reserves_answer_tokens() {
+        let mut provider = test_provider();
+        provider.thinking_budget_tokens = Some(4_096);
+
+        let body = provider
+            .request_body(
+                ModelRequest {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[],
+                    cancellation: Default::default(),
+                    prompt_cache_key: None,
+                },
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
+        assert_eq!(
+            body.thinking,
+            Some(AnthropicThinkingConfig {
+                kind: "enabled",
+                budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+            })
+        );
     }
 
     #[test]

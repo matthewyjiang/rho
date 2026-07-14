@@ -35,17 +35,84 @@ pub struct PartialToolCall {
 pub struct AbortedAssistant {
     pub content: Vec<ContentBlock>,
     pub reasoning: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ModelIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_context: Vec<ProviderContextBlock>,
     pub tool_calls: Vec<PartialToolCall>,
     pub usage: ModelUsage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelIdentity {
+    pub provider: String,
+    pub api: String,
+    pub model: String,
+}
+
+impl ModelIdentity {
+    pub fn new(
+        provider: impl Into<String>,
+        api: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            api: api.into(),
+            model: model.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderContextBlock {
+    pub identity: ModelIdentity,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
+    pub data: Value,
+}
+
+impl ProviderContextBlock {
+    pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
+        self.identity == *target
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AssistantMessage {
+    pub content: Vec<ContentBlock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ModelIdentity>,
+    /// Provider-produced reasoning summary. Raw reasoning must never be stored here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<String>,
+    /// Opaque provider data retained only for exact provider/API/model replay.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_context: Vec<ProviderContextBlock>,
+}
+
+impl AssistantMessage {
+    pub fn from_content(content: Vec<ContentBlock>) -> Self {
+        Self {
+            content,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
     System(String),
     User(Vec<ContentBlock>),
+    /// Legacy provider-neutral assistant format retained for session compatibility.
     Assistant(Vec<ContentBlock>),
+    /// Assistant output with model provenance and portable/provider-owned context.
+    EnrichedAssistant(Box<AssistantMessage>),
     /// Partial assistant output retained when the run is explicitly cancelled.
-    AbortedAssistant(AbortedAssistant),
+    AbortedAssistant(Box<AbortedAssistant>),
     ToolResult(ToolResult),
 }
 
@@ -54,8 +121,23 @@ impl Message {
         Self::User(vec![ContentBlock::Text(content.into())])
     }
 
+    #[cfg(test)]
     pub fn assistant_text(content: impl Into<String>) -> Self {
         Self::Assistant(vec![ContentBlock::Text(content.into())])
+    }
+
+    pub fn assistant(message: AssistantMessage) -> Self {
+        Self::EnrichedAssistant(Box::new(message))
+    }
+
+    pub(crate) fn completed_assistant_content(&self) -> Option<&[ContentBlock]> {
+        match self {
+            Self::Assistant(content) => Some(content),
+            Self::EnrichedAssistant(message) => Some(&message.content),
+            Self::System(_) | Self::User(_) | Self::AbortedAssistant(_) | Self::ToolResult(_) => {
+                None
+            }
+        }
     }
 }
 
@@ -123,12 +205,19 @@ impl ModelUsage {
 pub enum ModelEvent {
     OutputDelta(String),
     ReasoningDelta(String),
+    /// A provider-produced reasoning summary that is safe to persist and hand off.
+    ReasoningSummaryDelta(String),
     WebSearch(String),
     ToolCallDelta {
         index: usize,
         id: Option<String>,
         name: Option<String>,
         arguments: String,
+    },
+    ProviderContext {
+        kind: String,
+        position: Option<usize>,
+        data: Value,
     },
     Usage(ModelUsage),
 }
@@ -181,6 +270,10 @@ impl ModelError {
 /// request history.
 #[async_trait::async_trait(?Send)]
 pub trait ModelProvider: Send + Sync {
+    fn identity(&self) -> Option<ModelIdentity> {
+        None
+    }
+
     fn set_reasoning(&mut self, _reasoning: crate::reasoning::ReasoningLevel) -> bool {
         false
     }
@@ -199,7 +292,7 @@ pub trait ModelProvider: Send + Sync {
         };
         let ModelResponse::Assistant(blocks) = response;
 
-        for block in blocks.iter() {
+        for block in &blocks {
             if let ContentBlock::Text(text) = block {
                 on_event(ModelEvent::OutputDelta(text.clone()))?;
             }

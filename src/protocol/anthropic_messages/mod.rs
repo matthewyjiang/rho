@@ -8,5 +8,5 @@ pub(crate) use convert::{
 pub(crate) use stream::collect_anthropic_sse_response;
 pub(crate) use types::{
     AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage, AnthropicRequest,
-    AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+    AnthropicResponse, AnthropicRole, AnthropicSystemBlock, AnthropicThinkingConfig,
 };
