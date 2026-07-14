@@ -5,14 +5,10 @@ use super::*;
 use crate::provider_backend::{ContentBlock, Message, ToolCall, ToolSpec};
 
 fn test_provider(model: &str) -> AnthropicProvider {
-    AnthropicProvider {
-        client: provider_client(),
-        api_key: "test-key".into(),
-        api_base: "https://example.test/v1".into(),
-        model: model.into(),
-        max_tokens: |_| DEFAULT_MAX_TOKENS,
-        reasoning: ReasoningLevel::Off,
-    }
+    let mut provider =
+        AnthropicProvider::new(model.into(), "test-key".into(), |_| DEFAULT_MAX_TOKENS);
+    provider.api_base = "https://example.test/v1".into();
+    provider
 }
 
 fn request_body(provider: &AnthropicProvider) -> AnthropicRequest {
@@ -85,14 +81,53 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
     let value = serde_json::to_value(&body).unwrap();
 
     assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
-    assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Adaptive));
+    assert_eq!(
+        body.thinking,
+        Some(AnthropicThinkingConfig::Adaptive {
+            display: "summarized"
+        })
+    );
     assert_eq!(
         body.output_config,
         Some(AnthropicOutputConfig { effort: "medium" })
     );
-    assert_eq!(value["thinking"], json!({"type": "adaptive"}));
+    assert_eq!(
+        value["thinking"],
+        json!({"type": "adaptive", "display": "summarized"})
+    );
     assert_eq!(value["output_config"], json!({"effort": "medium"}));
     assert!(value["thinking"].get("budget_tokens").is_none());
+}
+
+#[test]
+fn reasoning_off_disables_adaptive_thinking_when_supported() {
+    let provider = test_provider("claude-sonnet-5");
+
+    let body = request_body(&provider);
+    let value = serde_json::to_value(&body).unwrap();
+
+    assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
+    assert_eq!(body.output_config, None);
+    assert_eq!(value["thinking"], json!({"type": "disabled"}));
+}
+
+#[test]
+fn reasoning_off_is_rejected_when_adaptive_thinking_is_mandatory() {
+    let mut provider = test_provider("claude-fable-5");
+
+    assert!(!provider.set_reasoning(ReasoningLevel::Off));
+    let body = request_body(&provider);
+
+    assert_eq!(
+        body.thinking,
+        Some(AnthropicThinkingConfig::Adaptive {
+            display: "summarized"
+        })
+    );
+    assert_eq!(
+        body.output_config,
+        Some(AnthropicOutputConfig { effort: "low" })
+    );
 }
 
 #[test]

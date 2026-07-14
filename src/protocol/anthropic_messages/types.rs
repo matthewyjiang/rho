@@ -26,7 +26,8 @@ pub(crate) struct AnthropicRequest {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum AnthropicThinkingConfig {
     Enabled { budget_tokens: u32 },
-    Adaptive,
+    Adaptive { display: &'static str },
+    Disabled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

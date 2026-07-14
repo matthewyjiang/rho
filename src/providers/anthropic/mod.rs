@@ -29,13 +29,14 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
+        let reasoning = default_reasoning(&model);
         Self {
             client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
             model,
             max_tokens,
-            reasoning: ReasoningLevel::Off,
+            reasoning,
         }
     }
 
@@ -131,11 +132,15 @@ fn thinking_config(
     Option<AnthropicOutputConfig>,
 ) {
     if reasoning == ReasoningLevel::Off {
-        return (None, None);
+        let thinking =
+            supports_disabled_thinking(model).then_some(AnthropicThinkingConfig::Disabled);
+        return (thinking, None);
     }
     if supports_adaptive_thinking(model) {
         return (
-            Some(AnthropicThinkingConfig::Adaptive),
+            Some(AnthropicThinkingConfig::Adaptive {
+                display: "summarized",
+            }),
             Some(AnthropicOutputConfig {
                 effort: adaptive_effort(model, reasoning),
             }),
@@ -170,6 +175,23 @@ fn supports_adaptive_thinking(model: &str) -> bool {
         "claude-mythos-preview",
     ];
     MODELS.iter().any(|prefix| model_matches(model, prefix))
+}
+
+fn default_reasoning(model: &str) -> ReasoningLevel {
+    if adaptive_thinking_is_mandatory(model) {
+        ReasoningLevel::Low
+    } else {
+        ReasoningLevel::Off
+    }
+}
+
+fn adaptive_thinking_is_mandatory(model: &str) -> bool {
+    const MODELS: &[&str] = &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"];
+    MODELS.iter().any(|prefix| model_matches(model, prefix))
+}
+
+fn supports_disabled_thinking(model: &str) -> bool {
+    model_matches(model, "claude-sonnet-5")
 }
 
 fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
@@ -255,6 +277,9 @@ impl ModelProvider for AnthropicProvider {
     }
 
     fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
+        if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(&self.model) {
+            return false;
+        }
         self.reasoning = reasoning;
         true
     }
