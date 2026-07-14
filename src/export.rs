@@ -24,6 +24,9 @@ use crate::{
 #[path = "export_tests.rs"]
 mod tests;
 
+#[path = "export/markdown.rs"]
+mod markdown;
+
 /// Tool outputs at most this many lines render expanded; longer ones start
 /// collapsed so the transcript stays skimmable.
 const TOOL_OUTPUT_EXPANDED_MAX_LINES: usize = 24;
@@ -247,7 +250,7 @@ fn push_assistant(
                 let _ = writeln!(
                     html,
                     "<div class=\"markdown\">{}</div>",
-                    markdown_to_html(text)
+                    markdown::to_html(text)
                 );
             }
             ContentBlock::Image(image) => push_image(html, image),
@@ -373,22 +376,6 @@ fn argument_preview(call: &ToolCall) -> String {
         preview.push('…');
     }
     preview
-}
-
-fn markdown_to_html(text: &str) -> String {
-    use pulldown_cmark::{html, Event, Options, Parser};
-
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(text, options).map(|event| match event {
-        Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
-        event => event,
-    });
-    let mut rendered = String::new();
-    html::push_html(&mut rendered, parser);
-    rendered
 }
 
 fn escape_html(text: &str) -> String {
@@ -642,6 +629,14 @@ details.system > pre { margin: 0 0.875rem 0.75rem; background: var(--well); }
 .markdown th, .markdown td { border: 1px solid var(--line); padding: 0.375rem 0.75rem; }
 .markdown th { background: var(--surface); }
 .markdown a { color: var(--brand); text-underline-offset: 2px; }
+.markdown math[display="block"] {
+  display: block;
+  max-width: 100%;
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.markdown .math-fallback { color: var(--err); }
 .markdown hr { border: none; border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

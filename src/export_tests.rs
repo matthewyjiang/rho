@@ -78,6 +78,62 @@ fn renders_assistant_text_as_markdown() {
 }
 
 #[test]
+fn renders_assistant_latex_as_mathml() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Euler's identity is $e^{i\\pi} + 1 = 0$.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("<msup>"));
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("display=\"block\""));
+    assert!(html.contains("<mfrac>"));
+    assert!(!html.contains("$e^{i\\pi}"));
+}
+
+#[test]
+fn leaves_latex_delimiters_literal_in_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "`$x^2$`\n\n```text\n$$y^2$$\n```",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>$x^2$</code>"));
+    assert!(html.contains("<code class=\"language-text\">$$y^2$$"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn escapes_html_inside_latex() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$\\text{<script>alert('x')</script>}$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("&lt;script&gt;alert(’x’)&lt;/script&gt;"));
+    assert!(!html.contains("class=\"math-fallback\""));
+    assert!(!html.contains("<script>alert"));
+}
+
+#[test]
+fn escapes_invalid_latex_in_fallback() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$\\definitelyUnknown{<script>alert('x')</script>}$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code class=\"math-fallback\">"));
+    assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"));
+    assert!(!html.contains("<script>alert"));
+}
+
+#[test]
 fn escapes_raw_html_in_assistant_markdown() {
     let export = export_with_messages(vec![message(Message::assistant_text(
         "before <img src=x onerror=\"alert('x')\"> after\n\n<script>alert('x')</script>",

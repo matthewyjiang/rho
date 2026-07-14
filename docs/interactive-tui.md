@@ -61,6 +61,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth and xAI OAuth are supported when logged in; absent windows are omitted. |
+| `/export [path]` | Export the current session to a self-contained HTML transcript. Assistant Markdown, including inline `$...$` and display `$$...$$` LaTeX math, is rendered in the exported file. |
 | `/exit` | Quit the TUI. |
 
 Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending.
