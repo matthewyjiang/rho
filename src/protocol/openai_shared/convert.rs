@@ -2,7 +2,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{
-    handoff::prepare_assistant, ContentBlock, Message, ModelError, ModelResponse, PartialToolCall,
+    handoff::{prepare_assistant, PreparedAssistant},
+    ContentBlock, Message, ModelError, ModelResponse, PartialToolCall, ProviderContextBlock,
 };
 use crate::tool::{ToolCall, ToolSpec};
 
@@ -128,10 +129,7 @@ pub(crate) fn codex_input_items_for_target(
                     crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
                 });
                 let prepared = prepare_assistant(*message, target.unwrap_or(&fallback_target));
-                append_codex_assistant(&mut input, prepared.content)?;
-                input.extend(prepared.replay_context.into_iter().filter_map(|block| {
-                    (block.kind == "openai_response_output_item").then_some(block.data)
-                }));
+                append_codex_prepared_assistant(&mut input, prepared)?;
             }
             Message::AbortedAssistant(message) => {
                 let mut enriched = crate::model::AssistantMessage {
@@ -153,10 +151,7 @@ pub(crate) fn codex_input_items_for_target(
                     crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
                 });
                 let prepared = prepare_assistant(enriched, target.unwrap_or(&fallback_target));
-                append_codex_assistant(&mut input, prepared.content)?;
-                input.extend(prepared.replay_context.into_iter().filter_map(|block| {
-                    (block.kind == "openai_response_output_item").then_some(block.data)
-                }));
+                append_codex_prepared_assistant(&mut input, prepared)?;
             }
             Message::ToolResult(result) => input.push(json!({
                 "type": "function_call_output",
@@ -166,6 +161,40 @@ pub(crate) fn codex_input_items_for_target(
         }
     }
     Ok(input)
+}
+
+fn append_codex_prepared_assistant(
+    input: &mut Vec<serde_json::Value>,
+    prepared: PreparedAssistant,
+) -> Result<(), ModelError> {
+    let mut assistant_items = Vec::new();
+    append_codex_assistant(&mut assistant_items, prepared.content)?;
+    insert_replay_items(&mut assistant_items, prepared.replay_context);
+    input.extend(assistant_items);
+    Ok(())
+}
+
+fn insert_replay_items(
+    assistant_items: &mut Vec<serde_json::Value>,
+    replay_context: Vec<ProviderContextBlock>,
+) {
+    let mut replay_items = replay_context
+        .into_iter()
+        .enumerate()
+        .filter(|(_, block)| block.kind == "openai_response_output_item")
+        .collect::<Vec<_>>();
+    replay_items.sort_by_key(|(sequence, block)| (block.position.unwrap_or(usize::MAX), *sequence));
+    let (positioned, unpositioned): (Vec<_>, Vec<_>) = replay_items
+        .into_iter()
+        .partition(|(_, block)| block.position.is_some());
+    for (_, block) in positioned.into_iter().rev() {
+        let position = block
+            .position
+            .expect("positioned replay item has a position")
+            .min(assistant_items.len());
+        assistant_items.insert(position, block.data);
+    }
+    assistant_items.extend(unpositioned.into_iter().map(|(_, block)| block.data));
 }
 
 fn append_codex_assistant(
@@ -436,6 +465,37 @@ mod handoff_tests {
         assert!(content.contains("answer"));
         assert!(content.contains("<reasoning_summary>"));
         assert!(content.contains("verified it"));
+    }
+
+    #[test]
+    fn codex_handoff_restores_replay_item_position() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: vec![
+                ContentBlock::Text("answer".into()),
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call_1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "pwd"}),
+                }),
+            ],
+            provenance: Some(source.clone()),
+            reasoning_summary: None,
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: source.clone(),
+                kind: "openai_response_output_item".into(),
+                position: Some(0),
+                data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+            }],
+        });
+
+        let input =
+            codex_input_items_for_target(vec![message], &mut Vec::new(), Some(&source)).unwrap();
+
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[2]["type"], "function_call");
     }
 
     #[test]

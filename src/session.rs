@@ -472,7 +472,7 @@ pub(super) fn summarize_session_file(
 fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
     let mut index = 0usize;
     while index < messages.len() {
-        let Message::Assistant(blocks) = &messages[index] else {
+        let Some(blocks) = messages[index].completed_assistant_content() else {
             index += 1;
             continue;
         };

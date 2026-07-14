@@ -15,6 +15,7 @@ use crate::{
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
@@ -56,9 +57,10 @@ impl AnthropicProvider {
         }
         let max_tokens = (self.max_tokens)(&self.model);
         let thinking = self.thinking_budget_tokens.and_then(|budget_tokens| {
-            (max_tokens > 1_024).then_some(AnthropicThinkingConfig {
+            let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
+            (available >= 1_024).then_some(AnthropicThinkingConfig {
                 kind: "enabled",
-                budget_tokens: budget_tokens.min(max_tokens - 1),
+                budget_tokens: budget_tokens.min(available),
             })
         });
         Ok(AnthropicRequest {
@@ -261,6 +263,33 @@ mod tests {
         assert!(value.get("cache_control").is_none());
         assert!(value.get("prompt_cache_key").is_none());
         assert_eq!(value["messages"][1]["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn thinking_budget_reserves_answer_tokens() {
+        let mut provider = test_provider();
+        provider.thinking_budget_tokens = Some(4_096);
+
+        let body = provider
+            .request_body(
+                ModelRequest {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[],
+                    cancellation: Default::default(),
+                    prompt_cache_key: None,
+                },
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
+        assert_eq!(
+            body.thinking,
+            Some(AnthropicThinkingConfig {
+                kind: "enabled",
+                budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+            })
+        );
     }
 
     #[test]

@@ -129,6 +129,16 @@ impl Message {
     pub fn assistant(message: AssistantMessage) -> Self {
         Self::EnrichedAssistant(Box::new(message))
     }
+
+    pub(crate) fn completed_assistant_content(&self) -> Option<&[ContentBlock]> {
+        match self {
+            Self::Assistant(content) => Some(content),
+            Self::EnrichedAssistant(message) => Some(&message.content),
+            Self::System(_) | Self::User(_) | Self::AbortedAssistant(_) | Self::ToolResult(_) => {
+                None
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

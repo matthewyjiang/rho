@@ -160,9 +160,7 @@ fn message_groups(messages: &[Message], start: usize) -> Vec<MessageGroup> {
 }
 
 fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize> {
-    let Message::Assistant(blocks) = &messages[index] else {
-        return None;
-    };
+    let blocks = messages[index].completed_assistant_content()?;
     let tool_call_ids = blocks
         .iter()
         .filter_map(|block| match block {
@@ -368,6 +366,43 @@ mod tests {
             partition.recent_messages.as_slice(),
             [
                 Message::Assistant(_),
+                Message::ToolResult(_),
+                Message::User(_)
+            ]
+        ));
+    }
+
+    #[test]
+    fn partition_does_not_split_enriched_assistant_tool_call_group() {
+        let identity =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let messages = vec![
+            Message::System("system".into()),
+            Message::user_text("x".repeat(1_000)),
+            Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::ToolCall(ToolCall {
+                    id: "call_1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo hi"}),
+                })],
+                provenance: Some(identity),
+                reasoning_summary: None,
+                provider_context: Vec::new(),
+            }),
+            Message::ToolResult(ToolResult {
+                id: "call_1".into(),
+                ok: true,
+                content: "hi".into(),
+            }),
+            Message::user_text("new"),
+        ];
+
+        let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
+
+        assert!(matches!(
+            partition.recent_messages.as_slice(),
+            [
+                Message::EnrichedAssistant(_),
                 Message::ToolResult(_),
                 Message::User(_)
             ]

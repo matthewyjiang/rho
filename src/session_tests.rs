@@ -294,6 +294,37 @@ fn drops_incomplete_tool_call_tail_on_load() {
 }
 
 #[test]
+fn drops_incomplete_enriched_tool_call_tail_on_load() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session
+        .append_message(&Message::user_text("run a tool"))
+        .unwrap();
+    session
+        .append_message(&Message::assistant(AssistantMessage {
+            content: vec![ContentBlock::ToolCall(ToolCall {
+                id: "call-1".into(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": "echo hi"}),
+            })],
+            provenance: Some(ModelIdentity::new(
+                "openai-codex",
+                "openai-responses",
+                "gpt-test",
+            )),
+            reasoning_summary: None,
+            provider_context: Vec::new(),
+        }))
+        .unwrap();
+
+    let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+    assert_eq!(messages.len(), 1);
+    assert!(matches!(&messages[0], Message::User(_)));
+}
+
+#[test]
 fn tolerates_only_truncated_final_json() {
     for (tail, should_load) in [
         (b"{\"type\":\"message\"".as_slice(), true),
