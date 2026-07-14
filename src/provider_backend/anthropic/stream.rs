@@ -153,6 +153,12 @@ pub(super) fn handle_anthropic_stream_line(
                         block.tool_input.push_str(&initial);
                     }
                 }
+                on_event(ModelEvent::ToolCallDelta {
+                    index,
+                    id: block.tool_id.clone(),
+                    name: block.tool_name.clone(),
+                    arguments: block.tool_input.clone(),
+                })?;
             }
         }
         Some("content_block_delta") => {
@@ -172,6 +178,12 @@ pub(super) fn handle_anthropic_stream_line(
                         .and_then(|partial_json| partial_json.as_str())
                     {
                         block.tool_input.push_str(partial_json);
+                        on_event(ModelEvent::ToolCallDelta {
+                            index,
+                            id: None,
+                            name: None,
+                            arguments: partial_json.to_string(),
+                        })?;
                     }
                 }
                 Some(_) | None => {}
@@ -288,7 +300,8 @@ mod tests {
                     ModelEvent::OutputDelta(delta) => Some(delta.as_str()),
                     ModelEvent::ReasoningDelta(_)
                     | ModelEvent::WebSearch(_)
-                    | ModelEvent::Usage(_) => None,
+                    | ModelEvent::Usage(_)
+                    | ModelEvent::ToolCallDelta { .. } => None,
                 })
                 .collect::<String>(),
             "hello"
@@ -326,7 +339,8 @@ mod tests {
                 ModelEvent::Usage(usage) => Some(usage),
                 ModelEvent::OutputDelta(_)
                 | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::WebSearch(_) => None,
+                | ModelEvent::WebSearch(_)
+                | ModelEvent::ToolCallDelta { .. } => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(usages.len(), 2);

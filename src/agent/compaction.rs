@@ -232,6 +232,9 @@ fn render_message_for_summary(message: &Message) -> String {
         Message::System(text) => format!("system:\n{text}"),
         Message::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
         Message::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
+        Message::AbortedAssistant(message) => {
+            format!("assistant [aborted]:\n{}", render_blocks(&message.content))
+        }
         Message::ToolResult(result) => format!("tool result:\n{}", render_tool_result(result)),
     }
 }

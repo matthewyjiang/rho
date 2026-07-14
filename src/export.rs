@@ -167,6 +167,7 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                     }
                 }
             }
+            Message::AbortedAssistant(_) => {}
             Message::System(_) | Message::User(_) => {}
         }
     }
@@ -188,6 +189,18 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
             Message::Assistant(blocks) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(html, entry.timestamp, blocks, &results_by_id, continuation);
+                previous_role = Some("assistant");
+            }
+            Message::AbortedAssistant(message) => {
+                let continuation = previous_role == Some("assistant");
+                push_assistant(
+                    html,
+                    entry.timestamp,
+                    &message.content,
+                    &results_by_id,
+                    continuation,
+                );
+                html.push_str("<div class=\"notice\">Operation aborted</div>\n");
                 previous_role = Some("assistant");
             }
             // Rendered inline with the tool call that produced it; the

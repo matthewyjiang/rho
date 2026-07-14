@@ -48,6 +48,7 @@ mod local_commands;
 mod local_diff;
 mod login;
 mod markdown;
+mod message_history;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
@@ -57,6 +58,7 @@ mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
 mod render;
+mod run_lifecycle;
 mod scrollbar;
 mod session_picker;
 mod skill_picker;
@@ -2040,7 +2042,7 @@ impl App {
         let mut outcome = self
             .run_prompt_turn(prompt, display_prompt, images, terminal, agent)
             .await?;
-        while !self.should_quit {
+        while matches!(outcome, TurnOutcome::Completed) && !self.should_quit {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break;
             };
@@ -2104,12 +2106,14 @@ impl App {
         self.active_tool_call = false;
         self.pending_tool_call = None;
         let interrupt_requested = Arc::new(AtomicBool::new(false));
+        let cancellation = crate::cancellation::RunCancellation::default();
         let tool_call_active = Arc::new(AtomicBool::new(false));
         let steering_prompts = Arc::new(Mutex::new(VecDeque::new()));
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let result = {
             let callback_interrupt_requested = Arc::clone(&interrupt_requested);
             let run_interrupt_requested = Arc::clone(&interrupt_requested);
+            let run_cancellation = cancellation.clone();
             let callback_tool_call_active = Arc::clone(&tool_call_active);
             let run_steering_prompts = Arc::clone(&steering_prompts);
             let (question_tx, mut question_rx) = mpsc::unbounded_channel::<QuestionAnswerRequest>();
@@ -2171,6 +2175,7 @@ impl App {
                             | AgentEvent::ContextUsage(_)
                             | AgentEvent::Usage(_)
                             | AgentEvent::ToolUpdated { .. }
+                            | AgentEvent::ToolCallUpdated { .. }
                             | AgentEvent::QuestionnaireStarted(_)
                             | AgentEvent::QuestionnaireFinished(_) => {}
                         }
@@ -2181,6 +2186,7 @@ impl App {
                         Ok(())
                     },
                     questionnaire_handler,
+                    run_cancellation,
                     move || run_interrupt_requested.load(Ordering::SeqCst),
                     move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
                 ),
@@ -2212,7 +2218,7 @@ impl App {
                             RunningInputMode::Turn,
                         ) {
                             Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
-                                break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
+                                cancellation.cancel();
                             }
                             Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
@@ -2230,7 +2236,7 @@ impl App {
                             RunningInputMode::Turn,
                         ) {
                             Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
-                                break Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted));
+                                cancellation.cancel();
                             }
                             Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
                             Err(err) => break Err(crate::agent::AgentError::Provider(err)),
@@ -2268,6 +2274,7 @@ impl App {
                 TurnOutcome::Completed
             }
             Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
+                self.restore_pending_work_to_input(&steering_prompts);
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
@@ -2534,7 +2541,7 @@ impl App {
         self.clamp_command_selection();
         self.steering_prompts.push_back(prompt);
         self.insert_entry(&Entry::Notice(format!(
-            "queued steer {} for after the current output or tool call",
+            "queued steer {} for after the current assistant turn",
             self.steering_prompts.len()
         )));
         self.status = format!("queued {} steer(s)", self.steering_prompts.len());
@@ -4484,6 +4491,23 @@ impl App {
                 });
                 None
             }
+            AgentEvent::ToolCallUpdated { name, arguments } => {
+                let mut display_lines = Vec::new();
+                if let Some(name) = name.filter(|name| !name.is_empty()) {
+                    display_lines.push(format!("preparing {name}"));
+                } else {
+                    display_lines.push("preparing tool call".into());
+                }
+                if !arguments.is_empty() {
+                    display_lines.push(arguments);
+                }
+                self.pending_tool_call = Some(ToolEntry {
+                    state: ToolEntryState::Running,
+                    display_lines,
+                    expanded: false,
+                });
+                None
+            }
             AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
             AgentEvent::ContextUsage(usage) => {
                 self.current_context = Some(usage);
@@ -5458,50 +5482,7 @@ fn recovered_history_tail(
     (selected_start, entries[selected_start..].to_vec())
 }
 
-fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
-    let mut entries = Vec::new();
-    let mut pending_tool_names = VecDeque::new();
-    for message in messages {
-        match message {
-            Message::System(_) => {}
-            Message::User(blocks) => {
-                let text = render_message_blocks(blocks);
-                if !text.is_empty() {
-                    entries.push(Entry::User(text));
-                }
-            }
-            Message::Assistant(blocks) => {
-                let text = text_blocks(blocks);
-                if !text.is_empty() {
-                    entries.push(Entry::Assistant(text));
-                }
-                pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
-                    ContentBlock::ToolCall(call) => Some(call.name.clone()),
-                    ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-                }));
-            }
-            Message::ToolResult(result) => {
-                let name = pending_tool_names
-                    .pop_front()
-                    .unwrap_or_else(|| "tool".into());
-                let display_style = ToolDisplayStyle::for_tool_name(&name);
-                let mut display_lines = vec![name];
-                if !result.content.trim().is_empty() {
-                    display_lines.push(result.content.clone());
-                }
-                entries.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished {
-                        ok: result.ok,
-                        display_style,
-                    },
-                    display_lines,
-                    expanded: false,
-                }));
-            }
-        }
-    }
-    entries
-}
+use message_history::transcript_entries_from_messages;
 
 fn tool_display_line_count(display_lines: &[String]) -> usize {
     display_lines
@@ -5551,6 +5532,7 @@ async fn generate_session_title(
         provider.send_turn(ModelRequest {
             messages: &request_messages,
             tools: &[],
+            cancellation: Default::default(),
             prompt_cache_key: None,
         }),
     )

@@ -1,6 +1,7 @@
 mod agent;
 mod app;
 mod auth;
+mod cancellation;
 mod cli;
 mod clipboard_image;
 mod commands;

@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin};
+use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use thiserror::Error;
 
@@ -20,9 +20,11 @@ use compaction::{
 };
 use context_tracker::ContextTracker;
 
+use crate::cancellation::RunCancellation;
 use crate::model::{
-    openai::prompt_cache_key_from_session_id, ContentBlock, ContextUsage, DynModelProvider,
-    Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
+    openai::prompt_cache_key_from_session_id, AbortedAssistant, ContentBlock, ContextUsage,
+    DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
+    PartialToolCall,
 };
 use crate::prompt::system_prompt;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
@@ -59,6 +61,10 @@ pub enum AgentEvent {
     ToolUpdated {
         display_lines: Vec<String>,
     },
+    ToolCallUpdated {
+        name: Option<String>,
+        arguments: String,
+    },
     ToolFinished {
         name: String,
         command: Option<String>,
@@ -77,6 +83,78 @@ enum CompactionTrigger {
 }
 
 const MAX_INVALID_RESPONSE_RETRIES: usize = 1;
+
+#[derive(Default)]
+struct PartialAssistant {
+    text: String,
+    reasoning: String,
+    tool_calls: BTreeMap<usize, PartialToolCall>,
+    usage: ModelUsage,
+}
+
+impl PartialAssistant {
+    fn record(&mut self, event: &ModelEvent) {
+        match event {
+            ModelEvent::OutputDelta(delta) => self.text.push_str(delta),
+            ModelEvent::ReasoningDelta(delta) => self.reasoning.push_str(delta),
+            ModelEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments,
+            } => {
+                let call = self
+                    .tool_calls
+                    .entry(*index)
+                    .or_insert_with(|| PartialToolCall {
+                        id: None,
+                        name: None,
+                        arguments: String::new(),
+                    });
+                if id.is_some() {
+                    call.id.clone_from(id);
+                }
+                if name.is_some() {
+                    call.name.clone_from(name);
+                }
+                call.arguments.push_str(arguments);
+            }
+            ModelEvent::Usage(usage) => merge_model_usage(&mut self.usage, usage),
+            ModelEvent::WebSearch(_) => {}
+        }
+    }
+
+    fn into_message(self) -> Message {
+        let content = if self.text.is_empty() {
+            Vec::new()
+        } else {
+            vec![ContentBlock::Text(self.text)]
+        };
+        Message::AbortedAssistant(AbortedAssistant {
+            content,
+            reasoning: self.reasoning,
+            tool_calls: self.tool_calls.into_values().collect(),
+            usage: self.usage,
+        })
+    }
+}
+
+fn merge_model_usage(total: &mut ModelUsage, update: &ModelUsage) {
+    fn merge(target: &mut Option<u64>, update: Option<u64>) {
+        if let Some(update) = update {
+            *target = Some(target.unwrap_or_default().saturating_add(update));
+        }
+    }
+    merge(&mut total.input_tokens, update.input_tokens);
+    merge(&mut total.output_tokens, update.output_tokens);
+    merge(&mut total.cache_read_tokens, update.cache_read_tokens);
+    merge(&mut total.cache_write_tokens, update.cache_write_tokens);
+    merge(&mut total.total_tokens, update.total_tokens);
+    merge(&mut total.cost_usd_micros, update.cost_usd_micros);
+    if update.context_window.is_some() {
+        total.context_window = update.context_window;
+    }
+}
 
 struct AbortOnDrop(tokio::task::AbortHandle);
 
@@ -282,6 +360,7 @@ impl Agent {
             user_content,
             on_event,
             None,
+            RunCancellation::default(),
             || false,
             next_steer,
         )
@@ -293,6 +372,7 @@ impl Agent {
         user_content: Vec<ContentBlock>,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
         mut ask_questionnaire: Option<QuestionnaireHandler<'_>>,
+        cancellation: RunCancellation,
         mut interrupt_requested: impl FnMut() -> bool,
         mut next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
     ) -> Result<String, AgentError> {
@@ -334,38 +414,59 @@ impl Agent {
                 }
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
+            let mut partial_assistant = PartialAssistant::default();
             let response = match self
                 .provider
                 .send_turn_stream(
                     ModelRequest {
                         messages: &self.messages,
                         tools: &specs,
+                        cancellation: cancellation.clone(),
                         prompt_cache_key: self.prompt_cache_key.as_deref(),
                     },
-                    &mut |event| match event {
-                        ModelEvent::OutputDelta(text) => on_event(AgentEvent::OutputDelta(text)),
-                        ModelEvent::ReasoningDelta(text) => {
-                            on_event(AgentEvent::ReasoningDelta(text))
-                        }
-                        ModelEvent::WebSearch(detail) => on_event(AgentEvent::ToolFinished {
-                            name: "web_search".into(),
-                            command: None,
-                            ok: true,
-                            content: detail.clone(),
-                            display_style: ToolDisplayStyle::web(),
-                            display_lines: vec![format!("web search: {detail}")],
-                        }),
-                        ModelEvent::Usage(usage) => {
-                            if let Some(context_usage) = self
-                                .context_tracker
-                                .record_provider_usage(&usage, request_estimate)
-                            {
-                                if let Some(diagnostics) = &self.diagnostics {
-                                    diagnostics.record_context(context_usage.clone());
-                                }
-                                on_event(AgentEvent::ContextUsage(context_usage))?;
+                    &mut |event| {
+                        partial_assistant.record(&event);
+                        match event {
+                            ModelEvent::OutputDelta(text) => {
+                                on_event(AgentEvent::OutputDelta(text))
                             }
-                            on_event(AgentEvent::Usage(usage))
+                            ModelEvent::ReasoningDelta(text) => {
+                                on_event(AgentEvent::ReasoningDelta(text))
+                            }
+                            ModelEvent::WebSearch(detail) => on_event(AgentEvent::ToolFinished {
+                                name: "web_search".into(),
+                                command: None,
+                                ok: true,
+                                content: detail.clone(),
+                                display_style: ToolDisplayStyle::web(),
+                                display_lines: vec![format!("web search: {detail}")],
+                            }),
+                            ModelEvent::ToolCallDelta {
+                                index,
+                                name,
+                                arguments,
+                                ..
+                            } => {
+                                let call = partial_assistant.tool_calls.get(&index);
+                                on_event(AgentEvent::ToolCallUpdated {
+                                    name: call.and_then(|call| call.name.clone()).or(name),
+                                    arguments: call
+                                        .map(|call| call.arguments.clone())
+                                        .unwrap_or(arguments),
+                                })
+                            }
+                            ModelEvent::Usage(usage) => {
+                                if let Some(context_usage) = self
+                                    .context_tracker
+                                    .record_provider_usage(&usage, request_estimate)
+                                {
+                                    if let Some(diagnostics) = &self.diagnostics {
+                                        diagnostics.record_context(context_usage.clone());
+                                    }
+                                    on_event(AgentEvent::ContextUsage(context_usage))?;
+                                }
+                                on_event(AgentEvent::Usage(usage))
+                            }
                         }
                     },
                 )
@@ -375,7 +476,10 @@ impl Agent {
                     invalid_response_retries = 0;
                     response
                 }
-                Err(ModelError::Interrupted) => return Err(ModelError::Interrupted.into()),
+                Err(ModelError::Interrupted) => {
+                    self.push_message(partial_assistant.into_message())?;
+                    return Err(ModelError::Interrupted.into());
+                }
                 Err(err)
                     if should_retry_model_error(&err)
                         && invalid_response_retries < MAX_INVALID_RESPONSE_RETRIES =>
@@ -474,6 +578,7 @@ impl Agent {
                                             )) {
                                                 Ok(()) => {}
                                                 Err(ModelError::Interrupted) => {
+                                                    cancellation.cancel();
                                                     deferred_interrupt =
                                                         Some(ModelError::Interrupted);
                                                 }
@@ -499,6 +604,7 @@ impl Agent {
                                                         ) {
                                                             Ok(()) => {}
                                                             Err(ModelError::Interrupted) => {
+                                                                cancellation.cancel();
                                                                 deferred_interrupt =
                                                                     Some(ModelError::Interrupted);
                                                             }
@@ -569,6 +675,7 @@ impl Agent {
                                         let args = call.arguments.clone();
                                         let ctx = self.ctx.clone();
                                         let id = call.id.clone();
+                                        let tool_cancellation = cancellation.clone();
                                         let (progress_tx, mut progress_rx) =
                                             tokio::sync::mpsc::unbounded_channel();
                                         let mut task = tokio::spawn(async move {
@@ -576,14 +683,25 @@ impl Agent {
                                                 let _ = progress_tx.send(display_lines);
                                             };
                                             execution_tool
-                                                .call_with_updates(args, ctx, id, &mut on_update)
+                                                .call_with_updates_and_cancellation(
+                                                    args,
+                                                    ctx,
+                                                    id,
+                                                    tool_cancellation,
+                                                    &mut on_update,
+                                                )
                                                 .await
                                         });
                                         let _abort_on_drop = AbortOnDrop(task.abort_handle());
                                         let result = loop {
                                             tokio::select! {
+                                                _ = cancellation.cancelled(), if deferred_interrupt.is_none() => {
+                                                    deferred_interrupt = Some(ModelError::Interrupted);
+                                                    task.abort();
+                                                }
                                                 _ = tokio::time::sleep(std::time::Duration::from_millis(25)), if deferred_interrupt.is_none() => {
                                                     if interrupt_requested() {
+                                                        cancellation.cancel();
                                                         deferred_interrupt = Some(ModelError::Interrupted);
                                                         task.abort();
                                                     }
@@ -593,13 +711,18 @@ impl Agent {
                                                         match on_event(AgentEvent::ToolUpdated { display_lines }) {
                                                             Ok(()) => {}
                                                             Err(ModelError::Interrupted) => {
+                                                                cancellation.cancel();
                                                                 deferred_interrupt = Some(ModelError::Interrupted);
+                                                                task.abort();
                                                             }
                                                             Err(err) => return Err(err.into()),
                                                         }
                                                     }
                                                 }
                                                 joined = &mut task => {
+                                                    if cancellation.is_cancelled() {
+                                                        deferred_interrupt = Some(ModelError::Interrupted);
+                                                    }
                                                     break match joined {
                                                         Ok(Ok(result)) => result,
                                                         Ok(Err(err)) => ToolResult {
@@ -659,6 +782,7 @@ impl Agent {
                                 }) {
                                     Ok(()) => {}
                                     Err(ModelError::Interrupted) => {
+                                        cancellation.cancel();
                                         deferred_interrupt = Some(ModelError::Interrupted);
                                     }
                                     Err(err) => return Err(err.into()),
@@ -667,6 +791,11 @@ impl Agent {
                         }
                         if let Some(err) = deferred_interrupt {
                             return Err(err.into());
+                        }
+                        if let Some(steer) = next_steer()? {
+                            self.push_message(Message::user_text(steer))?;
+                        } else if cancellation.is_cancelled() || interrupt_requested() {
+                            return Err(ModelError::Interrupted.into());
                         }
                     }
                 }
@@ -705,12 +834,14 @@ impl Agent {
                 ModelRequest {
                     messages: &summary_messages,
                     tools: &[],
+                    cancellation: Default::default(),
                     prompt_cache_key: self.prompt_cache_key.as_deref(),
                 },
                 &mut |event| match event {
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
-                    | ModelEvent::WebSearch(_) => Ok(()),
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. } => Ok(()),
                     ModelEvent::Usage(usage) => on_event(AgentEvent::Usage(usage)),
                 },
             )

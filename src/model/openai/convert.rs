@@ -111,27 +111,13 @@ pub(crate) fn codex_input_items(
                 "content": codex_content_blocks(&blocks),
             })),
             Message::Assistant(blocks) => {
-                let text = blocks
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text(text) => Some(text.as_str()),
-                        ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    input.push(json!({ "role": "assistant", "content": text }));
-                }
-                for block in blocks {
-                    if let ContentBlock::ToolCall(call) = block {
-                        input.push(json!({
-                            "type": "function_call",
-                            "call_id": call.id,
-                            "name": call.name,
-                            "arguments": serde_json::to_string(&call.arguments).map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?,
-                        }));
-                    }
-                }
+                append_codex_assistant(&mut input, blocks)?;
+            }
+            Message::AbortedAssistant(mut message) => {
+                message
+                    .content
+                    .push(ContentBlock::Text("[Operation aborted]".into()));
+                append_codex_assistant(&mut input, message.content)?;
             }
             Message::ToolResult(result) => input.push(json!({
                 "type": "function_call_output",
@@ -143,6 +129,58 @@ pub(crate) fn codex_input_items(
     Ok(input)
 }
 
+fn append_codex_assistant(
+    input: &mut Vec<serde_json::Value>,
+    blocks: Vec<ContentBlock>,
+) -> Result<(), ModelError> {
+    let text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !text.is_empty() {
+        input.push(json!({ "role": "assistant", "content": text }));
+    }
+    for block in blocks {
+        if let ContentBlock::ToolCall(call) = block {
+            input.push(json!({
+                "type": "function_call",
+                "call_id": call.id,
+                "name": call.name,
+                "arguments": serde_json::to_string(&call.arguments).map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?,
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
+    let content = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tool_calls = blocks
+        .into_iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
+            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(OpenAiMessage {
+        role: "assistant".into(),
+        content: (!content.is_empty()).then(|| json!(content)),
+        tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
+        tool_call_id: None,
+    })
+}
+
 pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, ModelError> {
     match message {
         Message::System(content) => Ok(openai_text_message("system", content)),
@@ -152,36 +190,12 @@ pub(crate) fn to_openai_message(message: Message) -> Result<OpenAiMessage, Model
             tool_calls: None,
             tool_call_id: None,
         }),
-        Message::Assistant(blocks) => {
-            let content = blocks
-                .iter()
-                .filter_map(|b| match b {
-                    ContentBlock::Text(text) => Some(text.as_str()),
-                    ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let tool_calls = blocks
-                .into_iter()
-                .filter_map(|b| match b {
-                    ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
-                    ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(OpenAiMessage {
-                role: "assistant".into(),
-                content: if content.is_empty() {
-                    None
-                } else {
-                    Some(json!(content))
-                },
-                tool_calls: if tool_calls.is_empty() {
-                    None
-                } else {
-                    Some(tool_calls)
-                },
-                tool_call_id: None,
-            })
+        Message::Assistant(blocks) => openai_assistant_message(blocks),
+        Message::AbortedAssistant(mut message) => {
+            message
+                .content
+                .push(ContentBlock::Text("[Operation aborted]".into()));
+            openai_assistant_message(message.content)
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),

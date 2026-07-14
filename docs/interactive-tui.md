@@ -101,9 +101,10 @@ Use `/title-model` to choose the model used for session title generation. The ti
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
 
-## Interrupt, reset, or quit
+## Interrupt, steer, reset, or quit
 
-- Press `esc` to interrupt the current response without closing Rho. If a tool command is running, Rho terminates it and ends the turn immediately.
+- Press `esc` to abort the current response without closing Rho. The provider request and active tool receive the same cancellation signal, partial assistant output remains in the session, and queued prompts are restored to the composer instead of running automatically.
+- Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request.
 - Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
 - Press `ctrl-c` to clear the current input line.
 - Press `ctrl-c` twice to quit.
@@ -114,12 +115,12 @@ Most editing keys work the way they do in a normal terminal input.
 
 | Key | Action |
 | --- | --- |
-| `esc` | Interrupt the current response, or hide the command palette when it is open |
+| `esc` | Abort the current response and restore queued work, or hide the command palette when it is open |
 | `/` at start | Open the command palette |
 | `@` | Open workspace file path autocomplete |
 | `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
 | `tab` | Complete the selected command or file path |
-| `enter` | Send a prompt, run a selected slash command, or queue a prompt while a response is running |
+| `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
 | `pageup` / `pagedown` | Scroll the transcript viewport |

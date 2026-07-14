@@ -107,17 +107,24 @@ impl ModelProvider for OpenAiProvider {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        match &self.auth {
-            Auth::ApiKey(key) => {
-                self.send_chat_completions_stream(request, key, on_event)
-                    .await
-            }
-            Auth::Codex { tokens, source } => {
-                let request_tokens =
-                    load_codex_tokens_for_request(self.credential_store.as_ref(), tokens, *source)?;
-                self.send_codex_responses_stream(request, request_tokens, *source, on_event)
-                    .await
-            }
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = async {
+                match &self.auth {
+                    Auth::ApiKey(key) => {
+                        self.send_chat_completions_stream(request, key, on_event).await
+                    }
+                    Auth::Codex { tokens, source } => {
+                        let request_tokens = load_codex_tokens_for_request(
+                            self.credential_store.as_ref(), tokens, *source,
+                        )?;
+                        self.send_codex_responses_stream(
+                            request, request_tokens, *source, on_event,
+                        ).await
+                    }
+                }
+            } => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }
 }
@@ -430,6 +437,7 @@ mod tests {
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
+                cancellation: Default::default(),
                 prompt_cache_key: Some("rho:session-1"),
             },
             None,
@@ -450,6 +458,7 @@ mod tests {
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
+                cancellation: Default::default(),
                 prompt_cache_key: None,
             },
             None,
@@ -471,6 +480,7 @@ mod tests {
                     description: "search the web".into(),
                     input_schema: json!({"type": "object"}),
                 }],
+                cancellation: Default::default(),
                 prompt_cache_key: None,
             },
             None,
@@ -518,6 +528,47 @@ mod tests {
     }
 
     #[test]
+    fn streams_partial_codex_tool_call_arguments() {
+        let mut state = CodexSseState::default();
+        let mut events = Vec::new();
+        let mut on_event = |event| {
+            events.push(event);
+            Ok(())
+        };
+
+        handle_codex_sse_line(
+            r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":""}}"#,
+            &mut state,
+            &mut Some(&mut on_event),
+        )
+        .unwrap();
+        handle_codex_sse_line(
+            r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}"#,
+            &mut state,
+            &mut Some(&mut on_event),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                ModelEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some(id),
+                    name: Some(name),
+                    arguments,
+                },
+                ModelEvent::ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments: delta,
+                }
+            ] if id == "call_1" && name == "read_file" && arguments.is_empty() && delta == "{\"path\":"
+        ));
+    }
+
+    #[test]
     fn chat_stream_usage_normalizes_prompt_cached_tokens() {
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -531,7 +582,8 @@ mod tests {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
-                    | ModelEvent::WebSearch(_) => {}
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. } => {}
                 }
                 Ok(())
             },
@@ -557,7 +609,8 @@ mod tests {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
-                    | ModelEvent::WebSearch(_) => {}
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. } => {}
                 }
                 Ok(())
             }),
@@ -583,6 +636,7 @@ mod tests {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
                     ModelEvent::WebSearch(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -607,6 +661,7 @@ mod tests {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
                     ModelEvent::WebSearch(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {},
                 }
                 Ok(())
@@ -630,6 +685,7 @@ mod tests {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
                     ModelEvent::WebSearch(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -704,6 +760,7 @@ mod tests {
                     ModelEvent::WebSearch(detail) => searches.push(detail),
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -728,6 +785,7 @@ mod tests {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
                     ModelEvent::WebSearch(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())
@@ -782,6 +840,7 @@ mod tests {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
                     ModelEvent::WebSearch(_) => {}
+                    ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
                 Ok(())

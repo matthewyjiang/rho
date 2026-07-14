@@ -91,6 +91,7 @@ pub(crate) fn handle_openai_stream_line(
         if let Some(id) = delta.get("id").and_then(|v| v.as_str()) {
             call.id = Some(id.to_string());
         }
+        let id = delta.get("id").and_then(|v| v.as_str()).map(str::to_string);
         if let Some(name) = delta
             .get("function")
             .and_then(|v| v.get("name"))
@@ -98,12 +99,26 @@ pub(crate) fn handle_openai_stream_line(
         {
             call.name = Some(name.to_string());
         }
-        if let Some(arguments) = delta
+        let name = delta
+            .get("function")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let arguments = delta
             .get("function")
             .and_then(|v| v.get("arguments"))
             .and_then(|v| v.as_str())
-        {
+            .unwrap_or_default();
+        if !arguments.is_empty() {
             call.arguments.push_str(arguments);
+        }
+        if id.is_some() || name.is_some() || !arguments.is_empty() {
+            on_event(ModelEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments: arguments.to_string(),
+            })?;
         }
     }
     Ok(true)
@@ -358,6 +373,50 @@ pub(crate) fn handle_codex_sse_line(
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ReasoningDelta(delta))?;
             }
+        }
+    } else if event_type == "response.output_item.added" {
+        let item = value.get("item").unwrap_or(&value);
+        if item.get("type").and_then(|kind| kind.as_str()) == Some("function_call") {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::ToolCallDelta {
+                    index: value
+                        .get("output_index")
+                        .and_then(|index| index.as_u64())
+                        .and_then(|index| usize::try_from(index).ok())
+                        .unwrap_or(state.tool_calls.len()),
+                    id: item
+                        .get("call_id")
+                        .or_else(|| item.get("id"))
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string),
+                    name: item
+                        .get("name")
+                        .and_then(|name| name.as_str())
+                        .map(str::to_string),
+                    arguments: item
+                        .get("arguments")
+                        .and_then(|arguments| arguments.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                })?;
+            }
+        }
+    } else if event_type == "response.function_call_arguments.delta" {
+        if let Some(on_event) = on_event.as_mut() {
+            on_event(ModelEvent::ToolCallDelta {
+                index: value
+                    .get("output_index")
+                    .and_then(|index| index.as_u64())
+                    .and_then(|index| usize::try_from(index).ok())
+                    .unwrap_or(state.tool_calls.len()),
+                id: None,
+                name: None,
+                arguments: value
+                    .get("delta")
+                    .and_then(|delta| delta.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            })?;
         }
     } else if event_type == "response.output_item.done" {
         let item = value.get("item").unwrap_or(&value);

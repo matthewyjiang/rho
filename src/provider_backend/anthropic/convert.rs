@@ -39,6 +39,16 @@ pub(super) fn split_system_and_messages(
                 AnthropicRole::Assistant,
                 blocks.into_iter().map(assistant_block).collect(),
             ),
+            Message::AbortedAssistant(mut message) => {
+                message
+                    .content
+                    .push(ContentBlock::Text("[Operation aborted]".into()));
+                push_message(
+                    &mut converted,
+                    AnthropicRole::Assistant,
+                    message.content.into_iter().map(assistant_block).collect(),
+                );
+            }
             Message::ToolResult(result) => push_message(
                 &mut converted,
                 AnthropicRole::User,

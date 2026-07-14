@@ -12,8 +12,9 @@ pub mod xai;
 pub mod registry;
 
 pub use crate::provider_backend::{
-    AnthropicProvider, ContentBlock, DynModelProvider, ImageContent, Message, ModelError,
-    ModelEvent, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
+    AbortedAssistant, AnthropicProvider, ContentBlock, DynModelProvider, ImageContent, Message,
+    ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
+    PartialToolCall,
 };
 pub use context::{ContextUsage, ContextUsageSource};
 pub use github_copilot::GitHubCopilotProvider;

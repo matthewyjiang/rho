@@ -2,6 +2,7 @@ pub mod anthropic;
 pub(crate) mod line_decoder;
 pub(crate) mod stream_timeout;
 
+use crate::cancellation::RunCancellation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -28,10 +29,27 @@ pub struct ToolResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PartialToolCall {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AbortedAssistant {
+    pub content: Vec<ContentBlock>,
+    pub reasoning: String,
+    pub tool_calls: Vec<PartialToolCall>,
+    pub usage: ModelUsage,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message {
     System(String),
     User(Vec<ContentBlock>),
     Assistant(Vec<ContentBlock>),
+    /// Partial assistant output retained when the run is explicitly cancelled.
+    AbortedAssistant(AbortedAssistant),
     ToolResult(ToolResult),
 }
 
@@ -62,6 +80,7 @@ pub struct ImageContent {
 pub struct ModelRequest<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
+    pub cancellation: RunCancellation,
     /// Provider-specific prompt cache key metadata.
     ///
     /// Providers must opt in explicitly when their API supports this field.
@@ -73,7 +92,7 @@ pub enum ModelResponse {
     Assistant(Vec<ContentBlock>),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
     /// Uncached input tokens charged at the normal input-token rate.
     ///
@@ -109,6 +128,12 @@ pub enum ModelEvent {
     OutputDelta(String),
     ReasoningDelta(String),
     WebSearch(String),
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: String,
+    },
     Usage(ModelUsage),
 }
 
@@ -171,7 +196,11 @@ pub trait ModelProvider: Send + Sync {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_turn(request).await?;
+        let cancellation = request.cancellation.clone();
+        let response = tokio::select! {
+            response = self.send_turn(request) => response?,
+            () = cancellation.cancelled() => return Err(ModelError::Interrupted),
+        };
         let ModelResponse::Assistant(blocks) = response;
 
         for block in blocks.iter() {

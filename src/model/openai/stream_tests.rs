@@ -48,6 +48,7 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
+                cancellation: Default::default(),
                 prompt_cache_key: None,
             },
             &mut |event| {

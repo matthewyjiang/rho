@@ -161,7 +161,11 @@ impl ModelProvider for AnthropicProvider {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        self.send_messages_stream(request, on_event).await
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_messages_stream(request, on_event) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
     }
 }
 
@@ -202,6 +206,7 @@ mod tests {
                         description: "run command".into(),
                         input_schema: json!({"type":"object"}),
                     }],
+                    cancellation: Default::default(),
                     prompt_cache_key: Some("ignored"),
                 },
                 true,

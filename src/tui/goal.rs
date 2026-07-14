@@ -62,6 +62,7 @@ pub(super) async fn evaluate(
         .send_turn(ModelRequest {
             messages: &request_messages,
             tools: &[],
+            cancellation: Default::default(),
             prompt_cache_key: None,
         })
         .await?;
