@@ -50,7 +50,7 @@ fn small_scroll_to_rendered_bottom_resumes_bottom_following() {
     }
     let history_len = app.history_len(40, Instant::now());
     let rendered_bottom_start =
-        history_len.saturating_sub(app.history_height_for_screen(40, 12, Instant::now(), false));
+        history_len.saturating_sub(app.history_height_for_screen(40, 12, Instant::now()));
     app.history_scroll = HistoryScroll::Manual {
         top_line: rendered_bottom_start.saturating_sub(1),
     };
@@ -126,6 +126,20 @@ fn jump_button_renders_above_composer_only_when_scrolled_up() {
         .unwrap();
 
     assert!(button_index < input_index, "{scrolled_lines:#?}");
+}
+
+#[test]
+fn activity_row_is_always_reserved() {
+    let mut app = test_app();
+    let area = Rect::new(0, 0, 40, 12);
+    let idle = app.screen_layout(area, Instant::now());
+
+    app.running = true;
+    let loading = app.screen_layout(area, Instant::now());
+
+    assert_eq!(idle.history, loading.history);
+    assert_eq!(idle.activity, loading.activity);
+    assert_eq!(idle.history.bottom(), idle.activity.unwrap().y);
 }
 
 #[test]

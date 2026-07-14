@@ -4763,17 +4763,12 @@ impl App {
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
-        let history_height_without_jump = self.history_height_from_line_counts(
-            height,
-            composer_lines.len(),
-            command_line_count,
-            /*include_jump_button*/ false,
-        );
+        let history_height_without_jump =
+            self.history_height_from_line_counts(height, composer_lines.len(), command_line_count);
         let show_jump_to_bottom = history_height_without_jump > 0
             && self.visible_history_start(history_len, history_height_without_jump)
                 < history_len.saturating_sub(history_height_without_jump);
-        let show_activity =
-            history_height_without_jump > 0 && (self.loading_active() || show_jump_to_bottom);
+        let show_activity = history_height_without_jump > 0;
         let reserved_above_composer =
             usize::from(show_top_divider).saturating_add(usize::from(show_activity));
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
@@ -4993,25 +4988,17 @@ impl App {
     #[cfg(test)]
     fn should_show_jump_to_bottom(&mut self, width: usize, height: usize, now: Instant) -> bool {
         let history_len = self.history_len(width, now);
-        let history_height =
-            self.history_height_for_screen(width, height, now, /*include_jump_button*/ false);
+        let history_height = self.history_height_for_screen(width, height, now);
         history_height > 0
             && self.visible_history_start(history_len, history_height)
                 < history_len.saturating_sub(history_height)
     }
 
-    fn history_height_for_screen(
-        &self,
-        width: usize,
-        height: usize,
-        _now: Instant,
-        include_jump_button: bool,
-    ) -> usize {
+    fn history_height_for_screen(&self, width: usize, height: usize, _now: Instant) -> usize {
         self.history_height_from_line_counts(
             height,
             self.composer_lines(width).len(),
             self.command_suggestion_lines(width).len(),
-            include_jump_button,
         )
     }
 
@@ -5020,7 +5007,6 @@ impl App {
         height: usize,
         composer_line_count: usize,
         command_line_count: usize,
-        include_jump_button: bool,
     ) -> usize {
         let statusline_height = self.statusline.height().min(height);
         let bottom_divider_height = usize::from(height > statusline_height);
@@ -5029,8 +5015,8 @@ impl App {
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
-        let reserved_above_composer = usize::from(show_top_divider)
-            + usize::from(self.loading_active() || include_jump_button);
+        let activity_height = usize::from(available_above_bottom > usize::from(show_top_divider));
+        let reserved_above_composer = usize::from(show_top_divider).saturating_add(activity_height);
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let visible_composer_len = composer_line_count.min(composer_budget);
         available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len)
@@ -5042,16 +5028,12 @@ impl App {
     }
 
     fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_height_for_screen(width, height, now, true)
-            .max(1);
+        let page = self.history_height_for_screen(width, height, now).max(1);
         self.scroll_history_lines(width, height, now, -(page as isize));
     }
 
     fn scroll_history_page_down(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_height_for_screen(width, height, now, true)
-            .max(1);
+        let page = self.history_height_for_screen(width, height, now).max(1);
         self.scroll_history_lines(width, height, now, page as isize);
     }
 
@@ -5059,22 +5041,12 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_line_count = self.composer_lines(width).len();
         let command_line_count = self.command_suggestion_lines(width).len();
-        let reserved_height = self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-            /*include_jump_button*/ true,
-        );
-        let unreserved_height = self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-            /*include_jump_button*/ false,
-        );
-        let max_start = history_len.saturating_sub(reserved_height);
-        let current = self.visible_history_start(history_len, reserved_height);
+        let history_height =
+            self.history_height_from_line_counts(height, composer_line_count, command_line_count);
+        let max_start = history_len.saturating_sub(history_height);
+        let current = self.visible_history_start(history_len, history_height);
         let next = current.saturating_add_signed(delta).min(max_start);
-        self.history_scroll = scroll_state_for_top_line(history_len, unreserved_height, next);
+        self.history_scroll = scroll_state_for_top_line(history_len, history_height, next);
         if matches!(self.history_scroll, HistoryScroll::Bottom) {
             self.hide_history_scrollbar();
         }
@@ -5116,22 +5088,12 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_line_count = self.composer_lines(width).len();
         let command_line_count = self.command_suggestion_lines(width).len();
-        let reserved_height = self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-            /*include_jump_button*/ true,
-        );
-        let unreserved_height = self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-            /*include_jump_button*/ false,
-        );
-        let max_start = history_len.saturating_sub(reserved_height);
+        let history_height =
+            self.history_height_from_line_counts(height, composer_line_count, command_line_count);
+        let max_start = history_len.saturating_sub(history_height);
         if let HistoryScroll::Manual { top_line } = self.history_scroll {
             self.history_scroll =
-                scroll_state_for_top_line(history_len, unreserved_height, top_line.min(max_start));
+                scroll_state_for_top_line(history_len, history_height, top_line.min(max_start));
             if matches!(self.history_scroll, HistoryScroll::Bottom) {
                 self.hide_history_scrollbar();
             }
@@ -6820,6 +6782,7 @@ mod tests {
             .collect::<Vec<_>>();
         let activity = layout.activity.unwrap();
         assert_eq!(activity.y.saturating_add(1), layout.top_divider.y);
+        assert_eq!(layout.history.bottom(), activity.y);
         assert!(rows[activity.y as usize].contains("working"), "{rows:#?}");
         assert!(
             rows[..activity.y as usize]
