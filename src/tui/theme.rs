@@ -239,6 +239,18 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    pub(super) fn shell_context() -> Style {
+        Style::default()
+            .fg(Palette::current().success)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub(super) fn shell_local() -> Style {
+        Style::default()
+            .fg(Palette::current().warning)
+            .add_modifier(Modifier::BOLD)
+    }
+
     pub(super) fn user_message() -> Style {
         Self::dim_block(Palette::current().user_background)
     }

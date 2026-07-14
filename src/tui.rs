@@ -43,6 +43,7 @@ mod file_picker;
 mod goal;
 mod goal_command;
 mod history_cache;
+mod inline_shell;
 mod keybindings;
 mod limits_command;
 mod local_commands;
@@ -78,6 +79,7 @@ use config_editor::{
 };
 use copy_interaction::CodeBlockCopyTarget;
 use goal::GoalState;
+use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -1937,10 +1939,13 @@ impl App {
         let mut prompt = self.expanded_input().trim().to_string();
         let mut display_prompt = self.input.trim().to_string();
         if prompt.is_empty() && self.pending_images.is_empty() {
-            self.input.clear();
-            self.paste_segments.clear();
-            self.input_cursor = 0;
-            self.clamp_command_selection();
+            self.clear_submitted_input();
+            return Ok(());
+        }
+        if let Some((mode, command)) = InlineShellMode::parse(&prompt) {
+            let command = command.to_string();
+            self.clear_submitted_input();
+            self.execute_inline_shell(mode, command, agent).await?;
             return Ok(());
         }
 
@@ -2880,6 +2885,19 @@ impl App {
                 ));
                 self.status = "edit compact target percent".into();
             }
+            config_picker::INLINE_SHELL_VALUE => {
+                let config = self.info.config_repository.load()?;
+                self.composer = ComposerMode::Picker(config_picker::inline_shell_picker(&config));
+                self.status = "select inline shell".into();
+            }
+            value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
+                let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
+                self.info.config_repository.update(|config| {
+                    config.inline_shell.clone_from(&shell);
+                })?;
+                self.open_main_config_picker_selected(config_picker::INLINE_SHELL_VALUE)?;
+                self.status = format!("inline shell: {shell}");
+            }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
@@ -3732,6 +3750,21 @@ impl App {
                 self.status = "edit max tool output lines".into();
                 Ok(())
             }
+            config_picker::INLINE_SHELL_VALUE => {
+                let config = self.info.config_repository.load()?;
+                self.composer = ComposerMode::Picker(config_picker::inline_shell_picker(&config));
+                self.status = "select inline shell".into();
+                Ok(())
+            }
+            value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
+                let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
+                self.info.config_repository.update(|config| {
+                    config.inline_shell.clone_from(&shell);
+                })?;
+                self.open_main_config_picker_selected(config_picker::INLINE_SHELL_VALUE)?;
+                self.status = format!("inline shell: {shell}");
+                Ok(())
+            }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
@@ -3819,13 +3852,27 @@ impl App {
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
-        if self.web_search_config_picker_is_open() {
-            self.open_main_config_picker_selected(config_picker::WEB_SEARCH_VALUE)
+        if self.web_search_config_picker_is_open() || self.inline_shell_picker_is_open() {
+            let selected = if self.web_search_config_picker_is_open() {
+                config_picker::WEB_SEARCH_VALUE
+            } else {
+                config_picker::INLINE_SHELL_VALUE
+            };
+            self.open_main_config_picker_selected(selected)
         } else {
             self.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
             Ok(())
         }
+    }
+
+    fn inline_shell_picker_is_open(&self) -> bool {
+        matches!(
+            &self.composer,
+            ComposerMode::Picker(picker)
+                if picker.action == PickerAction::Config
+                    && picker.items.iter().any(|item| item.value.starts_with(config_picker::INLINE_SHELL_PREFIX))
+        )
     }
 
     fn model_picker_is_open(&self) -> bool {
@@ -4849,7 +4896,11 @@ impl App {
 
     fn divider_line(&self, width: usize) -> Line<'static> {
         let divider_style = match &self.composer {
-            ComposerMode::Input => Theme::reasoning_input_border(self.info.reasoning),
+            ComposerMode::Input => match inline_shell::mode(&self.input) {
+                Some(InlineShellMode::IncludeInContext) => Theme::shell_context(),
+                Some(InlineShellMode::ExcludeFromContext) => Theme::shell_local(),
+                None => Theme::reasoning_input_border(self.info.reasoning),
+            },
             ComposerMode::Picker(_) | ComposerMode::Questionnaire(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -5186,7 +5237,17 @@ impl App {
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
         match &self.composer {
             ComposerMode::Input => {
-                input_lines_with_images(&self.input, &self.pending_images, width)
+                let mut lines = input_lines_with_images(&self.input, &self.pending_images, width);
+                if let Some(mode) = inline_shell::mode(&self.input) {
+                    let style = match mode {
+                        InlineShellMode::IncludeInContext => Theme::shell_context(),
+                        InlineShellMode::ExcludeFromContext => Theme::shell_local(),
+                    };
+                    for line in &mut lines {
+                        *line = line.clone().style(style);
+                    }
+                }
+                lines
             }
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
@@ -5256,6 +5317,14 @@ impl App {
     }
 
     fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
+        if let Some((text, style)) = inline_shell::mode_hint(&self.input) {
+            return vec![styled_line(
+                truncate_one_line(text, width.max(1)),
+                width.max(1),
+                style,
+                LineFill::Natural,
+            )];
+        }
         if self.command_palette_visible() {
             let matches = self.command_matches();
             let selected_index = self.command_selection.min(matches.len().saturating_sub(1));

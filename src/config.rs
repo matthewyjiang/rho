@@ -33,8 +33,13 @@ pub struct Config {
     pub check_for_updates: bool,
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
+    pub inline_shell: String,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
+}
+
+pub(crate) fn default_inline_shell() -> String {
+    if cfg!(windows) { "powershell" } else { "bash" }.into()
 }
 
 impl Default for Config {
@@ -58,6 +63,7 @@ impl Default for Config {
             check_for_updates: true,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
+            inline_shell: default_inline_shell(),
             keybindings: Keybindings::default(),
             prompt_templates: Default::default(),
         }
@@ -214,7 +220,7 @@ struct GroupedConfig<'a> {
     compaction: CompactionSection,
     title: TitleConfig<'a>,
     web_search: WebSearchConfig<'a>,
-    behavior: BehaviorConfig,
+    behavior: BehaviorConfig<'a>,
     keybindings: &'a Keybindings,
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
 }
@@ -268,9 +274,10 @@ struct WebSearchConfig<'a> {
 }
 
 #[derive(Serialize)]
-struct BehaviorConfig {
+struct BehaviorConfig<'a> {
     check_for_updates: bool,
     rtk: bool,
+    inline_shell: &'a str,
 }
 
 impl<'a> From<&'a Config> for GroupedConfig<'a> {
@@ -309,6 +316,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             behavior: BehaviorConfig {
                 check_for_updates: config.check_for_updates,
                 rtk: config.rtk,
+                inline_shell: &config.inline_shell,
             },
             keybindings: &config.keybindings,
             prompt_templates: &config.prompt_templates,
@@ -396,6 +404,9 @@ impl Config {
         if let Some(v) = file.rtk {
             cfg.rtk = v;
         }
+        if let Some(v) = file.inline_shell.filter(|value| !value.trim().is_empty()) {
+            cfg.inline_shell = v;
+        }
         if let Some(ModelSetting::Group(group)) = file.model {
             cfg.provider = group.provider.unwrap_or(cfg.provider);
             cfg.model = group.model.unwrap_or(cfg.model);
@@ -449,6 +460,10 @@ impl Config {
         if let Some(group) = file.behavior {
             cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
             cfg.rtk = group.rtk.unwrap_or(cfg.rtk);
+            cfg.inline_shell = group
+                .inline_shell
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(cfg.inline_shell);
         }
         if let Some(keybindings) = file.keybindings {
             cfg.keybindings = keybindings;
@@ -560,6 +575,7 @@ struct PartialConfig {
     web_search_exa_api_key: Option<String>,
     web_search_brave_api_key: Option<String>,
     rtk: Option<bool>,
+    inline_shell: Option<String>,
     display: Option<PartialDisplayConfig>,
     output: Option<PartialOutputConfig>,
     compaction: Option<PartialCompactionConfig>,
@@ -623,6 +639,7 @@ struct PartialWebSearchConfig {
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     rtk: Option<bool>,
+    inline_shell: Option<String>,
 }
 
 fn non_empty_secret(secret: String) -> Option<String> {

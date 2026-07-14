@@ -14,6 +14,8 @@ pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
+pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
+pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
 pub(super) const WEB_SEARCH_BACK_VALUE: &str = "web_search_back";
 pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
@@ -142,6 +144,16 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 value: MAX_TOOL_OUTPUT_LINES_VALUE.into(),
             },
             PickerItem {
+                label: "Inline shell".into(),
+                detail: Some("Shell used by ! and !! commands. Enter to choose from shells available on PATH.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: config.inline_shell.clone(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: INLINE_SHELL_VALUE.into(),
+            },
+            PickerItem {
                 label: "Web search".into(),
                 detail: Some("Configure web_search backend and API keys.".into()),
                 preview: None,
@@ -152,6 +164,27 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 value: WEB_SEARCH_VALUE.into(),
             },
         ],
+        PickerAction::Config,
+    )
+}
+
+pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
+    UiPicker::new(
+        "Inline shell",
+        "enter select, esc back",
+        super::inline_shell::available_shells(&config.inline_shell)
+            .into_iter()
+            .map(|shell| PickerItem {
+                label: shell.clone(),
+                detail: Some("Use this shell for inline ! and !! commands.".into()),
+                preview: None,
+                badge: (shell == config.inline_shell).then_some(PickerBadge {
+                    text: "selected".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: format!("{INLINE_SHELL_PREFIX}{shell}"),
+            })
+            .collect(),
         PickerAction::Config,
     )
 }
