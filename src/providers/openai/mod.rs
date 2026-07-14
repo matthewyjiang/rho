@@ -8,21 +8,18 @@ pub mod cache;
 mod codex_continuation;
 mod codex_request;
 mod codex_ws;
-pub(crate) mod convert;
-pub(crate) mod stream;
-pub(crate) mod types;
 
-pub use cache::prompt_cache_key_from_session_id;
+pub(crate) use cache::prompt_cache_key_from_session_id;
 
+use crate::protocol::openai_chat::{
+    convert_openai_response, convert_streamed_response, handle_openai_stream_line,
+    invalid_stream_utf8, to_openai_message, to_openai_tool, ChatRequest, ChatResponse,
+    ChatStreamOptions,
+};
+use crate::protocol::openai_responses::collect_codex_sse_response;
 use auth::{load_codex_tokens_for_request, refresh_codex_token, Auth, CodexAuthSource};
 use codex_request::{build_codex_responses_body, CodexRequestMode};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
-use convert::{convert_openai_response, to_openai_message, to_openai_tool};
-use stream::{
-    collect_codex_sse_response, convert_streamed_response, handle_openai_stream_line,
-    invalid_stream_utf8,
-};
-use types::{ChatRequest, ChatResponse, ChatStreamOptions};
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
@@ -379,13 +376,15 @@ mod stream_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::convert::{codex_input_items, codex_reasoning_param, to_openai_message};
-    use super::stream::{
-        convert_streamed_response, extract_sse_text, handle_codex_sse_line,
-        handle_openai_stream_line, CodexSseState,
-    };
     use super::*;
     use crate::model::{AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall};
+    use crate::protocol::openai_chat::{
+        convert_streamed_response, handle_openai_stream_line, to_openai_message,
+    };
+    use crate::protocol::openai_responses::{
+        codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
+        CodexSseState,
+    };
     use crate::tool::{ToolCall, ToolResult, ToolSpec};
     use serde_json::json;
 
@@ -504,7 +503,7 @@ mod tests {
     fn chat_completions_request_does_not_serialize_prompt_cache_key() {
         let body = serde_json::to_value(ChatRequest {
             model: "gpt-4.1".into(),
-            messages: vec![super::types::OpenAiMessage {
+            messages: vec![crate::protocol::openai_chat::OpenAiMessage {
                 role: "user".into(),
                 content: Some("hello".into()),
                 tool_calls: None,

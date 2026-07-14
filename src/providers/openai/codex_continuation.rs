@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::model::{Message, ModelError, ModelResponse};
 
-use super::convert::codex_input_items;
+use crate::protocol::openai_responses::codex_input_items;
 
 /// Holds the canonical boundary between a completed Responses request and the
 /// next one. A continuation is valid only when the next locally generated

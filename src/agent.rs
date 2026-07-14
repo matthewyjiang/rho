@@ -23,11 +23,11 @@ use context_tracker::ContextTracker;
 
 use crate::cancellation::RunCancellation;
 use crate::model::{
-    openai::prompt_cache_key_from_session_id, AbortedAssistant, ContentBlock, ContextUsage,
-    DynModelProvider, Message, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelUsage,
-    PartialToolCall,
+    AbortedAssistant, ContentBlock, ContextUsage, DynModelProvider, Message, ModelError,
+    ModelEvent, ModelRequest, ModelResponse, ModelUsage, PartialToolCall,
 };
 use crate::prompt::system_prompt;
+use crate::providers::openai::prompt_cache_key_from_session_id;
 use crate::tool::{truncate, ToolContext, ToolDisplayStyle, ToolError, ToolRegistry, ToolResult};
 
 pub type QuestionnaireFuture =

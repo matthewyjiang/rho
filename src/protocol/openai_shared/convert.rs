@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::model::{ContentBlock, Message, ModelError, ModelResponse, PartialToolCall};
 use crate::tool::{ToolCall, ToolSpec};
 
-use super::types::{
+use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 

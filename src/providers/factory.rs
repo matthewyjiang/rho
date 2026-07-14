@@ -5,12 +5,19 @@ use crate::{
     credentials::{load_provider_api_key, OsCredentialStore},
     model::{
         models_dev::{cached_reasoning_effort, cached_reasoning_levels},
-        openai::auth::{load_api_key_auth, load_codex_auth},
         registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
-        AnthropicProvider, DynModelProvider, GitHubCopilotProvider, ModelError, ModelProvider,
-        ModelRequest, ModelResponse, OpenAiProvider, XaiProvider,
+        DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
     },
     provider::{self, ProviderAuthKind},
+    providers::{
+        anthropic::AnthropicProvider,
+        github_copilot::GitHubCopilotProvider,
+        openai::{
+            auth::{load_api_key_auth, load_codex_auth},
+            OpenAiProvider,
+        },
+        xai::XaiProvider,
+    },
     reasoning::ReasoningLevel,
 };
 
@@ -65,7 +72,7 @@ fn anthropic_max_tokens(model: &str) -> u32 {
                 .and_then(|metadata| metadata.max_output_tokens)
         })
         .and_then(|tokens| u32::try_from(tokens).ok())
-        .unwrap_or(crate::provider_backend::anthropic::DEFAULT_MAX_TOKENS)
+        .unwrap_or(crate::providers::anthropic::DEFAULT_MAX_TOKENS)
 }
 
 fn load_anthropic_api_key_auth() -> Result<String, ModelError> {

@@ -580,7 +580,61 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         }
     }
 
-    Ok(None)
+    query_windows_console_palette()
+}
+
+#[cfg(windows)]
+fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleScreenBufferInfoEx, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFOEX, STD_OUTPUT_HANDLE,
+    };
+
+    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    if output.is_null() || output == -1isize as _ {
+        return Ok(None);
+    }
+
+    let mut info = CONSOLE_SCREEN_BUFFER_INFOEX {
+        cbSize: std::mem::size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetConsoleScreenBufferInfoEx(output, &mut info) } == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(windows_console_palette(
+        &info.ColorTable,
+        info.wAttributes,
+    )))
+}
+
+#[cfg(any(windows, test))]
+fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> TerminalPalette {
+    // Win32's table uses attribute-bit order (blue, green, red), not ANSI order.
+    const COLORS: [(AnsiColor, usize); 7] = [
+        (AnsiColor::Red, 4),
+        (AnsiColor::Green, 2),
+        (AnsiColor::Yellow, 6),
+        (AnsiColor::Blue, 1),
+        (AnsiColor::Magenta, 5),
+        (AnsiColor::Cyan, 3),
+        (AnsiColor::Gray, 7),
+    ];
+    let ansi = COLORS
+        .into_iter()
+        .map(|(color, index)| (color, rgb_from_colorref(color_table[index])))
+        .collect();
+    let background_index = usize::from((attributes >> 4) & 0x0f);
+
+    TerminalPalette {
+        background: rgb_from_colorref(color_table[background_index]),
+        ansi,
+    }
+}
+
+#[cfg(any(windows, test))]
+fn rgb_from_colorref(color: u32) -> Rgb {
+    Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -689,6 +743,21 @@ mod tests {
 
         assert_eq!(palette.background, Rgb::new(0, 0, 0));
         assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
+    }
+
+    #[test]
+    fn resolves_windows_console_palette_in_attribute_bit_order() {
+        let color_table = [
+            0x000000, 0x110000, 0x001100, 0x111100, 0x000011, 0x110011, 0x001111, 0x111111,
+            0x222222, 0x330000, 0x003300, 0x333300, 0x000033, 0x330033, 0x003333, 0x333333,
+        ];
+
+        let palette = windows_console_palette(&color_table, 0x20);
+
+        assert_eq!(palette.background, Rgb::new(0, 17, 0));
+        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(17, 0, 0));
+        assert_eq!(palette.ansi[&AnsiColor::Blue], Rgb::new(0, 0, 17));
+        assert_eq!(palette.ansi[&AnsiColor::Gray], Rgb::new(17, 17, 17));
     }
 
     #[test]
