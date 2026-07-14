@@ -1948,9 +1948,9 @@ impl App {
             }
             let command = command.to_string();
             self.clear_submitted_input();
-            return self
-                .execute_inline_shell(mode, command, terminal, agent)
-                .await;
+            self.execute_inline_shell(mode, command, terminal, agent)
+                .await?;
+            return Ok(());
         }
 
         match self.parse_input_command() {
@@ -3868,15 +3868,6 @@ impl App {
             self.status = if running { "running" } else { "ready" }.into();
             Ok(())
         }
-    }
-
-    fn inline_shell_picker_is_open(&self) -> bool {
-        matches!(
-            &self.composer,
-            ComposerMode::Picker(picker)
-                if picker.action == PickerAction::Config
-                    && picker.items.iter().any(|item| item.value.starts_with(config_picker::INLINE_SHELL_PREFIX))
-        )
     }
 
     fn model_picker_is_open(&self) -> bool {
