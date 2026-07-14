@@ -9,7 +9,7 @@ use crate::provider_backend::line_decoder::LineDecoder;
 const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 
 #[derive(Default)]
-pub(super) struct AnthropicSseState {
+pub(crate) struct AnthropicSseState {
     blocks: Vec<StreamedBlock>,
     last_output_tokens: u64,
 }
@@ -30,7 +30,7 @@ impl AnthropicSseState {
         &mut self.blocks[index]
     }
 
-    pub(super) fn into_response(self) -> Result<ModelResponse, ModelError> {
+    pub(crate) fn into_response(self) -> Result<ModelResponse, ModelError> {
         let mut blocks = Vec::new();
         for (index, block) in self.blocks.into_iter().enumerate() {
             if !block.text.is_empty() {
@@ -61,7 +61,7 @@ impl AnthropicSseState {
     }
 }
 
-pub(super) async fn collect_anthropic_sse_response(
+pub(crate) async fn collect_anthropic_sse_response(
     response: reqwest::Response,
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
 ) -> Result<ModelResponse, ModelError> {
@@ -95,7 +95,7 @@ fn sse_data(line: &str) -> Option<&str> {
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
-pub(super) fn handle_anthropic_stream_line(
+pub(crate) fn handle_anthropic_stream_line(
     line: &str,
     state: &mut AnthropicSseState,
     on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,

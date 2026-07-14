@@ -1,17 +1,13 @@
-mod convert;
-mod stream;
-mod types;
-
-use crate::provider_backend::{
-    stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
-    ModelResponse,
-};
-
-use convert::{convert_anthropic_response, split_system_and_messages, to_anthropic_tool};
-use stream::collect_anthropic_sse_response;
-use types::{
-    AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage, AnthropicRequest,
-    AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+use crate::{
+    protocol::anthropic_messages::{
+        collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
+        to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
+        AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+    },
+    provider_backend::{
+        stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
+        ModelResponse,
+    },
 };
 
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
@@ -230,5 +226,50 @@ mod tests {
         assert!(value.get("cache_control").is_none());
         assert!(value.get("prompt_cache_key").is_none());
         assert_eq!(value["messages"][1]["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn request_body_removes_top_level_schema_composition_from_tools() {
+        let provider = test_provider();
+        let body = provider
+            .request_body(
+                ModelRequest {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[ToolSpec {
+                        name: "edit_file".into(),
+                        description: "edit files".into(),
+                        input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "value": {
+                                    "anyOf": [
+                                        {"type": "string"},
+                                        {"type": "null"}
+                                    ]
+                                }
+                            },
+                            "anyOf": [
+                                {"required": ["path"]},
+                                {"required": ["value"]}
+                            ],
+                            "oneOf": [{"type": "object"}],
+                            "allOf": [{"type": "object"}]
+                        }),
+                    }],
+                    cancellation: Default::default(),
+                    prompt_cache_key: None,
+                },
+                false,
+            )
+            .unwrap();
+
+        let value = serde_json::to_value(body).unwrap();
+        let schema = &value["tools"][0]["input_schema"];
+        assert!(schema.get("anyOf").is_none());
+        assert!(schema.get("oneOf").is_none());
+        assert!(schema.get("allOf").is_none());
+        assert!(schema["properties"]["value"].get("anyOf").is_some());
+        assert_eq!(schema["properties"]["path"]["type"], "string");
     }
 }

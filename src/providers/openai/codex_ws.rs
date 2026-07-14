@@ -16,7 +16,7 @@ use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
 use super::codex_request::CodexRequestMode;
-use super::stream::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
+use crate::protocol::openai_responses::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
 ///

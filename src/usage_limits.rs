@@ -9,7 +9,7 @@ use crate::{
         load_codex_tokens, load_xai_tokens, save_xai_tokens, CodexTokens, CredentialStore,
         XaiTokens,
     },
-    model::openai::auth::{refresh_codex_token, CodexAuthSource},
+    providers::openai::auth::{refresh_codex_token, CodexAuthSource},
 };
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";

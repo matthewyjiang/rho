@@ -21,7 +21,7 @@ fn resolved_cache_write_tokens(usage: &AnthropicUsage) -> Option<u64> {
     })
 }
 
-pub(super) fn split_system_and_messages(
+pub(crate) fn split_system_and_messages(
     messages: Vec<Message>,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
     let mut system = Vec::new();
@@ -121,23 +121,29 @@ fn render_tool_call(call: &ToolCall) -> String {
     format!("Tool call: {}\n{}", call.name, arguments)
 }
 
-pub(super) fn to_anthropic_tool(tool: ToolSpec) -> AnthropicTool {
+pub(crate) fn to_anthropic_tool(tool: ToolSpec) -> AnthropicTool {
+    let mut input_schema = tool.input_schema;
+    if let Some(schema) = input_schema.as_object_mut() {
+        schema.remove("oneOf");
+        schema.remove("allOf");
+        schema.remove("anyOf");
+    }
     AnthropicTool {
         name: tool.name,
         description: tool.description,
-        input_schema: tool.input_schema,
+        input_schema,
         cache_control: None,
     }
 }
 
-pub(super) fn convert_anthropic_response(
+pub(crate) fn convert_anthropic_response(
     response: AnthropicResponse,
 ) -> Result<ModelResponse, ModelError> {
     let _usage = response.usage.map(usage_to_model_usage);
     convert_content_blocks(response.content)
 }
 
-pub(super) fn convert_content_blocks(
+pub(crate) fn convert_content_blocks(
     content: Vec<AnthropicContentBlock>,
 ) -> Result<ModelResponse, ModelError> {
     let mut blocks = Vec::new();
@@ -171,7 +177,7 @@ pub(super) fn convert_content_blocks(
     }
 }
 
-pub(super) fn usage_to_model_usage(usage: AnthropicUsage) -> ModelUsage {
+pub(crate) fn usage_to_model_usage(usage: AnthropicUsage) -> ModelUsage {
     let cache_read_tokens = resolved_cache_read_tokens(&usage);
     let cache_write_tokens = resolved_cache_write_tokens(&usage);
     let total_tokens = usage
@@ -200,8 +206,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::provider_backend::{
-        anthropic::types::AnthropicCacheCreation, ImageContent, ToolResult,
+    use crate::{
+        protocol::anthropic_messages::types::AnthropicCacheCreation,
+        provider_backend::{ImageContent, ToolResult},
     };
 
     #[test]

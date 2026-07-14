@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
+use crate::protocol::openai_responses::{
+    codex_input_items, collect_codex_sse_response, to_responses_lite_tool,
+};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
     credentials::CredentialStore,
-    model::{
-        openai::{
-            convert::{codex_input_items, to_responses_lite_tool},
-            stream::collect_codex_sse_response,
-        },
-        ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
-    },
+    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
     provider_backend::stream_timeout::provider_client,
     reasoning::ReasoningLevel,
 };

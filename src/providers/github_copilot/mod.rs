@@ -1,16 +1,14 @@
+use crate::protocol::openai_chat::{
+    convert_openai_response, convert_streamed_response, handle_openai_stream_line,
+    invalid_stream_utf8, to_openai_message, to_openai_tool,
+};
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
-    model::{
-        openai::{
-            convert::{convert_openai_response, to_openai_message, to_openai_tool},
-            stream::{convert_streamed_response, handle_openai_stream_line, invalid_stream_utf8},
-            types::{ChatRequest, ChatResponse, ChatStreamOptions},
-        },
-        ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
-    },
+    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
     provider_backend::{
         line_decoder::LineDecoder,
         stream_timeout::{provider_client, StreamIdleDeadline},

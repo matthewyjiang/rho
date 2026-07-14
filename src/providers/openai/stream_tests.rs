@@ -184,7 +184,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
 fn rejects_out_of_range_tool_call_index() {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
-    let err = super::stream::handle_openai_stream_line(
+    let err = crate::protocol::openai_chat::handle_openai_stream_line(
         r#"data: {"choices":[{"delta":{"tool_calls":[{"index":4000000000}]}}]}"#,
         &mut text,
         &mut tool_calls,

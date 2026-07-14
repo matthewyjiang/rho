@@ -9,7 +9,7 @@ use crate::{
         load_codex_tokens, load_provider_api_key, CodexTokens, OsCredentialStore,
         WebSearchCredential,
     },
-    model::openai::auth::{refresh_codex_token, CodexAuthSource},
+    providers::openai::auth::{refresh_codex_token, CodexAuthSource},
     tool::ToolError,
 };
 

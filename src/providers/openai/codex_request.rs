@@ -5,7 +5,7 @@ use crate::{
     tool::ToolSpec,
 };
 
-use super::convert::{
+use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, to_responses_lite_tool, to_responses_tool,
 };
 
