@@ -6,6 +6,7 @@ mod compaction;
 mod context_tracker;
 mod history;
 pub mod questionnaire;
+mod tool_call_preview;
 
 pub use compaction::CompactionConfig;
 pub use history::{HistorySink, SessionHistorySink};
@@ -62,8 +63,7 @@ pub enum AgentEvent {
         display_lines: Vec<String>,
     },
     ToolCallUpdated {
-        name: Option<String>,
-        arguments: String,
+        display_lines: Vec<String>,
     },
     ToolFinished {
         name: String,
@@ -502,12 +502,17 @@ impl Agent {
                                 ..
                             } => {
                                 let call = partial_assistant.tool_calls.get(&index);
-                                on_event(AgentEvent::ToolCallUpdated {
-                                    name: call.and_then(|call| call.name.clone()).or(name),
-                                    arguments: call
-                                        .map(|call| call.arguments.clone())
-                                        .unwrap_or(arguments),
-                                })
+                                let name = call.and_then(|call| call.name.clone()).or(name);
+                                let arguments = call
+                                    .map(|call| call.arguments.as_str())
+                                    .unwrap_or(arguments.as_str());
+                                let display_lines = tool_call_preview::display_lines(
+                                    name.as_deref(),
+                                    arguments,
+                                    &self.tools,
+                                    &self.ctx,
+                                );
+                                on_event(AgentEvent::ToolCallUpdated { display_lines })
                             }
                             ModelEvent::Usage(usage) => {
                                 if let Some(context_usage) = self

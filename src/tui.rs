@@ -4476,17 +4476,8 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { name, arguments } => {
-                let mut display_lines = Vec::new();
-                if let Some(name) = name.filter(|name| !name.is_empty()) {
-                    display_lines.push(format!("preparing {name}"));
-                } else {
-                    display_lines.push("preparing tool call".into());
-                }
-                if !arguments.is_empty() {
-                    display_lines.push(arguments);
-                }
-                self.pending_tool_call = Some(ToolEntry {
+            AgentEvent::ToolCallUpdated { display_lines } => {
+                self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
@@ -6397,6 +6388,28 @@ mod tests {
     #[test]
     fn normalize_paste_converts_carriage_returns() {
         assert_eq!(normalize_paste("a\r\nb\rc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn interrupted_tool_call_does_not_add_a_preparing_label() {
+        let entries = transcript_entries_from_messages(&[Message::AbortedAssistant(
+            crate::model::AbortedAssistant {
+                content: Vec::new(),
+                reasoning: String::new(),
+                tool_calls: vec![crate::model::PartialToolCall {
+                    id: Some("call_1".into()),
+                    name: Some("read_file".into()),
+                    arguments: r#"{"path":"src/main.rs"}"#.into(),
+                }],
+                usage: ModelUsage::default(),
+            },
+        )]);
+
+        assert!(matches!(
+            entries.as_slice(),
+            [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(_)]
+                if display_lines.first().map(String::as_str) == Some("read_file")
+        ));
     }
 
     #[test]

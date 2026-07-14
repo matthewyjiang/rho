@@ -1236,6 +1236,58 @@ async fn unknown_tools_are_returned_to_model_without_stopping_loop() {
 }
 
 #[test]
+fn streamed_tool_call_renders_argument_values_before_json_is_complete() {
+    let cwd = std::env::current_dir().unwrap();
+    let context = ToolContext {
+        cwd,
+        max_output_bytes: 12000,
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(crate::tools::read_file::ReadFile);
+
+    assert_eq!(
+        tool_call_preview::display_lines(
+            Some("read_file"),
+            r#"{"path":"src/main.rs"}"#,
+            &tools,
+            &context,
+        ),
+        vec!["read_file", "src/main.rs"]
+    );
+    assert_eq!(
+        tool_call_preview::display_lines(
+            Some("read_file"),
+            r#"{"path":"src/main"#,
+            &tools,
+            &context,
+        ),
+        vec!["read_file", "src/main"]
+    );
+    assert_eq!(
+        tool_call_preview::display_lines(
+            Some("read_file"),
+            r#"{"path":"src/main.rs","offset":"#,
+            &tools,
+            &context,
+        ),
+        vec!["read_file", "src/main.rs"]
+    );
+    assert_eq!(
+        tool_call_preview::display_lines(
+            Some("bash"),
+            r#"{"command":"cargo te"#,
+            &{
+                let mut tools = ToolRegistry::new();
+                tools.register(crate::tools::bash::Bash::new(false));
+                tools
+            },
+            &context,
+        ),
+        vec!["bash cargo te", "timeout: none"]
+    );
+}
+
+#[test]
 fn read_file_event_content_shows_requested_line_range() {
     let cwd = std::env::current_dir().unwrap();
     let content = crate::tools::read_file::ReadFile

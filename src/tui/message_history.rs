@@ -35,10 +35,8 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
                     entries.push(Entry::Assistant(text));
                 }
                 if let Some(tool_call) = message.tool_calls.last() {
-                    let mut display_lines = vec![format!(
-                        "preparing {}",
-                        tool_call.name.as_deref().unwrap_or("tool call")
-                    )];
+                    let mut display_lines =
+                        vec![tool_call.name.clone().unwrap_or_else(|| "tool call".into())];
                     if !tool_call.arguments.is_empty() {
                         display_lines.push(tool_call.arguments.clone());
                     }
