@@ -471,8 +471,9 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     use std::io::stdout;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, ReadConsoleInputW, SetConsoleMode,
+        GetConsoleMode, GetStdHandle, PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode,
         ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
@@ -518,31 +519,62 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         }
 
         let mut records = [INPUT_RECORD::default(); 128];
-        let mut count = 0;
+        let mut record_count = 0;
         if unsafe {
-            ReadConsoleInputW(
+            PeekConsoleInputW(
                 input,
                 records.as_mut_ptr(),
                 records.len() as u32,
-                &mut count,
+                &mut record_count,
             )
         } == 0
         {
             return Err(std::io::Error::last_os_error());
         }
-        for record in &records[..count as usize] {
-            if u32::from(record.EventType) != KEY_EVENT {
-                continue;
+        let leading_non_keys = records[..record_count as usize]
+            .iter()
+            .position(|record| {
+                if u32::from(record.EventType) != KEY_EVENT {
+                    return false;
+                }
+                let key = unsafe { record.Event.KeyEvent };
+                key.bKeyDown != 0 && unsafe { key.uChar.UnicodeChar } != 0
+            })
+            .unwrap_or(record_count as usize);
+        if leading_non_keys > 0 {
+            let mut discarded = 0;
+            if unsafe {
+                ReadConsoleInputW(
+                    input,
+                    records.as_mut_ptr(),
+                    leading_non_keys as u32,
+                    &mut discarded,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error());
             }
-            let key = unsafe { record.Event.KeyEvent };
-            if key.bKeyDown == 0 {
-                continue;
-            }
-            let character = unsafe { key.uChar.UnicodeChar };
-            if character != 0 {
-                bytes.extend_from_slice(String::from_utf16_lossy(&[character]).as_bytes());
-            }
+            continue;
         }
+        if record_count == 0 {
+            continue;
+        }
+
+        let mut buffer = [0u8; 1024];
+        let mut count = 0;
+        if unsafe {
+            ReadFile(
+                input,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                &mut count,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        bytes.extend_from_slice(&buffer[..count as usize]);
         if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
             return Ok(Some(palette));
         }
