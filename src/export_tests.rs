@@ -78,6 +78,205 @@ fn renders_assistant_text_as_markdown() {
 }
 
 #[test]
+fn renders_assistant_latex_as_mathml() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Euler's identity is $e^{i\\pi} + 1 = 0$.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("<msup>"));
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("display=\"block\""));
+    assert!(html.contains("<mfrac>"));
+    assert!(!html.contains("$e^{i\\pi}"));
+}
+
+#[test]
+fn renders_parenthesis_and_bracket_latex_delimiters() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Here’s inline math: \\(e^{i\\pi}+1=0\\).\n\nAnd a display equation:\n\n\\[\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("display=\"block\""));
+    assert!(html.contains("<msubsup>"));
+    assert!(!html.contains("\\(e^{i\\pi}"));
+    assert!(!html.contains("<p>["));
+}
+
+#[test]
+fn renders_explicit_inline_math_before_alphanumeric_text() {
+    let export = export_with_messages(vec![message(Message::assistant_text(r"\(x\)2"))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("<mi>x</mi>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn preserves_explicit_latex_delimiters_in_fallback() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        r"\(\definitelyUnknown{x}\)",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains(r#"<code class="math-fallback">\(\definitelyUnknown{x}\)</code>"#));
+}
+
+#[test]
+fn renders_display_math_with_markdown_block_markers() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "An aligned system:\n\n\\[\n\\begin{aligned}\n\\nabla \\times \\mathbf{B} &= \\mu_0\\mathbf{J}\n+ \\mu_0\\varepsilon_0\\frac{\\partial \\mathbf{E}}{\\partial t}.\n\\end{aligned}\n\\]\n\nA boxed transform:\n\n\\[\n\\boxed{\n\\mathcal{F}\\{f\\}(\\xi)\n=\n\\int_{-\\infty}^{\\infty} f(x)e^{-2\\pi i x\\xi}\\,dx\n}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.matches("display=\"block\"").count() >= 2);
+    assert!(html.contains("<mtable"));
+    assert!(html.contains("<menclose notation=\"box\""));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("<div class=\"markdown\"><h1>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn renders_markdown_sensitive_latex_inside_bracket_delimiters() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "\\[\n\\begin{aligned}\n\\nabla \\cdot \\mathbf{E} &= \\frac{\\rho}{\\varepsilon_0} \\\\\n\\nabla \\cdot \\mathbf{B} &= 0\n\\end{aligned}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("<mtable"));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn renders_dollar_display_math_with_markdown_block_markers() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$$\n\\begin{aligned}\nx &= 1\n+ y\n\\end{aligned}\n$$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn leaves_parenthesis_and_bracket_delimiters_literal_in_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "`\\(x^2\\)`\n\n```latex\n\\[y^2\\]\n```",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>\\(x^2\\)</code>"));
+    assert!(html.contains("<code class=\"language-latex\">\\[y^2\\]"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn does_not_match_parenthesis_or_bracket_math_across_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "\\(unclosed `code` later\\)\n\n\\[unclosed\n\n```text\ncode\n```\n\nlater\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>code</code>"));
+    assert!(html.contains("<code class=\"language-text\">code"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn preserves_ambiguous_currency_and_shell_variables() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Costs range from $5-$10 and the path is $HOME/$PATH.",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("Costs range from $5-$10 and the path is $HOME/$PATH."));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn reuses_latex_macros_within_one_assistant_text_block() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$$\\gdef\\RR{\\mathbb{R}}$$\n\nThe real numbers are $\\RR$.",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("mathvariant=\"double-struck\">R</mi>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn does_not_reuse_latex_macros_between_assistant_text_blocks() {
+    let export = export_with_messages(vec![
+        message(Message::assistant_text("$$\\gdef\\RR{\\mathbb{R}}$$")),
+        message(Message::assistant_text("$\\RR$")),
+    ]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code class=\"math-fallback\">$\\RR$</code>"));
+}
+
+#[test]
+fn leaves_latex_delimiters_literal_in_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "`$x^2$`\n\n```text\n$$y^2$$\n```",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>$x^2$</code>"));
+    assert!(html.contains("<code class=\"language-text\">$$y^2$$"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn escapes_html_inside_latex() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$\\text{<script>alert('x')</script>}$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("&lt;script&gt;alert(’x’)&lt;/script&gt;"));
+    assert!(!html.contains("class=\"math-fallback\""));
+    assert!(!html.contains("<script>alert"));
+}
+
+#[test]
+fn escapes_invalid_latex_in_fallback() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$\\definitelyUnknown{<script>alert('x')</script>}$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code class=\"math-fallback\">"));
+    assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"));
+    assert!(!html.contains("<script>alert"));
+}
+
+#[test]
 fn escapes_raw_html_in_assistant_markdown() {
     let export = export_with_messages(vec![message(Message::assistant_text(
         "before <img src=x onerror=\"alert('x')\"> after\n\n<script>alert('x')</script>",
