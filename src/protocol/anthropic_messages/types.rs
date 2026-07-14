@@ -17,14 +17,21 @@ pub(crate) struct AnthropicRequest {
     pub(crate) cache_control: Option<AnthropicCacheControl>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) thinking: Option<AnthropicThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) output_config: Option<AnthropicOutputConfig>,
     pub(crate) stream: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct AnthropicThinkingConfig {
-    #[serde(rename = "type")]
-    pub(crate) kind: &'static str,
-    pub(crate) budget_tokens: u32,
+#[serde(tag = "type", rename_all = "lowercase")]
+pub(crate) enum AnthropicThinkingConfig {
+    Enabled { budget_tokens: u32 },
+    Adaptive,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct AnthropicOutputConfig {
+    pub(crate) effort: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
