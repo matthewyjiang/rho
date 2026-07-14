@@ -473,8 +473,8 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
     use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
-        STD_INPUT_HANDLE,
+        GetConsoleMode, GetStdHandle, PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode,
+        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -516,6 +516,48 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
         if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
             break;
+        }
+
+        let mut records = [INPUT_RECORD::default(); 128];
+        let mut record_count = 0;
+        if unsafe {
+            PeekConsoleInputW(
+                input,
+                records.as_mut_ptr(),
+                records.len() as u32,
+                &mut record_count,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        let leading_non_keys = records[..record_count as usize]
+            .iter()
+            .position(|record| {
+                if u32::from(record.EventType) != KEY_EVENT {
+                    return false;
+                }
+                let key = unsafe { record.Event.KeyEvent };
+                key.bKeyDown != 0 && unsafe { key.uChar.UnicodeChar } != 0
+            })
+            .unwrap_or(record_count as usize);
+        if leading_non_keys > 0 {
+            let mut discarded = 0;
+            if unsafe {
+                ReadConsoleInputW(
+                    input,
+                    records.as_mut_ptr(),
+                    leading_non_keys as u32,
+                    &mut discarded,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            continue;
+        }
+        if record_count == 0 {
+            continue;
         }
 
         let mut buffer = [0u8; 1024];
