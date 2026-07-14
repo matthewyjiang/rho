@@ -112,6 +112,7 @@ impl Tool for Bash {
             .arg("-lc")
             .arg(&args.command)
             .current_dir(&ctx.cwd)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -341,6 +342,24 @@ mod tests {
             cwd: std::env::temp_dir(),
             max_output_bytes: 12000,
         }
+    }
+
+    #[tokio::test]
+    async fn command_receives_eof_on_stdin() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            Bash::new(false).call(
+                json!({"command": "if read -r value; then printf 'input:%s' \"$value\"; else printf 'eof'; fi"}),
+                test_context(),
+                "call_1".into(),
+            ),
+        )
+        .await
+        .expect("command should not wait for terminal input")
+        .unwrap();
+
+        assert!(result.ok);
+        assert!(result.content.contains("eof"));
     }
 
     #[tokio::test]

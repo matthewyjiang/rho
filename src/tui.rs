@@ -1948,9 +1948,9 @@ impl App {
             }
             let command = command.to_string();
             self.clear_submitted_input();
-            self.execute_inline_shell(mode, command, terminal, agent)
-                .await?;
-            return Ok(());
+            return self
+                .execute_inline_shell(mode, command, terminal, agent)
+                .await;
         }
 
         match self.parse_input_command() {
