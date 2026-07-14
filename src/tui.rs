@@ -4589,7 +4589,7 @@ impl App {
             frame.render_widget(
                 Paragraph::new(Line::styled(
                     self.jump_to_bottom_text(width),
-                    Theme::accent(),
+                    Theme::jump_to_bottom(),
                 ))
                 .style(Style::default()),
                 button,
@@ -5129,7 +5129,7 @@ impl App {
 
     #[cfg(test)]
     fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        Line::styled(self.jump_to_bottom_text(width), Theme::accent())
+        Line::styled(self.jump_to_bottom_text(width), Theme::jump_to_bottom())
     }
 
     fn jump_to_bottom_text(&self, width: usize) -> String {
