@@ -194,12 +194,16 @@ impl Tool for Bash {
             &exit_code,
         );
         content = truncate(content, ctx.max_output_bytes);
-        on_update(display_lines_with_content(&raw_args, &content));
-        Ok(ToolResult {
+        let result = ToolResult {
             id,
             ok: status.success(),
             content,
-        })
+        };
+        if self.rtk_enabled {
+            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
+        }
+        on_update(display_lines_with_content(&raw_args, &result.content));
+        Ok(result)
     }
 }
 

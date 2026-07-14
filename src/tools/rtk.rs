@@ -1,8 +1,16 @@
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::Duration,
+};
 
-use tokio::process::Command;
+use crate::tool::ToolResult;
+use serde_json::json;
+use tokio::{io::AsyncWriteExt, process::Command};
 
 const REWRITE_TIMEOUT: Duration = Duration::from_secs(2);
+static DISCOVER_LOG_NAME: LazyLock<String> =
+    LazyLock::new(|| format!("rho-{}-{}.jsonl", std::process::id(), uuid::Uuid::new_v4()));
 
 pub fn is_available() -> bool {
     let Ok(output) = std::process::Command::new("rtk").arg("--version").output() else {
@@ -58,19 +66,92 @@ pub async fn rewrite(command: &str) -> Option<String> {
     (!rewritten.is_empty() && rewritten != command).then(|| rewritten.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_rtk_versions() {
-        assert_eq!(parse_version("rtk 0.23.0"), Some((0, 23, 0)));
-        assert_eq!(parse_version("0.28.2"), Some((0, 28, 2)));
-    }
-
-    #[test]
-    fn old_rtk_versions_do_not_support_rewrite() {
-        assert!(!supports_rewrite("rtk 0.22.9"));
-        assert!(supports_rewrite("rtk 0.23.0"));
-    }
+pub(super) async fn log_execution(cwd: &Path, command: &str, result: &ToolResult) {
+    let Some(projects_dir) = discover_projects_dir() else {
+        return;
+    };
+    let _ = log_execution_in_projects_dir(&projects_dir, cwd, command, result).await;
 }
+
+fn discover_projects_dir() -> Option<PathBuf> {
+    let claude_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| crate::paths::home_dir().map(|home| home.join(".claude")))?;
+    Some(claude_dir.join("projects"))
+}
+
+async fn log_execution_in_projects_dir(
+    projects_dir: &Path,
+    cwd: &Path,
+    command: &str,
+    result: &ToolResult,
+) -> std::io::Result<()> {
+    let project_dir = projects_dir
+        .join(encode_project_path(cwd))
+        .join("rho-sessions");
+    tokio::fs::create_dir_all(&project_dir).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&project_dir, std::fs::Permissions::from_mode(0o700)).await?;
+    }
+
+    let path = project_dir.join(DISCOVER_LOG_NAME.as_str());
+    let tool_use_id = format!("rho-{}", uuid::Uuid::new_v4());
+    let assistant = json!({
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": tool_use_id,
+                "name": "Bash",
+                "input": { "command": command }
+            }]
+        }
+    });
+    let output_size = " ".repeat(result.content.len());
+    let result_entry = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": output_size,
+                "is_error": !result.ok
+            }]
+        }
+    });
+    let mut entry = serde_json::to_vec(&assistant).map_err(std::io::Error::other)?;
+    entry.push(b'\n');
+    entry.extend(serde_json::to_vec(&result_entry).map_err(std::io::Error::other)?);
+    entry.push(b'\n');
+
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).await?;
+    file.write_all(&entry).await
+}
+
+fn encode_project_path(path: &Path) -> String {
+    const SANITIZED_CHARS: &[char] = &['/', '.', '_', '\\', ':', ' ', '[', ']'];
+
+    path.to_string_lossy()
+        .chars()
+        .map(|ch| {
+            if !ch.is_ascii() || SANITIZED_CHARS.contains(&ch) {
+                '-'
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "rtk_tests.rs"]
+mod tests;

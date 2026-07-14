@@ -24,9 +24,16 @@ fn resolved_cache_write_tokens(usage: &AnthropicUsage) -> Option<u64> {
     })
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderContextReplay {
+    Enabled,
+    Disabled,
+}
+
 pub(crate) fn split_system_and_messages(
     messages: Vec<Message>,
     target: &crate::model::ModelIdentity,
+    provider_context_replay: ProviderContextReplay,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
     let mut system = Vec::new();
     let mut converted = Vec::new();
@@ -44,14 +51,20 @@ pub(crate) fn split_system_and_messages(
                 blocks.into_iter().map(assistant_block).collect(),
             ),
             Message::EnrichedAssistant(message) => {
-                let prepared = prepare_assistant(*message, target);
+                let mut message = *message;
+                if provider_context_replay == ProviderContextReplay::Disabled {
+                    message.provider_context.clear();
+                }
+                let prepared = prepare_assistant(message, target);
                 let mut content = prepared
                     .content
                     .into_iter()
                     .map(assistant_block)
                     .collect::<Vec<_>>();
                 for block in prepared.replay_context {
-                    if block.kind != "anthropic_content_block" {
+                    if provider_context_replay == ProviderContextReplay::Disabled
+                        || block.kind != "anthropic_content_block"
+                    {
                         continue;
                     }
                     if let Ok(block_data) = serde_json::from_value(block.data) {
@@ -73,6 +86,9 @@ pub(crate) fn split_system_and_messages(
                 enriched
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
+                if provider_context_replay == ProviderContextReplay::Disabled {
+                    enriched.provider_context.clear();
+                }
                 let prepared = prepare_assistant(enriched, target);
                 let mut content = prepared
                     .content
@@ -80,7 +96,9 @@ pub(crate) fn split_system_and_messages(
                     .map(assistant_block)
                     .collect::<Vec<_>>();
                 for block in prepared.replay_context {
-                    if block.kind == "anthropic_content_block" {
+                    if provider_context_replay == ProviderContextReplay::Enabled
+                        && block.kind == "anthropic_content_block"
+                    {
                         if let Ok(block_data) = serde_json::from_value(block.data) {
                             content.insert(
                                 block.position.unwrap_or(content.len()).min(content.len()),
@@ -281,6 +299,7 @@ mod tests {
                 }),
             ],
             &target(),
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -319,6 +338,7 @@ mod tests {
                 }),
             ])],
             &target(),
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -344,6 +364,7 @@ mod tests {
                 content: "failed".into(),
             })],
             &target(),
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -367,6 +388,7 @@ mod tests {
                 Message::assistant_text("three"),
             ],
             &target(),
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -392,6 +414,7 @@ mod tests {
                 }],
             })],
             &target(),
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -423,6 +446,7 @@ mod tests {
                 }],
             })],
             &target,
+            ProviderContextReplay::Enabled,
         )
         .unwrap();
 
@@ -430,6 +454,37 @@ mod tests {
             messages[0].content.as_slice(),
             [AnthropicContentBlock::Thinking { thinking, signature }, AnthropicContentBlock::Text { text, .. }]
                 if thinking == "private" && signature == "signed" && text == "answer"
+        ));
+    }
+
+    #[test]
+    fn exact_anthropic_handoff_omits_thinking_when_reasoning_is_disabled() {
+        let target = target();
+        let (_, messages) = split_system_and_messages(
+            vec![Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("answer".into())],
+                provenance: Some(target.clone()),
+                reasoning_summary: Some("safe summary".into()),
+                provider_context: vec![crate::model::ProviderContextBlock {
+                    identity: target.clone(),
+                    kind: "anthropic_content_block".into(),
+                    position: Some(0),
+                    data: json!({
+                        "type": "thinking",
+                        "thinking": "private",
+                        "signature": "signed"
+                    }),
+                }],
+            })],
+            &target,
+            ProviderContextReplay::Disabled,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            messages[0].content.as_slice(),
+            [AnthropicContentBlock::Text { text, .. }, AnthropicContentBlock::Text { text: summary, .. }]
+                if text == "answer" && summary.contains("safe summary")
         ));
     }
 

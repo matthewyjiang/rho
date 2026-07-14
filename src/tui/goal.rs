@@ -82,10 +82,21 @@ fn evaluation_transcript(messages: &[Message]) -> String {
     let transcript = messages
         .iter()
         .filter(|message| !matches!(message, Message::System(_)))
-        .map(|message| serde_json::to_string(message).unwrap_or_default())
+        .map(safe_transcript_message)
+        .map(|message| serde_json::to_string(&message).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n");
     tail_chars(&transcript, MAX_EVALUATION_TRANSCRIPT_CHARS)
+}
+
+fn safe_transcript_message(message: &Message) -> Message {
+    let mut message = message.clone();
+    match &mut message {
+        Message::EnrichedAssistant(assistant) => assistant.provider_context.clear(),
+        Message::AbortedAssistant(assistant) => assistant.provider_context.clear(),
+        Message::System(_) | Message::User(_) | Message::Assistant(_) | Message::ToolResult(_) => {}
+    }
+    message
 }
 
 fn tail_chars(text: &str, max_chars: usize) -> String {
@@ -168,6 +179,29 @@ mod tests {
     #[test]
     fn rejects_evaluation_without_a_reason() {
         assert!(parse_evaluation(r#"{"met":false,"reason":"  "}"#).is_err());
+    }
+
+    #[test]
+    fn transcript_omits_opaque_provider_context() {
+        let identity =
+            crate::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
+        let transcript =
+            evaluation_transcript(&[Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("answer".into())],
+                provenance: Some(identity.clone()),
+                reasoning_summary: Some("safe summary".into()),
+                provider_context: vec![crate::model::ProviderContextBlock {
+                    identity,
+                    kind: "anthropic_content_block".into(),
+                    position: Some(0),
+                    data: serde_json::json!({"signature": "secret-signature"}),
+                }],
+            })]);
+
+        assert!(transcript.contains("answer"));
+        assert!(transcript.contains("safe summary"));
+        assert!(!transcript.contains("secret-signature"));
+        assert!(!transcript.contains("provider_context"));
     }
 
     #[test]
