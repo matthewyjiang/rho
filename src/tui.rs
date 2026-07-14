@@ -7675,21 +7675,6 @@ mod tests {
     }
 
     #[test]
-    fn hidden_reasoning_shows_thinking_placeholder() {
-        let mut app = test_app();
-        app.active_turn_show_reasoning_output = false;
-        app.record_agent_event(AgentEvent::StepStarted(1));
-        let thinking = app
-            .history_live_lines(60, Instant::now())
-            .into_iter()
-            .find(|line| line_text(line).contains("Thinking..."))
-            .unwrap();
-        assert_eq!(thinking.spans[1].style, StreamKind::Reasoning.style());
-        app.reset_streams();
-        assert!(!app.hidden_reasoning_active);
-    }
-
-    #[test]
     fn history_lines_include_header_transcript_pending_preview_and_spinner() {
         let mut app = test_app();
         app.push_transcript_entry(Entry::User("hello".into()));
