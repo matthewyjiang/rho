@@ -4,40 +4,50 @@ use katex::{KatexContext, OutputFormat, Settings};
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 
 pub(super) fn to_html(text: &str) -> String {
+    let prepared = prepare_math(text);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_MATH);
 
-    let normalized = normalize_tex_delimiters(text);
     let context = math_context();
     let mut settings = Settings {
         output: OutputFormat::Mathml,
         ..Settings::default()
     };
-    let parser = Parser::new_ext(&normalized.source, options)
+    let parser = Parser::new_ext(&prepared.source, options)
         .into_offset_iter()
         .map(|(event, range)| {
-            let syntax = if normalized.is_explicit_math(&range) {
-                MathSyntax::Tex
-            } else {
-                MathSyntax::Dollar
-            };
+            if let Some(math) = prepared
+                .math
+                .iter()
+                .find(|math| math.placeholder_range.start == range.start)
+            {
+                return math_event(context, &mut settings, &math.tex, math.display, math.syntax);
+            }
+
             match event {
                 Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
-                Event::InlineMath(tex)
-                    if syntax == MathSyntax::Dollar
-                        && is_ambiguous_inline_math(&normalized.source, range.end) =>
-                {
+                Event::InlineMath(tex) if is_ambiguous_inline_math(&prepared.source, range.end) => {
                     Event::Text(CowStr::Boxed(format!("${tex}$").into_boxed_str()))
                 }
-                Event::InlineMath(tex) => {
-                    math_event(context, &mut settings, &tex, MathDisplay::Inline, syntax)
-                }
-                Event::DisplayMath(tex) => {
-                    math_event(context, &mut settings, &tex, MathDisplay::Block, syntax)
-                }
+                Event::InlineMath(tex) => math_event(
+                    context,
+                    &mut settings,
+                    &tex,
+                    MathDisplay::Inline,
+                    MathSyntax::Dollar,
+                ),
+                // Valid display math is extracted before Markdown parsing so
+                // block markers inside it cannot become lists or headings.
+                Event::DisplayMath(tex) => math_event(
+                    context,
+                    &mut settings,
+                    &tex,
+                    MathDisplay::Block,
+                    MathSyntax::Dollar,
+                ),
                 event => event,
             }
         });
@@ -51,24 +61,24 @@ fn math_context() -> &'static KatexContext {
     CONTEXT.get_or_init(KatexContext::default)
 }
 
-struct NormalizedMarkdown {
+struct PreparedMarkdown {
     source: String,
-    explicit_math: Vec<Range<usize>>,
+    math: Vec<ExtractedMath>,
 }
 
-impl NormalizedMarkdown {
-    fn is_explicit_math(&self, range: &Range<usize>) -> bool {
-        self.explicit_math.iter().any(|explicit| explicit == range)
-    }
+struct ExtractedMath {
+    placeholder_range: Range<usize>,
+    tex: String,
+    display: MathDisplay,
+    syntax: MathSyntax,
 }
 
-fn normalize_tex_delimiters(text: &str) -> NormalizedMarkdown {
+fn prepare_math(text: &str) -> PreparedMarkdown {
     let protected = protected_markdown_ranges(text);
     let mut protected_index = 0;
-    let mut output = String::with_capacity(text.len());
-    let mut explicit_math = Vec::new();
+    let mut source = String::with_capacity(text.len());
+    let mut math = Vec::new();
     let mut index = 0;
-    let mut open: Option<(TexDelimiter, usize)> = None;
 
     while index < text.len() {
         while protected
@@ -81,58 +91,60 @@ fn normalize_tex_delimiters(text: &str) -> NormalizedMarkdown {
             .get(protected_index)
             .filter(|range| range.start == index)
         {
-            if let Some((delimiter, output_start)) = open.take() {
-                output.replace_range(
-                    output_start..output_start + delimiter.markdown().len(),
-                    delimiter.open(),
-                );
-            }
-            output.push_str(&text[range.clone()]);
+            source.push_str(&text[range.clone()]);
             index = range.end;
             protected_index += 1;
             continue;
         }
 
-        if let Some((delimiter, _)) = open {
-            if starts_with_unescaped(text, index, delimiter.close()) {
-                output.push_str(delimiter.markdown());
-                index += delimiter.close().len();
-                explicit_math.push(output_start(open, delimiter)..output.len());
-                open = None;
+        if let Some(delimiter) = MathDelimiter::opening_at(text, index) {
+            let content_start = index + delimiter.open().len();
+            let protected_start = protected.get(protected_index).map(|range| range.start);
+            if let Some(close_start) =
+                find_closing_delimiter(text, content_start, delimiter.close(), protected_start)
+            {
+                let placeholder = format!("<rho-math-{} />", math.len());
+                let placeholder_start = source.len();
+                source.push_str(&placeholder);
+                math.push(ExtractedMath {
+                    placeholder_range: placeholder_start..source.len(),
+                    tex: text[content_start..close_start].to_owned(),
+                    display: delimiter.display(),
+                    syntax: delimiter.syntax(),
+                });
+                index = close_start + delimiter.close().len();
                 continue;
             }
-        } else if let Some(delimiter) = TexDelimiter::opening_at(text, index) {
-            let output_start = output.len();
-            output.push_str(delimiter.markdown());
-            index += delimiter.open().len();
-            open = Some((delimiter, output_start));
-            continue;
         }
 
         let ch = text[index..]
             .chars()
             .next()
             .expect("index remains on a character boundary");
-        output.push(ch);
+        source.push(ch);
         index += ch.len_utf8();
     }
 
-    if let Some((delimiter, output_start)) = open {
-        output.replace_range(
-            output_start..output_start + delimiter.markdown().len(),
-            delimiter.open(),
-        );
-    }
-    NormalizedMarkdown {
-        source: output,
-        explicit_math,
-    }
+    PreparedMarkdown { source, math }
 }
 
-fn output_start(open: Option<(TexDelimiter, usize)>, delimiter: TexDelimiter) -> usize {
-    open.filter(|(open_delimiter, _)| *open_delimiter == delimiter)
-        .map(|(_, output_start)| output_start)
-        .expect("closing delimiter matches the open delimiter")
+fn find_closing_delimiter(
+    text: &str,
+    mut index: usize,
+    delimiter: &str,
+    protected_start: Option<usize>,
+) -> Option<usize> {
+    while index < text.len() && protected_start.is_none_or(|start| index < start) {
+        if starts_with_unescaped(text, index, delimiter) {
+            return Some(index);
+        }
+        let ch = text[index..]
+            .chars()
+            .next()
+            .expect("index remains on a character boundary");
+        index += ch.len_utf8();
+    }
+    None
 }
 
 fn protected_markdown_ranges(text: &str) -> Vec<Range<usize>> {
@@ -158,41 +170,47 @@ fn starts_with_unescaped(text: &str, index: usize, delimiter: &str) -> bool {
             .is_multiple_of(2)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TexDelimiter {
-    Inline,
-    Block,
+#[derive(Clone, Copy)]
+enum MathDelimiter {
+    TexInline,
+    TexBlock,
+    DollarBlock,
 }
 
-impl TexDelimiter {
+impl MathDelimiter {
     fn opening_at(text: &str, index: usize) -> Option<Self> {
-        if starts_with_unescaped(text, index, Self::Block.open()) {
-            Some(Self::Block)
-        } else if starts_with_unescaped(text, index, Self::Inline.open()) {
-            Some(Self::Inline)
-        } else {
-            None
-        }
+        [Self::TexBlock, Self::TexInline, Self::DollarBlock]
+            .into_iter()
+            .find(|delimiter| starts_with_unescaped(text, index, delimiter.open()))
     }
 
     fn open(self) -> &'static str {
         match self {
-            Self::Inline => r"\(",
-            Self::Block => r"\[",
+            Self::TexInline => r"\(",
+            Self::TexBlock => r"\[",
+            Self::DollarBlock => "$$",
         }
     }
 
     fn close(self) -> &'static str {
         match self {
-            Self::Inline => r"\)",
-            Self::Block => r"\]",
+            Self::TexInline => r"\)",
+            Self::TexBlock => r"\]",
+            Self::DollarBlock => "$$",
         }
     }
 
-    fn markdown(self) -> &'static str {
+    fn display(self) -> MathDisplay {
         match self {
-            Self::Inline => "$",
-            Self::Block => "$$",
+            Self::TexInline => MathDisplay::Inline,
+            Self::TexBlock | Self::DollarBlock => MathDisplay::Block,
+        }
+    }
+
+    fn syntax(self) -> MathSyntax {
+        match self {
+            Self::TexInline | Self::TexBlock => MathSyntax::Tex,
+            Self::DollarBlock => MathSyntax::Dollar,
         }
     }
 }
@@ -204,7 +222,7 @@ fn is_ambiguous_inline_math(text: &str, range_end: usize) -> bool {
         .is_some_and(char::is_alphanumeric)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum MathSyntax {
     Dollar,
     Tex,

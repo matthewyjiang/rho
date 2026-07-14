@@ -116,7 +116,8 @@ fn renders_explicit_inline_math_before_alphanumeric_text() {
     let html = render_html(&export);
 
     assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
-    assert!(html.contains("</span>2</p>"));
+    assert!(html.contains("<mi>x</mi>"));
+    assert!(!html.contains("class=\"math-fallback\""));
 }
 
 #[test]
@@ -131,6 +132,22 @@ fn preserves_explicit_latex_delimiters_in_fallback() {
 }
 
 #[test]
+fn renders_display_math_with_markdown_block_markers() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "An aligned system:\n\n\\[\n\\begin{aligned}\n\\nabla \\times \\mathbf{B} &= \\mu_0\\mathbf{J}\n+ \\mu_0\\varepsilon_0\\frac{\\partial \\mathbf{E}}{\\partial t}.\n\\end{aligned}\n\\]\n\nA boxed transform:\n\n\\[\n\\boxed{\n\\mathcal{F}\\{f\\}(\\xi)\n=\n\\int_{-\\infty}^{\\infty} f(x)e^{-2\\pi i x\\xi}\\,dx\n}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.matches("display=\"block\"").count() >= 2);
+    assert!(html.contains("<mtable"));
+    assert!(html.contains("<menclose notation=\"box\""));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("<div class=\"markdown\"><h1>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
 fn renders_markdown_sensitive_latex_inside_bracket_delimiters() {
     let export = export_with_messages(vec![message(Message::assistant_text(
         "\\[\n\\begin{aligned}\n\\nabla \\cdot \\mathbf{E} &= \\frac{\\rho}{\\varepsilon_0} \\\\\n\\nabla \\cdot \\mathbf{B} &= 0\n\\end{aligned}\n\\]",
@@ -140,6 +157,19 @@ fn renders_markdown_sensitive_latex_inside_bracket_delimiters() {
 
     assert!(html.contains("class=\"katex-display\""));
     assert!(html.contains("<mtable"));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn renders_dollar_display_math_with_markdown_block_markers() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$$\n\\begin{aligned}\nx &= 1\n+ y\n\\end{aligned}\n$$",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("class=\"katex-display\""));
     assert!(!html.contains("<ul>"));
     assert!(!html.contains("class=\"math-fallback\""));
 }
