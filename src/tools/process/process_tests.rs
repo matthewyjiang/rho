@@ -389,18 +389,19 @@ async fn descendant_case(action: &str) {
         )
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !pid_file.exists() {
+    let pid = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.trim().parse::<i32>().ok())
+            {
+                break pid;
+            }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .expect("descendant pid file was not created");
-    let pid: i32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    .expect("descendant pid was not written");
     match action {
         "stop" => manager
             .stop(&started.process_id, Duration::ZERO)
