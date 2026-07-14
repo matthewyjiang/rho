@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::{
-    model::{ContentBlock, ImageContent},
+    model::{AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock},
     tool::{ToolCall, ToolResult},
 };
 
@@ -53,6 +53,37 @@ fn persists_and_loads_messages() {
             if text == "hello" && image.mime_type == "image/png" && image.data == "aW1n"
     )));
     assert!(matches!(&messages[1], Message::Assistant(_)));
+}
+
+#[test]
+fn enriched_assistant_context_round_trips_for_resume() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let identity = ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+    session
+        .append_message(&Message::assistant(AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(identity.clone()),
+            reasoning_summary: Some("verified the result".into()),
+            provider_context: vec![ProviderContextBlock {
+                identity,
+                kind: "openai_response_output_item".into(),
+                position: None,
+                data: serde_json::json!({"type": "reasoning", "encrypted_content": "signed"}),
+            }],
+        }))
+        .unwrap();
+
+    let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+
+    assert!(matches!(
+        &messages[0],
+        Message::EnrichedAssistant(message)
+            if message.reasoning_summary.as_deref() == Some("verified the result")
+                && message.provenance.as_ref().is_some_and(|value| value.model == "gpt-test")
+                && message.provider_context.len() == 1
+    ));
 }
 
 #[test]

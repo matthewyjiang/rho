@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::{
-    codex_input_items, collect_codex_sse_response, to_responses_lite_tool,
+    codex_input_items_for_target, collect_codex_sse_response, to_responses_lite_tool,
 };
 use reqwest::StatusCode;
 use serde_json::{json, Value};
@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::{
     auth::xai_token::XaiAuthManager,
     credentials::CredentialStore,
-    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
     provider_backend::stream_timeout::provider_client,
     reasoning::ReasoningLevel,
 };
@@ -103,6 +103,10 @@ impl XaiProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for XaiProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        Some(ModelIdentity::new("xai", "openai-responses", &self.model))
+    }
+
     fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
         self.reasoning_effort = xai_reasoning_effort(&self.model, reasoning).map(str::to_string);
         true
@@ -131,7 +135,9 @@ fn build_xai_responses_body(
     reasoning_effort: Option<&str>,
 ) -> Result<Value, ModelError> {
     let mut instructions = Vec::new();
-    let input = codex_input_items(request.messages.to_vec(), &mut instructions)?;
+    let target = crate::model::ModelIdentity::new("xai", "openai-responses", model);
+    let input =
+        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
     let tools = request
         .tools
         .iter()

@@ -1,8 +1,10 @@
 use crate::{
+    model::ModelIdentity,
     protocol::anthropic_messages::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
         to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
         AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+        AnthropicThinkingConfig,
     },
     provider_backend::{
         stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
@@ -20,6 +22,7 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
+    thinking_budget_tokens: Option<u32>,
 }
 
 impl AnthropicProvider {
@@ -30,6 +33,7 @@ impl AnthropicProvider {
             api_base: ANTHROPIC_API_BASE.into(),
             model,
             max_tokens,
+            thinking_budget_tokens: None,
         }
     }
 
@@ -38,7 +42,8 @@ impl AnthropicProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let (system, mut messages) = split_system_and_messages(request.messages.to_vec())?;
+        let target = self.identity().expect("Anthropic provider has an identity");
+        let (system, mut messages) = split_system_and_messages(request.messages.to_vec(), &target)?;
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools
@@ -49,9 +54,16 @@ impl AnthropicProvider {
         if let Some(tool) = tools.last_mut() {
             tool.cache_control = Some(AnthropicCacheControl::ephemeral());
         }
+        let max_tokens = (self.max_tokens)(&self.model);
+        let thinking = self.thinking_budget_tokens.and_then(|budget_tokens| {
+            (max_tokens > 1_024).then_some(AnthropicThinkingConfig {
+                kind: "enabled",
+                budget_tokens: budget_tokens.min(max_tokens - 1),
+            })
+        });
         Ok(AnthropicRequest {
             model: self.model.clone(),
-            max_tokens: (self.max_tokens)(&self.model),
+            max_tokens,
             system: system.map(|text| {
                 vec![AnthropicSystemBlock::text(
                     text,
@@ -61,6 +73,7 @@ impl AnthropicProvider {
             messages,
             tools: (!tools.is_empty()).then_some(tools),
             cache_control: None,
+            thinking,
             stream,
         })
     }
@@ -148,6 +161,27 @@ async fn error_for_status_with_body(
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for AnthropicProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        Some(ModelIdentity::new(
+            "anthropic",
+            "anthropic-messages",
+            &self.model,
+        ))
+    }
+
+    fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
+        self.thinking_budget_tokens = match reasoning {
+            crate::reasoning::ReasoningLevel::Off => None,
+            crate::reasoning::ReasoningLevel::Minimal => Some(1_024),
+            crate::reasoning::ReasoningLevel::Low => Some(2_048),
+            crate::reasoning::ReasoningLevel::Medium => Some(4_096),
+            crate::reasoning::ReasoningLevel::High => Some(8_192),
+            crate::reasoning::ReasoningLevel::Xhigh => Some(16_384),
+            crate::reasoning::ReasoningLevel::Max => Some(32_768),
+        };
+        true
+    }
+
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.send_messages(request).await
     }
@@ -179,6 +213,7 @@ mod tests {
             api_base: "https://example.test/v1".into(),
             model: "claude-sonnet-4-5".into(),
             max_tokens: |_| DEFAULT_MAX_TOKENS,
+            thinking_budget_tokens: None,
         }
     }
 

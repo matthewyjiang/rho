@@ -1,5 +1,8 @@
-use crate::provider_backend::{
-    ContentBlock, Message, ModelError, ModelResponse, ModelUsage, ToolCall, ToolSpec,
+use crate::{
+    model::handoff::prepare_assistant,
+    provider_backend::{
+        ContentBlock, Message, ModelError, ModelResponse, ModelUsage, ToolCall, ToolSpec,
+    },
 };
 
 use super::types::{
@@ -23,6 +26,7 @@ fn resolved_cache_write_tokens(usage: &AnthropicUsage) -> Option<u64> {
 
 pub(crate) fn split_system_and_messages(
     messages: Vec<Message>,
+    target: &crate::model::ModelIdentity,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
     let mut system = Vec::new();
     let mut converted = Vec::new();
@@ -39,15 +43,53 @@ pub(crate) fn split_system_and_messages(
                 AnthropicRole::Assistant,
                 blocks.into_iter().map(assistant_block).collect(),
             ),
-            Message::AbortedAssistant(mut message) => {
-                message
+            Message::EnrichedAssistant(message) => {
+                let prepared = prepare_assistant(*message, target);
+                let mut content = prepared
+                    .content
+                    .into_iter()
+                    .map(assistant_block)
+                    .collect::<Vec<_>>();
+                for block in prepared.replay_context {
+                    if block.kind != "anthropic_content_block" {
+                        continue;
+                    }
+                    if let Ok(block_data) = serde_json::from_value(block.data) {
+                        content.insert(
+                            block.position.unwrap_or(content.len()).min(content.len()),
+                            block_data,
+                        );
+                    }
+                }
+                push_message(&mut converted, AnthropicRole::Assistant, content);
+            }
+            Message::AbortedAssistant(message) => {
+                let mut enriched = crate::model::AssistantMessage {
+                    content: message.content,
+                    provenance: message.provenance,
+                    reasoning_summary: message.reasoning_summary,
+                    provider_context: message.provider_context,
+                };
+                enriched
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
-                push_message(
-                    &mut converted,
-                    AnthropicRole::Assistant,
-                    message.content.into_iter().map(assistant_block).collect(),
-                );
+                let prepared = prepare_assistant(enriched, target);
+                let mut content = prepared
+                    .content
+                    .into_iter()
+                    .map(assistant_block)
+                    .collect::<Vec<_>>();
+                for block in prepared.replay_context {
+                    if block.kind == "anthropic_content_block" {
+                        if let Ok(block_data) = serde_json::from_value(block.data) {
+                            content.insert(
+                                block.position.unwrap_or(content.len()).min(content.len()),
+                                block_data,
+                            );
+                        }
+                    }
+                }
+                push_message(&mut converted, AnthropicRole::Assistant, content);
             }
             Message::ToolResult(result) => push_message(
                 &mut converted,
@@ -153,6 +195,8 @@ pub(crate) fn convert_content_blocks(
                 blocks.push(ContentBlock::Text(text));
             }
             AnthropicContentBlock::Text { .. } => {}
+            AnthropicContentBlock::Thinking { .. }
+            | AnthropicContentBlock::RedactedThinking { .. } => {}
             AnthropicContentBlock::Image { .. } => {}
             AnthropicContentBlock::ToolUse { id, name, input } => {
                 blocks.push(ContentBlock::ToolCall(ToolCall {
@@ -211,26 +255,33 @@ mod tests {
         provider_backend::{ImageContent, ToolResult},
     };
 
+    fn target() -> crate::model::ModelIdentity {
+        crate::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test")
+    }
+
     #[test]
     fn converts_messages_and_tools_to_anthropic_shape() {
-        let (system, messages) = split_system_and_messages(vec![
-            Message::System("first".into()),
-            Message::System("second".into()),
-            Message::User(vec![ContentBlock::Text("hello".into())]),
-            Message::Assistant(vec![
-                ContentBlock::Text("I'll check".into()),
-                ContentBlock::ToolCall(ToolCall {
+        let (system, messages) = split_system_and_messages(
+            vec![
+                Message::System("first".into()),
+                Message::System("second".into()),
+                Message::User(vec![ContentBlock::Text("hello".into())]),
+                Message::Assistant(vec![
+                    ContentBlock::Text("I'll check".into()),
+                    ContentBlock::ToolCall(ToolCall {
+                        id: "toolu_1".into(),
+                        name: "bash".into(),
+                        arguments: json!({"command":"pwd"}),
+                    }),
+                ]),
+                Message::ToolResult(ToolResult {
                     id: "toolu_1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command":"pwd"}),
+                    ok: true,
+                    content: "/repo".into(),
                 }),
-            ]),
-            Message::ToolResult(ToolResult {
-                id: "toolu_1".into(),
-                ok: true,
-                content: "/repo".into(),
-            }),
-        ])
+            ],
+            &target(),
+        )
         .unwrap();
 
         assert_eq!(system, Some("first\n\nsecond".into()));
@@ -259,13 +310,16 @@ mod tests {
 
     #[test]
     fn converts_user_images_to_anthropic_shape() {
-        let (_system, messages) = split_system_and_messages(vec![Message::User(vec![
-            ContentBlock::Text("look".into()),
-            ContentBlock::Image(ImageContent {
-                data: "aW1n".into(),
-                mime_type: "image/png".into(),
-            }),
-        ])])
+        let (_system, messages) = split_system_and_messages(
+            vec![Message::User(vec![
+                ContentBlock::Text("look".into()),
+                ContentBlock::Image(ImageContent {
+                    data: "aW1n".into(),
+                    mime_type: "image/png".into(),
+                }),
+            ])],
+            &target(),
+        )
         .unwrap();
 
         assert_eq!(messages[0].role, AnthropicRole::User);
@@ -283,13 +337,15 @@ mod tests {
 
     #[test]
     fn marks_failed_tool_results_as_errors() {
-        let (_system, messages) =
-            split_system_and_messages(vec![Message::ToolResult(ToolResult {
+        let (_system, messages) = split_system_and_messages(
+            vec![Message::ToolResult(ToolResult {
                 id: "toolu_1".into(),
                 ok: false,
                 content: "failed".into(),
-            })])
-            .unwrap();
+            })],
+            &target(),
+        )
+        .unwrap();
 
         assert_eq!(
             messages[0].content[0],
@@ -304,16 +360,77 @@ mod tests {
 
     #[test]
     fn merges_consecutive_same_role_messages() {
-        let (_system, messages) = split_system_and_messages(vec![
-            Message::user_text("one"),
-            Message::user_text("two"),
-            Message::assistant_text("three"),
-        ])
+        let (_system, messages) = split_system_and_messages(
+            vec![
+                Message::user_text("one"),
+                Message::user_text("two"),
+                Message::assistant_text("three"),
+            ],
+            &target(),
+        )
         .unwrap();
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, AnthropicRole::User);
         assert_eq!(messages[0].content.len(), 2);
+    }
+
+    #[test]
+    fn converts_foreign_summary_and_omits_foreign_provider_context() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let (_, messages) = split_system_and_messages(
+            vec![Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("answer".into())],
+                provenance: Some(source.clone()),
+                reasoning_summary: Some("verified it".into()),
+                provider_context: vec![crate::model::ProviderContextBlock {
+                    identity: source,
+                    kind: "openai_response_output_item".into(),
+                    position: None,
+                    data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+                }],
+            })],
+            &target(),
+        )
+        .unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(
+            messages[0].content.as_slice(),
+            [AnthropicContentBlock::Text { text: answer, .. }, AnthropicContentBlock::Text { text: summary, .. }]
+                if answer == "answer" && summary.contains("<reasoning_summary>") && summary.contains("verified it")
+        ));
+    }
+
+    #[test]
+    fn exact_anthropic_handoff_replays_signed_thinking_in_original_position() {
+        let target = target();
+        let (_, messages) = split_system_and_messages(
+            vec![Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("answer".into())],
+                provenance: Some(target.clone()),
+                reasoning_summary: None,
+                provider_context: vec![crate::model::ProviderContextBlock {
+                    identity: target.clone(),
+                    kind: "anthropic_content_block".into(),
+                    position: Some(0),
+                    data: json!({
+                        "type": "thinking",
+                        "thinking": "private",
+                        "signature": "signed"
+                    }),
+                }],
+            })],
+            &target,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            messages[0].content.as_slice(),
+            [AnthropicContentBlock::Thinking { thinking, signature }, AnthropicContentBlock::Text { text, .. }]
+                if thinking == "private" && signature == "signed" && text == "answer"
+        ));
     }
 
     #[test]

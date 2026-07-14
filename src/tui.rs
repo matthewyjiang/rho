@@ -4151,7 +4151,14 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider);
+        let handoff = agent.replace_provider(new_provider);
+        if handoff.has_omissions() {
+            let kinds = handoff.omitted_kinds.join(", ");
+            self.insert_entry(&Entry::Notice(format!(
+                "model handoff omitted {} nonportable provider context block(s): {kinds}; assistant text, tool history, and reasoning summaries were preserved",
+                handoff.omitted_provider_context
+            )));
+        }
         self.info.provider = provider.clone();
         self.info.model = model.clone();
         self.info.reasoning = reasoning;

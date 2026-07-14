@@ -232,6 +232,13 @@ fn render_message_for_summary(message: &Message) -> String {
         Message::System(text) => format!("system:\n{text}"),
         Message::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
         Message::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
+        Message::EnrichedAssistant(message) => {
+            let mut rendered = render_blocks(&message.content);
+            if let Some(summary) = &message.reasoning_summary {
+                rendered.push_str(&format!("\nreasoning summary:\n{summary}"));
+            }
+            format!("assistant:\n{rendered}")
+        }
         Message::AbortedAssistant(message) => {
             format!("assistant [aborted]:\n{}", render_blocks(&message.content))
         }
@@ -261,6 +268,22 @@ mod tests {
 
     use super::*;
     use crate::tool::ToolCall;
+
+    #[test]
+    fn compaction_summary_retains_portable_reasoning_context() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let messages = vec![Message::assistant(crate::model::AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(source),
+            reasoning_summary: Some("verified it".into()),
+            provider_context: Vec::new(),
+        })];
+
+        let rendered = render_messages_for_summary(&messages);
+
+        assert!(rendered.contains("reasoning summary:\nverified it"));
+    }
 
     #[test]
     fn compaction_decision_requires_enabled_config_and_window() {

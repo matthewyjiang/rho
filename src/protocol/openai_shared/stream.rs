@@ -221,12 +221,17 @@ fn extract_reasoning_delta(value: &serde_json::Value) -> Option<String> {
     None
 }
 
+fn is_reasoning_summary_event(event_type: &str) -> bool {
+    event_type.contains("reasoning_summary") || event_type.contains("reasoning.summary")
+}
+
 #[derive(Default)]
 pub(crate) struct CodexSseState {
     pub(crate) text: String,
     pub(crate) completed_text: Option<String>,
     pub(crate) tool_calls: Vec<ToolCall>,
     pub(crate) response_id: Option<String>,
+    pub(crate) output_items: Vec<serde_json::Value>,
 }
 
 impl CodexSseState {
@@ -371,7 +376,11 @@ pub(crate) fn handle_codex_sse_line(
     } else if event_type.contains("reasoning") && event_type.ends_with(".delta") {
         if let Some(delta) = extract_reasoning_delta(&value) {
             if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::ReasoningDelta(delta))?;
+                if is_reasoning_summary_event(event_type) {
+                    on_event(ModelEvent::ReasoningSummaryDelta(delta))?;
+                } else {
+                    on_event(ModelEvent::ReasoningDelta(delta))?;
+                }
             }
         }
     } else if event_type == "response.output_item.added" {
@@ -420,6 +429,19 @@ pub(crate) fn handle_codex_sse_line(
         }
     } else if event_type == "response.output_item.done" {
         let item = value.get("item").unwrap_or(&value);
+        state.output_items.push(item.clone());
+        if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::ProviderContext {
+                    kind: "openai_response_output_item".into(),
+                    position: value
+                        .get("output_index")
+                        .and_then(|value| value.as_u64())
+                        .and_then(|value| usize::try_from(value).ok()),
+                    data: item.clone(),
+                })?;
+            }
+        }
         if let Some(detail) = extract_codex_web_search_detail(item) {
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::WebSearch(detail))?;
@@ -455,6 +477,16 @@ pub(crate) fn handle_codex_sse_line(
             .and_then(|output| output.as_array())
         {
             for item in output {
+                state.output_items.push(item.clone());
+                if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
+                    if let Some(on_event) = on_event.as_mut() {
+                        on_event(ModelEvent::ProviderContext {
+                            kind: "openai_response_output_item".into(),
+                            position: None,
+                            data: item.clone(),
+                        })?;
+                    }
+                }
                 if let Some(detail) = extract_codex_web_search_detail(item) {
                     if let Some(on_event) = on_event.as_mut() {
                         on_event(ModelEvent::WebSearch(detail))?;

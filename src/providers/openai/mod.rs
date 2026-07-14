@@ -13,7 +13,7 @@ pub(crate) use cache::prompt_cache_key_from_session_id;
 
 use crate::protocol::openai_chat::{
     convert_openai_response, convert_streamed_response, handle_openai_stream_line,
-    invalid_stream_utf8, to_openai_message, to_openai_tool, ChatRequest, ChatResponse,
+    invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest, ChatResponse,
     ChatStreamOptions,
 };
 use crate::protocol::openai_responses::collect_codex_sse_response;
@@ -23,7 +23,7 @@ use codex_ws::{CodexWsTransport, CodexWsTurn};
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
-    model::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
     provider_backend::{
         line_decoder::LineDecoder,
         stream_timeout::{provider_client, StreamIdleDeadline},
@@ -74,6 +74,14 @@ impl OpenAiProvider {
 
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for OpenAiProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        let api = match self.auth {
+            Auth::ApiKey(_) => "openai-chat-completions",
+            Auth::Codex { .. } => "openai-responses",
+        };
+        Some(ModelIdentity::new(self.provider, api, &self.model))
+    }
+
     fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
         let supported_reasoning =
             crate::model::models_dev::cached_reasoning_levels(self.provider, &self.model);
@@ -137,11 +145,12 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         key: &str,
     ) -> Result<ModelResponse, ModelError> {
+        let target = self.identity().expect("OpenAI provider has an identity");
         let messages = request
             .messages
             .iter()
             .cloned()
-            .map(to_openai_message)
+            .map(|message| to_openai_message_for_target(message, Some(&target)))
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
@@ -177,11 +186,12 @@ impl OpenAiProvider {
         key: &str,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
+        let target = self.identity().expect("OpenAI provider has an identity");
         let messages = request
             .messages
             .iter()
             .cloned()
-            .map(to_openai_message)
+            .map(|message| to_openai_message_for_target(message, Some(&target)))
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request
             .tools
@@ -379,7 +389,7 @@ mod tests {
     use super::*;
     use crate::model::{AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall};
     use crate::protocol::openai_chat::{
-        convert_streamed_response, handle_openai_stream_line, to_openai_message,
+        convert_streamed_response, handle_openai_stream_line, to_openai_message_for_target,
     };
     use crate::protocol::openai_responses::{
         codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
@@ -586,6 +596,8 @@ mod tests {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::ToolCallDelta { .. } => {}
                 }
@@ -613,6 +625,8 @@ mod tests {
                     ModelEvent::Usage(event_usage) => usage = Some(event_usage),
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::ToolCallDelta { .. } => {}
                 }
@@ -639,6 +653,8 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::ReasoningSummaryDelta(_) => {}
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::WebSearch(_) => {}
                     ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
@@ -663,10 +679,12 @@ mod tests {
             &mut Some(&mut |event| {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
-                    ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::ReasoningSummaryDelta(delta) => deltas.push(delta),
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::WebSearch(_) => {}
                     ModelEvent::ToolCallDelta { .. } => {}
-                    ModelEvent::Usage(_) => {},
+                    ModelEvent::Usage(_) => {}
                 }
                 Ok(())
             }),
@@ -688,6 +706,8 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::ReasoningSummaryDelta(_) => {}
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::WebSearch(_) => {}
                     ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
@@ -764,6 +784,8 @@ mod tests {
                     ModelEvent::WebSearch(detail) => searches.push(detail),
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::ReasoningSummaryDelta(_) => {}
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
                 }
@@ -788,6 +810,8 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(delta) => deltas.push(delta),
                     ModelEvent::ReasoningDelta(_) => {}
+                    ModelEvent::ReasoningSummaryDelta(_) => {}
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::WebSearch(_) => {}
                     ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
@@ -843,6 +867,8 @@ mod tests {
                 match event {
                     ModelEvent::OutputDelta(_) => {}
                     ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
+                    ModelEvent::ReasoningSummaryDelta(_) => {}
+                    ModelEvent::ProviderContext { .. } => {}
                     ModelEvent::WebSearch(_) => {}
                     ModelEvent::ToolCallDelta { .. } => {}
                     ModelEvent::Usage(_) => {}
@@ -859,13 +885,16 @@ mod tests {
 
     #[test]
     fn serializes_openai_chat_image_content() {
-        let message = to_openai_message(Message::User(vec![
-            ContentBlock::Text("what is this?".into()),
-            ContentBlock::Image(ImageContent {
-                data: "aW1n".into(),
-                mime_type: "image/png".into(),
-            }),
-        ]))
+        let message = to_openai_message_for_target(
+            Message::User(vec![
+                ContentBlock::Text("what is this?".into()),
+                ContentBlock::Image(ImageContent {
+                    data: "aW1n".into(),
+                    mime_type: "image/png".into(),
+                }),
+            ]),
+            None,
+        )
         .unwrap();
 
         assert_eq!(message.role, "user");
@@ -901,7 +930,7 @@ mod tests {
     #[test]
     fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
         let input = codex_input_items(
-            vec![Message::AbortedAssistant(AbortedAssistant {
+            vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
                 content: vec![ContentBlock::Text("partial answer".into())],
                 tool_calls: vec![PartialToolCall {
                     id: Some("call_1".into()),
@@ -909,7 +938,7 @@ mod tests {
                     arguments: "{\"path\":\"src/".into(),
                 }],
                 ..AbortedAssistant::default()
-            })],
+            }))],
             &mut Vec::new(),
         )
         .unwrap();
@@ -925,11 +954,14 @@ mod tests {
 
     #[test]
     fn serializes_openai_native_tool_result() {
-        let message = to_openai_message(Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "done".into(),
-        }))
+        let message = to_openai_message_for_target(
+            Message::ToolResult(ToolResult {
+                id: "call-1".into(),
+                ok: true,
+                content: "done".into(),
+            }),
+            None,
+        )
         .unwrap();
         assert_eq!(message.role, "tool");
         assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));

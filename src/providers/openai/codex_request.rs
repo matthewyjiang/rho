@@ -6,7 +6,7 @@ use crate::{
 };
 
 use crate::protocol::openai_responses::{
-    codex_input_items, codex_reasoning_param, to_responses_lite_tool, to_responses_tool,
+    codex_input_items_for_target, codex_reasoning_param, to_responses_lite_tool, to_responses_tool,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +49,9 @@ pub(super) fn build_codex_responses_body(
 ) -> Result<Value, ModelError> {
     let mode = CodexRequestMode::for_model(model);
     let mut instructions = Vec::new();
-    let mut input = codex_input_items(request.messages.to_vec(), &mut instructions)?;
+    let target = crate::model::ModelIdentity::new("openai-codex", "openai-responses", model);
+    let mut input =
+        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
     let tools = request
         .tools
         .iter()

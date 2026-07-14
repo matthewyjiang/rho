@@ -47,11 +47,15 @@ pub fn build_provider(
                 reasoning_summary,
             )) as DynModelProvider)
         }
-        ProviderRuntime::Anthropic => Ok(Box::new(AnthropicProvider::new(
-            model.to_string(),
-            load_anthropic_api_key_auth()?,
-            anthropic_max_tokens,
-        )) as DynModelProvider),
+        ProviderRuntime::Anthropic => {
+            let mut provider = AnthropicProvider::new(
+                model.to_string(),
+                load_anthropic_api_key_auth()?,
+                anthropic_max_tokens,
+            );
+            provider.set_reasoning(reasoning);
+            Ok(Box::new(provider) as DynModelProvider)
+        }
         ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
             model.to_string(),
             GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
