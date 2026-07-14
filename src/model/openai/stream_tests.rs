@@ -1,14 +1,24 @@
 use std::sync::Arc;
 
-use super::{auth::Auth, OpenAiProvider};
-use crate::{
-    credentials::MemoryCredentialStore,
-    model::{ContentBlock, Message, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+use super::{
+    auth::{Auth, CodexAuthSource},
+    codex_ws::CodexWsTransport,
+    OpenAiProvider,
 };
+use crate::{
+    cancellation::RunCancellation,
+    credentials::{CodexTokens, MemoryCredentialStore},
+    model::{
+        ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
+    },
+};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
+use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage};
 
 #[tokio::test]
 async fn chat_completion_stream_accepts_data_without_space_after_colon() {
@@ -67,6 +77,106 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
     assert!(matches!(
         events.as_slice(),
         [ModelEvent::OutputDelta(delta)] if delta == "hello"
+    ));
+}
+
+#[tokio::test]
+async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_url = format!("ws://{}/responses", listener.local_addr().unwrap());
+    let first_request_received = Arc::new(tokio::sync::Notify::new());
+    let server_first_request_received = Arc::clone(&first_request_received);
+    tokio::spawn(async move {
+        let (first_stream, _) = listener.accept().await.unwrap();
+        let mut first_socket = accept_async(first_stream).await.unwrap();
+        first_socket.next().await.unwrap().unwrap();
+        server_first_request_received.notify_one();
+
+        let (second_stream, _) = listener.accept().await.unwrap();
+        let mut second_socket = accept_async(second_stream).await.unwrap();
+        second_socket.next().await.unwrap().unwrap();
+        second_socket
+            .send(WsMessage::Text(
+                json!({"type":"response.output_text.delta","delta":"fresh"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        second_socket
+            .send(WsMessage::Text(
+                json!({
+                    "type":"response.completed",
+                    "response":{
+                        "id":"resp_fresh",
+                        "output_text":"fresh",
+                        "output":[],
+                        "usage":{"input_tokens":1,"output_tokens":1}
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let tokens = CodexTokens {
+        access_token: "token".into(),
+        refresh_token: None,
+        id_token: None,
+        account_id: None,
+    };
+    let mut provider = OpenAiProvider::new_with_auth(
+        "gpt-5-codex".into(),
+        Auth::Codex {
+            tokens,
+            source: CodexAuthSource::Env,
+        },
+        Arc::new(MemoryCredentialStore::default()),
+        None,
+        None,
+    );
+    provider.codex_ws = CodexWsTransport::new_with_url(ws_url);
+
+    let cancellation = RunCancellation::default();
+    let cancel_after_request = {
+        let cancellation = cancellation.clone();
+        async move {
+            first_request_received.notified().await;
+            cancellation.cancel();
+        }
+    };
+    let first_messages = [Message::user_text("first")];
+    let mut on_first_event = |_| Ok(());
+    let first_turn = provider.send_turn_stream(
+        ModelRequest {
+            messages: &first_messages,
+            tools: &[],
+            cancellation,
+            prompt_cache_key: None,
+        },
+        &mut on_first_event,
+    );
+    let (result, ()) = tokio::join!(first_turn, cancel_after_request);
+    assert!(matches!(result, Err(ModelError::Interrupted)));
+
+    let response = provider
+        .send_turn_stream(
+            ModelRequest {
+                messages: &[Message::user_text("second")],
+                tools: &[],
+                cancellation: Default::default(),
+                prompt_cache_key: None,
+            },
+            &mut |_| Ok(()),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        response,
+        ModelResponse::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "fresh")
     ));
 }
 

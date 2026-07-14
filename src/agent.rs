@@ -310,8 +310,14 @@ impl Agent {
         let estimate = self
             .context_tracker
             .estimate_request(&self.messages, &specs);
-        self.compact_history(&specs, estimate, CompactionTrigger::Manual, on_event)
-            .await
+        self.compact_history(
+            &specs,
+            estimate,
+            CompactionTrigger::Manual,
+            RunCancellation::default(),
+            on_event,
+        )
+        .await
     }
 
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
@@ -443,6 +449,7 @@ impl Agent {
                     &specs,
                     request_estimate,
                     CompactionTrigger::Automatic,
+                    cancellation.clone(),
                     &mut on_event,
                 )
                 .await?
@@ -856,6 +863,7 @@ impl Agent {
         specs: &[crate::tool::ToolSpec],
         estimate: context_tracker::RequestContextEstimate,
         trigger: CompactionTrigger,
+        cancellation: RunCancellation,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
     ) -> Result<bool, AgentError> {
         let estimate = self.context_tracker.estimate_for_compaction(estimate);
@@ -881,7 +889,7 @@ impl Agent {
                 ModelRequest {
                     messages: &summary_messages,
                     tools: &[],
-                    cancellation: Default::default(),
+                    cancellation,
                     prompt_cache_key: self.prompt_cache_key.as_deref(),
                 },
                 &mut |event| match event {

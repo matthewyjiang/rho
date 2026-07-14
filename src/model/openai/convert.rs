@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::model::{ContentBlock, Message, ModelError, ModelResponse};
+use crate::model::{ContentBlock, Message, ModelError, ModelResponse, PartialToolCall};
 use crate::tool::{ToolCall, ToolSpec};
 
 use super::types::{
@@ -114,6 +114,12 @@ pub(crate) fn codex_input_items(
                 append_codex_assistant(&mut input, blocks)?;
             }
             Message::AbortedAssistant(mut message) => {
+                message.content.extend(
+                    message
+                        .tool_calls
+                        .iter()
+                        .map(|call| ContentBlock::Text(render_partial_tool_call(call))),
+                );
                 message
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
@@ -266,6 +272,15 @@ fn render_tool_call(call: &ToolCall) -> String {
     let arguments = serde_json::to_string_pretty(&call.arguments)
         .unwrap_or_else(|_| call.arguments.to_string());
     format!("Tool call: {}\n{}", call.name, arguments)
+}
+
+fn render_partial_tool_call(call: &PartialToolCall) -> String {
+    format!(
+        "[Partial tool call (not executed)]\nID: {}\nName: {}\nArguments:\n{}",
+        call.id.as_deref().unwrap_or("[unknown]"),
+        call.name.as_deref().unwrap_or("[unknown]"),
+        call.arguments,
+    )
 }
 
 #[derive(Deserialize)]

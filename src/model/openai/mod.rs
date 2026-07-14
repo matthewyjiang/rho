@@ -124,7 +124,12 @@ impl ModelProvider for OpenAiProvider {
                     }
                 }
             } => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+            () = cancellation.cancelled() => {
+                if matches!(&self.auth, Auth::Codex { .. }) {
+                    self.codex_ws.reset().await;
+                }
+                Err(ModelError::Interrupted)
+            },
         }
     }
 }
@@ -380,7 +385,7 @@ mod tests {
         handle_openai_stream_line, CodexSseState,
     };
     use super::*;
-    use crate::model::{ContentBlock, ImageContent, Message};
+    use crate::model::{AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall};
     use crate::tool::{ToolCall, ToolResult, ToolSpec};
     use serde_json::json;
 
@@ -890,6 +895,31 @@ mod tests {
             vec![json!({
                 "role":"user",
                 "content":[{"type":"input_image","image_url":"data:image/png;base64,aW1n"}]
+            })]
+        );
+    }
+
+    #[test]
+    fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
+        let input = codex_input_items(
+            vec![Message::AbortedAssistant(AbortedAssistant {
+                content: vec![ContentBlock::Text("partial answer".into())],
+                tool_calls: vec![PartialToolCall {
+                    id: Some("call_1".into()),
+                    name: Some("read_file".into()),
+                    arguments: "{\"path\":\"src/".into(),
+                }],
+                ..AbortedAssistant::default()
+            })],
+            &mut Vec::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            input,
+            vec![json!({
+                "role":"assistant",
+                "content":"partial answer\n[Partial tool call (not executed)]\nID: call_1\nName: read_file\nArguments:\n{\"path\":\"src/\n[Operation aborted]"
             })]
         );
     }
