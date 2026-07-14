@@ -73,3 +73,7 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
     }
     entries
 }
+
+#[cfg(test)]
+#[path = "message_history_tests.rs"]
+mod tests;

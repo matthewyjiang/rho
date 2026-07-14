@@ -6393,28 +6393,6 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_tool_call_does_not_add_a_preparing_label() {
-        let entries = transcript_entries_from_messages(&[Message::AbortedAssistant(
-            crate::model::AbortedAssistant {
-                content: Vec::new(),
-                reasoning: String::new(),
-                tool_calls: vec![crate::model::PartialToolCall {
-                    id: Some("call_1".into()),
-                    name: Some("read_file".into()),
-                    arguments: r#"{"path":"src/main.rs"}"#.into(),
-                }],
-                usage: ModelUsage::default(),
-            },
-        )]);
-
-        assert!(matches!(
-            entries.as_slice(),
-            [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(_)]
-                if display_lines.first().map(String::as_str) == Some("read_file")
-        ));
-    }
-
-    #[test]
     fn recovered_session_messages_become_transcript_entries() {
         let entries = transcript_entries_from_messages(&[
             Message::System("system".into()),

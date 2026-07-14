@@ -1,7 +1,43 @@
 use crate::{
     agent::questionnaire,
-    tool::{ToolContext, ToolRegistry},
+    tool::{ToolContext, ToolPreviewMode, ToolRegistry},
 };
+
+#[derive(Default)]
+pub(super) struct StreamedToolCallPreview {
+    name: Option<String>,
+    next_parse_length: usize,
+}
+
+impl StreamedToolCallPreview {
+    pub(super) fn update(
+        &mut self,
+        name: Option<&str>,
+        arguments: &str,
+        tools: &ToolRegistry,
+        ctx: &ToolContext,
+    ) -> Option<Vec<String>> {
+        let name_changed = self.name.as_deref() != name;
+        if name_changed {
+            self.name = name.map(str::to_owned);
+            self.next_parse_length = 0;
+        }
+
+        let arguments_needed = name.is_some_and(|name| {
+            name == questionnaire::TOOL_NAME
+                || tools
+                    .get(name)
+                    .is_some_and(|tool| tool.preview_mode() == ToolPreviewMode::Arguments)
+        });
+        if !name_changed && (!arguments_needed || arguments.len() < self.next_parse_length) {
+            return None;
+        }
+
+        let display_lines = display_lines(name, arguments, tools, ctx);
+        self.next_parse_length = arguments.len().saturating_add(arguments.len().max(1));
+        Some(display_lines)
+    }
+}
 
 pub(super) fn display_lines(
     name: Option<&str>,
@@ -11,6 +47,17 @@ pub(super) fn display_lines(
 ) -> Vec<String> {
     let Some(name) = name.filter(|name| !name.is_empty()) else {
         return Vec::new();
+    };
+    let tool = if name == questionnaire::TOOL_NAME {
+        None
+    } else {
+        let Some(tool) = tools.get(name) else {
+            return vec![name.into()];
+        };
+        if tool.preview_mode() == ToolPreviewMode::NameOnly {
+            return vec![name.into()];
+        }
+        Some(tool)
     };
     let arguments = serde_json::from_str(arguments)
         .ok()
@@ -24,10 +71,8 @@ pub(super) fn display_lines(
             |request| questionnaire::start_display_lines(&request),
         );
     }
-    tools.get(name).map_or_else(
-        || vec![name.into()],
-        |tool| tool.display_preview_lines(&arguments, ctx),
-    )
+    tool.expect("non-questionnaire tools are resolved before parsing")
+        .display_preview_lines(&arguments, ctx)
 }
 
 fn parse_partial_json(input: &str) -> Option<serde_json::Value> {

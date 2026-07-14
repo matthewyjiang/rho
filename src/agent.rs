@@ -469,6 +469,7 @@ impl Agent {
                 on_event(AgentEvent::ContextUsage(context_usage))?;
             }
             let mut partial_assistant = PartialAssistant::default();
+            let mut tool_call_previews = BTreeMap::new();
             let response = match self
                 .provider
                 .send_turn_stream(
@@ -506,13 +507,17 @@ impl Agent {
                                 let arguments = call
                                     .map(|call| call.arguments.as_str())
                                     .unwrap_or(arguments.as_str());
-                                let display_lines = tool_call_preview::display_lines(
-                                    name.as_deref(),
-                                    arguments,
-                                    &self.tools,
-                                    &self.ctx,
-                                );
-                                on_event(AgentEvent::ToolCallUpdated { display_lines })
+                                if let Some(display_lines) = tool_call_previews
+                                    .entry(index)
+                                    .or_insert_with(
+                                        tool_call_preview::StreamedToolCallPreview::default,
+                                    )
+                                    .update(name.as_deref(), arguments, &self.tools, &self.ctx)
+                                {
+                                    on_event(AgentEvent::ToolCallUpdated { display_lines })
+                                } else {
+                                    Ok(())
+                                }
                             }
                             ModelEvent::Usage(usage) => {
                                 if let Some(context_usage) = self

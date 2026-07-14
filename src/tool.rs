@@ -13,6 +13,12 @@ use crate::cancellation::RunCancellation;
 pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolPreviewMode {
+    Arguments,
+    NameOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolDisplayStyle {
     DefaultTool,
     FileOrCommand,
@@ -88,6 +94,11 @@ pub trait Tool: Send + Sync {
 
     fn display_style(&self) -> ToolDisplayStyle {
         ToolDisplayStyle::for_tool_name(&self.spec().name)
+    }
+
+    /// Controls whether streamed previews need parsed argument values.
+    fn preview_mode(&self) -> ToolPreviewMode {
+        ToolPreviewMode::Arguments
     }
 
     fn display_command(&self, _args: &Value) -> Option<String> {
