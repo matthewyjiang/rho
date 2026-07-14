@@ -548,7 +548,15 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         }
     }
 
-    query_windows_console_palette()
+    let fallback = query_windows_console_palette()?;
+    let Some(fallback) = fallback else {
+        return Ok(None);
+    };
+    Ok(parse_palette_response_with_background(
+        &String::from_utf8_lossy(&bytes),
+        Some(fallback.background),
+    )
+    .or(Some(fallback)))
 }
 
 #[cfg(windows)]
@@ -612,6 +620,13 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
+    parse_palette_response_with_background(response, None)
+}
+
+fn parse_palette_response_with_background(
+    response: &str,
+    fallback_background: Option<Rgb>,
+) -> Option<TerminalPalette> {
     let mut background = None;
     let mut ansi = HashMap::new();
 
@@ -634,7 +649,7 @@ fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     }
 
     Some(TerminalPalette {
-        background: background?,
+        background: background.or(fallback_background)?,
         ansi,
     })
     .filter(|palette| palette.ansi.len() >= 7)
@@ -710,6 +725,17 @@ mod tests {
         let palette = parse_palette_response(response).expect("palette");
 
         assert_eq!(palette.background, Rgb::new(0, 0, 0));
+        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
+    }
+
+    #[test]
+    fn uses_fallback_background_with_osc_palette_response() {
+        let response = "\x1b]4;1;rgb:ffff/0000/0000\x1b\\\x1b]4;2;rgb:0000/ffff/0000\x1b\\\x1b]4;3;rgb:ffff/ffff/0000\x1b\\\x1b]4;4;rgb:0000/0000/ffff\x1b\\\x1b]4;5;rgb:ffff/0000/ffff\x1b\\\x1b]4;6;rgb:0000/ffff/ffff\x1b\\\x1b]4;7;rgb:ffff/ffff/ffff\x1b\\";
+
+        let palette = parse_palette_response_with_background(response, Some(Rgb::new(12, 34, 56)))
+            .expect("palette");
+
+        assert_eq!(palette.background, Rgb::new(12, 34, 56));
         assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
     }
 
