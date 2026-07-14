@@ -11,12 +11,26 @@ pub(super) fn to_html(text: &str) -> String {
     options.insert(Options::ENABLE_MATH);
 
     let context = math_context();
-    let parser = Parser::new_ext(text, options).map(|event| match event {
-        Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
-        Event::InlineMath(tex) => math_event(context, &tex, MathDisplay::Inline),
-        Event::DisplayMath(tex) => math_event(context, &tex, MathDisplay::Block),
-        event => event,
-    });
+    let mut settings = Settings {
+        output: OutputFormat::Mathml,
+        ..Settings::default()
+    };
+    let parser =
+        Parser::new_ext(text, options)
+            .into_offset_iter()
+            .map(|(event, range)| match event {
+                Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
+                Event::InlineMath(tex) if is_ambiguous_inline_math(text, range.end) => {
+                    Event::Text(CowStr::Boxed(format!("${tex}$").into_boxed_str()))
+                }
+                Event::InlineMath(tex) => {
+                    math_event(context, &mut settings, &tex, MathDisplay::Inline)
+                }
+                Event::DisplayMath(tex) => {
+                    math_event(context, &mut settings, &tex, MathDisplay::Block)
+                }
+                event => event,
+            });
     let mut rendered = String::new();
     html::push_html(&mut rendered, parser);
     rendered
@@ -27,20 +41,27 @@ fn math_context() -> &'static KatexContext {
     CONTEXT.get_or_init(KatexContext::default)
 }
 
+fn is_ambiguous_inline_math(text: &str, range_end: usize) -> bool {
+    text[range_end..]
+        .chars()
+        .next()
+        .is_some_and(char::is_alphanumeric)
+}
+
 #[derive(Clone, Copy)]
 enum MathDisplay {
     Inline,
     Block,
 }
 
-fn math_event<'a>(context: &KatexContext, tex: &str, display: MathDisplay) -> Event<'a> {
-    let settings = Settings {
-        output: OutputFormat::Mathml,
-        display_mode: matches!(display, MathDisplay::Block),
-        ..Settings::default()
-    };
-
-    let markup = katex::render_to_string(context, tex, &settings)
+fn math_event<'a>(
+    context: &KatexContext,
+    settings: &mut Settings,
+    tex: &str,
+    display: MathDisplay,
+) -> Event<'a> {
+    settings.display_mode = matches!(display, MathDisplay::Block);
+    let markup = katex::render_to_string(context, tex, settings)
         .unwrap_or_else(|_| fallback_markup(tex, display));
     Event::InlineHtml(CowStr::Boxed(markup.into_boxed_str()))
 }

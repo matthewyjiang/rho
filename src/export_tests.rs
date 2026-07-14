@@ -94,6 +94,42 @@ fn renders_assistant_latex_as_mathml() {
 }
 
 #[test]
+fn preserves_ambiguous_currency_and_shell_variables() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Costs range from $5-$10 and the path is $HOME/$PATH.",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("Costs range from $5-$10 and the path is $HOME/$PATH."));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn reuses_latex_macros_within_one_assistant_text_block() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "$$\\gdef\\RR{\\mathbb{R}}$$\n\nThe real numbers are $\\RR$.",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("mathvariant=\"double-struck\">R</mi>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn does_not_reuse_latex_macros_between_assistant_text_blocks() {
+    let export = export_with_messages(vec![
+        message(Message::assistant_text("$$\\gdef\\RR{\\mathbb{R}}$$")),
+        message(Message::assistant_text("$\\RR$")),
+    ]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code class=\"math-fallback\">$\\RR$</code>"));
+}
+
+#[test]
 fn leaves_latex_delimiters_literal_in_code() {
     let export = export_with_messages(vec![message(Message::assistant_text(
         "`$x^2$`\n\n```text\n$$y^2$$\n```",
