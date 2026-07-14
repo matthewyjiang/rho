@@ -134,7 +134,8 @@ async fn log_execution_in_projects_dir(
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options.open(path).await?;
-    file.write_all(&entry).await
+    file.write_all(&entry).await?;
+    file.flush().await
 }
 
 fn encode_project_path(path: &Path) -> String {
