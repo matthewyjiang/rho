@@ -138,6 +138,8 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 `rtk` enables built-in RTK command rewriting when the `rtk` binary is available. It defaults to `true`; set `rtk = false` to leave shell commands unchanged.
 
+Rewritten commands run through the RTK binary, so their savings are recorded by `rtk gain`. Rho also writes RTK-compatible command records and output sizes under the Claude projects directory so `rtk discover` can include Rho shell commands. Command output is not copied into these compatibility records. Set `CLAUDE_CONFIG_DIR` to override the default `~/.claude` location used by both Rho and RTK.
+
 ## Auto compaction
 
 `auto_compact` enables summarizing older conversation history when the estimated current context approaches the effective model window. It is disabled by default. `compact_threshold_percent` controls the trigger point. `compact_target_percent` controls the post-compaction target as a percent of the effective model window; it must stay below the threshold, so values at or above `compact_threshold_percent` are clamped to one below it when the config is loaded or saved. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count. Context estimates are anchored to the most recent provider-reported token usage when available.
