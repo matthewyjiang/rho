@@ -1274,6 +1274,19 @@ fn streamed_tool_call_renders_argument_values_before_json_is_complete() {
     );
     assert_eq!(
         tool_call_preview::display_lines(
+            Some("edit_file"),
+            r#"{"edits":[{"path":"src/main.rs","new_string":"hel"#,
+            &{
+                let mut tools = ToolRegistry::new();
+                tools.register(crate::tools::edit_file::EditFile);
+                tools
+            },
+            &context,
+        ),
+        vec!["edit_file"]
+    );
+    assert_eq!(
+        tool_call_preview::display_lines(
             Some("bash"),
             r#"{"command":"cargo te"#,
             &{
@@ -1283,7 +1296,7 @@ fn streamed_tool_call_renders_argument_values_before_json_is_complete() {
             },
             &context,
         ),
-        vec!["bash cargo te", "timeout: none"]
+        vec!["bash cargo te"]
     );
 }
 

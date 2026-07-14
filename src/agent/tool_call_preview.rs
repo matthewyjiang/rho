@@ -26,7 +26,7 @@ pub(super) fn display_lines(
     }
     tools.get(name).map_or_else(
         || vec![name.into()],
-        |tool| tool.display_start_lines(&arguments, ctx),
+        |tool| tool.display_preview_lines(&arguments, ctx),
     )
 }
 

@@ -48,6 +48,10 @@ impl Tool for Bash {
             .map(str::to_string)
     }
 
+    fn display_preview_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
+        vec![command_line(args)]
+    }
+
     fn display_start_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
         command_lines(args)
     }
@@ -277,15 +281,15 @@ async fn drain_stream_chunks(
     }
 }
 
+fn command_line(args: &serde_json::Value) -> String {
+    match args.get("command").and_then(|command| command.as_str()) {
+        Some(command) if !command.trim().is_empty() => format!("bash {command}"),
+        _ => "bash".into(),
+    }
+}
+
 fn command_lines(args: &serde_json::Value) -> Vec<String> {
-    let mut lines = vec![
-        match args.get("command").and_then(|command| command.as_str()) {
-            Some(command) if !command.trim().is_empty() => format!("bash {command}"),
-            _ => "bash".into(),
-        },
-    ];
-    lines.push(format_timeout(args));
-    lines
+    vec![command_line(args), format_timeout(args)]
 }
 
 fn display_lines_with_content(args: &serde_json::Value, content: &str) -> Vec<String> {

@@ -114,6 +114,12 @@ pub trait Tool: Send + Sync {
         lines
     }
 
+    /// Formats incomplete streamed arguments before tool execution starts.
+    /// Implementors should return stable summary text and avoid result-only content.
+    fn display_preview_lines(&self, args: &Value, ctx: &ToolContext) -> Vec<String> {
+        self.display_start_lines(args, ctx)
+    }
+
     fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
         let mut lines = vec![self.spec().name];
         if let Some(command) = self

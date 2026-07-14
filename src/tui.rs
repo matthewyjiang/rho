@@ -3068,6 +3068,7 @@ impl App {
                 if matches!(
                     other,
                     AgentEvent::StepStarted(_)
+                        | AgentEvent::ToolCallUpdated { .. }
                         | AgentEvent::ToolStarted { .. }
                         | AgentEvent::ToolFinished { .. }
                 ) {
@@ -4476,7 +4477,7 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { display_lines } => {
+            AgentEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
                 self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
@@ -4484,6 +4485,7 @@ impl App {
                 });
                 None
             }
+            AgentEvent::ToolCallUpdated { .. } => None,
             AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
             AgentEvent::ContextUsage(usage) => {
                 self.current_context = Some(usage);
