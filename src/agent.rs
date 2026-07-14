@@ -264,6 +264,17 @@ impl Agent {
         self.run_with_events(user_prompt, |_| Ok(())).await
     }
 
+    pub fn append_user_context_with_display(
+        &mut self,
+        model: String,
+        display: String,
+    ) -> Result<(), AgentError> {
+        self.push_message_with_display(
+            Message::user_text(model),
+            Some(&Message::user_text(display)),
+        )
+    }
+
     pub fn load_skill(&mut self, skill: &crate::skills::Skill) -> Result<(), AgentError> {
         self.push_message(Message::user_text(format!(
             "Loaded skill `{}` from {}:\n\n{}",

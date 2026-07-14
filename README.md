@@ -41,6 +41,12 @@ For one-off prompts:
 rho run "summarize this repository"
 ```
 
+### Inline shell
+
+Prefix TUI input with `!` to run a command locally and add its command, output, and exit status to model context. Use `!!` to run it without adding anything to context. The composer uses distinct colors and labels for the two modes.
+
+Rho defaults to Bash on Unix-like systems and PowerShell on Windows. Choose another detected shell under `/config` -> **Inline shell**.
+
 ## Docs
 
 See the docs site: <https://matthewyjiang.github.io/rho/>

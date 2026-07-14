@@ -49,6 +49,7 @@ For PRs:
 - Keep feature-specific construction and decisions with the owning feature. For example, a picker renderer handles labels, details, badges, and selection state, while the model picker decides which model is selected.
 - Model concepts such as selected, current, unavailable, warning, or detail explicitly instead of inferring them from encoded strings or suffixes.
 - Split files that accumulate unrelated responsibilities along ownership boundaries: shared types and mechanics together, feature setup and policy in focused modules.
+- If a file is subject to a custom legacy line budget, refactor cohesive behavior into appropriate modules to reduce the legacy file size. Do not satisfy the budget with formatting tricks, shortened names, compressed code, or other line-count workarounds.
 - Design reusable components around stable concepts rather than current UI text or provider names, so new features provide data instead of adding component conditionals.
 - Avoid broad abstractions before boundaries are clear. Once a pattern repeats, extract shared mechanics and leave differing policy at call sites.
 
