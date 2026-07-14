@@ -129,6 +129,33 @@ fn jump_button_renders_above_composer_only_when_scrolled_up() {
 }
 
 #[test]
+fn spinner_and_jump_button_share_activity_row_with_jump_right_aligned() {
+    let mut app = test_app();
+    app.running = true;
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::User(format!("message {index}")));
+    }
+    app.scroll_history_page_up(40, 12, Instant::now());
+
+    let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+    let activity = layout.activity.unwrap();
+    let button = layout.jump_to_bottom.unwrap();
+    let line = app.activity_line(40, Instant::now(), /*show_jump_to_bottom*/ true);
+    let rendered = line_text(&line);
+
+    assert_eq!(activity.y, button.y);
+    assert_eq!(
+        button.x.saturating_add(button.width),
+        activity.x.saturating_add(activity.width)
+    );
+    assert!(rendered.starts_with('⠋'), "{rendered:?}");
+    assert!(
+        rendered.ends_with("↓ jump to bottom  ctrl+g"),
+        "{rendered:?}"
+    );
+}
+
+#[test]
 fn compact_jump_button_renders_on_narrow_terminals() {
     let app = test_app();
 
@@ -150,6 +177,7 @@ fn mouse_wheel_scrolls_history_and_clicking_jump_button_returns_to_bottom() {
 
     let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
     let button = layout.jump_to_bottom.unwrap();
+    assert!(button.x > 0);
     app.handle_mouse_event(
         MouseEventKind::Down(MouseButton::Left),
         button.x,

@@ -31,6 +31,7 @@ use ratatui::{
     widgets::Paragraph,
     DefaultTerminal, Frame, Terminal,
 };
+mod activity;
 mod command_palette;
 mod config_editor;
 mod config_picker;
@@ -69,6 +70,7 @@ mod theme;
 mod tool_diff;
 mod turn_prompt;
 
+use activity::LoadingSpinner;
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
@@ -215,6 +217,7 @@ struct ActiveFrame {
 struct ScreenLayout {
     history: Rect,
     history_scrollbar: Option<HistoryScrollbar>,
+    activity: Option<Rect>,
     jump_to_bottom: Option<Rect>,
     top_divider: Rect,
     composer: Rect,
@@ -398,11 +401,6 @@ struct CommandChoice {
     kind: CommandChoiceKind,
 }
 
-#[derive(Clone, Debug, Default)]
-struct LoadingSpinner {
-    started_at: Option<Instant>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TurnOutcome {
     Completed,
@@ -414,45 +412,6 @@ enum TurnOutcome {
 enum HistoryScroll {
     Bottom,
     Manual { top_line: usize },
-}
-
-impl LoadingSpinner {
-    const FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    const FRAME_INTERVAL: Duration = Duration::from_millis(80);
-
-    fn start(&mut self) {
-        self.started_at = Some(Instant::now());
-    }
-
-    fn start_if_needed(&mut self) {
-        if self.started_at.is_none() {
-            self.start();
-        }
-    }
-
-    fn stop(&mut self) {
-        self.started_at = None;
-    }
-
-    fn frame_at(&self, now: Instant) -> &'static str {
-        let Some(started_at) = self.started_at else {
-            return Self::FRAMES[0];
-        };
-        let interval_ms = Self::FRAME_INTERVAL.as_millis().max(1);
-        let frame = now
-            .saturating_duration_since(started_at)
-            .as_millis()
-            .checked_div(interval_ms)
-            .unwrap_or(0) as usize;
-        Self::FRAMES[frame % Self::FRAMES.len()]
-    }
-
-    fn line(&self, now: Instant) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(self.frame_at(now), Theme::accent()),
-            Span::styled(" working", Theme::dim()),
-        ])
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4625,10 +4584,15 @@ impl App {
         {
             scrollbar.render(frame, self.history_scrollbar_drag.is_some());
         }
-        if let Some(button) = layout.jump_to_bottom {
+        if let Some(activity) = layout.activity {
             frame.render_widget(
-                Paragraph::new(vec![self.jump_to_bottom_line(width)]).style(Style::default()),
-                button,
+                Paragraph::new(vec![self.activity_line(
+                    width,
+                    now,
+                    layout.jump_to_bottom.is_some(),
+                )])
+                .style(Style::default()),
+                activity,
             );
         }
         if layout.top_divider.height > 0 {
@@ -4743,8 +4707,8 @@ impl App {
         let history_start = self.visible_history_start(history_len, layout.history.height as usize);
         let mut lines =
             self.visible_history_lines(width, now, history_start, layout.history.height as usize);
-        if layout.jump_to_bottom.is_some() {
-            lines.push(self.jump_to_bottom_line(width));
+        if layout.activity.is_some() {
+            lines.push(self.activity_line(width, now, layout.jump_to_bottom.is_some()));
         }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width));
@@ -4808,8 +4772,10 @@ impl App {
         let show_jump_to_bottom = history_height_without_jump > 0
             && self.visible_history_start(history_len, history_height_without_jump)
                 < history_len.saturating_sub(history_height_without_jump);
+        let show_activity =
+            history_height_without_jump > 0 && (self.loading_active() || show_jump_to_bottom);
         let reserved_above_composer =
-            usize::from(show_top_divider).saturating_add(usize::from(show_jump_to_bottom));
+            usize::from(show_top_divider).saturating_add(usize::from(show_activity));
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let visible_composer_len = composer_lines.len().min(composer_budget);
         let composer_start =
@@ -4820,10 +4786,21 @@ impl App {
         let mut y = area.y;
         let history = Rect::new(area.x, y, area.width, history_height as u16);
         y = y.saturating_add(history.height);
-        let jump_to_bottom = show_jump_to_bottom.then(|| {
+        let activity = show_activity.then(|| {
             let rect = Rect::new(area.x, y, area.width, 1);
             y = y.saturating_add(1);
             rect
+        });
+        let jump_to_bottom = activity.filter(|_| show_jump_to_bottom).map(|activity| {
+            let text_width = display_width(&self.jump_to_bottom_text(width)).min(width) as u16;
+            Rect::new(
+                activity
+                    .x
+                    .saturating_add(activity.width.saturating_sub(text_width)),
+                activity.y,
+                text_width,
+                1,
+            )
         });
         let top_divider = if show_top_divider {
             let rect = Rect::new(area.x, y, area.width, 1);
@@ -4847,6 +4824,7 @@ impl App {
                 history_len,
                 self.visible_history_start(history_len, history_height),
             ),
+            activity,
             jump_to_bottom,
             top_divider,
             composer,
@@ -4977,7 +4955,7 @@ impl App {
             .collect()
     }
 
-    fn history_live_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
+    fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(pending) = &self.pending_tool_call {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
@@ -5000,10 +4978,6 @@ impl App {
                 StreamKind::Reasoning.style(),
                 LineFill::Natural,
             )));
-        }
-        if self.loading_active() {
-            lines.push(Line::raw(""));
-            lines.push(self.loading_spinner.line(now));
         }
         lines
     }
@@ -5055,8 +5029,8 @@ impl App {
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
-        let reserved_above_composer =
-            usize::from(show_top_divider) + usize::from(include_jump_button);
+        let reserved_above_composer = usize::from(show_top_divider)
+            + usize::from(self.loading_active() || include_jump_button);
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let visible_composer_len = composer_line_count.min(composer_budget);
         available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len)
@@ -5173,14 +5147,32 @@ impl App {
         Ok(())
     }
 
+    fn activity_line(
+        &self,
+        width: usize,
+        now: Instant,
+        show_jump_to_bottom: bool,
+    ) -> Line<'static> {
+        let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
+        activity::line(
+            width,
+            now,
+            self.loading_active().then_some(&self.loading_spinner),
+            jump_text,
+        )
+    }
+
+    #[cfg(test)]
     fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        let binding = self.info.keybindings.jump_to_bottom.to_string();
-        let text = if width < 24 {
-            format!("↓ bottom {binding}")
-        } else {
-            format!("↓ jump to bottom  {binding}")
-        };
-        styled_line(text, width.max(1), Theme::accent(), LineFill::PadToWidth)
+        self.activity_line(width, Instant::now(), /*show_jump_to_bottom*/ true)
+    }
+
+    fn jump_to_bottom_text(&self, width: usize) -> String {
+        activity::jump_to_bottom_text(
+            width,
+            &self.info.keybindings.jump_to_bottom.to_string(),
+            /*alongside_spinner*/ self.loading_active(),
+        )
     }
 
     fn handle_history_key<B: Backend>(
@@ -6808,31 +6800,7 @@ mod tests {
     }
 
     #[test]
-    fn loading_spinner_advances_frames() {
-        let started_at = Instant::now();
-        let spinner = LoadingSpinner {
-            started_at: Some(started_at),
-        };
-
-        assert_eq!(spinner.frame_at(started_at), "⠋");
-        assert_eq!(
-            spinner.frame_at(started_at + LoadingSpinner::FRAME_INTERVAL),
-            "⠙"
-        );
-    }
-
-    #[test]
-    fn loading_spinner_line_separates_frame_from_text() {
-        let started_at = Instant::now();
-        let spinner = LoadingSpinner {
-            started_at: Some(started_at),
-        };
-
-        assert_eq!(line_text(&spinner.line(started_at)), "⠋ working");
-    }
-
-    #[test]
-    fn active_lines_separate_spinner_from_content_with_blank_line() {
+    fn spinner_is_anchored_immediately_above_composer_divider() {
         let mut app = test_app();
         app.running = true;
         app.pending_tool_call = Some(ToolEntry {
@@ -6840,24 +6808,25 @@ mod tests {
             display_lines: vec!["bash".into(), "cargo test".into()],
             expanded: false,
         });
+        let width = 40;
+        let height = 24;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
 
-        let lines = app.active_lines_at_for_height(40, DEFAULT_TUI_HEIGHT as usize, Instant::now());
+        terminal.draw(|frame| app.draw(frame)).unwrap();
 
-        let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
-
-        assert!(rendered.contains("working"), "{rendered}");
+        let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+        let rows = (0..height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), row))
+            .collect::<Vec<_>>();
+        let activity = layout.activity.unwrap();
+        assert_eq!(activity.y.saturating_add(1), layout.top_divider.y);
+        assert!(rows[activity.y as usize].contains("working"), "{rows:#?}");
         assert!(
-            rendered.contains(
-                "
-
-⠋ working"
-            ) || rendered.contains(
-                "working
-"
-            ),
-            "{rendered}"
+            rows[..activity.y as usize]
+                .iter()
+                .any(|row| row.contains("cargo test")),
+            "{rows:#?}"
         );
-        assert!(rendered.contains("bash"), "{rendered}");
     }
 
     #[test]
@@ -7660,7 +7629,7 @@ mod tests {
     }
 
     #[test]
-    fn history_lines_include_header_transcript_pending_preview_and_spinner() {
+    fn history_lines_include_header_transcript_pending_preview_but_not_activity_row() {
         let mut app = test_app();
         app.push_transcript_entry(Entry::User("hello".into()));
         app.pending_tool_call = Some(ToolEntry {
@@ -7674,7 +7643,7 @@ mod tests {
             include_leading_blank: true,
         });
         app.running = true;
-        app.loading_spinner.started_at = Some(Instant::now());
+        app.loading_spinner.start();
 
         let rendered = app
             .history_lines(60, Instant::now())
@@ -7687,7 +7656,7 @@ mod tests {
         assert!(rendered.contains("hello"), "{rendered}");
         assert!(rendered.contains("bash"), "{rendered}");
         assert!(rendered.contains("partial answer"), "{rendered}");
-        assert!(rendered.contains("working"), "{rendered}");
+        assert!(!rendered.contains("working"), "{rendered}");
     }
 
     #[test]
