@@ -403,11 +403,6 @@ fn query_terminal_palette() -> Option<TerminalPalette> {
     query_terminal_palette_impl().ok().flatten()
 }
 
-#[cfg(windows)]
-fn is_native_wezterm() -> bool {
-    std::env::var_os("WEZTERM_PANE").is_some()
-}
-
 fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
     const COLORS: [AnsiColor; 7] = [
         AnsiColor::Red,
@@ -473,12 +468,6 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 
 #[cfg(windows)]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    if is_native_wezterm() {
-        // WezTerm's bundled ConPTY does not pass terminal query responses back
-        // to native Windows applications. Use the console palette directly.
-        return query_windows_console_palette();
-    }
-
     use std::io::stdout;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
