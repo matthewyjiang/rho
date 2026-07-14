@@ -28,23 +28,15 @@ fn loading_spinner_line_separates_frame_from_text() {
         started_at: Some(started_at),
     };
 
-    assert_eq!(line_text(&spinner.line(started_at)), "⠋ working");
+    assert_eq!(line_text(&spinner.line(started_at, 40)), "⠋ working");
 }
 
 #[test]
-fn activity_line_right_aligns_jump_text() {
+fn spinner_line_compacts_to_available_width() {
     let spinner = LoadingSpinner::default();
-    let rendered = line_text(&line(
-        40,
-        Instant::now(),
-        Some(&spinner),
-        Some("↓ jump to bottom  ctrl+g".into()),
-    ));
+    let rendered = line_text(&spinner.line(Instant::now(), 1));
 
-    assert!(rendered.starts_with("⠋ working"), "{rendered:?}");
-    assert!(
-        rendered.ends_with("↓ jump to bottom  ctrl+g"),
-        "{rendered:?}"
-    );
-    assert_eq!(display_width(&rendered), 40);
+    assert_eq!(rendered, "⠋");
+    assert_eq!(spinner_width(1), 1);
+    assert_eq!(spinner_width(40), display_width(SPINNER_LABEL));
 }

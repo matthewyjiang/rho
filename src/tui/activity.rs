@@ -6,6 +6,14 @@ use super::{render::display_width, theme::Theme};
 
 const SPINNER_LABEL: &str = "⠋ working";
 
+pub(super) fn spinner_width(available: usize) -> usize {
+    if available >= display_width(SPINNER_LABEL) {
+        display_width(SPINNER_LABEL)
+    } else {
+        available.min(display_width("⠋"))
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct LoadingSpinner {
     started_at: Option<Instant>,
@@ -42,44 +50,18 @@ impl LoadingSpinner {
         Self::FRAMES[frame % Self::FRAMES.len()]
     }
 
-    fn line(&self, now: Instant) -> Line<'static> {
-        Line::from(vec![
-            Span::styled(self.frame_at(now), Theme::accent()),
-            Span::styled(" working", Theme::dim()),
-        ])
-    }
-}
-
-pub(super) fn line(
-    width: usize,
-    now: Instant,
-    spinner: Option<&LoadingSpinner>,
-    jump_text: Option<String>,
-) -> Line<'static> {
-    let width = width.max(1);
-    let jump_width = jump_text.as_deref().map_or(0, display_width).min(width);
-    let spinner_available = if jump_width > 0 {
-        width.saturating_sub(jump_width + 1)
-    } else {
-        width
-    };
-    let spinner = match (spinner, spinner_available) {
-        (Some(spinner), available) if available >= display_width(SPINNER_LABEL) => {
-            spinner.line(now)
+    pub(super) fn line(&self, now: Instant, available: usize) -> Line<'static> {
+        if available >= display_width(SPINNER_LABEL) {
+            Line::from(vec![
+                Span::styled(self.frame_at(now), Theme::accent()),
+                Span::styled(" working", Theme::dim()),
+            ])
+        } else if available > 0 {
+            Line::from(Span::styled(self.frame_at(now), Theme::accent()))
+        } else {
+            Line::default()
         }
-        (Some(spinner), available) if available > 0 => {
-            Line::from(Span::styled(spinner.frame_at(now), Theme::accent()))
-        }
-        _ => Line::default(),
-    };
-    let spinner_width = spinner.width();
-    let spacing = width.saturating_sub(spinner_width + jump_width);
-    let mut spans = spinner.spans;
-    spans.push(Span::raw(" ".repeat(spacing)));
-    if let Some(text) = jump_text {
-        spans.push(Span::styled(text, Theme::accent()));
     }
-    Line::from(spans)
 }
 
 pub(super) fn jump_to_bottom_text(width: usize, binding: &str, alongside_spinner: bool) -> String {

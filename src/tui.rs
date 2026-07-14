@@ -4544,11 +4544,12 @@ impl App {
             &composer_lines,
             command_lines.len(),
         );
-        let history_start = self.visible_history_start(history_len, layout.history.height as usize);
+        let (history_start, history_count) =
+            self.visible_history_window(history_len, layout.history.height as usize);
         let history_visible = self.visible_history_lines_with_live(
             width,
             history_start,
-            layout.history.height as usize,
+            history_count,
             &live_history,
         );
         frame.render_widget(
@@ -4586,13 +4587,19 @@ impl App {
         }
         if let Some(activity) = layout.activity {
             frame.render_widget(
-                Paragraph::new(vec![self.activity_line(
-                    width,
-                    now,
-                    layout.jump_to_bottom.is_some(),
-                )])
-                .style(Style::default()),
+                Paragraph::new(self.loading_spinner.line(now, activity.width as usize))
+                    .style(Style::default()),
                 activity,
+            );
+        }
+        if let Some(button) = layout.jump_to_bottom {
+            frame.render_widget(
+                Paragraph::new(Line::styled(
+                    self.jump_to_bottom_text(width),
+                    Theme::accent(),
+                ))
+                .style(Style::default()),
+                button,
             );
         }
         if layout.top_divider.height > 0 {
@@ -4704,11 +4711,17 @@ impl App {
             &composer_lines,
             command_lines.len(),
         );
-        let history_start = self.visible_history_start(history_len, layout.history.height as usize);
-        let mut lines =
-            self.visible_history_lines(width, now, history_start, layout.history.height as usize);
-        if layout.activity.is_some() {
-            lines.push(self.activity_line(width, now, layout.jump_to_bottom.is_some()));
+        let (history_start, history_count) =
+            self.visible_history_window(history_len, layout.history.height as usize);
+        let mut lines = self.visible_history_lines(width, now, history_start, history_count);
+        lines.resize(layout.history.height as usize, Line::default());
+        if let Some(activity) = layout.activity {
+            lines[activity.y.saturating_sub(layout.history.y) as usize] =
+                self.loading_spinner.line(now, activity.width as usize);
+        }
+        if let Some(button) = layout.jump_to_bottom {
+            lines[button.y.saturating_sub(layout.history.y) as usize] =
+                self.jump_to_bottom_line(width);
         }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width));
@@ -4768,9 +4781,7 @@ impl App {
         let show_jump_to_bottom = history_height_without_jump > 0
             && self.visible_history_start(history_len, history_height_without_jump)
                 < history_len.saturating_sub(history_height_without_jump);
-        let show_activity = history_height_without_jump > 0;
-        let reserved_above_composer =
-            usize::from(show_top_divider).saturating_add(usize::from(show_activity));
+        let reserved_above_composer = usize::from(show_top_divider);
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let visible_composer_len = composer_lines.len().min(composer_budget);
         let composer_start =
@@ -4781,22 +4792,27 @@ impl App {
         let mut y = area.y;
         let history = Rect::new(area.x, y, area.width, history_height as u16);
         y = y.saturating_add(history.height);
-        let activity = show_activity.then(|| {
-            let rect = Rect::new(area.x, y, area.width, 1);
-            y = y.saturating_add(1);
-            rect
-        });
-        let jump_to_bottom = activity.filter(|_| show_jump_to_bottom).map(|activity| {
-            let text_width = display_width(&self.jump_to_bottom_text(width)).min(width) as u16;
+        let activity_y = history.bottom().saturating_sub(1);
+        let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
+        let jump_width = jump_text.as_deref().map_or(0, display_width).min(width) as u16;
+        let jump_to_bottom = jump_text.map(|_| {
             Rect::new(
-                activity
+                history
                     .x
-                    .saturating_add(activity.width.saturating_sub(text_width)),
-                activity.y,
-                text_width,
+                    .saturating_add(history.width.saturating_sub(jump_width)),
+                activity_y,
+                jump_width,
                 1,
             )
         });
+        let spinner_available = if jump_width > 0 {
+            width.saturating_sub(jump_width as usize + 1)
+        } else {
+            width
+        };
+        let spinner_width = activity::spinner_width(spinner_available) as u16;
+        let activity = (self.loading_active() && spinner_width > 0 && history.height > 0)
+            .then(|| Rect::new(history.x, activity_y, spinner_width, 1));
         let top_divider = if show_top_divider {
             let rect = Rect::new(area.x, y, area.width, 1);
             y = y.saturating_add(1);
@@ -4977,6 +4993,16 @@ impl App {
         lines
     }
 
+    fn visible_history_window(&self, history_len: usize, height: usize) -> (usize, usize) {
+        let count = if self.loading_active() && matches!(self.history_scroll, HistoryScroll::Bottom)
+        {
+            height.saturating_sub(1)
+        } else {
+            height
+        };
+        (self.visible_history_start(history_len, count), count)
+    }
+
     fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
         let max_start = history_len.saturating_sub(height);
         match self.history_scroll {
@@ -5015,8 +5041,7 @@ impl App {
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
-        let activity_height = usize::from(available_above_bottom > usize::from(show_top_divider));
-        let reserved_above_composer = usize::from(show_top_divider).saturating_add(activity_height);
+        let reserved_above_composer = usize::from(show_top_divider);
         let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let visible_composer_len = composer_line_count.min(composer_budget);
         available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len)
@@ -5109,24 +5134,9 @@ impl App {
         Ok(())
     }
 
-    fn activity_line(
-        &self,
-        width: usize,
-        now: Instant,
-        show_jump_to_bottom: bool,
-    ) -> Line<'static> {
-        let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
-        activity::line(
-            width,
-            now,
-            self.loading_active().then_some(&self.loading_spinner),
-            jump_text,
-        )
-    }
-
     #[cfg(test)]
     fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        self.activity_line(width, Instant::now(), /*show_jump_to_bottom*/ true)
+        Line::styled(self.jump_to_bottom_text(width), Theme::accent())
     }
 
     fn jump_to_bottom_text(&self, width: usize) -> String {
@@ -6782,7 +6792,8 @@ mod tests {
             .collect::<Vec<_>>();
         let activity = layout.activity.unwrap();
         assert_eq!(activity.y.saturating_add(1), layout.top_divider.y);
-        assert_eq!(layout.history.bottom(), activity.y);
+        assert_eq!(activity.y, layout.history.bottom().saturating_sub(1));
+        assert!(activity.width < layout.history.width);
         assert!(rows[activity.y as usize].contains("working"), "{rows:#?}");
         assert!(
             rows[..activity.y as usize]

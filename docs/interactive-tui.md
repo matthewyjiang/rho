@@ -132,6 +132,6 @@ Most editing keys work the way they do in a normal terminal input.
 
 Copied text is sent to the terminal clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
 
-When the transcript is scrolled away from the bottom, Rho shows a right-aligned `↓ jump to bottom  ctrl+g` button directly above the composer. Rho always reserves that activity row so transcript height remains stable; during generation, the spinner appears on its left. Press `ctrl-g` or click the button to resume following live output.
+When the transcript is scrolled away from the bottom, Rho overlays a right-aligned `↓ jump to bottom  ctrl+g` button on the last transcript row and obscures only the button's own cells. During generation, the spinner is similarly overlaid on the left. At the live bottom, transcript content stops one row above the spinner; while manually scrolled, the complete last row remains visible wherever neither control is drawn. Press `ctrl-g` or click the button to resume following live output.
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
