@@ -89,7 +89,7 @@ enum SessionEntry {
         timestamp: String,
         message: Message,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        display_message: Option<Message>,
+        display_message: Option<Box<Message>>,
     },
     ReplaceHistory {
         timestamp: String,
@@ -178,7 +178,7 @@ impl Session {
             {
                 messages.push(ExportedMessage {
                     timestamp: parse_timestamp(&timestamp),
-                    message: display_message.unwrap_or(message),
+                    message: display_message.map_or(message, |message| *message),
                 });
             }
             Ok(())
@@ -266,7 +266,7 @@ impl Session {
         self.append_entry(&SessionEntry::Message {
             timestamp: timestamp(),
             message: message.clone(),
-            display_message: Some(display_message.clone()),
+            display_message: Some(Box::new(display_message.clone())),
         })?;
         let _ = index::record_message(self, display_message);
         Ok(())
@@ -327,7 +327,7 @@ fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
                 display_message,
                 ..
             } => {
-                display.push(display_message.unwrap_or_else(|| message.clone()));
+                display.push(display_message.map_or_else(|| message.clone(), |message| *message));
                 model_tail.push(message);
             }
             SessionEntry::ReplaceHistory { messages, .. } => {
@@ -428,7 +428,7 @@ pub(super) fn summarize_session_file(
                 if let Some(timestamp) = parse_timestamp(&timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages.push(display_message.unwrap_or(message));
+                messages.push(display_message.map_or(message, |message| *message));
             }
             SessionEntry::ReplaceHistory {
                 timestamp,

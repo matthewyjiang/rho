@@ -73,6 +73,13 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
         Message::System(text) => MESSAGE_OVERHEAD_TOKENS.saturating_add(text_tokens(text)),
         Message::User(blocks) | Message::Assistant(blocks) => MESSAGE_OVERHEAD_TOKENS
             .saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>()),
+        Message::AbortedAssistant(message) => MESSAGE_OVERHEAD_TOKENS.saturating_add(
+            message
+                .content
+                .iter()
+                .map(content_block_tokens)
+                .sum::<u64>(),
+        ),
         Message::ToolResult(result) => {
             TOOL_RESULT_OVERHEAD_TOKENS.saturating_add(json_tokens(result))
         }

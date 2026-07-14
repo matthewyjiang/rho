@@ -1,3 +1,4 @@
+use crate::cancellation::RunCancellation;
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -76,6 +77,24 @@ impl Tool for Bash {
         id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
+        self.call_with_updates_and_cancellation(
+            args,
+            ctx,
+            id,
+            RunCancellation::default(),
+            on_update,
+        )
+        .await
+    }
+
+    async fn call_with_updates_and_cancellation(
+        &self,
+        args: serde_json::Value,
+        ctx: ToolContext,
+        id: String,
+        cancellation: RunCancellation,
+        on_update: &mut (dyn FnMut(Vec<String>) + Send),
+    ) -> Result<ToolResult, ToolError> {
         let mut raw_args = args.clone();
         let mut args: Args = serde_json::from_value(args)?;
         if self.rtk_enabled {
@@ -117,6 +136,9 @@ impl Tool for Bash {
         update_tick.tick().await;
         let status = loop {
             tokio::select! {
+                () = cancellation.cancelled() => {
+                    return Err(ToolError::Message("tool interrupted".into()));
+                }
                 status = child.wait() => break status?,
                 chunk = chunk_rx.recv(), if output_open => {
                     match chunk {

@@ -120,7 +120,11 @@ impl ModelProvider for XaiProvider {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
-        self.send_responses_turn(request, Some(on_event)).await
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_responses_turn(request, Some(on_event)) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
     }
 }
 

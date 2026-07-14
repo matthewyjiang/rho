@@ -19,7 +19,7 @@ pub trait HistorySink: Send {
 enum PersistenceCommand {
     Append {
         message: Message,
-        display_message: Option<Message>,
+        display_message: Option<Box<Message>>,
     },
     Replace(Vec<Message>),
 }
@@ -82,7 +82,7 @@ impl HistorySink for SessionHistorySink {
             .ok_or_else(|| anyhow::anyhow!("session persistence worker stopped"))?
             .send(PersistenceCommand::Append {
                 message: message.clone(),
-                display_message: Some(display_message.clone()),
+                display_message: Some(Box::new(display_message.clone())),
             })
             .map_err(|_| anyhow::anyhow!("session persistence worker stopped"))
     }

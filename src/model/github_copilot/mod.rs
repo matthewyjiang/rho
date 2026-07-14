@@ -147,6 +147,20 @@ impl ModelProvider for GitHubCopilotProvider {
         request: ModelRequest<'_>,
         on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
     ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_turn_stream_inner(request, on_event) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
+}
+
+impl GitHubCopilotProvider {
+    async fn send_turn_stream_inner(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, true)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
@@ -229,6 +243,7 @@ mod tests {
                 ModelRequest {
                     messages: &[Message::user_text("hello")],
                     tools: &[],
+                    cancellation: Default::default(),
                     prompt_cache_key: None,
                 },
                 true,
@@ -316,6 +331,7 @@ mod tests {
             .send_turn(ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
+                cancellation: Default::default(),
                 prompt_cache_key: None,
             })
             .await

@@ -9,6 +9,7 @@ use std::{
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::cancellation::RunCancellation;
 pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +146,20 @@ pub trait Tool: Send + Sync {
         _on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
         self.call(args, ctx, id).await
+    }
+
+    async fn call_with_updates_and_cancellation(
+        &self,
+        args: Value,
+        ctx: ToolContext,
+        id: String,
+        cancellation: RunCancellation,
+        on_update: &mut (dyn FnMut(Vec<String>) + Send),
+    ) -> Result<ToolResult, ToolError> {
+        tokio::select! {
+            result = self.call_with_updates(args, ctx, id, on_update) => result,
+            () = cancellation.cancelled() => Err(ToolError::Message("tool interrupted".into())),
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::cancellation::RunCancellation;
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -75,6 +76,24 @@ impl Tool for PowerShell {
         id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
+        self.call_with_updates_and_cancellation(
+            args,
+            ctx,
+            id,
+            RunCancellation::default(),
+            on_update,
+        )
+        .await
+    }
+
+    async fn call_with_updates_and_cancellation(
+        &self,
+        args: serde_json::Value,
+        ctx: ToolContext,
+        id: String,
+        cancellation: RunCancellation,
+        on_update: &mut (dyn FnMut(Vec<String>) + Send),
+    ) -> Result<ToolResult, ToolError> {
         let mut raw_args = args.clone();
         let mut args: Args = serde_json::from_value(args)?;
         if self.rtk_enabled {
@@ -139,7 +158,14 @@ impl Tool for PowerShell {
                 )));
             }
 
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            tokio::select! {
+                () = cancellation.cancelled() => {
+                    process_tree.kill();
+                    let _ = child.wait().await;
+                    return Err(ToolError::Message("tool interrupted".into()));
+                }
+                () = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+            }
         };
 
         process_tree.kill();

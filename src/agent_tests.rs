@@ -295,6 +295,47 @@ impl ModelProvider for ToolRecordingCompactingProvider {
     }
 }
 
+struct CancellationAwareCompactingProvider {
+    requests: RecordedRequests,
+    summary_started: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait(?Send)]
+impl ModelProvider for CancellationAwareCompactingProvider {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        unreachable!("streaming provider should use send_turn_stream")
+    }
+
+    async fn send_turn_stream(
+        &self,
+        request: ModelRequest<'_>,
+        _on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        let is_summary_request = matches!(
+            request.messages.first(),
+            Some(Message::System(text))
+                if text.starts_with("Summarize the compacted conversation history")
+        );
+        self.requests.lock().unwrap().push((
+            if is_summary_request {
+                "summary"
+            } else {
+                "normal"
+            }
+            .into(),
+            request.messages.to_vec(),
+        ));
+        if is_summary_request {
+            self.summary_started.notify_one();
+            request.cancellation.cancelled().await;
+            return Err(ModelError::Interrupted);
+        }
+        Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+            "ok".into(),
+        )]))
+    }
+}
+
 struct FailingSummaryProvider {
     requests: RecordedRequests,
 }
@@ -680,6 +721,53 @@ async fn compacts_history_before_normal_provider_call_when_threshold_is_exceeded
 }
 
 #[tokio::test]
+async fn automatic_compaction_uses_run_cancellation() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let summary_started = Arc::new(tokio::sync::Notify::new());
+    let mut agent = test_agent_with_tools(
+        CancellationAwareCompactingProvider {
+            requests: requests.clone(),
+            summary_started: summary_started.clone(),
+        },
+        ToolRegistry::new(),
+    );
+    agent.set_compaction_config(CompactionConfig {
+        auto_compact: true,
+        threshold_percent: 1,
+        target_percent: 1,
+    });
+    agent.set_context_window(Some(1_000));
+    agent.run("first".into()).await.unwrap();
+
+    let cancellation = RunCancellation::default();
+    let cancel_compaction = {
+        let cancellation = cancellation.clone();
+        async move {
+            summary_started.notified().await;
+            cancellation.cancel();
+        }
+    };
+    let run = agent.run_with_content_and_events_questionnaire_and_steering(
+        vec![ContentBlock::Text("second".into())],
+        |_| Ok(()),
+        None,
+        cancellation,
+        || false,
+        || Ok(None),
+    );
+    let (result, ()) = tokio::join!(run, cancel_compaction);
+
+    assert!(matches!(
+        result,
+        Err(AgentError::Provider(ModelError::Interrupted))
+    ));
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].0, "normal");
+    assert_eq!(requests[1].0, "summary");
+}
+
+#[tokio::test]
 async fn failed_compaction_summary_skips_compaction_and_turn_succeeds() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = test_agent_with_tools(
@@ -1009,6 +1097,7 @@ async fn interrupting_active_tool_persists_failed_result() {
         vec![ContentBlock::Text("run tool".into())],
         |_| Ok(()),
         None,
+        Default::default(),
         move || run_interrupt_requested.load(std::sync::atomic::Ordering::SeqCst),
         || Ok(None),
     );
@@ -1262,6 +1351,7 @@ async fn questionnaire_tool_is_only_advertised_when_handler_is_available() {
             vec![ContentBlock::Text("hello".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            Default::default(),
             || false,
             || Ok(None),
         )
@@ -1316,6 +1406,7 @@ async fn questionnaire_tool_answer_is_returned_to_model() {
                 Ok(())
             },
             Some(&mut ask_questionnaire),
+            Default::default(),
             || false,
             || Ok(None),
         )
@@ -1420,6 +1511,7 @@ async fn questionnaire_tool_multi_question_answers_are_returned_to_model() {
             vec![ContentBlock::Text("prep release".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            Default::default(),
             || false,
             || Ok(None),
         )
@@ -1465,6 +1557,7 @@ async fn invalid_questionnaire_arguments_return_failed_tool_result() {
             vec![ContentBlock::Text("ask".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            Default::default(),
             || false,
             || Ok(None),
         )
@@ -1580,6 +1673,7 @@ async fn diagnostics_report_questionnaire_only_when_available_to_the_request() {
             vec![ContentBlock::Text("hello".into())],
             |_| Ok(()),
             Some(&mut ask_questionnaire),
+            Default::default(),
             || false,
             || Ok(None),
         )
@@ -1593,4 +1687,94 @@ async fn diagnostics_report_questionnaire_only_when_available_to_the_request() {
     agent.run("again".into()).await.unwrap();
 
     assert_eq!(diagnostics.response("tools").unwrap(), "[]");
+}
+
+struct PartialAbortProvider;
+
+#[async_trait(?Send)]
+impl ModelProvider for PartialAbortProvider {
+    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        unreachable!("streaming provider should use send_turn_stream")
+    }
+
+    async fn send_turn_stream(
+        &self,
+        _request: ModelRequest<'_>,
+        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        on_event(ModelEvent::ReasoningDelta("checking".into()))?;
+        on_event(ModelEvent::OutputDelta("partial answer".into()))?;
+        on_event(ModelEvent::ToolCallDelta {
+            index: 0,
+            id: Some("call_1".into()),
+            name: Some("read_file".into()),
+            arguments: "{\"path\":\"src/".into(),
+        })?;
+        on_event(ModelEvent::Usage(ModelUsage {
+            output_tokens: Some(7),
+            ..ModelUsage::default()
+        }))?;
+        Err(ModelError::Interrupted)
+    }
+}
+
+#[tokio::test]
+async fn abort_persists_partial_assistant_state() {
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = test_agent_with_tools(PartialAbortProvider, ToolRegistry::new());
+    agent.set_history_sink(RecordingHistorySink::append_target(persisted.clone()));
+
+    let error = agent.run("start".into()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        AgentError::Provider(ModelError::Interrupted)
+    ));
+    let persisted = persisted.lock().unwrap();
+    let Some(Message::AbortedAssistant(message)) = persisted.last() else {
+        panic!("expected persisted aborted assistant message");
+    };
+    assert!(matches!(
+        message.content.as_slice(),
+        [ContentBlock::Text(text)] if text == "partial answer"
+    ));
+    assert_eq!(message.reasoning, "checking");
+    assert_eq!(message.tool_calls.len(), 1);
+    assert_eq!(message.tool_calls[0].name.as_deref(), Some("read_file"));
+    assert_eq!(message.tool_calls[0].arguments, "{\"path\":\"src/");
+    assert_eq!(message.usage.output_tokens, Some(7));
+}
+
+#[tokio::test]
+async fn steering_is_inserted_after_tool_batch_before_next_provider_request() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = SequencedProvider {
+        requests: requests.clone(),
+        responses: Mutex::new(VecDeque::from([
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_1".into(),
+                name: "ok_tool".into(),
+                arguments: serde_json::json!({}),
+            })]),
+            ModelResponse::Assistant(vec![ContentBlock::Text("corrected".into())]),
+        ])),
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(OkTool);
+    let mut agent = test_agent_with_tools(provider, tools);
+    let mut steering = VecDeque::from(["use the correction".to_string()]);
+
+    let answer = agent
+        .run_with_events_and_steering("start".into(), |_| Ok(()), || Ok(steering.pop_front()))
+        .await
+        .unwrap();
+
+    assert_eq!(answer, "corrected");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(matches!(
+        requests[1].as_slice(),
+        [.., Message::ToolResult(_), Message::User(blocks)]
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "use the correction")
+    ));
 }

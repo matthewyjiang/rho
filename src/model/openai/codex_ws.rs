@@ -68,7 +68,7 @@ impl CodexWsTransport {
         Self::new_with_url(codex_ws_url(api_base))
     }
 
-    fn new_with_url(ws_url: String) -> Self {
+    pub(super) fn new_with_url(ws_url: String) -> Self {
         Self {
             ws_url,
             idle_timeout: crate::provider_backend::stream_timeout::STREAM_IDLE_TIMEOUT,
