@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.28.1...rho-coding-agent-v0.29.0) (2026-07-14)
+
+
+### Features
+
+* **model:** preserve provider-native replay context ([#253](https://github.com/matthewyjiang/rho/issues/253)) ([3086c1a](https://github.com/matthewyjiang/rho/commit/3086c1a0f0dc11579efbf5b9573139afe239cb94))
+* **tui:** add inline shell commands ([#254](https://github.com/matthewyjiang/rho/issues/254)) ([0cd61cd](https://github.com/matthewyjiang/rho/commit/0cd61cd14c9e4c011036221210125957fb57403d))
+
 ## [0.28.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.28.0...rho-coding-agent-v0.28.1) (2026-07-14)
 
 
