@@ -8,6 +8,8 @@ use std::{
 
 use tokio::process::Command;
 
+const INLINE_SHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum InlineShellMode {
     IncludeInContext,
@@ -32,6 +34,17 @@ impl InlineShellMode {
 
 pub(super) fn mode(input: &str) -> Option<InlineShellMode> {
     InlineShellMode::parse(input).map(|(mode, _)| mode)
+}
+
+pub(super) fn mode_when_idle(running: bool, input: &str) -> Option<InlineShellMode> {
+    (!running).then(|| mode(input)).flatten()
+}
+
+pub(super) fn mode_hint_when_idle(
+    running: bool,
+    input: &str,
+) -> Option<(&'static str, ratatui::style::Style)> {
+    (!running).then(|| mode_hint(input)).flatten()
 }
 
 pub(super) fn mode_hint(input: &str) -> Option<(&'static str, ratatui::style::Style)> {
@@ -87,18 +100,33 @@ pub(super) async fn execute(
         "cmd" | "cmd.exe" => {
             process.args(["/C", command]);
         }
+        "sh" | "sh.exe" => {
+            process.args(["-c", command]);
+        }
         _ => {
             process.args(["-lc", command]);
         }
     }
-    let output = process
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output()
-        .await?;
+    let output = tokio::time::timeout(
+        INLINE_SHELL_TIMEOUT,
+        process
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "inline shell command timed out after {} seconds",
+                INLINE_SHELL_TIMEOUT.as_secs()
+            ),
+        )
+    })??;
     Ok(ShellOutput {
         shell: shell.to_string(),
         command: command.to_string(),
@@ -121,6 +149,10 @@ pub(super) fn context_text(output: &ShellOutput) -> String {
         output.stderr,
         output.exit_code
     )
+}
+
+pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> String {
+    display_lines(output, included_in_context).join("\n")
 }
 
 pub(super) fn display_lines(output: &ShellOutput, included_in_context: bool) -> Vec<String> {
@@ -173,6 +205,22 @@ fn executable_name(shell: &str) -> &str {
 }
 
 impl super::App {
+    pub(super) fn block_inline_shell_during_turn(&mut self) -> anyhow::Result<()> {
+        self.insert_entry(&super::Entry::Notice(
+            "inline shell is unavailable while a model turn is running".into(),
+        ));
+        self.status = "inline shell unavailable while running".into();
+        Ok(())
+    }
+
+    pub(super) fn block_pasted_inline_shell(&mut self) -> anyhow::Result<()> {
+        self.insert_entry(&super::Entry::Error(
+            "inline shell commands cannot start from collapsed pasted content".into(),
+        ));
+        self.status = "inline shell paste blocked".into();
+        Ok(())
+    }
+
     pub(super) fn clear_submitted_input(&mut self) {
         self.input.clear();
         self.paste_segments.clear();
@@ -184,8 +232,12 @@ impl super::App {
         &mut self,
         mode: InlineShellMode,
         command: String,
+        terminal: &mut ratatui::DefaultTerminal,
         agent: &mut crate::agent::Agent,
     ) -> anyhow::Result<()> {
+        if self.running {
+            return self.block_inline_shell_during_turn();
+        }
         if command.is_empty() {
             self.status = "enter a shell command after ! or !!".into();
             return Ok(());
@@ -206,6 +258,7 @@ impl super::App {
             command
         ));
         self.status = format!("running {shell}");
+        terminal.draw(|frame| self.draw(frame))?;
         let output = match execute(&shell, &command, &self.info.cwd).await {
             Ok(output) => output,
             Err(error) => {
@@ -216,16 +269,29 @@ impl super::App {
                 return Ok(());
             }
         };
+        let context = crate::tool::truncate(context_text(&output), config.max_output_bytes);
+        let persisted_display = crate::tool::truncate(
+            format!(
+                "!{command}\n\n{}",
+                display_text(&output, /*included_in_context*/ true)
+            ),
+            config.max_output_bytes,
+        );
         if mode.included_in_context() {
             self.ensure_session(agent)?;
-            agent.append_user_context_with_display(context_text(&output), format!("!{command}"))?;
+            agent.append_user_context_with_display(context, persisted_display)?;
         }
+        let display_text = crate::tool::truncate(
+            display_text(&output, mode.included_in_context()),
+            config.max_output_bytes,
+        );
+        let display_lines = display_text.lines().map(str::to_string).collect();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
             state: super::ToolEntryState::Finished {
                 ok: output.ok,
                 display_style: crate::tool::ToolDisplayStyle::file_or_command(),
             },
-            display_lines: display_lines(&output, mode.included_in_context()),
+            display_lines,
             expanded: true,
         }));
         self.statusline.refresh_git_branch();

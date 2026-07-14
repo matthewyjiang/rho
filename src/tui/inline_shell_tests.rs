@@ -43,3 +43,20 @@ async fn executes_with_selected_shell() {
     assert!(output.ok);
     assert_eq!(output.stdout, "inline-shell");
 }
+
+#[test]
+fn display_text_preserves_output_and_context_state() {
+    let output = ShellOutput {
+        shell: "bash".into(),
+        command: "printf hello".into(),
+        stdout: "hello".into(),
+        stderr: String::new(),
+        exit_code: "0".into(),
+        ok: true,
+    };
+
+    assert_eq!(
+        display_text(&output, /*included_in_context*/ true),
+        "bash printf hello\nincluded in context  exit code: 0\n\nhello"
+    );
+}

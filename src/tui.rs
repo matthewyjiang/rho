@@ -1942,10 +1942,14 @@ impl App {
             self.clear_submitted_input();
             return Ok(());
         }
-        if let Some((mode, command)) = InlineShellMode::parse(&prompt) {
+        if let Some((mode, command)) = InlineShellMode::parse(self.input.trim()) {
+            if !self.paste_segments.is_empty() {
+                return self.block_pasted_inline_shell();
+            }
             let command = command.to_string();
             self.clear_submitted_input();
-            self.execute_inline_shell(mode, command, agent).await?;
+            self.execute_inline_shell(mode, command, terminal, agent)
+                .await?;
             return Ok(());
         }
 
@@ -4896,7 +4900,7 @@ impl App {
 
     fn divider_line(&self, width: usize) -> Line<'static> {
         let divider_style = match &self.composer {
-            ComposerMode::Input => match inline_shell::mode(&self.input) {
+            ComposerMode::Input => match inline_shell::mode_when_idle(self.running, &self.input) {
                 Some(InlineShellMode::IncludeInContext) => Theme::shell_context(),
                 Some(InlineShellMode::ExcludeFromContext) => Theme::shell_local(),
                 None => Theme::reasoning_input_border(self.info.reasoning),
@@ -5238,7 +5242,7 @@ impl App {
         match &self.composer {
             ComposerMode::Input => {
                 let mut lines = input_lines_with_images(&self.input, &self.pending_images, width);
-                if let Some(mode) = inline_shell::mode(&self.input) {
+                if let Some(mode) = inline_shell::mode_when_idle(self.running, &self.input) {
                     let style = match mode {
                         InlineShellMode::IncludeInContext => Theme::shell_context(),
                         InlineShellMode::ExcludeFromContext => Theme::shell_local(),
@@ -5317,7 +5321,7 @@ impl App {
     }
 
     fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
-        if let Some((text, style)) = inline_shell::mode_hint(&self.input) {
+        if let Some((text, style)) = inline_shell::mode_hint_when_idle(self.running, &self.input) {
             return vec![styled_line(
                 truncate_one_line(text, width.max(1)),
                 width.max(1),
