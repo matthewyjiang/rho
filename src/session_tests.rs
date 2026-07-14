@@ -56,6 +56,38 @@ fn persists_and_loads_messages() {
 }
 
 #[test]
+fn separate_display_message_round_trips_for_resume_and_export() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let model_message = Message::user_text("internal goal-setting instructions");
+    let display_message = Message::user_text("/goal all tests pass");
+    session
+        .append_message_with_display(&model_message, &display_message)
+        .unwrap();
+    session
+        .append_message(&Message::assistant_text("working on it"))
+        .unwrap();
+
+    let (_, histories) =
+        Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+    assert!(matches!(
+        &histories.model[0],
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "internal goal-setting instructions")
+    ));
+    assert!(matches!(
+        &histories.display[0],
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+    ));
+
+    let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    assert!(matches!(
+        &export.messages[0].message,
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+    ));
+}
+
+#[test]
 fn replace_history_round_trips_compacted_messages() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -477,6 +509,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
         message: Message::user_text(*prompt),
+        display_message: None,
     }));
     let contents = entries
         .into_iter()

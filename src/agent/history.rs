@@ -8,11 +8,19 @@ use crate::session::Session;
 
 pub trait HistorySink: Send {
     fn append_message(&mut self, message: &Message) -> anyhow::Result<()>;
+    fn append_message_with_display(
+        &mut self,
+        message: &Message,
+        display_message: &Message,
+    ) -> anyhow::Result<()>;
     fn replace_history(&mut self, messages: &[Message]) -> anyhow::Result<()>;
 }
 
 enum PersistenceCommand {
-    Append(Message),
+    Append {
+        message: Message,
+        display_message: Option<Message>,
+    },
     Replace(Vec<Message>),
 }
 
@@ -31,7 +39,15 @@ impl SessionHistorySink {
                     // Keep per-entry fsync durability while moving file and SQLite work off Tokio.
                     // Persistence failures are best-effort, matching the index update behavior.
                     let _ = match command {
-                        PersistenceCommand::Append(message) => session.append_message(&message),
+                        PersistenceCommand::Append {
+                            message,
+                            display_message,
+                        } => match display_message {
+                            Some(display_message) => {
+                                session.append_message_with_display(&message, &display_message)
+                            }
+                            None => session.append_message(&message),
+                        },
                         PersistenceCommand::Replace(messages) => session.replace_history(&messages),
                     };
                 }
@@ -49,7 +65,25 @@ impl HistorySink for SessionHistorySink {
         self.command_tx
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("session persistence worker stopped"))?
-            .send(PersistenceCommand::Append(message.clone()))
+            .send(PersistenceCommand::Append {
+                message: message.clone(),
+                display_message: None,
+            })
+            .map_err(|_| anyhow::anyhow!("session persistence worker stopped"))
+    }
+
+    fn append_message_with_display(
+        &mut self,
+        message: &Message,
+        display_message: &Message,
+    ) -> anyhow::Result<()> {
+        self.command_tx
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("session persistence worker stopped"))?
+            .send(PersistenceCommand::Append {
+                message: message.clone(),
+                display_message: Some(display_message.clone()),
+            })
             .map_err(|_| anyhow::anyhow!("session persistence worker stopped"))
     }
 

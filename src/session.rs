@@ -88,6 +88,8 @@ enum SessionEntry {
     Message {
         timestamp: String,
         message: Message,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_message: Option<Message>,
     },
     ReplaceHistory {
         timestamp: String,
@@ -168,10 +170,15 @@ impl Session {
 
         let mut messages = Vec::new();
         visit_entries(path, |entry| {
-            if let SessionEntry::Message { timestamp, message } = entry {
+            if let SessionEntry::Message {
+                timestamp,
+                message,
+                display_message,
+            } = entry
+            {
                 messages.push(ExportedMessage {
                     timestamp: parse_timestamp(&timestamp),
-                    message,
+                    message: display_message.unwrap_or(message),
                 });
             }
             Ok(())
@@ -245,8 +252,23 @@ impl Session {
         self.append_entry(&SessionEntry::Message {
             timestamp: timestamp(),
             message: message.clone(),
+            display_message: None,
         })?;
         let _ = index::record_message(self, message);
+        Ok(())
+    }
+
+    pub fn append_message_with_display(
+        &self,
+        message: &Message,
+        display_message: &Message,
+    ) -> anyhow::Result<()> {
+        self.append_entry(&SessionEntry::Message {
+            timestamp: timestamp(),
+            message: message.clone(),
+            display_message: Some(display_message.clone()),
+        })?;
+        let _ = index::record_message(self, display_message);
         Ok(())
     }
 
@@ -295,20 +317,27 @@ impl Session {
 
 fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
     let mut replacement = Vec::new();
+    let mut model_tail = Vec::new();
     let mut display = Vec::new();
-    let mut model_display_start = 0;
     visit_entries(path, |entry| {
         match entry {
             SessionEntry::Session { .. } => {}
-            SessionEntry::Message { message, .. } => display.push(message),
+            SessionEntry::Message {
+                message,
+                display_message,
+                ..
+            } => {
+                display.push(display_message.unwrap_or_else(|| message.clone()));
+                model_tail.push(message);
+            }
             SessionEntry::ReplaceHistory { messages, .. } => {
                 replacement = messages;
-                model_display_start = display.len();
+                model_tail.clear();
             }
         }
         Ok(())
     })?;
-    replacement.extend(display[model_display_start..].iter().cloned());
+    replacement.extend(model_tail);
     Ok(SessionHistories {
         model: drop_incomplete_tool_turn_tail(replacement),
         display: drop_incomplete_tool_turn_tail(display),
@@ -391,11 +420,15 @@ pub(super) fn summarize_session_file(
                     updated_at = updated_at.max(timestamp);
                 }
             }
-            SessionEntry::Message { timestamp, message } => {
+            SessionEntry::Message {
+                timestamp,
+                message,
+                display_message,
+            } => {
                 if let Some(timestamp) = parse_timestamp(&timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages.push(message);
+                messages.push(display_message.unwrap_or(message));
             }
             SessionEntry::ReplaceHistory {
                 timestamp,
