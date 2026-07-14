@@ -70,11 +70,31 @@ impl Tool for Process {
             .flatten()
     }
 
+    fn display_lines(
+        &self,
+        _args: &serde_json::Value,
+        _context: &ToolContext,
+        result: &ToolResult,
+    ) -> Vec<String> {
+        display::result_lines(&result.content)
+            .unwrap_or_else(|| vec!["process".into(), result.content.clone()])
+    }
+
     async fn call(
         &self,
         args: serde_json::Value,
         context: ToolContext,
         id: String,
+    ) -> Result<ToolResult, ToolError> {
+        self.call_with_updates(args, context, id, &mut |_| {}).await
+    }
+
+    async fn call_with_updates(
+        &self,
+        args: serde_json::Value,
+        context: ToolContext,
+        id: String,
+        on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
         match serde_json::from_value(args)? {
             ProcessArgs::Start {
@@ -90,6 +110,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
+                on_update(display::snapshot_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Poll {
@@ -112,6 +133,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
+                on_update(display::snapshot_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Stop { process_id } => {
@@ -119,6 +141,10 @@ impl Tool for Process {
                     .stop(&process_id, STOP_GRACE)
                     .await
                     .map_err(ToolError::Message)?;
+                on_update(vec![
+                    "process".into(),
+                    format!("stop requested: {process_id}"),
+                ]);
                 result!(id, json!({"process_id":process_id,"stop_requested":true}))
             }
         }
