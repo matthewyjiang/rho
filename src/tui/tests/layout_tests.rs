@@ -50,7 +50,7 @@ fn small_scroll_to_rendered_bottom_resumes_bottom_following() {
     }
     let history_len = app.history_len(40, Instant::now());
     let rendered_bottom_start =
-        history_len.saturating_sub(app.history_height_for_screen(40, 12, Instant::now(), false));
+        history_len.saturating_sub(app.history_height_for_screen(40, 12, Instant::now()));
     app.history_scroll = HistoryScroll::Manual {
         top_line: rendered_bottom_start.saturating_sub(1),
     };
@@ -129,6 +129,127 @@ fn jump_button_renders_above_composer_only_when_scrolled_up() {
 }
 
 #[test]
+fn spinner_overlays_last_history_row_without_reducing_layout_height() {
+    let mut app = test_app();
+    let area = Rect::new(0, 0, 40, 12);
+    let idle = app.screen_layout(area, Instant::now());
+
+    app.running = true;
+    let loading = app.screen_layout(area, Instant::now());
+
+    assert_eq!(idle.history, loading.history);
+    assert_eq!(idle.activity, None);
+    let activity = loading.activity.unwrap();
+    assert_eq!(activity.y, loading.history.bottom().saturating_sub(1));
+    assert!(activity.width < loading.history.width);
+}
+
+#[test]
+fn spinner_offsets_bottom_following_but_not_manual_scroll() {
+    let mut app = test_app();
+    app.running = true;
+
+    assert_eq!(app.visible_history_window(20, 10), (11, 9));
+
+    app.history_scroll = HistoryScroll::Manual { top_line: 3 };
+    assert_eq!(app.visible_history_window(20, 10), (3, 10));
+}
+
+#[test]
+fn spinner_and_jump_button_share_activity_row_with_jump_right_aligned() {
+    let mut app = test_app();
+    app.running = true;
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::User(format!("message {index}")));
+    }
+    app.scroll_history_page_up(40, 12, Instant::now());
+
+    let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
+    let activity = layout.activity.unwrap();
+    let button = layout.jump_to_bottom.unwrap();
+    assert_eq!(activity.y, button.y);
+    assert_eq!(activity.x, layout.history.x);
+    assert!(activity.right() < button.x);
+    assert_eq!(button.right(), layout.history.right());
+}
+
+#[test]
+fn bottom_following_renders_last_message_above_spinner_overlay() {
+    let mut app = test_app();
+    app.running = true;
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::Assistant(format!("message {index}")));
+    }
+    let width = 40;
+    let height = 12;
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let activity = layout.activity.unwrap();
+    let rows = (0..height)
+        .map(|row| buffer_row_text(terminal.backend().buffer(), row))
+        .collect::<Vec<_>>();
+    assert!(
+        rows[..activity.y as usize]
+            .iter()
+            .any(|row| row.contains("message 19")),
+        "{rows:#?}"
+    );
+    assert!(
+        !rows[activity.y as usize].contains("message 19"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    let now = Instant::now();
+    for index in 0..30 {
+        app.push_transcript_entry(Entry::Assistant(format!(
+            "message {index:02} remains visible across this row"
+        )));
+    }
+    let history_len = app.history_len(width as usize, now);
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), now);
+    let history_height = layout.history.height as usize;
+    let top_line = (0..history_len.saturating_sub(history_height))
+        .find(|top_line| {
+            app.visible_history_lines(width as usize, now, *top_line, history_height)
+                .last()
+                .is_some_and(|line| !line_text(line).trim().is_empty())
+        })
+        .unwrap();
+    app.history_scroll = HistoryScroll::Manual { top_line };
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), now);
+    let button = layout.jump_to_bottom.unwrap();
+    let expected = app
+        .visible_history_lines(width as usize, now, top_line, history_height)
+        .last()
+        .map(line_text)
+        .unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    let rendered = buffer_row_text(terminal.backend().buffer(), button.y);
+    let preserved_width = button.x as usize;
+    assert!(
+        !expected[..preserved_width].trim().is_empty(),
+        "{expected:?}"
+    );
+    assert_eq!(&rendered[..preserved_width], &expected[..preserved_width]);
+    assert!(
+        rendered.ends_with("↓ jump to bottom  ctrl+g"),
+        "{rendered:?}"
+    );
+}
+
+#[test]
 fn compact_jump_button_renders_on_narrow_terminals() {
     let app = test_app();
 
@@ -150,6 +271,7 @@ fn mouse_wheel_scrolls_history_and_clicking_jump_button_returns_to_bottom() {
 
     let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
     let button = layout.jump_to_bottom.unwrap();
+    assert!(button.x > 0);
     app.handle_mouse_event(
         MouseEventKind::Down(MouseButton::Left),
         button.x,
@@ -313,7 +435,10 @@ fn clicking_hidden_scrollbar_does_not_scroll_history() {
     app.handle_mouse_event(
         MouseEventKind::Down(MouseButton::Left),
         scrollbar.rect.x,
-        scrollbar.rect.y.saturating_add(scrollbar.rect.height - 1),
+        scrollbar
+            .rect
+            .y
+            .saturating_add(scrollbar.rect.height.saturating_sub(2)),
         &mut terminal,
     )
     .unwrap();
