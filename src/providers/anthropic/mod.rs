@@ -51,11 +51,7 @@ impl AnthropicProvider {
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
-            if thinking.is_some() {
-                ProviderContextReplay::Enabled
-            } else {
-                ProviderContextReplay::Disabled
-            },
+            provider_context_replay(thinking.as_ref()),
         )?;
         mark_cache_control_points(&mut messages);
         let mut tools = request
@@ -120,6 +116,15 @@ impl AnthropicProvider {
 
     fn messages_url(&self) -> String {
         format!("{}/messages", self.api_base.trim_end_matches('/'))
+    }
+}
+
+fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> ProviderContextReplay {
+    match thinking {
+        Some(
+            AnthropicThinkingConfig::Enabled { .. } | AnthropicThinkingConfig::Adaptive { .. },
+        ) => ProviderContextReplay::Enabled,
+        Some(AnthropicThinkingConfig::Disabled) | None => ProviderContextReplay::Disabled,
     }
 }
 

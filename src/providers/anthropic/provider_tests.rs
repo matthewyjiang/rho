@@ -100,6 +100,27 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
 }
 
 #[test]
+fn provider_context_replay_follows_effective_thinking_mode() {
+    let adaptive = AnthropicThinkingConfig::Adaptive {
+        display: "summarized",
+    };
+    let disabled = AnthropicThinkingConfig::Disabled;
+
+    assert!(matches!(
+        provider_context_replay(Some(&adaptive)),
+        ProviderContextReplay::Enabled
+    ));
+    assert!(matches!(
+        provider_context_replay(Some(&disabled)),
+        ProviderContextReplay::Disabled
+    ));
+    assert!(matches!(
+        provider_context_replay(None),
+        ProviderContextReplay::Disabled
+    ));
+}
+
+#[test]
 fn reasoning_off_disables_adaptive_thinking_when_supported() {
     let provider = test_provider("claude-sonnet-5");
 
