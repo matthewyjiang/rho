@@ -250,6 +250,46 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
 }
 
 #[test]
+fn jump_button_resets_tool_output_background() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    app.push_transcript_entry(test_tool_entry(
+        true,
+        &[
+            "tool line 0",
+            "tool line 1",
+            "tool line 2",
+            "tool line 3",
+            "tool line 4",
+            "tool line 5",
+            "tool line 6",
+            "tool line 7",
+            "tool line 8",
+            "tool line 9",
+        ],
+    ));
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::Assistant(format!("later message {index}")));
+    }
+    app.history_scroll = HistoryScroll::Manual { top_line: 0 };
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let button = layout.jump_to_bottom.unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    let buffer = terminal.backend().buffer();
+    assert_ne!(
+        buffer[(button.x.saturating_sub(1), button.y)].bg,
+        Color::Reset
+    );
+    for column in button.x..button.right() {
+        assert_eq!(buffer[(column, button.y)].bg, Color::Reset);
+    }
+}
+
+#[test]
 fn compact_jump_button_renders_on_narrow_terminals() {
     let app = test_app();
 

@@ -211,6 +211,10 @@ impl Theme {
         Self::accent().add_modifier(Modifier::BOLD)
     }
 
+    pub(super) fn jump_to_bottom() -> Style {
+        Self::accent().bg(Color::Reset)
+    }
+
     pub(super) fn success() -> Style {
         Style::default()
             .fg(Palette::current().success)
