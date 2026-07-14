@@ -94,6 +94,83 @@ fn renders_assistant_latex_as_mathml() {
 }
 
 #[test]
+fn renders_parenthesis_and_bracket_latex_delimiters() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "Here’s inline math: \\(e^{i\\pi}+1=0\\).\n\nAnd a display equation:\n\n\\[\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("display=\"block\""));
+    assert!(html.contains("<msubsup>"));
+    assert!(!html.contains("\\(e^{i\\pi}"));
+    assert!(!html.contains("<p>["));
+}
+
+#[test]
+fn renders_explicit_inline_math_before_alphanumeric_text() {
+    let export = export_with_messages(vec![message(Message::assistant_text(r"\(x\)2"))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"));
+    assert!(html.contains("</span>2</p>"));
+}
+
+#[test]
+fn preserves_explicit_latex_delimiters_in_fallback() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        r"\(\definitelyUnknown{x}\)",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains(r#"<code class="math-fallback">\(\definitelyUnknown{x}\)</code>"#));
+}
+
+#[test]
+fn renders_markdown_sensitive_latex_inside_bracket_delimiters() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "\\[\n\\begin{aligned}\n\\nabla \\cdot \\mathbf{E} &= \\frac{\\rho}{\\varepsilon_0} \\\\\n\\nabla \\cdot \\mathbf{B} &= 0\n\\end{aligned}\n\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("class=\"katex-display\""));
+    assert!(html.contains("<mtable"));
+    assert!(!html.contains("<ul>"));
+    assert!(!html.contains("class=\"math-fallback\""));
+}
+
+#[test]
+fn leaves_parenthesis_and_bracket_delimiters_literal_in_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "`\\(x^2\\)`\n\n```latex\n\\[y^2\\]\n```",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>\\(x^2\\)</code>"));
+    assert!(html.contains("<code class=\"language-latex\">\\[y^2\\]"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
+fn does_not_match_parenthesis_or_bracket_math_across_code() {
+    let export = export_with_messages(vec![message(Message::assistant_text(
+        "\\(unclosed `code` later\\)\n\n\\[unclosed\n\n```text\ncode\n```\n\nlater\\]",
+    ))]);
+
+    let html = render_html(&export);
+
+    assert!(html.contains("<code>code</code>"));
+    assert!(html.contains("<code class=\"language-text\">code"));
+    assert!(!html.contains("<math"));
+}
+
+#[test]
 fn preserves_ambiguous_currency_and_shell_variables() {
     let export = export_with_messages(vec![message(Message::assistant_text(
         "Costs range from $5-$10 and the path is $HOME/$PATH.",
