@@ -1,3 +1,4 @@
+mod display;
 mod manager;
 mod platform;
 mod supervisor;
