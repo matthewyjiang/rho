@@ -15,6 +15,7 @@
 * **ci:** wait for descendant pid contents ([#236](https://github.com/matthewyjiang/rho/issues/236)) ([300a25e](https://github.com/matthewyjiang/rho/commit/300a25e031ab1d871993e991c5fef01bd9105c6e))
 * **tui:** anchor spinner above composer ([#244](https://github.com/matthewyjiang/rho/issues/244)) ([432e64d](https://github.com/matthewyjiang/rho/commit/432e64d9b584a998c45f28368dadf68636e06fd2))
 * **tui:** clarify goal command prompts ([#237](https://github.com/matthewyjiang/rho/issues/237)) ([e826729](https://github.com/matthewyjiang/rho/commit/e82672916a9887b13b6ef3b9d763af293b700f44))
+* **tui:** preview streamed tool calls ([#243](https://github.com/matthewyjiang/rho/issues/243)) ([9d78c5d](https://github.com/matthewyjiang/rho/commit/9d78c5d74e05b0d0621d1f8c04ea024596ef3669))
 * **tui:** show placeholder for hidden reasoning ([#242](https://github.com/matthewyjiang/rho/issues/242)) ([f1d1e8c](https://github.com/matthewyjiang/rho/commit/f1d1e8c534318dfa71c21e0aa62020bdb39f4dcf))
 
 ## [0.27.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.27.0...rho-coding-agent-v0.27.1) (2026-07-13)
