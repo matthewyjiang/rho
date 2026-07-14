@@ -4,7 +4,7 @@ use crate::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
         to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
         AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
-        AnthropicThinkingConfig,
+        AnthropicThinkingConfig, ProviderContextReplay,
     },
     provider_backend::{
         stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
@@ -44,7 +44,23 @@ impl AnthropicProvider {
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.identity().expect("Anthropic provider has an identity");
-        let (system, mut messages) = split_system_and_messages(request.messages.to_vec(), &target)?;
+        let max_tokens = (self.max_tokens)(&self.model);
+        let thinking = self.thinking_budget_tokens.and_then(|budget_tokens| {
+            let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
+            (available >= 1_024).then_some(AnthropicThinkingConfig {
+                kind: "enabled",
+                budget_tokens: budget_tokens.min(available),
+            })
+        });
+        let (system, mut messages) = split_system_and_messages(
+            request.messages.to_vec(),
+            &target,
+            if thinking.is_some() {
+                ProviderContextReplay::Enabled
+            } else {
+                ProviderContextReplay::Disabled
+            },
+        )?;
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools
@@ -55,14 +71,6 @@ impl AnthropicProvider {
         if let Some(tool) = tools.last_mut() {
             tool.cache_control = Some(AnthropicCacheControl::ephemeral());
         }
-        let max_tokens = (self.max_tokens)(&self.model);
-        let thinking = self.thinking_budget_tokens.and_then(|budget_tokens| {
-            let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
-            (available >= 1_024).then_some(AnthropicThinkingConfig {
-                kind: "enabled",
-                budget_tokens: budget_tokens.min(available),
-            })
-        });
         Ok(AnthropicRequest {
             model: self.model.clone(),
             max_tokens,

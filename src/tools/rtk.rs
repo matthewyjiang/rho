@@ -138,7 +138,7 @@ async fn log_execution_in_projects_dir(
 }
 
 fn encode_project_path(path: &Path) -> String {
-    const SANITIZED_CHARS: &[char] = &['/', '.', '_', '\\', ' ', '[', ']'];
+    const SANITIZED_CHARS: &[char] = &['/', '.', '_', '\\', ':', ' ', '[', ']'];
 
     path.to_string_lossy()
         .chars()

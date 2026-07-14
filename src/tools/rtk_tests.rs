@@ -25,7 +25,7 @@ fn encodes_project_paths_like_rtk_discover() {
     );
     assert_eq!(
         encode_project_path(Path::new(r"C:\Users\rho\my project")),
-        "C:-Users-rho-my-project"
+        "C--Users-rho-my-project"
     );
 }
 
