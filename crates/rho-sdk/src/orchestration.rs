@@ -4,22 +4,24 @@ use tokio::sync::mpsc;
 
 use crate::{
     client::Rho,
-    event::{RunOutcome, StopReason, ToolCompletion, ToolFailure},
+    event::{RunOutcome, StopReason},
     model::{
         AbortedAssistant, AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest,
-        ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall, ToolResult,
+        ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
     },
     provider::{provider_event_channel, ModelProvider},
     run::RunCommand,
     session::{SessionCore, SessionState, UserInput},
-    tool::{tool_progress_channel, ToolContext, ToolInvocation},
     CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
-    ToolCallId,
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
 const TOOL_PROGRESS_CAPACITY: usize = 16;
 const INVALID_RESPONSE_ATTEMPTS: usize = 2;
+
+mod tool_turn;
+
+use tool_turn::{execute_tool, StagedToolTurn};
 
 #[derive(Default)]
 struct StreamCapture {
@@ -145,32 +147,39 @@ pub(crate) async fn execute_run(
             return Ok(outcome);
         }
 
-        for call in tool_calls {
+        let mut tool_turn = StagedToolTurn::new(tool_calls);
+        while let Some(pending) = tool_turn.current() {
             match emit(
                 &events,
                 &cancellation,
-                RunEvent::ToolProposed { call: call.clone() },
+                RunEvent::ToolProposed {
+                    call: pending.call.clone(),
+                },
             )
             .await
             {
                 Ok(()) => {}
                 Err(Error::Cancelled) => {
+                    tool_turn.interrupt_remaining(&mut history);
                     return commit_cancelled_history(core, history, &events).await;
                 }
                 Err(error) => return Err(error),
             }
-            let result = match execute_tool(&core, &runtime, &call, &mut control).await {
-                Ok(result) => result,
-                Err(Error::Cancelled) => {
+            match execute_tool(&core, &runtime, &pending, &mut control).await {
+                Ok(result) => tool_turn.resolve_current(result, &mut history),
+                Err(failure) if matches!(&failure.error, Error::Cancelled) => {
+                    if let Some(result) = failure.completed_result {
+                        tool_turn.resolve_current(result, &mut history);
+                    }
+                    tool_turn.interrupt_remaining(&mut history);
                     return commit_cancelled_history(core, history, &events).await;
                 }
-                Err(error) => {
+                Err(failure) => {
                     core.set_state(SessionState::Failed);
-                    emit_failure(&events, &error).await;
-                    return Err(error);
+                    emit_failure(&events, &failure.error).await;
+                    return Err(failure.error);
                 }
-            };
-            history.push(Message::ToolResult(result));
+            }
         }
         history.append(control.steering);
     }
@@ -489,214 +498,6 @@ async fn handle_provider_event(
         .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
-async fn execute_tool(
-    core: &Arc<SessionCore>,
-    runtime: &Rho,
-    call: &ToolCall,
-    control: &mut RunControl<'_>,
-) -> Result<ToolResult, Error> {
-    let cancellation = control.cancellation;
-    let events = control.events;
-    let call_id = ToolCallId::from_string(call.id.clone()).map_err(|error| {
-        Error::Provider(ProviderError::new(
-            ProviderErrorKind::InvalidResponse,
-            error.to_string(),
-            Retryability::Permanent,
-        ))
-    })?;
-    let Some(tool) = runtime.tools.get(&call.name) else {
-        emit(
-            events,
-            cancellation,
-            RunEvent::ToolFinished {
-                call_id,
-                result: ToolCompletion::Unavailable,
-            },
-        )
-        .await?;
-        return Ok(ToolResult {
-            id: call.id.clone(),
-            ok: false,
-            content: format!("tool '{}' is unavailable", call.name),
-        });
-    };
-
-    emit(
-        events,
-        cancellation,
-        RunEvent::ToolStarted {
-            call_id: call_id.clone(),
-            name: call.name.clone(),
-            metadata: tool.start_metadata(&call.arguments),
-        },
-    )
-    .await?;
-    let (progress, mut progress_receiver) =
-        tool_progress_channel(NonZeroUsize::new(TOOL_PROGRESS_CAPACITY).unwrap());
-    let invocation = ToolInvocation::new(call_id.clone(), call.arguments.clone());
-    let (host_input, mut host_input_receiver) =
-        crate::host_input::channel(TOOL_PROGRESS_CAPACITY, cancellation.clone());
-    let context = ToolContext::with_security(
-        runtime.workspace.clone(),
-        Arc::clone(&runtime.workspace_policy),
-        Arc::clone(&runtime.approval_handler),
-        core.approvals(),
-        Arc::clone(&runtime.approval_audit),
-        cancellation.clone(),
-        progress,
-    )
-    .with_host_input(host_input);
-    let mut future = tool.call(invocation, context);
-    let mut pending_input = std::collections::BTreeMap::new();
-    let mut progress_open = true;
-    let mut host_input_open = true;
-    let mut commands_open = true;
-    let result = loop {
-        tokio::select! {
-            result = &mut future => break result,
-            progress = progress_receiver.recv(), if progress_open => {
-                match progress {
-                    Some(progress) => {
-                        emit(
-                            events,
-                            cancellation,
-                            RunEvent::ToolUpdated {
-                                call_id: call_id.clone(),
-                                progress,
-                            },
-                        ).await?;
-                    }
-                    None => progress_open = false,
-                }
-            }
-            request = host_input_receiver.recv(), if host_input_open => {
-                match request {
-                    Some(request) => {
-                        let request_id = request.request.id().clone();
-                        match pending_input.entry(request_id) {
-                        std::collections::btree_map::Entry::Vacant(entry) => {
-                            core.set_state(SessionState::WaitingForHostInput);
-                            let event_request = request.request.clone();
-                            entry.insert(request);
-                            emit(
-                                events,
-                                cancellation,
-                                RunEvent::HostInputRequested { request: event_request },
-                            ).await?;
-                        }
-                            std::collections::btree_map::Entry::Occupied(_) => {
-                                let _ = request.response.send(Err(Error::InvalidHostResponse {
-                                    message: "duplicate host input request ID".into(),
-                                }));
-                            }
-                        }
-                    }
-                    None => host_input_open = false,
-                }
-            }
-            command = control.commands.recv(), if commands_open => {
-                match command {
-                    Some(command) => {
-                        handle_tool_command(core, command, &mut pending_input, control.steering);
-                    }
-                    None => commands_open = false,
-                }
-            }
-            () = cancellation.cancelled() => return Err(Error::Cancelled),
-        }
-    };
-    core.set_state(SessionState::Running);
-    while let Some(progress) = progress_receiver.try_recv() {
-        emit(
-            events,
-            cancellation,
-            RunEvent::ToolUpdated {
-                call_id: call_id.clone(),
-                progress,
-            },
-        )
-        .await?;
-    }
-
-    match result {
-        Ok(output) => {
-            emit(
-                events,
-                cancellation,
-                RunEvent::ToolFinished {
-                    call_id,
-                    result: ToolCompletion::Success(output.clone()),
-                },
-            )
-            .await?;
-            Ok(ToolResult {
-                id: call.id.clone(),
-                ok: true,
-                content: output.content().to_owned(),
-            })
-        }
-        Err(error) => {
-            emit(
-                events,
-                cancellation,
-                RunEvent::ToolFinished {
-                    call_id,
-                    result: ToolCompletion::Failure(ToolFailure::new(
-                        error.kind(),
-                        error.message().to_owned(),
-                    )),
-                },
-            )
-            .await?;
-            Ok(ToolResult {
-                id: call.id.clone(),
-                ok: false,
-                content: error.message().to_owned(),
-            })
-        }
-    }
-}
-
-fn handle_tool_command(
-    core: &Arc<SessionCore>,
-    command: RunCommand,
-    pending: &mut std::collections::BTreeMap<
-        crate::HostInputId,
-        crate::host_input::HostInputEnvelope,
-    >,
-    steering: &mut Vec<Message>,
-) {
-    match command {
-        RunCommand::Steer { input, accepted } => accept_steering(input, accepted, steering),
-        RunCommand::Respond {
-            request_id,
-            response,
-            accepted,
-        } => {
-            let Some(request) = pending.get(&request_id) else {
-                let _ = accepted.send(Err("host input request is not pending".into()));
-                return;
-            };
-            if let Err(error) = request.request.validate(&response) {
-                let _ = accepted.send(Err(error.to_string()));
-                return;
-            }
-            let request = pending
-                .remove(&request_id)
-                .expect("pending request was checked above");
-            let delivered = request.response.send(Ok(response)).is_ok();
-            let _ = if delivered {
-                accepted.send(Ok(()))
-            } else {
-                accepted.send(Err("host input requester was dropped".into()))
-            };
-            if pending.is_empty() {
-                core.set_state(SessionState::Running);
-            }
-        }
-    }
-}
-
 async fn commit_cancellation(
     core: Arc<SessionCore>,
     mut history: Vec<Message>,
@@ -771,3 +572,7 @@ async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
     )
     .await;
 }
+
+#[cfg(test)]
+#[path = "orchestration_tests.rs"]
+mod tests;
