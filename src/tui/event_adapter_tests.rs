@@ -45,7 +45,7 @@ fn retains_structured_tool_metadata_until_completion() {
     let output = ToolOutput::text("updated").metadata(
         ToolMetadata::new()
             .affected_path("src/lib.rs")
-            .diff("-old\n+new"),
+            .diff("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n"),
     );
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
@@ -59,10 +59,7 @@ fn retains_structured_tool_metadata_until_completion() {
     };
 
     assert!(ok);
-    assert_eq!(
-        display_lines,
-        vec!["edit_file", "src/lib.rs", "-old\n+new", "updated"]
-    );
+    assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
 }
 
 #[test]

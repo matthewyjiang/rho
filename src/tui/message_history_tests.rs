@@ -7,8 +7,8 @@ use super::{
 
 #[test]
 fn interrupted_tool_call_uses_the_tool_name_without_a_preparing_label() {
-    let entries = transcript_entries_from_messages(&[Message::AbortedAssistant(Box::new(
-        AbortedAssistant {
+    let entries = transcript_entries_from_messages(
+        &[Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: Vec::new(),
             reasoning: String::new(),
             provenance: None,
@@ -20,8 +20,9 @@ fn interrupted_tool_call_uses_the_tool_name_without_a_preparing_label() {
                 arguments: r#"{"path":"src/main.rs"}"#.into(),
             }],
             usage: ModelUsage::default(),
-        },
-    ))]);
+        }))],
+        std::path::Path::new(""),
+    );
 
     let [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(notice)] = entries.as_slice()
     else {

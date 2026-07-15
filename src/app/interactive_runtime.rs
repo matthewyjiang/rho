@@ -27,12 +27,42 @@ use crate::{
 pub(crate) enum InteractiveState {
     #[default]
     Idle,
-    Running,
+    Running(RunPhase),
     WaitingForHostInput,
-    Cancelling,
+    Cancelling(RunPhase),
     Compacting,
+    SwitchingProvider,
     Completed,
     Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunPhase {
+    Model,
+    Tool,
+    Steering,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ActiveRunCommand {
+    Quit,
+    SwitchSession,
+    ReplaceProvider,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ActiveRunDisposition {
+    CancelAndWait,
+    RejectUntilFinished,
+    DeferUntilFinished,
+}
+
+pub(crate) const fn active_run_disposition(command: ActiveRunCommand) -> ActiveRunDisposition {
+    match command {
+        ActiveRunCommand::Quit => ActiveRunDisposition::CancelAndWait,
+        ActiveRunCommand::SwitchSession => ActiveRunDisposition::RejectUntilFinished,
+        ActiveRunCommand::ReplaceProvider => ActiveRunDisposition::DeferUntilFinished,
+    }
 }
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
@@ -64,6 +94,9 @@ pub(crate) struct InteractiveRuntime {
     pending_model_user: Option<Message>,
     pending_display_user: Option<Message>,
     pending_session_id: Option<SessionId>,
+    pending_context_usage: Option<rho_sdk::model::ContextUsage>,
+    cumulative_input_tokens: u64,
+    step_input_token_baseline: u64,
 }
 
 impl InteractiveRuntime {
@@ -161,6 +194,9 @@ impl InteractiveRuntime {
             pending_model_user: None,
             pending_display_user: None,
             pending_session_id: None,
+            pending_context_usage: None,
+            cumulative_input_tokens: 0,
+            step_input_token_baseline: 0,
         })
     }
 
@@ -183,6 +219,10 @@ impl InteractiveRuntime {
         self.context_window = context_window;
     }
 
+    pub(crate) fn take_context_usage(&mut self) -> Option<rho_sdk::model::ContextUsage> {
+        self.pending_context_usage.take()
+    }
+
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
     }
@@ -203,11 +243,18 @@ impl InteractiveRuntime {
                 })?;
         }
         let model_user = Message::User(input.blocks().to_vec());
-        let run = self.session.start(input).await?;
         self.pending_model_user = Some(model_user);
         self.pending_display_user = display_user;
-        self.active_run = Some(run);
-        self.state = InteractiveState::Running;
+        self.cumulative_input_tokens = 0;
+        self.step_input_token_baseline = 0;
+        let mut request_history = self.session.history();
+        request_history.push(Message::User(input.blocks().to_vec()));
+        self.pending_context_usage = Some(rho_sdk::model::ContextUsage::estimated(
+            rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
+            self.context_window,
+        ));
+        self.active_run = Some(self.session.start(input).await?);
+        self.state = InteractiveState::Running(RunPhase::Model);
         Ok(())
     }
 
@@ -221,19 +268,26 @@ impl InteractiveRuntime {
 
     pub(crate) fn cancel(&mut self) {
         if let Some(run) = &self.active_run {
+            let phase = match self.state {
+                InteractiveState::Running(phase) | InteractiveState::Cancelling(phase) => phase,
+                InteractiveState::WaitingForHostInput => RunPhase::Tool,
+                _ => RunPhase::Model,
+            };
             run.cancel();
-            self.state = InteractiveState::Cancelling;
+            self.state = InteractiveState::Cancelling(phase);
         }
     }
 
-    pub(crate) async fn steer(&self, input: UserInput) -> Result<(), Error> {
+    pub(crate) async fn steer(&mut self, input: UserInput) -> Result<(), Error> {
         self.active_run
             .as_ref()
             .ok_or(Error::InvalidHostResponse {
                 message: "no active run accepts steering input".into(),
             })?
             .steer(input)
-            .await
+            .await?;
+        self.state = InteractiveState::Running(RunPhase::Steering);
+        Ok(())
     }
 
     pub(crate) async fn respond(
@@ -248,7 +302,7 @@ impl InteractiveRuntime {
             })?
             .respond(request_id, response)
             .await?;
-        self.state = InteractiveState::Running;
+        self.state = InteractiveState::Running(RunPhase::Tool);
         Ok(())
     }
 
@@ -274,6 +328,11 @@ impl InteractiveRuntime {
         self.state = InteractiveState::Idle;
         let outcome = result?;
         self.sync_storage_replace()?;
+        if outcome.current_messages() < outcome.previous_messages() {
+            self.pending_context_usage = Some(
+                rho_sdk::model::ContextUsage::unknown_after_compaction(self.context_window),
+            );
+        }
         Ok(outcome.current_messages() < outcome.previous_messages())
     }
 
@@ -294,7 +353,11 @@ impl InteractiveRuntime {
         _history: Vec<Message>,
     ) -> anyhow::Result<()> {
         if self.active_run.is_some() {
-            anyhow::bail!("cannot resume while a run is active");
+            debug_assert_eq!(
+                active_run_disposition(ActiveRunCommand::SwitchSession),
+                ActiveRunDisposition::RejectUntilFinished
+            );
+            anyhow::bail!("cannot switch sessions while a run is active");
         }
         let id = storage.id().to_string();
         self.storage = Some(storage);
@@ -306,10 +369,28 @@ impl InteractiveRuntime {
         provider: Arc<dyn ModelProvider>,
         reasoning: rho_sdk::ReasoningLevel,
     ) -> Result<rho_sdk::model::handoff::HandoffReport, Error> {
-        let report = self.session.replace_provider(Arc::clone(&provider))?;
-        self.session.set_reasoning_level(reasoning)?;
+        if self.active_run.is_some() {
+            debug_assert_eq!(
+                active_run_disposition(ActiveRunCommand::ReplaceProvider),
+                ActiveRunDisposition::DeferUntilFinished
+            );
+            return Err(Error::SessionBusy);
+        }
+        self.state = begin_provider_switch(self.state)?;
+        let report = match self.session.replace_provider(Arc::clone(&provider)) {
+            Ok(report) => report,
+            Err(error) => {
+                self.state = InteractiveState::Idle;
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.session.set_reasoning_level(reasoning) {
+            self.state = InteractiveState::Idle;
+            return Err(error);
+        }
         self.provider = provider;
         self.reasoning = reasoning;
+        self.state = InteractiveState::Idle;
         Ok(report)
     }
 
@@ -345,6 +426,10 @@ impl InteractiveRuntime {
 
     pub(crate) async fn shutdown(&mut self) {
         if self.active_run.is_some() {
+            debug_assert_eq!(
+                active_run_disposition(ActiveRunCommand::Quit),
+                ActiveRunDisposition::CancelAndWait
+            );
             self.cancel();
             let _ = self.finish_run().await;
         }
@@ -354,6 +439,30 @@ impl InteractiveRuntime {
 
     fn observe_event(&mut self, event: &RunEvent) {
         self.state = state_after_event(self.state, event);
+        match event {
+            RunEvent::StepStarted { .. } => {
+                self.step_input_token_baseline = self.cumulative_input_tokens;
+            }
+            RunEvent::UsageUpdated { usage } => {
+                if let Some(cumulative_tokens) = usage.total_input_tokens() {
+                    self.cumulative_input_tokens = cumulative_tokens;
+                    let tokens = cumulative_tokens.saturating_sub(self.step_input_token_baseline);
+                    let context_window = match (usage.context_window, self.context_window) {
+                        (Some(reported), Some(configured)) => Some(reported.min(configured)),
+                        (reported, configured) => reported.or(configured),
+                    };
+                    self.pending_context_usage = Some(
+                        rho_sdk::model::ContextUsage::provider_reported(tokens, context_window),
+                    );
+                }
+            }
+            RunEvent::CompactionCompleted { .. } => {
+                self.pending_context_usage = Some(
+                    rho_sdk::model::ContextUsage::unknown_after_compaction(self.context_window),
+                );
+            }
+            _ => {}
+        }
     }
 
     async fn rebuild_session(
@@ -441,13 +550,47 @@ fn report_resume_omissions(
     }
 }
 
+fn begin_provider_switch(current: InteractiveState) -> Result<InteractiveState, Error> {
+    if current == InteractiveState::Idle {
+        Ok(InteractiveState::SwitchingProvider)
+    } else {
+        Err(Error::SessionBusy)
+    }
+}
+
 fn state_after_event(current: InteractiveState, event: &RunEvent) -> InteractiveState {
     match event {
-        RunEvent::HostInputRequested { .. } => InteractiveState::WaitingForHostInput,
+        RunEvent::Started { .. } | RunEvent::StepStarted { .. } => {
+            running_unless_cancelling(current, RunPhase::Model)
+        }
+        RunEvent::ToolStarted { .. } => running_unless_cancelling(current, RunPhase::Tool),
+        RunEvent::ToolFinished { .. } => running_unless_cancelling(current, RunPhase::Model),
+        RunEvent::HostInputRequested { .. } => {
+            if matches!(current, InteractiveState::Cancelling(_)) {
+                current
+            } else {
+                InteractiveState::WaitingForHostInput
+            }
+        }
+        RunEvent::CompactionStarted { .. } => {
+            if matches!(current, InteractiveState::Cancelling(_)) {
+                current
+            } else {
+                InteractiveState::Compacting
+            }
+        }
+        RunEvent::CompactionCompleted { .. } => running_unless_cancelling(current, RunPhase::Model),
         RunEvent::Completed { .. } | RunEvent::Cancelled { .. } => InteractiveState::Completed,
         RunEvent::Failed { .. } => InteractiveState::Failed,
-        _ if current == InteractiveState::Cancelling => InteractiveState::Cancelling,
-        _ => InteractiveState::Running,
+        _ => current,
+    }
+}
+
+fn running_unless_cancelling(current: InteractiveState, phase: RunPhase) -> InteractiveState {
+    if matches!(current, InteractiveState::Cancelling(_)) {
+        current
+    } else {
+        InteractiveState::Running(phase)
     }
 }
 

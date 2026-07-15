@@ -1,15 +1,20 @@
 use std::collections::VecDeque;
 
 use crate::{
-    model::{ContentBlock, Message},
+    app::interactive_presenter::InteractiveToolPresenter,
+    model::{ContentBlock, Message, ToolCall},
     tool::ToolDisplayStyle,
 };
 
 use super::{Entry, ToolEntry, ToolEntryState};
 
-pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entry> {
+pub(super) fn transcript_entries_from_messages(
+    messages: &[Message],
+    cwd: &std::path::Path,
+) -> Vec<Entry> {
+    let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
     let mut entries = Vec::new();
-    let mut pending_tool_names = VecDeque::new();
+    let mut pending_tools = VecDeque::new();
     for message in messages {
         match message {
             Message::System(_) => {}
@@ -24,8 +29,8 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
-                pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
-                    ContentBlock::ToolCall(call) => Some(call.name.clone()),
+                pending_tools.extend(blocks.iter().filter_map(|block| match block {
+                    ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
@@ -35,8 +40,8 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
-                pending_tool_names.extend(blocks.iter().filter_map(|block| match block {
-                    ContentBlock::ToolCall(call) => Some(call.name.clone()),
+                pending_tools.extend(blocks.iter().filter_map(|block| match block {
+                    ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
@@ -63,20 +68,18 @@ pub(super) fn transcript_entries_from_messages(messages: &[Message]) -> Vec<Entr
                 entries.push(Entry::Notice("model interrupted".into()));
             }
             Message::ToolResult(result) => {
-                let name = pending_tool_names
-                    .pop_front()
-                    .unwrap_or_else(|| "tool".into());
-                let display_style = ToolDisplayStyle::for_tool_name(&name);
-                let mut display_lines = vec![name];
-                if !result.content.trim().is_empty() {
-                    display_lines.push(result.content.clone());
-                }
+                let call = pending_tools.pop_front().unwrap_or_else(|| ToolCall {
+                    id: result.id.clone(),
+                    name: "tool".into(),
+                    arguments: serde_json::Value::Object(Default::default()),
+                });
+                let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished {
                         ok: result.ok,
-                        display_style,
+                        display_style: presented.display_style,
                     },
-                    display_lines,
+                    display_lines: presented.display_lines,
                     expanded: false,
                 }));
             }

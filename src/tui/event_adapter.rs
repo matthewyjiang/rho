@@ -1,12 +1,10 @@
-use std::collections::BTreeMap;
-
 use rho_sdk::{
-    model::{ContextUsage, ModelUsage, ToolCall},
-    tool::{OperationKind, ToolMetadata},
-    HostInputRequest, HostInputResponse, RunEvent, ToolCompletion,
+    model::{ContextUsage, ModelUsage},
+    HostInputRequest, HostInputResponse, RunEvent,
 };
 
 use crate::{
+    app::interactive_presenter::InteractiveToolPresenter,
     questionnaire::{
         QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind,
         QuestionnaireRequest, QuestionnaireResponse,
@@ -53,21 +51,23 @@ pub(super) enum ViewEvent {
     Ignored,
 }
 
-#[derive(Clone, Debug)]
-struct ToolView {
-    name: String,
-    arguments: serde_json::Value,
-    metadata: ToolMetadata,
-}
-
 #[derive(Default)]
 pub(super) struct SdkEventAdapter {
-    proposed: BTreeMap<String, ToolView>,
-    partial_names: BTreeMap<usize, String>,
-    partial_arguments: BTreeMap<usize, String>,
+    presenter: Option<InteractiveToolPresenter>,
 }
 
 impl SdkEventAdapter {
+    pub(super) fn new(cwd: std::path::PathBuf) -> Self {
+        Self {
+            presenter: Some(InteractiveToolPresenter::new(cwd)),
+        }
+    }
+
+    fn presenter(&mut self) -> &mut InteractiveToolPresenter {
+        self.presenter
+            .get_or_insert_with(|| InteractiveToolPresenter::new(std::path::PathBuf::new()))
+    }
+
     pub(super) fn translate(&mut self, event: RunEvent) -> ViewEvent {
         match event {
             RunEvent::Started { .. } => ViewEvent::Ignored,
@@ -83,111 +83,39 @@ impl SdkEventAdapter {
                 name,
                 arguments_delta,
                 ..
-            } => {
-                if let Some(name) = name {
-                    self.partial_names.insert(index, name);
-                }
-                self.partial_arguments
-                    .entry(index)
-                    .or_default()
-                    .push_str(&arguments_delta);
-                let name = self
-                    .partial_names
-                    .get(&index)
-                    .map(String::as_str)
-                    .unwrap_or("tool");
-                let arguments = self
-                    .partial_arguments
-                    .get(&index)
-                    .map(String::as_str)
-                    .unwrap_or_default();
-                ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-                    display_lines: preview_lines(name, arguments),
-                })
-            }
+            } => self
+                .presenter()
+                .preview(index, name, &arguments_delta)
+                .map_or(ViewEvent::Ignored, |display_lines| {
+                    ViewEvent::Update(ViewModelEvent::ToolCallUpdated { display_lines })
+                }),
             RunEvent::ToolProposed { call } => {
-                let lines = proposed_lines(&call);
-                self.proposed.insert(
-                    call.id.clone(),
-                    ToolView {
-                        name: call.name,
-                        arguments: call.arguments,
-                        metadata: ToolMetadata::default(),
-                    },
-                );
-                ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-                    display_lines: lines,
-                })
+                let display_lines = self.presenter().proposed(call);
+                ViewEvent::Update(ViewModelEvent::ToolCallUpdated { display_lines })
             }
             RunEvent::ToolStarted {
                 call_id,
                 name,
                 metadata,
             } => {
-                let id = call_id.to_string();
-                let tool = self.proposed.entry(id).or_insert_with(|| ToolView {
-                    name: name.clone(),
-                    arguments: serde_json::Value::Object(Default::default()),
-                    metadata: metadata.clone(),
-                });
-                tool.name = name;
-                tool.metadata = metadata;
+                let presented = self.presenter().started(call_id, name.clone(), metadata);
                 ViewEvent::Update(ViewModelEvent::ToolStarted {
-                    name: tool.name.clone(),
-                    command: tool.metadata.command_summary_text().map(str::to_string),
-                    display_style: ToolDisplayStyle::for_tool_name(&tool.name),
-                    display_lines: tool_lines(tool, None),
+                    name,
+                    command: presented.command,
+                    display_style: presented.display_style,
+                    display_lines: presented.display_lines,
                 })
             }
             RunEvent::ToolUpdated { call_id, progress } => {
-                let id = call_id.to_string();
-                let mut tool = self.proposed.get_mut(&id);
-                if let Some(tool) = tool.as_deref_mut() {
-                    tool.metadata = progress.presentation().clone();
-                }
-                let mut lines =
-                    tool.map_or_else(|| vec!["tool".into()], |tool| tool_lines(tool, None));
-                if !progress.text().trim().is_empty() {
-                    lines.push(progress.text().to_string());
-                }
-                if let (Some(completed), Some(total)) =
-                    (progress.completed_units(), progress.total_units())
-                {
-                    lines.push(format!("progress: {completed}/{total}"));
-                }
-                ViewEvent::Update(ViewModelEvent::ToolUpdated {
-                    display_lines: lines,
-                })
+                let display_lines = self.presenter().updated(&call_id, &progress);
+                ViewEvent::Update(ViewModelEvent::ToolUpdated { display_lines })
             }
             RunEvent::ToolFinished { call_id, result } => {
-                let id = call_id.to_string();
-                let tool = self.proposed.remove(&id).unwrap_or_else(|| ToolView {
-                    name: "tool".into(),
-                    arguments: serde_json::Value::Object(Default::default()),
-                    metadata: ToolMetadata::default(),
-                });
-                let (ok, content, metadata) = match result {
-                    ToolCompletion::Success(output) => (
-                        true,
-                        output.content().to_string(),
-                        output.presentation().clone(),
-                    ),
-                    ToolCompletion::Failure(error) => {
-                        (false, error.message().to_string(), ToolMetadata::default())
-                    }
-                    ToolCompletion::Unavailable => {
-                        (false, "tool is unavailable".into(), ToolMetadata::default())
-                    }
-                    _ => (false, "unknown tool result".into(), ToolMetadata::default()),
-                };
-                let mut completed = tool;
-                if metadata != ToolMetadata::default() {
-                    completed.metadata = metadata;
-                }
+                let (ok, presented) = self.presenter().finished(&call_id, result);
                 ViewEvent::Update(ViewModelEvent::ToolFinished {
                     ok,
-                    display_style: ToolDisplayStyle::for_tool_name(&completed.name),
-                    display_lines: tool_lines(&completed, Some(&content)),
+                    display_style: presented.display_style,
+                    display_lines: presented.display_lines,
                 })
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
@@ -196,7 +124,7 @@ impl SdkEventAdapter {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
-                        display_lines: vec!["web search".into(), detail],
+                        display_lines: vec![format!("web search: {detail}")],
                     })
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))
@@ -272,48 +200,6 @@ fn answer_text(value: serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         value => value.to_string(),
     }
-}
-
-fn preview_lines(name: &str, arguments: &str) -> Vec<String> {
-    let mut lines = vec![name.to_string()];
-    if !arguments.trim().is_empty() {
-        lines.push(arguments.to_string());
-    }
-    lines
-}
-
-fn proposed_lines(call: &ToolCall) -> Vec<String> {
-    let mut lines = vec![call.name.clone()];
-    if call.arguments != serde_json::Value::Object(Default::default()) {
-        lines.push(call.arguments.to_string());
-    }
-    lines
-}
-
-fn tool_lines(tool: &ToolView, content: Option<&str>) -> Vec<String> {
-    let mut lines = vec![tool.name.clone()];
-    if let Some(command) = tool.metadata.command_summary_text() {
-        lines.push(command.to_string());
-    }
-    for path in tool.metadata.affected_paths() {
-        lines.push(path.display().to_string());
-    }
-    for url in tool.metadata.urls() {
-        lines.push(url.clone());
-    }
-    if let Some(diff) = tool.metadata.unified_diff() {
-        lines.push(diff.to_string());
-    }
-    if lines.len() == 1 && tool.arguments != serde_json::Value::Object(Default::default()) {
-        lines.push(tool.arguments.to_string());
-    }
-    if let Some(content) = content.filter(|content| !content.trim().is_empty()) {
-        lines.push(content.to_string());
-    }
-    if matches!(tool.metadata.operation_kind(), Some(OperationKind::Network)) && lines.len() == 1 {
-        lines.push("network request".into());
-    }
-    lines
 }
 
 #[cfg(test)]

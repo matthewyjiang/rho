@@ -2108,10 +2108,13 @@ impl App {
             Message::User(content)
         });
         agent.start(input, display_user).await?;
+        if let Some(context) = agent.take_context_usage() {
+            self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+        }
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let mut adapter = SdkEventAdapter::default();
+        let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
         let mut pending_questionnaire: Option<(
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
@@ -2124,6 +2127,9 @@ impl App {
                     let Some(event) = event else {
                         break;
                     };
+                    if let Some(context) = agent.take_context_usage() {
+                        self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+                    }
                     match adapter.translate(event) {
                         ViewEvent::Update(event) => {
                             self.handle_queued_agent_event(event, terminal)?;
@@ -3363,6 +3369,10 @@ impl App {
                 }
             }
         };
+        drop(compact_future);
+        if let Some(context) = agent.take_context_usage() {
+            self.record_agent_event(ViewModelEvent::ContextUsage(context));
+        }
         self.running = false;
         self.loading_spinner.stop();
 
@@ -4320,7 +4330,7 @@ impl App {
         self.cumulative_usage = None;
         self.latest_usage = None;
         self.current_context = None;
-        let entries = transcript_entries_from_messages(&display_history);
+        let entries = transcript_entries_from_messages(&display_history, &self.info.cwd);
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
@@ -5351,7 +5361,8 @@ impl App {
     }
 
     fn insert_recovered_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        let entries = transcript_entries_from_messages(&self.info.recovered_messages);
+        let entries =
+            transcript_entries_from_messages(&self.info.recovered_messages, &self.info.cwd);
         if entries.is_empty() {
             return Ok(());
         }
@@ -6343,27 +6354,30 @@ mod tests {
 
     #[test]
     fn recovered_session_messages_become_transcript_entries() {
-        let entries = transcript_entries_from_messages(&[
-            Message::System("system".into()),
-            Message::User(vec![
-                ContentBlock::Text("hello".into()),
-                ContentBlock::Image(ImageContent {
-                    data: "aW1n".into(),
-                    mime_type: "image/png".into(),
+        let entries = transcript_entries_from_messages(
+            &[
+                Message::System("system".into()),
+                Message::User(vec![
+                    ContentBlock::Text("hello".into()),
+                    ContentBlock::Image(ImageContent {
+                        data: "aW1n".into(),
+                        mime_type: "image/png".into(),
+                    }),
+                ]),
+                Message::Assistant(vec![ContentBlock::Text("hi".into())]),
+                Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+                    id: "call_1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "src/main.rs"}),
+                })]),
+                Message::ToolResult(crate::tool::ToolResult {
+                    id: "call_1".into(),
+                    ok: false,
+                    content: "missing file".into(),
                 }),
-            ]),
-            Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-            Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
-                id: "call_1".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "src/main.rs"}),
-            })]),
-            Message::ToolResult(crate::tool::ToolResult {
-                id: "call_1".into(),
-                ok: false,
-                content: "missing file".into(),
-            }),
-        ]);
+            ],
+            std::path::Path::new(""),
+        );
 
         assert!(
             matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]")
@@ -6378,7 +6392,7 @@ mod tests {
                 },
                 ref display_lines,
                 ..
-            }) if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
+            }) if display_lines == &vec!["read_file src/main.rs".to_string()]
         ));
         let lines = entry_lines(&entries[2], 40, 10);
         assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
