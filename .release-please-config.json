@@ -4,7 +4,6 @@
       "release-type": "rust",
       "package-name": "rho-coding-agent",
       "component": "rho-coding-agent",
-      "release-as": "1.0.0",
       "changelog-path": "CHANGELOG.md",
       "draft": true,
       "extra-files": [
@@ -18,7 +17,6 @@
       "release-type": "rust",
       "package-name": "rho-sdk",
       "component": "rho-sdk",
-      "release-as": "1.0.0",
       "changelog-path": "CHANGELOG.md",
       "draft": true
     }
