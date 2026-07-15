@@ -413,9 +413,7 @@ impl Session {
         let mut serialized = serde_json::to_vec(entry)?;
         serialized.push(b'\n');
         let mut options = OpenOptions::new();
-        // Windows requires write access, in addition to append access, when
-        // truncating an incomplete trailing JSONL record before appending.
-        options.create(true).read(true).write(true).append(true);
+        options.create(true).read(true).append(true);
         #[cfg(unix)]
         options.mode(0o600);
 
@@ -423,17 +421,17 @@ impl Session {
             .map(|metadata| metadata.len())
             .unwrap_or(0);
         let (previous_len, needs_separator) = recoverable_jsonl_end(&self.path)?;
+        if previous_len != original_len {
+            restore_file_len(&self.path, previous_len)?;
+        }
         let mut file = options.open(&self.path)?;
         set_private_file_permissions(&file)?;
-        if previous_len != original_len {
-            file.set_len(previous_len)?;
-        }
         if needs_separator {
             serialized.insert(0, b'\n');
         }
         if let Err(error) = file.write_all(&serialized).and_then(|()| file.sync_data()) {
-            let _ = file.set_len(previous_len);
-            let _ = file.sync_data();
+            drop(file);
+            let _ = restore_file_len(&self.path, previous_len);
             return Err(error.into());
         }
         Ok(())
@@ -484,6 +482,12 @@ fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
     rho_sdk::Error::Persistence {
         message: error.to_string(),
     }
+}
+
+fn restore_file_len(path: &Path, len: u64) -> std::io::Result<()> {
+    let file = OpenOptions::new().write(true).open(path)?;
+    file.set_len(len)?;
+    file.sync_data()
 }
 
 fn recoverable_jsonl_end(path: &Path) -> anyhow::Result<(u64, bool)> {

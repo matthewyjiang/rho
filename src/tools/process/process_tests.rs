@@ -498,27 +498,24 @@ async fn drop_kills_descendants() {
 #[tokio::test]
 async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
     let manager = ProcessManager::new(ProcessLimits::default());
-    let command = format!("python3 -m http.server {port} --bind 127.0.0.1 & echo $!; wait");
+    let command = "python3 -u -c 'import http.server, os; s = http.server.ThreadingHTTPServer((\"127.0.0.1\", 0), http.server.SimpleHTTPRequestHandler); print(os.getpid(), s.server_port, flush=True); s.serve_forever()'";
     let started = manager
-        .start(command, std::path::Path::new("."), None)
+        .start(command.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let first = manager
         .poll(&started.process_id, Some(0), Duration::from_secs(5))
         .await
         .unwrap();
-    let pid: i32 = first
+    let identity = first
         .chunks
         .iter()
         .map(|chunk| chunk.text.as_str())
-        .collect::<String>()
-        .trim()
-        .parse()
-        .unwrap();
+        .collect::<String>();
+    let mut identity = identity.split_whitespace();
+    let pid: i32 = identity.next().unwrap().parse().unwrap();
+    let port: u16 = identity.next().unwrap().parse().unwrap();
     let url = format!("http://127.0.0.1:{port}/Cargo.toml");
     let body = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
