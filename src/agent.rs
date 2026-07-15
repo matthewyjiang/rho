@@ -368,6 +368,26 @@ impl Agent {
     pub(crate) async fn run_with_model_and_display_content_events_questionnaire_and_steering(
         &mut self,
         user_content: ModelAndDisplayContent,
+        on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
+        ask_questionnaire: Option<QuestionnaireHandler<'_>>,
+        cancellation: RunCancellation,
+        interrupt_requested: impl FnMut() -> bool,
+        next_steer: impl FnMut() -> Result<Option<String>, AgentError>,
+    ) -> Result<String, AgentError> {
+        self.run_turn_events_questionnaire_and_steering(
+            Some(user_content),
+            on_event,
+            ask_questionnaire,
+            cancellation,
+            interrupt_requested,
+            next_steer,
+        )
+        .await
+    }
+
+    pub(crate) async fn run_turn_events_questionnaire_and_steering(
+        &mut self,
+        user_content: Option<ModelAndDisplayContent>,
         mut on_event: impl FnMut(AgentEvent) -> Result<(), ModelError>,
         mut ask_questionnaire: Option<QuestionnaireHandler<'_>>,
         cancellation: RunCancellation,
@@ -381,13 +401,15 @@ impl Agent {
         if let Some(diagnostics) = &self.diagnostics {
             diagnostics.update_tools(&specs);
         }
-        let (user_message, display_message) = match user_content {
-            ModelAndDisplayContent::Same(content) => (Message::User(content), None),
-            ModelAndDisplayContent::Separate { model, display } => {
-                (Message::User(model), Some(Message::User(display)))
-            }
-        };
-        self.push_message_with_display(user_message, display_message.as_ref())?;
+        if let Some(user_content) = user_content {
+            let (user_message, display_message) = match user_content {
+                ModelAndDisplayContent::Same(content) => (Message::User(content), None),
+                ModelAndDisplayContent::Separate { model, display } => {
+                    (Message::User(model), Some(Message::User(display)))
+                }
+            };
+            self.push_message_with_display(user_message, display_message.as_ref())?;
+        }
 
         let mut step = 1usize;
         let mut invalid_response_retries = 0usize;
