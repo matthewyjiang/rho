@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "audit": "rho-sdk-secret-canary",
-  "date_utc": "2026-07-15T03:52:54.453987+00:00",
-  "source_revision": "9ed7d0b2cde6fa08013e8dae7f7e5024428faf7d",
+  "date_utc": "2026-07-15T04:37:08.496882+00:00",
+  "source_revision": "f4e05b1a1a8269be00b3f3e8fa67c9f82e6b563a",
   "working_tree_changes_included": false,
   "reviewer": "repository-maintainer automated and manual review",
   "independent_audit": false,
@@ -41,10 +41,10 @@
       "rg -n 'RunEvent::|DiagnosticsSnapshot|ProviderError::new|ToolError::|to_json|Serialize|snapshot' crates/rho-sdk src"
     ],
     "counts": {
-      "rust_files": 265,
-      "debug_display_error_log_candidates": 449,
-      "secret_source_candidates": 3290,
-      "event_diagnostic_snapshot_candidates": 911
+      "rust_files": 268,
+      "debug_display_error_log_candidates": 451,
+      "secret_source_candidates": 3328,
+      "event_diagnostic_snapshot_candidates": 917
     },
     "human_data_flow_reviewed": true
   },
