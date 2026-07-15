@@ -28,7 +28,7 @@ const DEVICE_CODE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OAuthRequest {
     pub authorize_url: String,
     pub redirect_uri: String,
@@ -36,7 +36,7 @@ pub struct OAuthRequest {
     pub verifier: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CodexDeviceLogin {
     pub user_code: String,
     pub verification_uri: String,
@@ -45,10 +45,44 @@ pub struct CodexDeviceLogin {
     interval: Duration,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CallbackOutcome {
     Code(String),
     Error(String),
+}
+
+impl std::fmt::Debug for OAuthRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OAuthRequest")
+            .field("authorize_url", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("state", &"[REDACTED]")
+            .field("verifier", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for CodexDeviceLogin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CodexDeviceLogin")
+            .field("user_code", &"[REDACTED]")
+            .field("verification_uri", &self.verification_uri)
+            .field("expires_in", &self.expires_in)
+            .field("device_auth_id", &"[REDACTED]")
+            .field("interval", &self.interval)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for CallbackOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(_) => formatter.write_str("Code([REDACTED])"),
+            Self::Error(_) => formatter.write_str("Error([REDACTED])"),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,7 +109,7 @@ pub enum CodexOAuthError {
     MissingToken(&'static str),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -83,7 +117,7 @@ struct TokenResponse {
     account_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct IdTokenClaims {
     #[serde(rename = "https://api.openai.com/auth", default)]
     auth: Option<IdTokenAuthClaims>,
@@ -124,7 +158,7 @@ impl ChatGptPlan {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct IdTokenAuthClaims {
     #[serde(default)]
     chatgpt_account_id: Option<String>,
@@ -132,7 +166,7 @@ struct IdTokenAuthClaims {
     chatgpt_plan_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct DeviceUserCodeResponse {
     device_auth_id: Option<String>,
     #[serde(alias = "usercode")]
@@ -143,7 +177,7 @@ struct DeviceUserCodeResponse {
     error_description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct DeviceTokenResponse {
     authorization_code: Option<String>,
     code_verifier: Option<String>,
@@ -585,6 +619,23 @@ fn account_id_from_id_token(id_token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_debug_redacts_codes_and_pkce_secrets() {
+        let request = build_oauth_request_with_values(
+            "oauth-state-secret".into(),
+            "pkce-verifier-secret".into(),
+            "http://localhost:1455/auth/callback".into(),
+        );
+        let request_debug = format!("{request:?}");
+        assert!(!request_debug.contains("oauth-state-secret"));
+        assert!(!request_debug.contains("pkce-verifier-secret"));
+        assert!(
+            !format!("{:?}", CallbackOutcome::Code("oauth-code-secret".into()))
+                .contains("oauth-code-secret")
+        );
+    }
+
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,

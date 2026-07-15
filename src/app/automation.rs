@@ -2,6 +2,7 @@ use std::{
     fmt,
     io::{self, Read, Write},
     path::PathBuf,
+    sync::Arc,
 };
 
 use rho_sdk::{
@@ -12,12 +13,15 @@ use rho_sdk::{
 use crate::{
     cli::Command,
     config::Config,
+    credentials::OsCredentialStore,
     diagnostics::RuntimeDiagnostics,
     herdr::{HerdrReporter, HerdrState},
     prompt,
     providers::build_automation_provider,
     tools::sdk_registry::AutomationToolSet,
 };
+
+use super::sdk_config::SdkBootstrapOptions;
 
 /// Error returned after an automation run handles an interrupt and completes cleanup.
 #[derive(Debug)]
@@ -79,11 +83,11 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
 }
 
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
-    let provider = build_automation_provider(
-        &startup.config.provider,
-        &startup.config.model,
-        startup.config.reasoning,
-    )?;
+    let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
+    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+        Arc::new(OsCredentialStore),
+    );
+    let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let tool_set = if startup.no_tools {
         AutomationToolSet::disabled()
     } else {
@@ -102,13 +106,13 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     };
     startup.diagnostics.update_tools(&tool_specs);
 
-    let workspace = Workspace::new(&startup.cwd)?;
+    let workspace = Workspace::new(&sdk_options.workspace.root)?;
     let mut builder = Rho::builder()
         .provider_shared(provider)
         .system_prompt(system_prompt)
         .workspace(workspace)
         .workspace_policy(AutomationWorkspacePolicy)
-        .reasoning_level(startup.config.reasoning);
+        .reasoning_level(sdk_options.runtime.reasoning);
     for tool in tool_set.tools() {
         builder = builder.tool_shared(tool.clone());
     }

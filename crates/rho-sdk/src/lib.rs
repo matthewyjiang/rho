@@ -133,6 +133,7 @@ mod persistence;
 pub mod provider;
 mod reasoning;
 mod run;
+mod secret;
 mod session;
 pub mod tool;
 mod workspace;
@@ -153,6 +154,7 @@ pub use id::{HostInputId, InvalidId, Revision, RunId, SessionId, ToolCallId};
 pub use persistence::{InMemorySessionStore, SessionSnapshot, SESSION_SNAPSHOT_SCHEMA_VERSION};
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
 pub use run::Run;
+pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use workspace::{
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,

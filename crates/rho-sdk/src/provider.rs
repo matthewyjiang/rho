@@ -101,7 +101,12 @@ pub trait ModelProvider: Send + Sync {
 }
 
 /// Owned request snapshot captured by [`ScriptedProvider`].
+///
+/// Fields are readable for assertions, while the non-exhaustive marker reserves
+/// space for future request metadata. Downstream code receives this value from
+/// [`ScriptedProvider::recorded_requests`] rather than constructing it.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct RecordedModelRequest {
     pub messages: Vec<crate::model::Message>,
     pub tools: Vec<crate::model::ToolSpec>,

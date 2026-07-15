@@ -6,13 +6,14 @@ use crate::{
         AnthropicOutputConfig, AnthropicRequest, AnthropicResponse, AnthropicRole,
         AnthropicSystemBlock, AnthropicThinkingConfig, ProviderContextReplay,
     },
-    provider_backend::{
-        stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
-        ModelResponse,
-    },
+    provider_backend::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
     reasoning::ReasoningLevel,
 };
 
+#[cfg(test)]
+use crate::provider_backend::stream_timeout::provider_client;
+
+#[cfg(test)]
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -28,12 +29,29 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
+    #[cfg(test)]
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
+        Self::new_with_transport(
+            model,
+            api_key,
+            max_tokens,
+            provider_client(),
+            ANTHROPIC_API_BASE.into(),
+        )
+    }
+
+    pub(crate) fn new_with_transport(
+        model: String,
+        api_key: String,
+        max_tokens: fn(&str) -> u32,
+        client: reqwest::Client,
+        api_base: String,
+    ) -> Self {
         let reasoning = default_reasoning(&model);
         Self {
-            client: provider_client(),
+            client,
             api_key,
-            api_base: ANTHROPIC_API_BASE.into(),
+            api_base,
             model,
             max_tokens,
             reasoning,

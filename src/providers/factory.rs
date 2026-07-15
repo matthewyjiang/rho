@@ -1,156 +1,76 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    auth::github_copilot_token::GitHubCopilotAuthManager,
-    credentials::{load_provider_api_key, OsCredentialStore},
-    model::{
-        models_dev::{cached_reasoning_effort, cached_reasoning_levels},
-        registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
-        DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
-    },
-    provider::{self, ProviderAuthKind},
-    providers::sdk_adapter::SdkProviderAdapter,
-    providers::{
-        anthropic::AnthropicProvider,
-        github_copilot::GitHubCopilotProvider,
-        openai::{
-            auth::{load_api_key_auth, load_codex_auth},
-            OpenAiProvider,
-        },
-        xai::XaiProvider,
-    },
+    auth::provider_credentials::{ApplicationCredentialSource, ProviderCredentialSource},
+    credentials::OsCredentialStore,
+    model::{DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse},
+    providers::builder::{ProviderBuildOptions, ProviderBuilder, ProviderCredential},
     reasoning::ReasoningLevel,
 };
 
-pub fn build_provider(
+/// Temporary compatibility shim for the private application provider trait.
+///
+/// Tracked by issue #256 and removable with the remaining TUI goal-provider
+/// call site. Credential lookup remains isolated in the explicit application
+/// adapter rather than provider construction.
+pub(crate) fn build_provider(
     provider: &str,
     model: &str,
     reasoning: ReasoningLevel,
 ) -> Result<DynModelProvider, ModelError> {
-    Ok(
-        match build_adaptable_provider(provider, model, reasoning)? {
-            BuiltProvider::OpenAi(provider) => Box::new(*provider) as DynModelProvider,
-            BuiltProvider::Anthropic(provider) => Box::new(*provider) as DynModelProvider,
-            BuiltProvider::GithubCopilot(provider) => Box::new(*provider) as DynModelProvider,
-            BuiltProvider::Xai(provider) => Box::new(*provider) as DynModelProvider,
-        },
-    )
+    let options = ProviderBuildOptions::new(provider, model, reasoning)?;
+    let credentials = ApplicationCredentialSource::new(Arc::new(OsCredentialStore));
+    let credential = credentials.acquire(options.provider())?;
+    ProviderBuilder::new(options, credential).build_application()
 }
 
-pub fn build_automation_provider(
-    provider: &str,
-    model: &str,
-    reasoning: ReasoningLevel,
+/// Builds a provider from side-effect-free options and explicit credentials.
+pub(crate) fn build_sdk_provider_explicit(
+    options: ProviderBuildOptions,
+    credential: ProviderCredential,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    ProviderBuilder::new(options, credential).build()
+}
+
+/// Acquires credentials through an explicitly selected application adapter and
+/// passes them to side-effect-free provider construction.
+pub(crate) fn build_sdk_provider_with_source(
+    options: ProviderBuildOptions,
+    credentials: &dyn ProviderCredentialSource,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    let credential = credentials.acquire(options.provider())?;
+    build_sdk_provider_explicit(options, credential)
+}
+
+pub(crate) fn build_automation_provider(
+    options: ProviderBuildOptions,
+    credentials: &dyn ProviderCredentialSource,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     #[cfg(debug_assertions)]
-    if let Some(provider) =
-        super::automation_fixture::from_env(provider, model).map_err(ModelError::InvalidResponse)?
+    if let Some(provider) = super::automation_fixture::from_env(options.provider(), options.model())
+        .map_err(ModelError::InvalidResponse)?
     {
         return Ok(provider);
     }
 
-    build_sdk_provider(provider, model, reasoning)
+    build_sdk_provider_with_source(options, credentials)
 }
 
-/// Builds a provider adapted to the public SDK [`rho_sdk::provider::ModelProvider`] contract.
-pub fn build_sdk_provider(
+/// Temporary application compatibility shim for TUI provider replacement.
+///
+/// This function performs opt-in environment/keychain acquisition through
+/// [`ApplicationCredentialSource`] and then delegates to the explicit builder.
+/// It remains only for TUI call sites excluded from the issue #256 provider API
+/// work and must be removed when those call sites adopt application bootstrap
+/// conversion. New code must use [`build_sdk_provider_with_source`].
+pub(crate) fn build_sdk_provider(
     provider: &str,
     model: &str,
     reasoning: ReasoningLevel,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
-    Ok(
-        match build_adaptable_provider(provider, model, reasoning)? {
-            BuiltProvider::OpenAi(provider) => SdkProviderAdapter::shared(*provider),
-            BuiltProvider::Anthropic(provider) => SdkProviderAdapter::shared(*provider),
-            BuiltProvider::GithubCopilot(provider) => SdkProviderAdapter::shared(*provider),
-            BuiltProvider::Xai(provider) => SdkProviderAdapter::shared(*provider),
-        },
-    )
-}
-
-enum BuiltProvider {
-    OpenAi(Box<OpenAiProvider>),
-    Anthropic(Box<AnthropicProvider>),
-    GithubCopilot(Box<GitHubCopilotProvider>),
-    Xai(Box<XaiProvider>),
-}
-
-fn build_adaptable_provider(
-    provider: &str,
-    model: &str,
-    reasoning: ReasoningLevel,
-) -> Result<BuiltProvider, ModelError> {
-    let supported_reasoning = cached_reasoning_levels(provider, model);
-    let reasoning = reasoning.normalize(supported_reasoning.as_deref());
-    let reasoning_effort = cached_reasoning_effort(provider, model, reasoning);
-    let reasoning_summary = reasoning.summary().map(str::to_string);
-    let runtime = provider_runtime(provider)
-        .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
-    match runtime {
-        ProviderRuntime::OpenAi { auth_mode } => {
-            let credential_store = Arc::new(OsCredentialStore);
-            let auth = match auth_mode {
-                AuthMode::ApiKey => load_api_key_auth(credential_store.as_ref())?,
-                AuthMode::Codex => load_codex_auth(credential_store.as_ref())?,
-            };
-            Ok(BuiltProvider::OpenAi(Box::new(
-                OpenAiProvider::new_with_auth(
-                    model.to_string(),
-                    auth,
-                    credential_store,
-                    reasoning_effort,
-                    reasoning_summary,
-                ),
-            )))
-        }
-        ProviderRuntime::Anthropic => {
-            let mut provider = AnthropicProvider::new(
-                model.to_string(),
-                load_anthropic_api_key_auth()?,
-                anthropic_max_tokens,
-            );
-            provider.set_reasoning(reasoning);
-            Ok(BuiltProvider::Anthropic(Box::new(provider)))
-        }
-        ProviderRuntime::GithubCopilot => Ok(BuiltProvider::GithubCopilot(Box::new(
-            GitHubCopilotProvider::new(
-                model.to_string(),
-                GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
-            )?,
-        ))),
-        ProviderRuntime::Xai => Ok(BuiltProvider::Xai(Box::new(XaiProvider::new(
-            model.to_string(),
-            Arc::new(OsCredentialStore),
-            reasoning,
-        )?))),
-    }
-}
-
-fn anthropic_max_tokens(model: &str) -> u32 {
-    crate::model::provider_models::cached_provider_model("anthropic", model)
-        .and_then(|metadata| metadata.max_output_tokens)
-        .or_else(|| {
-            crate::model::models_dev::cached_model_metadata("anthropic", model)
-                .and_then(|metadata| metadata.max_output_tokens)
-        })
-        .and_then(|tokens| u32::try_from(tokens).ok())
-        .unwrap_or(crate::providers::anthropic::DEFAULT_MAX_TOKENS)
-}
-
-fn load_anthropic_api_key_auth() -> Result<String, ModelError> {
-    let descriptor = provider::provider_descriptor("anthropic")
-        .ok_or_else(|| ModelError::UnsupportedProvider("anthropic".into()))?;
-    let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
-    } = descriptor.auth_kind
-    else {
-        return Err(ModelError::UnsupportedProvider("anthropic".into()));
-    };
-    if let Ok(key) = std::env::var(env_var) {
-        return Ok(key);
-    }
-    let store = OsCredentialStore;
-    load_provider_api_key(&store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
+    let options = ProviderBuildOptions::new(provider, model, reasoning)?;
+    let credentials = ApplicationCredentialSource::new(Arc::new(OsCredentialStore));
+    build_sdk_provider_with_source(options, &credentials)
 }
 
 #[derive(Debug)]
@@ -194,8 +114,8 @@ fn clone_model_error(error: &ModelError) -> ModelError {
             status: *status,
             body: body.clone(),
         },
-        ModelError::Io(err) => ModelError::InvalidResponse(err.to_string()),
-        ModelError::Request(err) => ModelError::InvalidResponse(err.to_string()),
+        ModelError::Io(_) => ModelError::InvalidResponse("provider I/O failed".into()),
+        ModelError::Request(_) => ModelError::InvalidResponse("provider request failed".into()),
     }
 }
 

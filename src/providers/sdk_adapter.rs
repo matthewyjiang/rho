@@ -20,6 +20,13 @@
 //! transports still apply reasoning through construction-time configuration and
 //! [`crate::model::ModelProvider::set_reasoning`]. Request-level reasoning is
 //! accepted by the adapter but not yet applied by the underlying transports.
+//!
+//! # Removal plan
+//!
+//! This private shim is tracked by issue #256. Remove it after the remaining
+//! application provider consumers use [`rho_sdk::provider::ModelProvider`]
+//! directly. It is not part of the SDK compatibility contract, and new
+//! provider construction must not depend on it for credential acquisition.
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
@@ -242,9 +249,9 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             error.to_string(),
             Retryability::Permanent,
         ),
-        ModelError::Credentials(message) => ProviderError::new(
+        ModelError::Credentials(_) => ProviderError::new(
             ProviderErrorKind::Authentication,
-            format!("credential store error: {message}"),
+            "credential store operation failed",
             Retryability::Permanent,
         ),
         ModelError::Interrupted => ProviderError::interrupted("provider stream interrupted"),
@@ -255,14 +262,14 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             ),
             Retryability::Retryable,
         ),
-        ModelError::StreamFailedAfterOutput { message } => ProviderError::new(
+        ModelError::StreamFailedAfterOutput { message: _ } => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
-            message,
+            "provider stream failed after emitting output",
             Retryability::Permanent,
         ),
-        ModelError::InvalidResponse(message) => ProviderError::new(
+        ModelError::InvalidResponse(_) => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
-            message,
+            "provider returned an invalid response",
             Retryability::Permanent,
         ),
         ModelError::UnsupportedProvider(provider) => ProviderError::new(
@@ -281,14 +288,14 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             };
             ProviderError::new(kind, format!("HTTP {status_code}"), retryability)
         }
-        ModelError::Request(error) => ProviderError::new(
+        ModelError::Request(_) => ProviderError::new(
             ProviderErrorKind::Unavailable,
-            format!("request failed: {error}"),
+            "provider request failed",
             Retryability::Retryable,
         ),
-        ModelError::Io(error) => ProviderError::new(
+        ModelError::Io(_) => ProviderError::new(
             ProviderErrorKind::Other,
-            format!("io error: {error}"),
+            "provider I/O failed",
             Retryability::Retryable,
         ),
     }

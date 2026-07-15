@@ -10,6 +10,7 @@
 pub(crate) mod anthropic;
 #[cfg(debug_assertions)]
 mod automation_fixture;
+pub(crate) mod builder;
 mod factory;
 pub(crate) mod github_copilot;
 pub(crate) mod openai;
@@ -17,6 +18,8 @@ pub(crate) mod sdk_adapter;
 mod send_stream;
 pub(crate) mod xai;
 
+pub(crate) use builder::ProviderBuildOptions;
 pub(crate) use factory::{
-    build_automation_provider, build_provider, build_sdk_provider, UnavailableProvider,
+    build_automation_provider, build_provider, build_sdk_provider, build_sdk_provider_with_source,
+    UnavailableProvider,
 };

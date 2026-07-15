@@ -63,6 +63,13 @@ Emergency compiler requirements caused by a security or soundness fix may skip
 the normal notice period, but still require all metadata and CI updates in the
 same change.
 
+## Public API inventory
+
+The reviewed export list, extensibility decisions, redaction invariants, and
+remaining private application shims are maintained in the
+[SDK public API inventory](sdk-public-api.md). Any public export added to
+`rho-sdk` must be added there with its evolution and serialization contract.
+
 ## Semantic versioning and deprecation
 
 Public Rust items, documented event ordering and cancellation behavior, feature

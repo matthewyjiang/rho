@@ -97,6 +97,7 @@ pub enum ProviderErrorKind {
 
 /// Whether retrying an operation unchanged may succeed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Retryability {
     Retryable,
     Permanent,

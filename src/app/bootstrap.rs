@@ -1,4 +1,7 @@
-use std::io::{self, IsTerminal};
+use std::{
+    io::{self, IsTerminal},
+    sync::Arc,
+};
 
 use crate::{
     cli::{Cli, Command},
@@ -9,7 +12,10 @@ use crate::{
     update,
 };
 
-use super::{automation, cli_config, config_repository::ConfigRepository, interactive, login};
+use super::{
+    automation, cli_config, config_repository::ConfigRepository, interactive, login,
+    sdk_config::SdkBootstrapOptions,
+};
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
@@ -64,8 +70,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
+    let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
+    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+        Arc::new(OsCredentialStore),
+    );
     let provider_result =
-        crate::providers::build_sdk_provider(&config.provider, &config.model, config.reasoning);
+        crate::providers::build_sdk_provider_with_source(sdk_options.provider, &credentials);
     let (missing_auth_error, missing_auth_model_error) = match provider_result {
         Ok(_) => (None, None),
         Err(error) if is_interactive_startup_unavailable_error(&error) => {

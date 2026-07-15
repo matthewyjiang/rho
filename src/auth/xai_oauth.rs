@@ -29,7 +29,7 @@ const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct XaiOAuthRequest {
     pub authorize_url: String,
     redirect_uri: String,
@@ -38,7 +38,7 @@ pub struct XaiOAuthRequest {
     challenge: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct XaiDeviceLogin {
     pub user_code: String,
     pub verification_uri: String,
@@ -48,10 +48,46 @@ pub struct XaiDeviceLogin {
     device_code: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CallbackOutcome {
     Code(String),
     Error(String),
+}
+
+impl std::fmt::Debug for XaiOAuthRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XaiOAuthRequest")
+            .field("authorize_url", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("state", &"[REDACTED]")
+            .field("verifier", &"[REDACTED]")
+            .field("challenge", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for XaiDeviceLogin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XaiDeviceLogin")
+            .field("user_code", &"[REDACTED]")
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &"[REDACTED]")
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .field("device_code", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for CallbackOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(_) => formatter.write_str("Code([REDACTED])"),
+            Self::Error(_) => formatter.write_str("Error([REDACTED])"),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -78,7 +114,7 @@ pub enum XaiOAuthError {
     MissingToken(&'static str),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -88,7 +124,7 @@ struct TokenResponse {
     error_description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct DeviceCodeResponse {
     device_code: Option<String>,
     user_code: Option<String>,

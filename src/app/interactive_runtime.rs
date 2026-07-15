@@ -14,10 +14,11 @@ use crate::{
         replacement_history_from_summary, CompactionConfig,
     },
     config::Config,
+    credentials::OsCredentialStore,
     diagnostics::RuntimeDiagnostics,
     model::models_dev::cached_model_metadata,
     prompt,
-    providers::{build_sdk_provider, UnavailableProvider},
+    providers::{build_sdk_provider_with_source, UnavailableProvider},
     session::Session as StoredSession,
     tools::sdk_registry::AutomationToolSet,
 };
@@ -79,9 +80,16 @@ impl InteractiveRuntime {
             diagnostics,
             unavailable_error,
         } = options;
+        let sdk_options = super::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
         let provider: Arc<dyn ModelProvider> = match unavailable_error {
             Some(error) => Arc::new(UnavailableProvider::new(error)),
-            None => build_sdk_provider(&config.provider, &config.model, config.reasoning)?,
+            None => {
+                let credentials =
+                    crate::auth::provider_credentials::ApplicationCredentialSource::new(Arc::new(
+                        OsCredentialStore,
+                    ));
+                build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
+            }
         };
         let tools = if no_tools {
             AutomationToolSet::disabled()
@@ -98,17 +106,17 @@ impl InteractiveRuntime {
             SystemPrompt::Custom(built.text)
         };
         diagnostics.update_tools(&specs);
-        let workspace = Workspace::new(cwd)?;
+        let workspace = Workspace::new(&sdk_options.workspace.root)?;
         let context_window = cached_model_metadata(&config.provider, &config.model)
             .and_then(|metadata| metadata.display_context_window());
-        let compaction = CompactionConfig::from(config);
+        let compaction = sdk_options.runtime.compaction.clone();
         diagnostics.update_compaction_config(&compaction);
         let runtime = build_runtime(
             Arc::clone(&provider),
             &tools,
             workspace.clone(),
             system_prompt.clone(),
-            config.reasoning,
+            sdk_options.runtime.reasoning,
             compaction.clone(),
             context_window,
         )?;
@@ -130,7 +138,7 @@ impl InteractiveRuntime {
             tools,
             workspace,
             system_prompt,
-            reasoning: config.reasoning,
+            reasoning: sdk_options.runtime.reasoning,
             compaction,
             context_window,
             storage,

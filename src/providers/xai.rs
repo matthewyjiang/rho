@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::{
@@ -8,13 +9,12 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
-    credentials::CredentialStore,
     model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
-    provider_backend::stream_timeout::provider_client,
     reasoning::ReasoningLevel,
 };
 
-const API_BASE: &str = "https://api.x.ai/v1";
+#[cfg(test)]
+use crate::{credentials::CredentialStore, provider_backend::stream_timeout::provider_client};
 
 pub struct XaiProvider {
     client: reqwest::Client,
@@ -25,28 +25,37 @@ pub struct XaiProvider {
 }
 
 impl XaiProvider {
-    pub(crate) fn new(
+    pub(crate) fn new_with_transport(
         model: String,
-        store: Arc<dyn CredentialStore>,
+        auth: XaiAuthManager,
         reasoning: ReasoningLevel,
-    ) -> Result<Self, ModelError> {
-        Self::new_with_api_base(model, store, reasoning, API_BASE.into())
+        client: reqwest::Client,
+        api_base: String,
+    ) -> Self {
+        let reasoning_effort = xai_reasoning_effort(&model, reasoning).map(str::to_string);
+        Self {
+            client,
+            model,
+            auth,
+            api_base,
+            reasoning_effort,
+        }
     }
 
+    #[cfg(test)]
     fn new_with_api_base(
         model: String,
         store: Arc<dyn CredentialStore>,
         reasoning: ReasoningLevel,
         api_base: String,
     ) -> Result<Self, ModelError> {
-        let reasoning_effort = xai_reasoning_effort(&model, reasoning).map(str::to_string);
-        Ok(Self {
-            client: provider_client(),
+        Ok(Self::new_with_transport(
             model,
-            auth: XaiAuthManager::new(store)?,
+            XaiAuthManager::new(store)?,
+            reasoning,
+            provider_client(),
             api_base,
-            reasoning_effort,
-        })
+        ))
     }
 
     async fn send_request(

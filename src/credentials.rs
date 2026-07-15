@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt,
     sync::{Mutex, OnceLock},
 };
 
@@ -27,7 +28,7 @@ const MAX_SECRET_CHUNK_UTF16_UNITS: usize = 1000;
 
 const CHUNK_MANIFEST_VERSION: &str = "v2";
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CodexTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -35,7 +36,7 @@ pub struct CodexTokens {
     pub account_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GitHubCopilotTokens {
     pub github_access_token: String,
     pub github_refresh_token: Option<String>,
@@ -48,13 +49,38 @@ pub struct GitHubCopilotTokens {
     pub copilot_models_endpoint: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct XaiTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at_unix: Option<i64>,
     pub id_token: Option<String>,
 }
+
+macro_rules! redacted_token_debug {
+    ($type:ty, $($visible:ident),* $(,)?) => {
+        impl fmt::Debug for $type {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($type));
+                debug.field("credentials", &"[REDACTED]");
+                $(debug.field(stringify!($visible), &self.$visible);)*
+                debug.finish()
+            }
+        }
+    };
+}
+
+redacted_token_debug!(CodexTokens, account_id);
+redacted_token_debug!(
+    GitHubCopilotTokens,
+    github_expires_at_unix,
+    copilot_expires_at_unix,
+    copilot_refresh_after_unix,
+    copilot_token_endpoint,
+    copilot_chat_endpoint,
+    copilot_models_endpoint,
+);
+redacted_token_debug!(XaiTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
@@ -672,6 +698,35 @@ pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_debug_redacts_every_secret_field() {
+        let codex = CodexTokens {
+            access_token: "codex-access-secret".into(),
+            refresh_token: Some("codex-refresh-secret".into()),
+            id_token: Some("codex-id-secret".into()),
+            account_id: Some("account".into()),
+        };
+        let xai = XaiTokens {
+            access_token: "xai-access-secret".into(),
+            refresh_token: Some("xai-refresh-secret".into()),
+            expires_at_unix: Some(123),
+            id_token: Some("xai-id-secret".into()),
+        };
+
+        let debug = format!("{codex:?} {xai:?}");
+        for secret in [
+            "codex-access-secret",
+            "codex-refresh-secret",
+            "codex-id-secret",
+            "xai-access-secret",
+            "xai-refresh-secret",
+            "xai-id-secret",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("[REDACTED]"));
+    }
 
     #[test]
     fn web_search_api_keys_use_dedicated_accounts() {

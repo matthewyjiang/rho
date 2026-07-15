@@ -17,18 +17,18 @@ use crate::protocol::openai_chat::{
     ChatStreamOptions,
 };
 use crate::protocol::openai_responses::collect_codex_sse_response;
-use auth::{load_codex_tokens_for_request, refresh_codex_token, Auth, CodexAuthSource};
+use auth::{refresh_codex_token, Auth, CodexAuthSource};
 use codex_request::{build_codex_responses_body, CodexRequestMode};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
     model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
-    provider_backend::{
-        line_decoder::LineDecoder,
-        stream_timeout::{provider_client, StreamIdleDeadline},
-    },
+    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
+
+#[cfg(test)]
+use crate::provider_backend::stream_timeout::provider_client;
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -43,6 +43,7 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    #[cfg(test)]
     pub(crate) fn new_with_auth(
         model: String,
         auth: Auth,
@@ -50,16 +51,37 @@ impl OpenAiProvider {
         reasoning_effort: Option<String>,
         reasoning_summary: Option<String>,
     ) -> Self {
-        let (api_base, provider): (String, &'static str) = match &auth {
+        Self::new_with_transport(
+            model,
+            auth,
+            credential_store,
+            reasoning_effort,
+            reasoning_summary,
+            provider_client(),
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_transport(
+        model: String,
+        auth: Auth,
+        credential_store: Arc<dyn CredentialStore>,
+        reasoning_effort: Option<String>,
+        reasoning_summary: Option<String>,
+        client: reqwest::Client,
+        api_base_override: Option<String>,
+    ) -> Self {
+        let (default_api_base, provider): (String, &'static str) = match &auth {
             Auth::Codex { .. } => (
                 "https://chatgpt.com/backend-api/codex".into(),
                 "openai-codex",
             ),
             Auth::ApiKey(_) => ("https://api.openai.com/v1".into(), "openai"),
         };
+        let api_base = api_base_override.unwrap_or(default_api_base);
         let codex_ws = CodexWsTransport::new(&api_base);
         Self {
-            client: provider_client(),
+            client,
             auth,
             api_base,
             model,
@@ -89,9 +111,7 @@ impl OpenAiProvider {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
             Auth::Codex { tokens, source } => {
-                let request_tokens =
-                    load_codex_tokens_for_request(self.credential_store.as_ref(), tokens, *source)?;
-                self.send_codex_responses_complete(request, request_tokens, *source)
+                self.send_codex_responses_complete(request, tokens.clone(), *source)
                     .await
             }
         }
@@ -111,12 +131,8 @@ impl OpenAiProvider {
                         self.send_chat_completions_stream(request, key, on_event).await
                     }
                     Auth::Codex { tokens, source } => {
-                        let request_tokens = load_codex_tokens_for_request(
-                            self.credential_store.as_ref(), tokens, *source,
-                        )?;
-                        self.send_codex_responses_stream(
-                            request, request_tokens, *source, on_event,
-                        ).await
+                        self.send_codex_responses_stream(request, tokens.clone(), *source, on_event)
+                            .await
                     }
                 }
             } => result,
@@ -166,12 +182,8 @@ impl ModelProvider for OpenAiProvider {
                         self.send_chat_completions_stream(request, key, on_event).await
                     }
                     Auth::Codex { tokens, source } => {
-                        let request_tokens = load_codex_tokens_for_request(
-                            self.credential_store.as_ref(), tokens, *source,
-                        )?;
-                        self.send_codex_responses_stream(
-                            request, request_tokens, *source, on_event,
-                        ).await
+                        self.send_codex_responses_stream(request, tokens.clone(), *source, on_event)
+                            .await
                     }
                 }
             } => result,

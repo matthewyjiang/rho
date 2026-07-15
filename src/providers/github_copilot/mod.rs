@@ -9,11 +9,11 @@ use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
     model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
-    provider_backend::{
-        line_decoder::LineDecoder,
-        stream_timeout::{provider_client, StreamIdleDeadline},
-    },
+    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
+
+#[cfg(test)]
+use crate::provider_backend::stream_timeout::provider_client;
 
 const DEFAULT_COPILOT_CHAT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
 const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
@@ -25,15 +25,33 @@ pub struct GitHubCopilotProvider {
     client: reqwest::Client,
     auth: GitHubCopilotAuthManager,
     model: String,
+    chat_endpoint: Option<String>,
 }
 
 impl GitHubCopilotProvider {
+    #[cfg(test)]
     pub fn new(model: String, auth: GitHubCopilotAuthManager) -> Result<Self, ModelError> {
         auth.ensure_auth_available()?;
         Ok(Self {
             client: provider_client(),
             auth,
             model,
+            chat_endpoint: None,
+        })
+    }
+
+    pub(crate) fn new_with_transport(
+        model: String,
+        auth: GitHubCopilotAuthManager,
+        client: reqwest::Client,
+        chat_endpoint: Option<String>,
+    ) -> Result<Self, ModelError> {
+        auth.ensure_auth_available()?;
+        Ok(Self {
+            client,
+            auth,
+            model,
+            chat_endpoint,
         })
     }
 
@@ -47,6 +65,7 @@ impl GitHubCopilotProvider {
             client,
             auth,
             model,
+            chat_endpoint: None,
         }
     }
 
@@ -102,11 +121,13 @@ impl GitHubCopilotProvider {
         body: &ChatRequest,
         auth: &GitHubCopilotAuthMaterial,
     ) -> Result<reqwest::Response, ModelError> {
-        let endpoint = if auth.chat_endpoint.trim().is_empty() {
-            DEFAULT_COPILOT_CHAT_COMPLETIONS_URL
-        } else {
-            auth.chat_endpoint.as_str()
-        };
+        let endpoint = self.chat_endpoint.as_deref().unwrap_or_else(|| {
+            if auth.chat_endpoint.trim().is_empty() {
+                DEFAULT_COPILOT_CHAT_COMPLETIONS_URL
+            } else {
+                auth.chat_endpoint.as_str()
+            }
+        });
         Ok(self
             .apply_headers(self.client.post(endpoint), auth)
             .json(body)
@@ -266,9 +287,11 @@ mod tests {
             },
         )
         .unwrap();
-        let provider =
-            GitHubCopilotProvider::new("gpt-4.1".into(), GitHubCopilotAuthManager::new(store))
-                .unwrap();
+        let provider = GitHubCopilotProvider::new(
+            "gpt-4.1".into(),
+            GitHubCopilotAuthManager::new(store).unwrap(),
+        )
+        .unwrap();
 
         let body = provider
             .chat_request(
@@ -290,13 +313,11 @@ mod tests {
 
     #[test]
     fn provider_construction_requires_available_auth() {
-        let result = GitHubCopilotProvider::new(
-            "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new_with_env_token(
-                Arc::new(MemoryCredentialStore::default()),
-                None,
-            ),
-        );
+        let result = GitHubCopilotAuthManager::new_with_env_token(
+            Arc::new(MemoryCredentialStore::default()),
+            None,
+        )
+        .and_then(|auth| GitHubCopilotProvider::new("gpt-4.1".into(), auth));
 
         assert!(matches!(result, Err(ModelError::MissingGithubCopilotAuth)));
     }
@@ -356,7 +377,7 @@ mod tests {
         .unwrap();
         let provider = GitHubCopilotProvider::new_with_client(
             "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new(store),
+            GitHubCopilotAuthManager::new(store).unwrap(),
             reqwest::Client::new(),
         );
 

@@ -27,7 +27,13 @@ const GITHUB_TOKEN_EXPIRY_SKEW_SECONDS: i64 = 300;
 #[derive(Clone)]
 pub(crate) struct GitHubCopilotAuthManager {
     store: Arc<dyn CredentialStore>,
-    env_token: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    credential: GitHubCopilotCredential,
+}
+
+#[derive(Clone)]
+enum GitHubCopilotCredential {
+    Env(String),
+    Store(Arc<tokio::sync::Mutex<GitHubCopilotTokens>>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +42,7 @@ pub(crate) enum GitHubCopilotAuthSource {
     Store,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct GitHubCopilotAuthMaterial {
     pub(crate) token: String,
     pub(crate) source: GitHubCopilotAuthSource,
@@ -44,7 +50,19 @@ pub(crate) struct GitHubCopilotAuthMaterial {
     pub(crate) models_endpoint: String,
 }
 
-#[derive(Debug, Deserialize)]
+impl std::fmt::Debug for GitHubCopilotAuthMaterial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GitHubCopilotAuthMaterial")
+            .field("token", &"[REDACTED]")
+            .field("source", &self.source)
+            .field("chat_endpoint", &self.chat_endpoint)
+            .field("models_endpoint", &self.models_endpoint)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
 struct CopilotTokenResponse {
     token: String,
     expires_at: Option<i64>,
@@ -52,7 +70,7 @@ struct CopilotTokenResponse {
     endpoints: Option<CopilotTokenEndpoints>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct CopilotTokenEndpoints {
     api: Option<String>,
     #[serde(alias = "chat_completions")]
@@ -61,52 +79,70 @@ struct CopilotTokenEndpoints {
 }
 
 impl GitHubCopilotAuthManager {
-    pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Self {
-        Self {
-            store,
-            env_token: Arc::new(nonempty_env_copilot_token),
-        }
+    pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
+        Self::from_acquired(store, nonempty_env_copilot_token())
+    }
+
+    fn from_acquired(
+        store: Arc<dyn CredentialStore>,
+        env_token: Option<String>,
+    ) -> Result<Self, ModelError> {
+        let credential = match nonempty_token(env_token) {
+            Some(token) => GitHubCopilotCredential::Env(token),
+            None => GitHubCopilotCredential::Store(Arc::new(tokio::sync::Mutex::new(
+                load_github_copilot_tokens(store.as_ref())?
+                    .ok_or(ModelError::MissingGithubCopilotAuth)?,
+            ))),
+        };
+        Ok(Self { store, credential })
     }
 
     #[cfg(test)]
     pub(crate) fn new_with_env_token(
         store: Arc<dyn CredentialStore>,
         env_token: Option<String>,
-    ) -> Self {
-        Self {
-            store,
-            env_token: Arc::new(move || env_token.clone()),
-        }
+    ) -> Result<Self, ModelError> {
+        Self::from_acquired(store, env_token)
     }
 
     pub(crate) fn ensure_auth_available(&self) -> Result<(), ModelError> {
-        ensure_auth_available_with_env_token(self.store.as_ref(), (self.env_token)())
+        Ok(())
     }
 
     pub(crate) async fn auth_material(
         &self,
         client: &reqwest::Client,
     ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
-        auth_material_with_env_token(client, self.store.as_ref(), (self.env_token)()).await
+        match &self.credential {
+            GitHubCopilotCredential::Env(token) => Ok(GitHubCopilotAuthMaterial {
+                token: token.clone(),
+                source: GitHubCopilotAuthSource::Env,
+                chat_endpoint: COPILOT_CHAT_COMPLETIONS_URL.to_string(),
+                models_endpoint: COPILOT_MODELS_URL.to_string(),
+            }),
+            GitHubCopilotCredential::Store(tokens) => {
+                let mut tokens = tokens.lock().await;
+                if let Some(token) = fresh_cached_copilot_token(&tokens, now_unix_seconds()) {
+                    return Ok(material_from_stored_token(token, &tokens));
+                }
+                refresh_copilot_token_with_store(client, self.store.as_ref(), &mut tokens).await
+            }
+        }
     }
 
     pub(crate) async fn force_refresh(
         &self,
         client: &reqwest::Client,
     ) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
-        force_refresh_auth_material_with_env_token(client, self.store.as_ref(), (self.env_token)())
-            .await
-    }
-}
-
-fn ensure_auth_available_with_env_token(
-    store: &dyn CredentialStore,
-    env_token: Option<String>,
-) -> Result<(), ModelError> {
-    if nonempty_token(env_token).is_some() || load_github_copilot_tokens(store)?.is_some() {
-        Ok(())
-    } else {
-        Err(ModelError::MissingGithubCopilotAuth)
+        match &self.credential {
+            GitHubCopilotCredential::Env(_) => Ok(None),
+            GitHubCopilotCredential::Store(tokens) => {
+                let mut tokens = tokens.lock().await;
+                refresh_copilot_token_with_store(client, self.store.as_ref(), &mut tokens)
+                    .await
+                    .map(Some)
+            }
+        }
     }
 }
 
@@ -472,7 +508,8 @@ mod tests {
         tokens.copilot_token_endpoint = Some(url);
         save_github_copilot_tokens(store.as_ref(), &tokens).unwrap();
 
-        let auth = GitHubCopilotAuthManager::new_with_env_token(store, Some(String::new()));
+        let auth =
+            GitHubCopilotAuthManager::new_with_env_token(store, Some(String::new())).unwrap();
         let material = auth
             .force_refresh(&reqwest::Client::new())
             .await
@@ -504,5 +541,19 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ModelError::MissingGithubCopilotAuth));
+    }
+
+    #[test]
+    fn auth_material_debug_redacts_token() {
+        let material = GitHubCopilotAuthMaterial {
+            token: "copilot-secret-token".into(),
+            source: GitHubCopilotAuthSource::Env,
+            chat_endpoint: "https://chat.example".into(),
+            models_endpoint: "https://models.example".into(),
+        };
+
+        let debug = format!("{material:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("copilot-secret-token"));
     }
 }
