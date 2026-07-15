@@ -90,6 +90,15 @@ impl ProcessInvocation {
         }
     }
 
+    /// Creates a direct executable invocation resolved through the inherited `PATH`.
+    pub fn executable_from_path(executable: impl Into<PathBuf>, arguments: Vec<String>) -> Self {
+        Self::Executable {
+            executable: executable.into(),
+            selection: ExecutableSelection::SearchPath,
+            arguments,
+        }
+    }
+
     pub fn shell(
         executable: impl Into<PathBuf>,
         arguments: Vec<String>,

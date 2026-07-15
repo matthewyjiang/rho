@@ -98,11 +98,13 @@ impl AppToolSet {
             tools.push(tool);
         }
 
-        let (web_search, fetch_content) = super::web::access_tools(config);
+        let web_search = super::web::access_tools(config);
         if web_search.is_available() {
             tools.push(adapt(web_search, config.max_output_bytes));
         }
-        tools.push(adapt(fetch_content, config.max_output_bytes));
+        tools.push(Arc::new(super::web::SdkFetchContent::new(
+            config.max_output_bytes,
+        )));
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
         Self {

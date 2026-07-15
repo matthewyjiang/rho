@@ -9,7 +9,7 @@ use super::sdk_support::{required_string, workspace};
 pub(super) fn security_for(name: &str) -> ToolSecurity {
     let capabilities = match name {
         "bash" | "powershell" | "process" => vec![CapabilityKind::Process],
-        "web_search" | "fetch_content" => vec![CapabilityKind::Network],
+        "web_search" => vec![CapabilityKind::Network],
         "skill" => vec![CapabilityKind::Skill],
         _ => Vec::new(),
     };
@@ -69,34 +69,6 @@ pub(super) async fn authorize_builtin(
                 CapabilityRequest::network(NetworkTarget::ToolManaged, source),
             )
             .await
-        }
-        "fetch_content" => {
-            let targets = arguments
-                .get("urls")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .chain(arguments.get("url").and_then(serde_json::Value::as_str))
-                .collect::<Vec<_>>();
-            if targets.is_empty() {
-                return authorize_request(
-                    context,
-                    CapabilityRequest::network(NetworkTarget::ToolManaged, source),
-                )
-                .await;
-            }
-            for target in targets {
-                let network = url::Url::parse(target)
-                    .ok()
-                    .filter(|url| matches!(url.scheme(), "http" | "https"))
-                    .map_or(NetworkTarget::ToolManaged, |_| {
-                        NetworkTarget::Url(target.into())
-                    });
-                authorize_request(context, CapabilityRequest::network(network, source.clone()))
-                    .await?;
-            }
-            Ok(())
         }
         "skill" => {
             let name = required_string(arguments, "name")?;
