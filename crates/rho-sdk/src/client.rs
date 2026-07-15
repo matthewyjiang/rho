@@ -358,10 +358,18 @@ impl Rho {
             crate::diagnostics::ExecutionSettings {
                 event_capacity: self.event_capacity.get(),
                 max_steps: self.max_steps.get(),
-                compaction_trigger_messages: self
-                    .compaction_policy
-                    .as_ref()
-                    .map(|policy| policy.trigger_messages().get()),
+                compaction_trigger_messages: self.compaction_policy.as_ref().and_then(|policy| {
+                    match policy.threshold() {
+                        crate::CompactionThreshold::Messages(trigger) => Some(trigger.get()),
+                        crate::CompactionThreshold::ContextTokens(_) => None,
+                    }
+                }),
+                compaction_trigger_tokens: self.compaction_policy.as_ref().and_then(|policy| {
+                    match policy.threshold() {
+                        crate::CompactionThreshold::ContextTokens(trigger) => Some(trigger.get()),
+                        crate::CompactionThreshold::Messages(_) => None,
+                    }
+                }),
                 reasoning_level: self.reasoning_level,
             },
         )

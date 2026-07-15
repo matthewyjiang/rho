@@ -1,7 +1,7 @@
 use std::{
     fmt,
     future::Future,
-    num::NonZeroUsize,
+    num::{NonZeroU64, NonZeroUsize},
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -53,23 +53,44 @@ impl CompactionState {
     }
 }
 
+/// Threshold used to decide when automatic compaction is requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CompactionThreshold {
+    Messages(NonZeroUsize),
+    ContextTokens(NonZeroU64),
+}
+
 /// Policy deciding when automatic compaction is requested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompactionPolicy {
-    trigger_messages: NonZeroUsize,
+    threshold: CompactionThreshold,
 }
 
 impl CompactionPolicy {
     pub fn after_messages(trigger_messages: NonZeroUsize) -> Self {
-        Self { trigger_messages }
+        Self {
+            threshold: CompactionThreshold::Messages(trigger_messages),
+        }
     }
 
-    pub fn should_compact(&self, message_count: usize) -> bool {
-        message_count >= self.trigger_messages.get()
+    /// Requests compaction once the SDK's provider-neutral context estimate
+    /// reaches the supplied token threshold.
+    pub fn at_context_tokens(trigger_tokens: NonZeroU64) -> Self {
+        Self {
+            threshold: CompactionThreshold::ContextTokens(trigger_tokens),
+        }
     }
 
-    pub fn trigger_messages(&self) -> NonZeroUsize {
-        self.trigger_messages
+    pub fn threshold(&self) -> CompactionThreshold {
+        self.threshold
+    }
+
+    pub(crate) fn should_compact(&self, message_count: usize, context_tokens: u64) -> bool {
+        match self.threshold {
+            CompactionThreshold::Messages(trigger) => message_count >= trigger.get(),
+            CompactionThreshold::ContextTokens(trigger) => context_tokens >= trigger.get(),
+        }
     }
 }
 

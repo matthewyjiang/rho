@@ -2225,8 +2225,8 @@ impl App {
             Ok(outcome) if sdk_failure.is_none() => {
                 self.running = false;
                 self.loading_spinner.stop();
-                self.finish_streams(terminal)?;
-                self.insert_final_answer_suffix(terminal, outcome.text())?;
+                self.finish_streams();
+                self.insert_final_answer_suffix(outcome.text());
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.status = if self.queued_prompts.is_empty() {
@@ -2248,7 +2248,7 @@ impl App {
                 self.restore_pending_work_to_input(&Arc::default());
                 self.running = false;
                 self.loading_spinner.stop();
-                self.finish_streams(terminal)?;
+                self.finish_streams();
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
                 self.current_turn_start = None;
@@ -2256,23 +2256,28 @@ impl App {
                 TurnOutcome::Interrupted
             }
             result => {
-                self.reset_streams();
-                self.current_turn_start = None;
-                self.running = false;
-                self.loading_spinner.stop();
                 let message = sdk_failure.unwrap_or_else(|| match result {
                     Ok(_) => "model run failed".into(),
                     Err(error) => error.to_string(),
                 });
-                self.insert_entry(&Entry::Error(message));
-                self.status = "error".into();
-                TurnOutcome::Failed
+                self.finalize_failed_turn(message)
             }
         };
         self.apply_pending_model_selection(agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(outcome)
+    }
+
+    fn finalize_failed_turn(&mut self, message: String) -> TurnOutcome {
+        self.finish_streams();
+        self.reset_streams();
+        self.current_turn_start = None;
+        self.running = false;
+        self.loading_spinner.stop();
+        self.insert_entry(&Entry::Error(message));
+        self.status = "error".into();
+        TurnOutcome::Failed
     }
 
     async fn report_resting_herdr_state(&self) {
@@ -3050,7 +3055,7 @@ impl App {
         match event {
             ViewModelEvent::OutputDelta(text) => {
                 self.hidden_reasoning_active = false;
-                let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
+                let switched = self.switch_stream_kind(StreamKind::Assistant);
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
@@ -3061,7 +3066,7 @@ impl App {
                     self.hidden_reasoning_active = true;
                     return Ok(true);
                 }
-                let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
+                let switched = self.switch_stream_kind(StreamKind::Reasoning);
                 self.reasoning_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
                 self.update_stream_preview_deadline(StreamKind::Reasoning);
@@ -3076,7 +3081,7 @@ impl App {
                         | ViewModelEvent::ToolFinished { .. }
                 ) {
                     self.hidden_reasoning_active = false;
-                    self.finish_streams(terminal)?;
+                    self.finish_streams();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
                     self.insert_entry(&entry);
@@ -3087,22 +3092,18 @@ impl App {
         }
     }
 
-    fn switch_stream_kind(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    fn switch_stream_kind(&mut self, kind: StreamKind) -> bool {
         let inserted = if self
             .current_stream_kind
             .is_some_and(|current| current != kind)
         {
-            self.finish_current_stream(terminal)?
+            self.finish_current_stream()
         } else {
             false
         };
         self.current_stream_kind = Some(kind);
         self.update_stream_preview_deadline(kind);
-        Ok(inserted)
+        inserted
     }
 
     fn drain_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
@@ -3126,35 +3127,28 @@ impl App {
         };
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
-            self.insert_stream_fragment(terminal, fragment, kind)?;
+            self.insert_stream_fragment(fragment, kind);
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    fn finish_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
-        let reasoning_finished = self.finish_stream(terminal, StreamKind::Reasoning)?;
-        let assistant_finished = self.finish_stream(terminal, StreamKind::Assistant)?;
+    fn finish_streams(&mut self) -> bool {
+        let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
+        let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
-        Ok(reasoning_finished || assistant_finished)
+        reasoning_finished || assistant_finished
     }
 
-    fn finish_current_stream(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
-        if let Some(kind) = self.current_stream_kind {
-            self.finish_stream(terminal, kind)
-        } else {
-            Ok(false)
-        }
+    fn finish_current_stream(&mut self) -> bool {
+        self.current_stream_kind
+            .is_some_and(|kind| self.finish_stream(kind))
     }
 
-    fn finish_stream(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    fn finish_stream(&mut self, kind: StreamKind) -> bool {
         let fragment = match kind {
             StreamKind::Assistant => self.assistant_stream.finish(),
             StreamKind::Reasoning => self.reasoning_stream.finish(),
@@ -3162,10 +3156,10 @@ impl App {
         self.update_stream_preview_deadline(kind);
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
-            self.insert_stream_fragment(terminal, fragment, kind)?;
-            Ok(true)
+            self.insert_stream_fragment(fragment, kind);
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 
@@ -3214,24 +3208,19 @@ impl App {
         }
     }
 
-    fn insert_final_answer_suffix(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        answer: &str,
-    ) -> std::io::Result<()> {
+    fn insert_final_answer_suffix(&mut self, answer: &str) {
         match final_answer_delta(self.assistant_stream.emitted_text(), answer) {
             FinalAnswerDelta::None => {}
             FinalAnswerDelta::Append(suffix) => {
                 self.assistant_stream.push_delta(suffix);
                 if let Some(fragment) = self.assistant_stream.finish() {
-                    self.insert_stream_fragment(terminal, fragment, StreamKind::Assistant)?;
+                    self.insert_stream_fragment(fragment, StreamKind::Assistant);
                 }
             }
             FinalAnswerDelta::Mismatch => {
                 self.replace_current_turn_assistant_transcript(answer);
             }
         }
-        Ok(())
     }
 
     fn render_stream_preview_lines(
@@ -3265,13 +3254,7 @@ impl App {
         lines
     }
 
-    fn insert_stream_fragment(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        fragment: StreamFragment,
-        kind: StreamKind,
-    ) -> std::io::Result<()> {
-        let _ = terminal;
+    fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             if matches!(kind, StreamKind::Assistant) {
@@ -3281,7 +3264,6 @@ impl App {
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
-        Ok(())
     }
 
     fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
@@ -6631,6 +6613,30 @@ mod tests {
             app.transcript.as_slice(),
             [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
         ));
+    }
+
+    #[test]
+    fn failed_turn_keeps_live_partial_assistant_text_before_error() {
+        let mut app = test_app();
+        app.running = true;
+        app.current_turn_start = Some(0);
+        app.assistant_stream
+            .push_delta("partial assistant before stream failure");
+
+        assert_eq!(
+            app.finalize_failed_turn("provider stream failed".into()),
+            TurnOutcome::Failed
+        );
+
+        assert!(matches!(
+            app.transcript.as_slice(),
+            [Entry::Assistant(text), Entry::Error(error)]
+                if text == "partial assistant before stream failure"
+                    && error == "provider stream failed"
+        ));
+        assert!(!app.running);
+        assert!(app.assistant_stream.is_empty());
+        assert_eq!(app.status, "error");
     }
 
     #[test]

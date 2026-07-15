@@ -173,7 +173,9 @@ async fn maybe_compact(
     let Some(policy) = &runtime.compaction_policy else {
         return Ok(());
     };
-    if !policy.should_compact(history.len()) {
+    let context_tokens =
+        crate::model::context::estimate_context_tokens(history, &runtime.tools.specs());
+    if !policy.should_compact(history.len(), context_tokens) {
         return Ok(());
     }
     let compactor = runtime

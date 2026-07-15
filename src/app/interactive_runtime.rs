@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{num::NonZeroU64, path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::{ContentBlock, Message, ModelRequest, ModelResponse},
@@ -603,6 +603,9 @@ fn build_runtime(
     compaction: CompactionConfig,
     context_window: Option<u64>,
 ) -> Result<Rho, Error> {
+    let automatic_compaction_threshold = context_window
+        .and_then(|window| compaction.threshold_tokens(window))
+        .and_then(NonZeroU64::new);
     let compactor = ModelCompactor {
         provider: Arc::clone(&provider),
         tool_specs: tools.specs(),
@@ -617,6 +620,10 @@ fn build_runtime(
         .workspace_policy(InteractiveWorkspacePolicy)
         .reasoning_level(reasoning)
         .compactor(compactor);
+    if let Some(trigger_tokens) = automatic_compaction_threshold {
+        builder =
+            builder.compaction_policy(rho_sdk::CompactionPolicy::at_context_tokens(trigger_tokens));
+    }
     for tool in tools.tools() {
         builder = builder.tool_shared(tool.clone());
     }

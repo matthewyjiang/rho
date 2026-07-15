@@ -25,6 +25,11 @@ impl Default for CompactionConfig {
 }
 
 impl CompactionConfig {
+    pub fn threshold_tokens(&self, context_window: u64) -> Option<u64> {
+        (self.auto_compact && context_window > 0)
+            .then(|| percent_tokens(context_window, normalized_percent(self.threshold_percent)))
+    }
+
     pub fn target_tokens(&self, context_window: u64) -> u64 {
         percent_tokens(
             context_window,
@@ -59,10 +64,13 @@ pub fn should_compact(
     let Some(tokens) = estimated_tokens else {
         return false;
     };
-    let Some(window) = context_window.filter(|window| *window > 0) else {
+    let Some(window) = context_window else {
         return false;
     };
-    tokens >= percent_tokens(window, normalized_percent(config.threshold_percent))
+    let Some(threshold_tokens) = config.threshold_tokens(window) else {
+        return false;
+    };
+    tokens >= threshold_tokens
 }
 
 pub fn partition_messages_for_compaction(
@@ -292,6 +300,7 @@ mod tests {
             target_percent: 50,
         };
 
+        assert_eq!(config.threshold_tokens(1_000), Some(800));
         assert!(should_compact(&config, Some(800), Some(1_000)));
         assert!(!should_compact(&config, Some(799), Some(1_000)));
         assert!(!should_compact(&config, Some(900), None));

@@ -142,7 +142,7 @@ pub use cancellation::CancellationToken;
 pub use client::{Rho, RhoBuilder, SessionOptions, ShutdownOutcome, SystemPrompt};
 pub use compaction::{
     CompactionFuture, CompactionOutcome, CompactionOutput, CompactionPolicy, CompactionRequest,
-    CompactionState, CompactionTrigger, Compactor, ScriptedCompactor,
+    CompactionState, CompactionThreshold, CompactionTrigger, Compactor, ScriptedCompactor,
 };
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};

@@ -89,6 +89,7 @@ pub struct DiagnosticsSnapshot {
     event_capacity: usize,
     max_steps: usize,
     compaction_trigger_messages: Option<usize>,
+    compaction_trigger_tokens: Option<u64>,
     reasoning_level: crate::ReasoningLevel,
     default_features: Vec<String>,
 }
@@ -106,6 +107,7 @@ pub(crate) struct ExecutionSettings {
     pub(crate) event_capacity: usize,
     pub(crate) max_steps: usize,
     pub(crate) compaction_trigger_messages: Option<usize>,
+    pub(crate) compaction_trigger_tokens: Option<u64>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
 }
 
@@ -131,6 +133,7 @@ impl DiagnosticsSnapshot {
             event_capacity: execution.event_capacity,
             max_steps: execution.max_steps,
             compaction_trigger_messages: execution.compaction_trigger_messages,
+            compaction_trigger_tokens: execution.compaction_trigger_tokens,
             reasoning_level: execution.reasoning_level,
             default_features: Vec::new(),
         }
@@ -174,6 +177,10 @@ impl DiagnosticsSnapshot {
 
     pub fn compaction_trigger_messages(&self) -> Option<usize> {
         self.compaction_trigger_messages
+    }
+
+    pub fn compaction_trigger_tokens(&self) -> Option<u64> {
+        self.compaction_trigger_tokens
     }
 
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {

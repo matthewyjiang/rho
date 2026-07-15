@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 use pretty_assertions::assert_eq;
 
@@ -11,8 +11,16 @@ use crate::{
 fn policy_uses_explicit_message_threshold() {
     let policy = CompactionPolicy::after_messages(NonZeroUsize::new(3).unwrap());
 
-    assert!(!policy.should_compact(2));
-    assert!(policy.should_compact(3));
+    assert!(!policy.should_compact(2, u64::MAX));
+    assert!(policy.should_compact(3, 0));
+}
+
+#[test]
+fn policy_uses_explicit_context_token_threshold() {
+    let policy = CompactionPolicy::at_context_tokens(NonZeroU64::new(1_000).unwrap());
+
+    assert!(!policy.should_compact(usize::MAX, 999));
+    assert!(policy.should_compact(0, 1_000));
 }
 
 #[test]

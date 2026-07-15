@@ -29,6 +29,7 @@ Compaction transport and policy are host supplied:
 
 - `Compactor` accepts owned provider-neutral history and cancellation, then returns complete replacement history.
 - `CompactionPolicy::after_messages` triggers at or above a nonzero message count.
+- `CompactionPolicy::at_context_tokens` triggers when the SDK's provider-neutral estimate of message and tool-schema context reaches a nonzero token threshold.
 - A builder with automatic policy but no compactor is invalid.
 - Automatic compaction is checked before each provider step, emits started/completed events, commits the replacement immediately, updates compaction counters, and then continues.
 - `Session::compact` is an exclusive manual operation and returns a typed `CompactionOutcome`. It does not create a streaming `Run` event sequence.
