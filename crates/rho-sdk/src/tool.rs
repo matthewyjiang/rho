@@ -476,6 +476,14 @@ pub trait Tool: Send + Sync {
         ToolSecurity::host_provided()
     }
 
+    /// Returns presentation metadata available before this tool starts.
+    ///
+    /// Implementors may derive metadata from validated or unvalidated arguments,
+    /// but must not perform side effects or treat this hook as authorization.
+    fn start_metadata(&self, _arguments: &Value) -> ToolMetadata {
+        ToolMetadata::default()
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a>;
 }
 

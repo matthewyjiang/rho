@@ -53,7 +53,7 @@ impl Tool for EditFile {
         let cwd = ctx.cwd.clone();
         let outcome = apply_edits(
             edits,
-            |path| resolve_path(&cwd, path),
+            |path| Ok(resolve_path(&cwd, path)),
             |path| compact_display_path(&cwd, path),
             ctx.max_output_bytes,
         )
@@ -68,7 +68,7 @@ impl Tool for EditFile {
 
 pub(super) async fn apply_edits(
     edits: Vec<Edit>,
-    resolve_requested: impl Fn(&str) -> PathBuf,
+    resolve_requested: impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: impl Fn(&str) -> String,
     max_output_bytes: usize,
 ) -> Result<EditFileOutcome, ToolError> {
@@ -78,7 +78,7 @@ pub(super) async fn apply_edits(
 
     for (index, edit) in edits.iter().enumerate() {
         edit.validate(index)?;
-        let requested_path = resolve_requested(&edit.path);
+        let requested_path = resolve_requested(&edit.path)?;
         let path = tokio::fs::canonicalize(&requested_path)
             .await
             .map_err(|error| {

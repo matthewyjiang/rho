@@ -9,6 +9,8 @@ use crate::{
 #[non_exhaustive]
 pub enum StopReason {
     EndTurn,
+    /// The configured model-step budget was exhausted after committing progress.
+    MaxSteps,
 }
 
 /// Final typed result of a successful run.

@@ -9,10 +9,11 @@
 //! # Streaming fidelity
 //!
 //! Application transports emit semantic events through synchronous callbacks.
-//! The adapter drains those callbacks concurrently into the SDK's bounded event
-//! sender, preserving ordering while the public runtime applies backpressure.
-//! Provider execution remains owned by the SDK and the compatibility channel is
-//! scoped to one in-flight provider turn.
+//! The adapter uses a bounded compatibility bridge sized to the SDK event
+//! channel. Because application callbacks are synchronous, a callback burst
+//! that fills the bridge is interrupted rather than buffered without bound.
+//! Between transport polls, events are forwarded through the SDK sender with
+//! its normal asynchronous backpressure and ordering guarantees.
 //!
 //! # Per-request reasoning
 //!
@@ -122,9 +123,12 @@ impl<P: AdaptableProvider> SdkModelProvider for SdkProviderAdapter<P> {
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         Box::pin(async move {
-            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-            let mut on_event =
-                move |event| event_tx.send(event).map_err(|_| ModelError::Interrupted);
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(events.capacity());
+            let mut on_event = move |event| {
+                event_tx
+                    .try_send(event)
+                    .map_err(|_| ModelError::Interrupted)
+            };
             let mut provider = self.inner.stream_turn(request, &mut on_event);
             loop {
                 tokio::select! {

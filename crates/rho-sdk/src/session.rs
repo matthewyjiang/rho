@@ -104,6 +104,7 @@ pub(crate) struct SessionCore {
     data: Mutex<SessionData>,
     runtime: RwLock<Rho>,
     approvals: Arc<crate::workspace::SessionApprovals>,
+    lifecycle_lock: Mutex<()>,
     state: AtomicU8,
 }
 
@@ -126,6 +127,7 @@ impl SessionCore {
             }),
             runtime: RwLock::new(runtime),
             approvals: Arc::default(),
+            lifecycle_lock: Mutex::new(()),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
     }
@@ -217,19 +219,29 @@ impl SessionCore {
     }
 
     pub(crate) fn begin_run(&self) -> Result<(), Error> {
-        self.state
-            .compare_exchange(
-                SessionState::Idle.code(),
-                SessionState::Running.code(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .map(|_| ())
-            .map_err(|_| Error::SessionBusy)
+        let _lifecycle = self
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.state() {
+            SessionState::Idle | SessionState::Completed | SessionState::Failed => {
+                self.set_state(SessionState::Running);
+                Ok(())
+            }
+            SessionState::Running
+            | SessionState::WaitingForHostInput
+            | SessionState::Cancelling => Err(Error::SessionBusy),
+        }
     }
 
     pub(crate) fn finish_run(&self) {
-        self.set_state(SessionState::Idle);
+        let _lifecycle = self
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !matches!(self.state(), SessionState::Completed | SessionState::Failed) {
+            self.set_state(SessionState::Idle);
+        }
     }
 }
 
@@ -303,6 +315,11 @@ impl Session {
     }
 
     pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
+        let _lifecycle = self
+            .core
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.is_running() {
             return Err(Error::SessionBusy);
         }
@@ -323,7 +340,10 @@ impl Session {
     }
 
     pub fn is_running(&self) -> bool {
-        self.state() != SessionState::Idle
+        matches!(
+            self.state(),
+            SessionState::Running | SessionState::WaitingForHostInput | SessionState::Cancelling
+        )
     }
 
     pub async fn start(&self, input: UserInput) -> Result<Run, Error> {
@@ -408,6 +428,11 @@ impl Session {
 
     /// Appends host-provided context while the session is idle.
     pub fn append_message(&self, message: Message) -> Result<Revision, Error> {
+        let _lifecycle = self
+            .core
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.is_running() {
             return Err(Error::SessionBusy);
         }
@@ -417,6 +442,11 @@ impl Session {
     }
 
     pub fn reset(&self) -> Result<(), Error> {
+        let _lifecycle = self
+            .core
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.is_running() {
             return Err(Error::SessionBusy);
         }
@@ -444,6 +474,11 @@ impl Session {
         &self,
         provider: Arc<dyn ModelProvider>,
     ) -> Result<crate::model::handoff::HandoffReport, Error> {
+        let _lifecycle = self
+            .core
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.is_running() {
             return Err(Error::SessionBusy);
         }

@@ -57,6 +57,7 @@ pub(crate) async fn execute_run(
     }
 
     let mut accumulated_usage = ModelUsage::default();
+    let mut last_content = Vec::new();
     let mut steering = Vec::new();
     for step in 1..=runtime.max_steps.get() {
         drain_steering(&mut commands, &mut history);
@@ -125,6 +126,7 @@ pub(crate) async fn execute_run(
             provider_context: capture.provider_context,
         };
         history.push(Message::assistant(assistant));
+        last_content.clone_from(&content);
         drain_steering(control.commands, control.steering);
         let was_steered = !control.steering.is_empty();
 
@@ -173,14 +175,22 @@ pub(crate) async fn execute_run(
         history.append(control.steering);
     }
 
-    let error = Error::Provider(ProviderError::new(
-        ProviderErrorKind::InvalidResponse,
-        format!("provider exceeded {} model steps", runtime.max_steps),
-        Retryability::Permanent,
-    ));
-    core.set_state(SessionState::Failed);
-    emit_failure(&events, &error).await;
-    Err(error)
+    let revision = core.commit(history)?;
+    let outcome = RunOutcome::new(
+        last_content,
+        accumulated_usage,
+        StopReason::MaxSteps,
+        revision,
+    );
+    core.set_state(SessionState::Completed);
+    send_terminal(
+        &events,
+        RunEvent::Completed {
+            outcome: outcome.clone(),
+        },
+    )
+    .await;
+    Ok(outcome)
 }
 
 async fn maybe_compact(
@@ -320,26 +330,32 @@ async fn provider_turn(
     };
     let mut future = provider.send_turn_stream(request, provider_events);
     let mut capture = StreamCapture::default();
+    let mut events_open = true;
+    let mut commands_open = true;
     let result = loop {
         tokio::select! {
             result = &mut future => break result,
-            event = receiver.recv() => {
-                if let Some(event) = event {
-                    if let Err(error) = handle_provider_event(
-                        event,
-                        provider.identity(),
-                        accumulated_usage,
-                        &mut capture,
-                        control.events,
-                        control.cancellation,
-                    ).await {
-                        return Err(RequestFailure { error, capture });
+            event = receiver.recv(), if events_open => {
+                match event {
+                    Some(event) => {
+                        if let Err(error) = handle_provider_event(
+                            event,
+                            provider.identity(),
+                            accumulated_usage,
+                            &mut capture,
+                            control.events,
+                            control.cancellation,
+                        ).await {
+                            return Err(RequestFailure { error, capture });
+                        }
                     }
+                    None => events_open = false,
                 }
             }
-            command = control.commands.recv() => {
-                if let Some(command) = command {
-                    accept_steering(command, control.steering);
+            command = control.commands.recv(), if commands_open => {
+                match command {
+                    Some(command) => accept_non_tool_command(command, control.steering),
+                    None => commands_open = false,
                 }
             }
             () = control.cancellation.cancelled() => {
@@ -370,21 +386,27 @@ async fn provider_turn(
     }
 }
 
-fn accept_steering(command: RunCommand, steering: &mut Vec<Message>) {
+fn accept_non_tool_command(command: RunCommand, steering: &mut Vec<Message>) {
     match command {
-        RunCommand::Steer { input, accepted } => {
-            steering.push(Message::User(input.into_blocks()));
-            let _ = accepted.send(());
-        }
+        RunCommand::Steer { input, accepted } => accept_steering(input, accepted, steering),
         RunCommand::Respond { accepted, .. } => {
             let _ = accepted.send(Err("no host input request is awaiting a response".into()));
         }
     }
 }
 
+fn accept_steering(
+    input: UserInput,
+    accepted: tokio::sync::oneshot::Sender<()>,
+    steering: &mut Vec<Message>,
+) {
+    steering.push(Message::User(input.into_blocks()));
+    let _ = accepted.send(());
+}
+
 fn drain_steering(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut Vec<Message>) {
     while let Ok(command) = commands.try_recv() {
-        accept_steering(command, steering);
+        accept_non_tool_command(command, steering);
     }
 }
 
@@ -505,7 +527,7 @@ async fn execute_tool(
         RunEvent::ToolStarted {
             call_id: call_id.clone(),
             name: call.name.clone(),
-            metadata: crate::tool::ToolMetadata::default(),
+            metadata: tool.start_metadata(&call.arguments),
         },
     )
     .await?;
@@ -526,25 +548,32 @@ async fn execute_tool(
     .with_host_input(host_input);
     let mut future = tool.call(invocation, context);
     let mut pending_input = std::collections::BTreeMap::new();
+    let mut progress_open = true;
+    let mut host_input_open = true;
+    let mut commands_open = true;
     let result = loop {
         tokio::select! {
             result = &mut future => break result,
-            progress = progress_receiver.recv() => {
-                if let Some(progress) = progress {
-                    emit(
-                        events,
-                        cancellation,
-                        RunEvent::ToolUpdated {
-                            call_id: call_id.clone(),
-                            progress,
-                        },
-                    ).await?;
+            progress = progress_receiver.recv(), if progress_open => {
+                match progress {
+                    Some(progress) => {
+                        emit(
+                            events,
+                            cancellation,
+                            RunEvent::ToolUpdated {
+                                call_id: call_id.clone(),
+                                progress,
+                            },
+                        ).await?;
+                    }
+                    None => progress_open = false,
                 }
             }
-            request = host_input_receiver.recv() => {
-                if let Some(request) = request {
-                    let request_id = request.request.id().clone();
-                    match pending_input.entry(request_id) {
+            request = host_input_receiver.recv(), if host_input_open => {
+                match request {
+                    Some(request) => {
+                        let request_id = request.request.id().clone();
+                        match pending_input.entry(request_id) {
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             core.set_state(SessionState::WaitingForHostInput);
                             let event_request = request.request.clone();
@@ -555,17 +584,22 @@ async fn execute_tool(
                                 RunEvent::HostInputRequested { request: event_request },
                             ).await?;
                         }
-                        std::collections::btree_map::Entry::Occupied(_) => {
-                            let _ = request.response.send(Err(Error::InvalidHostResponse {
-                                message: "duplicate host input request ID".into(),
-                            }));
+                            std::collections::btree_map::Entry::Occupied(_) => {
+                                let _ = request.response.send(Err(Error::InvalidHostResponse {
+                                    message: "duplicate host input request ID".into(),
+                                }));
+                            }
                         }
                     }
+                    None => host_input_open = false,
                 }
             }
-            command = control.commands.recv() => {
-                if let Some(command) = command {
-                    handle_tool_command(core, command, &mut pending_input, control.steering);
+            command = control.commands.recv(), if commands_open => {
+                match command {
+                    Some(command) => {
+                        handle_tool_command(core, command, &mut pending_input, control.steering);
+                    }
+                    None => commands_open = false,
                 }
             }
             () = cancellation.cancelled() => return Err(Error::Cancelled),
@@ -633,10 +667,7 @@ fn handle_tool_command(
     steering: &mut Vec<Message>,
 ) {
     match command {
-        RunCommand::Steer { input, accepted } => {
-            steering.push(Message::User(input.into_blocks()));
-            let _ = accepted.send(());
-        }
+        RunCommand::Steer { input, accepted } => accept_steering(input, accepted, steering),
         RunCommand::Respond {
             request_id,
             response,

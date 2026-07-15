@@ -19,6 +19,7 @@ In scope:
 
 Out of scope as security boundaries:
 
+- the shipped Rho CLI, automation mode, and interactive TUI, which currently install allow-all workspace policies to preserve existing application behavior
 - model alignment or correctness
 - provider service internals
 - malicious native code loaded into the host process
@@ -38,6 +39,8 @@ Protect:
 - approval integrity and the user's understanding of an operation
 - host availability, memory, CPU, disk, process, token, and billing budgets
 - audit and diagnostic integrity
+
+The SDK builder defaults to deny, but the shipped Rho application is an explicitly permissive host: its CLI, automation mode, and TUI allow all capability requests. The capability-policy controls in this threat model protect external embedders only when those hosts install restrictive policies and approval handlers. Rho application users must rely on process isolation, workspace selection, and tool-specific validation rather than assuming the default SDK policy is active.
 
 ## Trust boundaries
 

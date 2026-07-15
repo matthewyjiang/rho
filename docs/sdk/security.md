@@ -17,6 +17,10 @@ The 1.0 security model is explicit authority with no sensitive capability grante
 
 A provider is required because a runtime without a provider cannot execute, but constructing and registering it is a host decision. A custom provider or tool is trusted in-process code and can exercise whatever authority the host process and operating system grant it. SDK policy is not a sandbox for malicious Rust code.
 
+### Rho application defaults differ
+
+The default-deny posture above applies to external SDK embedders. The shipped Rho CLI, automation mode, and interactive TUI preserve the application's existing behavior by installing workspace policies that allow every capability request without prompting. Running the Rho application therefore grants its built-in tools the authority of the current process, subject to workspace path checks and other tool-specific validation. Do not treat the CLI or TUI defaults as a security boundary. Hosts that need capability gating must embed the SDK with an explicit restrictive policy and approval handler.
+
 ## Capability model
 
 Sensitive operations are represented as separate `CapabilityKind` values for path reads, path writes, process execution, network access, skill loading, and instruction discovery. A request also records whether it came from host-provided code, a built-in adapter, or prompt construction. A host policy returns allow, deny, or require approval. Defaults deny.

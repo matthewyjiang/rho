@@ -25,6 +25,11 @@ pub struct ProviderEventSender {
 }
 
 impl ProviderEventSender {
+    /// Returns the fixed capacity configured for this event stream.
+    pub fn capacity(&self) -> usize {
+        self.sender.max_capacity()
+    }
+
     /// Sends an event, waiting for bounded channel capacity when necessary.
     pub async fn send(&self, event: ModelEvent) -> Result<(), ProviderError> {
         self.sender

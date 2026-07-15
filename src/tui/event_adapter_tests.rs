@@ -28,6 +28,19 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
 }
 
 #[test]
+fn malformed_response_retry_resets_the_current_provider_stream() {
+    let mut adapter = SdkEventAdapter::default();
+
+    assert!(matches!(
+        adapter.translate(RunEvent::ProviderActivity {
+            kind: "invalid_response_retry".into(),
+            detail: "retrying".into(),
+        }),
+        ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+    ));
+}
+
+#[test]
 fn retains_structured_tool_metadata_until_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-1").unwrap();

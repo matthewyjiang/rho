@@ -148,6 +148,10 @@ impl Tool for ListDirTool {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        path_start_metadata(arguments, OperationKind::Read)
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
@@ -175,6 +179,10 @@ impl Tool for ReadFileTool {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Read])
+    }
+
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        path_start_metadata(arguments, OperationKind::Read)
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
@@ -215,6 +223,10 @@ impl Tool for WriteFileTool {
         ToolSecurity::built_in([CapabilityKind::Write])
     }
 
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        path_start_metadata(arguments, OperationKind::Write)
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
@@ -250,6 +262,10 @@ impl Tool for EditFileTool {
         ToolSecurity::built_in([CapabilityKind::Write])
     }
 
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        path_start_metadata(arguments, OperationKind::Write)
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
@@ -280,10 +296,11 @@ impl Tool for EditFileTool {
             let outcome = apply_edits(
                 edits,
                 |path| {
-                    authorized_paths
-                        .get(path)
-                        .cloned()
-                        .unwrap_or_else(|| root.join(path))
+                    authorized_paths.get(path).cloned().ok_or_else(|| {
+                        AppToolError::Message(format!(
+                            "edit path '{path}' was not authorized for this invocation"
+                        ))
+                    })
                 },
                 |path| compact_display_path(&root, path),
                 self.max_output_bytes,
@@ -308,6 +325,23 @@ impl Tool for EditFileTool {
             Ok(ToolOutput::text(outcome.content).metadata(metadata))
         })
     }
+}
+
+fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetadata {
+    let mut metadata = ToolMetadata::new().operation(operation);
+    if let Some(path) = arguments.get("path").and_then(Value::as_str) {
+        metadata = metadata.affected_path(path);
+    }
+    for path in arguments
+        .get("edits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|edit| edit.get("path").and_then(Value::as_str))
+    {
+        metadata = metadata.affected_path(path);
+    }
+    metadata
 }
 
 #[derive(Clone, Copy)]

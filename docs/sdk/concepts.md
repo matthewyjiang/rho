@@ -49,7 +49,7 @@ History cannot be mutated in place through the public session API. Initial histo
 
 A run appends the initial user input to a private candidate history and then performs model steps. Before each step it may compact. A provider receives borrowed provider-neutral messages, tool specifications, cancellation, reasoning level, and optional provider-specific cache metadata. It does not receive the session object and cannot mutate history directly.
 
-A step can end in final assistant content or tool calls. Tool calls are proposed and executed in model order. Successful and failed tool results are both returned to the model for a following step. The default maximum is 32 model steps and can be changed with `RhoBuilder::max_steps`.
+A step can end in final assistant content or tool calls. Tool calls are proposed and executed in model order. Successful and failed tool results are both returned to the model for a following step. The default maximum is 32 model steps and can be changed with `RhoBuilder::max_steps`. Reaching that budget commits the accumulated history and completes with `StopReason::MaxSteps`, allowing the host to distinguish a resumable runtime limit from the provider's normal `StopReason::EndTurn` completion.
 
 ## Host responsibilities
 

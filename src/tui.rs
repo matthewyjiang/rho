@@ -272,6 +272,7 @@ struct App {
     stream_preview_deadline: Option<Instant>,
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
+    provider_attempt_start: Option<usize>,
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     running: bool,
@@ -636,6 +637,7 @@ impl App {
             stream_preview_deadline: None,
             live_stream_preview: None,
             current_turn_start: None,
+            provider_attempt_start: None,
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             running: false,
@@ -2774,6 +2776,25 @@ impl App {
         self.hidden_reasoning_active = false;
     }
 
+    fn reset_provider_attempt_stream(&mut self) {
+        self.reset_streams();
+        let Some(start) = self.provider_attempt_start else {
+            return;
+        };
+        let mut index = 0;
+        let original_len = self.transcript.len();
+        self.transcript.retain(|entry| {
+            let keep = index < start || !matches!(entry, Entry::Assistant(_) | Entry::Reasoning(_));
+            index += 1;
+            keep
+        });
+        if self.transcript.len() != original_len {
+            self.history_lines.invalidate_from(start);
+        }
+        self.provider_attempt_start = Some(self.transcript.len());
+        self.status = "retrying provider response".into();
+    }
+
     fn loading_active(&self) -> bool {
         self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
     }
@@ -2882,6 +2903,10 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
         match event {
+            ViewModelEvent::ProviderStreamReset => {
+                self.reset_provider_attempt_stream();
+                Ok(true)
+            }
             ViewModelEvent::OutputDelta(text) => {
                 self.hidden_reasoning_active = false;
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
@@ -4286,6 +4311,7 @@ impl App {
         match event {
             ViewModelEvent::StepStarted(step) => {
                 self.reset_streams();
+                self.provider_attempt_start = Some(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
                 self.active_tool_call = false;
@@ -4324,6 +4350,7 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
+            ViewModelEvent::ProviderStreamReset => None,
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());

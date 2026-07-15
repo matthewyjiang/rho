@@ -37,7 +37,7 @@ The current pre-1.0 implementation does not yet guarantee a terminal event for e
 
 ## Retry contract
 
-The core runtime performs one narrow automatic retry: a malformed normalized assistant response is attempted at most twice in total. Before the second attempt it emits `ProviderActivity` with kind `invalid_response_retry`. A response with zero content blocks and malformed tool calls are invalid. A second invalid response fails permanently.
+The core runtime performs one narrow automatic retry: a malformed normalized assistant response is attempted at most twice in total. Before the second attempt it emits `ProviderActivity` with kind `invalid_response_retry`. Any text, reasoning, or tool-call deltas emitted before this event belong to the rejected attempt. Hosts that render a live response must discard that attempt's current stream when they receive the event before rendering retry deltas. The Rho TUI performs this reset. A response with zero content blocks and malformed tool calls are invalid. A second invalid response fails permanently.
 
 The SDK does **not** automatically retry every retryable provider, transport, tool, policy, compaction, or persistence error. `Error::is_retryable` and `ProviderError` classification tell the host whether an unchanged retry may succeed; they do not authorize replay or guarantee idempotency. A host retry should start a new run only after checking session revision, provider billing implications, tool side effects, and its own idempotency keys.
 
@@ -90,4 +90,4 @@ Shutdown requests cancellation but does not asynchronously join every extension-
 
 ## Session state visibility
 
-`SessionState` exposes `Idle`, `Running`, `WaitingForHostInput`, `Cancelling`, `Completed`, and `Failed`. These values are lifecycle observations, not a lock token. Active-run cleanup eventually returns the session to `Idle`, so terminal intermediate states may be brief. Use run outcomes and revisions for durable decisions rather than polling state for event reconstruction.
+`SessionState` exposes `Idle`, `Running`, `WaitingForHostInput`, `Cancelling`, `Completed`, and `Failed`. `Completed` and `Failed` remain observable after the worker exits; a later run may transition either terminal state back to `Running`. Cancelled runs return to `Idle` after cleanup. These values are lifecycle observations, not a lock token. Use run outcomes and revisions for durable decisions rather than polling state for event reconstruction.

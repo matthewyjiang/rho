@@ -333,6 +333,10 @@ where
         security_for(&self.inner.spec().name)
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        metadata_for(&self.inner.spec().name)
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             if context.cancellation().is_cancelled() {
@@ -360,7 +364,8 @@ where
             };
             // Bridge the tool's synchronous update callback into the SDK
             // progress channel so hosts see live output while the tool runs.
-            let (update_sender, mut updates) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+            let (update_sender, mut updates) =
+                tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
             let mut on_update = move |lines: Vec<String>| {
                 let _ = update_sender.send(lines);
             };
@@ -372,15 +377,19 @@ where
                 &mut on_update,
             );
             tokio::pin!(call);
+            let mut updates_open = true;
             let result = loop {
                 tokio::select! {
                     result = &mut call => break result,
-                    update = updates.recv() => {
-                        if let Some(lines) = update {
-                            let _ = context
-                                .progress()
-                                .send(ToolProgress::message(lines.join("\n")))
-                                .await;
+                    update = updates.recv(), if updates_open => {
+                        match update {
+                            Some(lines) => {
+                                let _ = context
+                                    .progress()
+                                    .send(ToolProgress::message(lines.join("\n")))
+                                    .await;
+                            }
+                            None => updates_open = false,
                         }
                     }
                 }
@@ -403,7 +412,8 @@ where
 fn metadata_for(name: &str) -> ToolMetadata {
     let operation = match name {
         "bash" | "powershell" | "process" => OperationKind::Execute,
-        "web_search" | "fetch_content" | "get_search_content" => OperationKind::Network,
+        "web_search" | "fetch_content" => OperationKind::Network,
+        "get_search_content" => OperationKind::Read,
         _ => OperationKind::Other(name.to_string()),
     };
     ToolMetadata::new().operation(operation)

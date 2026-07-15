@@ -18,6 +18,7 @@ pub(super) enum ViewModelEvent {
     ToolStarted {
         display_lines: Vec<String>,
     },
+    ProviderStreamReset,
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
@@ -116,7 +117,10 @@ impl SdkEventAdapter {
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
             RunEvent::ProviderActivity { kind, detail } => {
-                if kind == "web_search" {
+                if kind == "invalid_response_retry" {
+                    self.presenter().step_started();
+                    ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+                } else if kind == "web_search" {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),

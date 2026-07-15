@@ -1,6 +1,7 @@
 pub mod support;
 
 use std::{
+    future::Future,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -9,13 +10,49 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{Message, ModelEvent, ModelResponse},
+    model::{Message, ModelEvent, ModelResponse, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
+    tool::{
+        OperationKind, Tool, ToolContext, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+    },
     CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error, Rho,
-    RunEvent, SessionOptions, UserInput,
+    RunEvent, SessionOptions, SessionState, StopReason, UserInput,
 };
 
 use support::{identity, text_response, tool_call_response, LargeOutputTool, TEST_TIMEOUT};
+
+#[derive(Clone)]
+struct DropsContextTool {
+    polls: Arc<AtomicUsize>,
+}
+
+impl Tool for DropsContextTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "drops_context".into(),
+            description: "drops its context before waiting".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        ToolMetadata::new().operation(OperationKind::Other("reliability_test".into()))
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        let polls = Arc::clone(&self.polls);
+        Box::pin(async move {
+            let sleep = tokio::time::sleep(std::time::Duration::from_millis(100));
+            tokio::pin!(sleep);
+            std::future::poll_fn(|context| {
+                polls.fetch_add(1, Ordering::Relaxed);
+                sleep.as_mut().poll(context)
+            })
+            .await;
+            Ok(ToolOutput::text("finished"))
+        })
+    }
+}
 
 #[derive(Clone)]
 struct BoundedCompactor {
@@ -38,6 +75,78 @@ impl Compactor for BoundedCompactor {
             ))])
         })
     }
+}
+
+#[tokio::test]
+async fn closed_tool_context_channels_do_not_busy_poll_the_tool_future() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::completed(tool_call_response("drop-call", "drops_context")),
+            ScriptedTurn::completed(text_response("done")),
+        ],
+    );
+    let polls = Arc::new(AtomicUsize::new(0));
+    let runtime = Rho::builder()
+        .provider(provider)
+        .tool(DropsContextTool {
+            polls: Arc::clone(&polls),
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(UserInput::text("exercise dropped context"))
+        .await
+        .unwrap();
+    let mut metadata_seen = false;
+    while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+        .await
+        .expect("tool with dropped context stalled")
+    {
+        if let RunEvent::ToolStarted { metadata, .. } = event {
+            metadata_seen = matches!(
+                metadata.operation_kind(),
+                Some(OperationKind::Other(kind)) if kind == "reliability_test"
+            );
+        }
+    }
+
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+    assert!(metadata_seen, "tool start metadata was not propagated");
+    assert!(
+        polls.load(Ordering::Relaxed) < 100,
+        "closed context channels caused excessive tool polling"
+    );
+    assert_eq!(session.state(), SessionState::Completed);
+    assert!(!session.is_running());
+}
+
+#[tokio::test]
+async fn max_steps_completes_with_a_distinct_resumable_stop_reason() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(tool_call_response(
+            "large-call",
+            "large",
+        ))],
+    );
+    let runtime = Rho::builder()
+        .provider(provider)
+        .tool(LargeOutputTool { bytes: 8 })
+        .max_steps(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    let outcome = tokio::time::timeout(TEST_TIMEOUT, session.complete("one step"))
+        .await
+        .expect("max-steps run stalled")
+        .unwrap();
+
+    assert_eq!(outcome.stop_reason(), StopReason::MaxSteps);
+    assert_eq!(session.state(), SessionState::Completed);
+    assert_eq!(session.history().len(), 3);
 }
 
 #[tokio::test]
@@ -191,6 +300,8 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     assert_eq!(terminal_failures, 1);
     assert_eq!(provider.recorded_requests().len(), 2);
     assert!(session.history().is_empty());
+    assert_eq!(session.state(), SessionState::Failed);
+    assert!(!session.is_running());
 }
 
 #[test]

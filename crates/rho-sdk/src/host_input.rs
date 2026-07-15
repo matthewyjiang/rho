@@ -184,19 +184,24 @@ impl HostInputRequest {
     }
 
     pub fn validate(&self, response: &HostInputResponse) -> Result<(), Error> {
-        if response.answers.len() != self.questions.len() {
+        if let Some(question_id) = response
+            .answers
+            .keys()
+            .find(|id| !self.questions.iter().any(|question| &question.id == *id))
+        {
             return Err(Error::InvalidHostResponse {
-                message: "host response must answer every question exactly once".into(),
+                message: format!("host response contains unknown question '{question_id}'"),
             });
         }
         for question in &self.questions {
-            let answers =
-                response
-                    .answers
-                    .get(&question.id)
-                    .ok_or_else(|| Error::InvalidHostResponse {
+            let Some(answers) = response.answers.get(&question.id) else {
+                if question.required {
+                    return Err(Error::InvalidHostResponse {
                         message: format!("host response is missing question '{}'", question.id),
-                    })?;
+                    });
+                }
+                continue;
+            };
             if (answers.is_empty() && question.required)
                 || (question.selection == SelectionMode::One && answers.len() > 1)
             {

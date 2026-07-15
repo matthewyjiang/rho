@@ -1,4 +1,4 @@
-use std::{fmt, ops::Deref};
+use std::fmt;
 
 /// An explicitly handled secret value with redacted formatting.
 ///
@@ -75,14 +75,6 @@ impl From<String> for SecretString {
 impl From<&str> for SecretString {
     fn from(secret: &str) -> Self {
         Self::new(secret)
-    }
-}
-
-impl Deref for SecretString {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.expose_secret()
     }
 }
 
