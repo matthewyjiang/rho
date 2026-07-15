@@ -1,8 +1,9 @@
-#[allow(unused_imports)]
+#[cfg(test)]
+pub use rho_sdk::model::AbortedAssistant;
 pub use rho_sdk::model::{
-    AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent,
-    ModelIdentity, ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
-    ToolCall, ToolResult, ToolSpec,
+    AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent, ModelIdentity, ModelRequest,
+    ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall, ToolResult,
+    ToolSpec,
 };
 use thiserror::Error;
 
@@ -60,26 +61,6 @@ pub trait ModelProvider: Send + Sync {
     }
 
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError>;
-
-    async fn send_turn_stream(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-    ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        let response = tokio::select! {
-            response = self.send_turn(request) => response?,
-            () = cancellation.cancelled() => return Err(ModelError::Interrupted),
-        };
-        let ModelResponse::Assistant(blocks) = response;
-
-        for block in &blocks {
-            if let ContentBlock::Text(text) = block {
-                on_event(ModelEvent::OutputDelta(text.clone()))?;
-            }
-        }
-        Ok(ModelResponse::Assistant(blocks))
-    }
 }
 
 pub type DynModelProvider = Box<dyn ModelProvider>;

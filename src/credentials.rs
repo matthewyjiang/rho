@@ -548,36 +548,6 @@ pub fn delete_provider_credentials(
     store.delete_secret(auth_kind.account())
 }
 
-#[allow(dead_code)]
-pub fn load_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    load_provider_api_key(store, "openai")
-}
-
-#[allow(dead_code)]
-pub fn save_openai_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    save_provider_api_key(store, "openai", key)
-}
-
-#[allow(dead_code)]
-pub fn delete_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    delete_provider_credentials(store, "openai")
-}
-
-#[allow(dead_code)]
-pub fn load_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    load_provider_api_key(store, "anthropic")
-}
-
-#[allow(dead_code)]
-pub fn save_anthropic_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    save_provider_api_key(store, "anthropic", key)
-}
-
-#[allow(dead_code)]
-pub fn delete_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    delete_provider_credentials(store, "anthropic")
-}
-
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
     let Some(secret) = store.get_secret(CODEX_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -611,11 +581,6 @@ pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> Crede
     store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
 }
 
-#[allow(dead_code)]
-pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(CODEX_TOKENS_ACCOUNT)
-}
-
 pub fn load_github_copilot_tokens(
     store: &dyn CredentialStore,
 ) -> CredentialResult<Option<GitHubCopilotTokens>> {
@@ -634,11 +599,6 @@ pub fn save_github_copilot_tokens(
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
     store.set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, &secret)
-}
-
-#[allow(dead_code)]
-pub fn delete_github_copilot_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(GITHUB_COPILOT_TOKENS_ACCOUNT)
 }
 
 pub fn provider_has_env_override(provider: &str) -> bool {
@@ -749,34 +709,25 @@ mod tests {
     }
 
     #[test]
-    fn api_key_round_trips_through_memory_store() {
+    fn provider_api_keys_round_trip_through_memory_store() {
         let store = MemoryCredentialStore::default();
 
-        assert_eq!(load_openai_api_key(&store).unwrap(), None);
-        save_openai_api_key(&store, "sk-test").unwrap();
-        assert_eq!(load_openai_api_key(&store).unwrap(), Some("sk-test".into()));
-        assert!(delete_openai_api_key(&store).unwrap());
-        assert_eq!(load_openai_api_key(&store).unwrap(), None);
-    }
-
-    #[test]
-    fn anthropic_api_key_round_trips_through_memory_store() {
-        let store = MemoryCredentialStore::default();
-
-        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
-        assert_eq!(
-            load_anthropic_api_key(&store).unwrap(),
-            Some("sk-ant-test".into())
-        );
-        assert!(delete_anthropic_api_key(&store).unwrap());
-        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
+        for (provider, key) in [("openai", "sk-test"), ("anthropic", "sk-ant-test")] {
+            assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);
+            save_provider_api_key(&store, provider, key).unwrap();
+            assert_eq!(
+                load_provider_api_key(&store, provider).unwrap().as_deref(),
+                Some(key)
+            );
+            assert!(delete_provider_credentials(&store, provider).unwrap());
+            assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);
+        }
     }
 
     #[test]
     fn available_auth_modes_includes_anthropic_api_key() {
         let store = MemoryCredentialStore::default();
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+        save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
         assert!(available_auth_modes(&store).contains(&"anthropic-api-key".into()));
     }

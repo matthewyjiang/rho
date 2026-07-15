@@ -64,22 +64,6 @@ impl Tool for Process {
         }
     }
 
-    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
-        (args["action"] == "start")
-            .then(|| args["command"].as_str().map(str::to_owned))
-            .flatten()
-    }
-
-    fn display_lines(
-        &self,
-        _args: &serde_json::Value,
-        _context: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        display::result_lines(&result.content)
-            .unwrap_or_else(|| vec!["process".into(), result.content.clone()])
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,

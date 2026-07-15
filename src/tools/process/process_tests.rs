@@ -1,6 +1,6 @@
 use super::types::{terminal, Stream};
 use super::*;
-use crate::tool::{Tool, ToolContext, ToolError, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolError};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 
@@ -47,57 +47,6 @@ fn process_tool_has_one_compact_action_schema() {
         })
     );
 }
-
-#[test]
-fn process_tool_displays_snapshot_as_structured_lines() {
-    let tool = Process::new(ProcessManager::new(ProcessLimits::default()));
-    let result = ToolResult {
-        id: "call".into(),
-        ok: true,
-        content: serde_json::to_string(&Snapshot {
-            process_id: "process-1".into(),
-            command: "cargo test".into(),
-            state: State::Exited,
-            runtime_seconds: 1.25,
-            first_cursor: 0,
-            next_cursor: 2,
-            available_cursor: 3,
-            truncated: true,
-            output_pending: true,
-            chunks: vec![
-                Chunk {
-                    cursor: 0,
-                    stream: Stream::Stdout,
-                    text: "one\ntwo\n".into(),
-                },
-                Chunk {
-                    cursor: 1,
-                    stream: Stream::Stderr,
-                    text: "warning\n".into(),
-                },
-            ],
-            exit_code: Some(0),
-            terminal_detail: None,
-        })
-        .unwrap(),
-    };
-
-    assert_eq!(
-        tool.display_lines(&json!({}), &tool_context(), &result),
-        vec![
-            "process",
-            "cargo test",
-            "exited - process-1 - 1.2s, exit code 0",
-            "output before cursor 0 is no longer available",
-            "stdout:",
-            "one\ntwo\n",
-            "stderr:",
-            "warning\n",
-            "more output available at cursor 2",
-        ]
-    );
-}
-
 #[tokio::test]
 async fn process_tool_streams_structured_snapshot_lines() {
     let manager = ProcessManager::new(ProcessLimits::default());

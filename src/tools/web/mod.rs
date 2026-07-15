@@ -1,5 +1,4 @@
 mod adapters;
-mod display;
 mod fetch;
 mod process;
 mod search;

@@ -27,11 +27,8 @@ struct FileChanges {
 
 pub(super) struct EditFileOutcome {
     pub content: String,
-    #[allow(dead_code)]
     pub display_paths: Vec<String>,
-    #[allow(dead_code)]
     pub diffs: String,
-    #[allow(dead_code)]
     pub file_count: usize,
 }
 
@@ -43,51 +40,6 @@ impl Tool for EditFile {
             description: "Edits one or more existing UTF-8 text files by exact string replacement. All edits are validated before any file is written.".into(),
             input_schema: input_schema(),
         }
-    }
-
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_diff()
-    }
-
-    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
-        let paths = display_paths(args, ctx);
-        (!paths.is_empty()).then(|| paths.join(", "))
-    }
-
-    fn preview_mode(&self) -> ToolPreviewMode {
-        ToolPreviewMode::NameOnly
-    }
-
-    fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
-        vec![format!(
-            "edit_file {}",
-            self.display_content(args, ctx).unwrap_or_default()
-        )]
-    }
-
-    fn display_lines(
-        &self,
-        args: &serde_json::Value,
-        ctx: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        let mut lines = vec![format!(
-            "edit_file {}",
-            self.display_content(args, ctx)
-                .unwrap_or_else(|| result.content.clone())
-        )];
-        if result.ok {
-            let paths = display_paths(args, ctx);
-            let diff = if paths.len() > 1 {
-                super::diff::compact_diff_for_display_with_file_headers(&result.content)
-            } else {
-                super::diff::compact_diff_for_display(&result.content)
-            };
-            if let Some(diff) = diff {
-                lines.push(diff);
-            }
-        }
-        lines
     }
 
     async fn call(
@@ -281,37 +233,6 @@ fn write_content(file: &std::fs::File, content: &str) -> std::io::Result<()> {
 
 fn clone_io_error(error: &std::io::Error) -> std::io::Error {
     std::io::Error::new(error.kind(), error.to_string())
-}
-
-fn display_paths(args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
-    let mut paths = Vec::new();
-    for path in input_paths(args) {
-        let path = compact_display_path(&ctx.cwd, path);
-        if !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-    paths
-}
-
-fn input_paths(args: &serde_json::Value) -> Vec<&str> {
-    if let Some(edits) = args.get("edits").and_then(|edits| edits.as_array()) {
-        let mut paths = Vec::new();
-        for path in edits
-            .iter()
-            .filter_map(|edit| edit.get("path").and_then(|path| path.as_str()))
-        {
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
-        paths
-    } else {
-        args.get("path")
-            .and_then(|path| path.as_str())
-            .into_iter()
-            .collect()
-    }
 }
 
 fn replacement_spans(content: &str, old_string: &str) -> Vec<Range<usize>> {

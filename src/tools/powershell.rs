@@ -37,33 +37,6 @@ impl Tool for PowerShell {
         }
     }
 
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_or_command()
-    }
-
-    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("command")
-            .and_then(|command| command.as_str())
-            .map(str::to_string)
-    }
-
-    fn display_preview_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
-        vec![command_line(args)]
-    }
-
-    fn display_start_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
-        command_lines(args)
-    }
-
-    fn display_lines(
-        &self,
-        args: &serde_json::Value,
-        _ctx: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        display_lines_with_content(args, &result.content)
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,

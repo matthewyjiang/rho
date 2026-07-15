@@ -322,60 +322,6 @@ async fn legacy_replace_all_remains_supported() {
 }
 
 #[tokio::test]
-async fn display_lines_keep_the_first_context_line() {
-    let (_dir, ctx) = test_context();
-    std::fs::write(ctx.cwd.join("sample.txt"), "first\nold\nlast\n").unwrap();
-    let args = json!({"edits": [{
-        "path": "sample.txt",
-        "old_string": "old",
-        "new_string": "new"
-    }]});
-
-    let result = call(args.clone(), ctx.clone()).await.unwrap();
-
-    assert_eq!(
-        EditFile.display_lines(&args, &ctx, &result),
-        vec!["edit_file sample.txt", "first\n-old\n+new\nlast"]
-    );
-}
-
-#[tokio::test]
-async fn display_lines_label_each_file_diff() {
-    let (_dir, ctx) = test_context();
-    std::fs::write(ctx.cwd.join("first.txt"), "old one\n").unwrap();
-    std::fs::write(ctx.cwd.join("second.txt"), "old two\n").unwrap();
-    let args = json!({"edits": [
-        {"path": "first.txt", "old_string": "old", "new_string": "new"},
-        {"path": "second.txt", "old_string": "old", "new_string": "new"}
-    ]});
-
-    let result = call(args.clone(), ctx.clone()).await.unwrap();
-
-    assert_eq!(
-        EditFile.display_lines(&args, &ctx, &result),
-        vec![
-            "edit_file first.txt, second.txt",
-            "first.txt\n-old one\n+new one\n\nsecond.txt\n-old two\n+new two"
-        ]
-    );
-}
-
-#[test]
-fn display_content_lists_multiple_files() {
-    let (_dir, ctx) = test_context();
-    let args = json!({"edits": [
-        {"path": "first.txt", "old_string": "a", "new_string": "b"},
-        {"path": "second.txt", "old_string": "c", "new_string": "d"},
-        {"path": "first.txt", "old_string": "e", "new_string": "f"}
-    ]});
-
-    assert_eq!(
-        EditFile.display_content(&args, &ctx),
-        Some("first.txt, second.txt".into())
-    );
-}
-
-#[tokio::test]
 async fn rejects_identical_old_and_new_string_with_edit_context() {
     let (_dir, ctx) = test_context();
     std::fs::write(ctx.cwd.join("sample.txt"), "alpha").unwrap();

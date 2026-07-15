@@ -31,29 +31,6 @@ impl Tool for ReadFile {
         }
     }
 
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_or_command()
-    }
-
-    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
-        args.get("path")
-            .and_then(|path| path.as_str())
-            .map(|path| read_file_display_content(&ctx.cwd, path, args))
-    }
-
-    fn display_lines(
-        &self,
-        args: &serde_json::Value,
-        ctx: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        vec![format!(
-            "read_file {}",
-            self.display_content(args, ctx)
-                .unwrap_or_else(|| result.content.clone())
-        )]
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,

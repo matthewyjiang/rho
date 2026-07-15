@@ -53,7 +53,7 @@ fn context_is_null_until_usage_is_observed() {
     assert_eq!(response["context_window"], 1_000);
     assert_eq!(response["source"], "Estimated");
 
-    diagnostics.clear_context();
+    diagnostics.update_identity("anthropic", "claude-test", ReasoningLevel::Low);
     assert_eq!(diagnostics.response("context").unwrap(), "null");
 }
 

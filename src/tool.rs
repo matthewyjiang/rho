@@ -1,22 +1,10 @@
-use std::{
-    collections::HashMap,
-    future::Future,
-    path::{Component, Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::cancellation::RunCancellation;
 pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToolPreviewMode {
-    Arguments,
-    NameOnly,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolDisplayStyle {
@@ -52,17 +40,6 @@ impl ToolDisplayStyle {
     pub const fn questionnaire() -> Self {
         Self::Questionnaire
     }
-
-    pub fn for_tool_name(name: &str) -> Self {
-        match name {
-            "edit_file" | "write_file" => Self::file_diff(),
-            "bash" | "powershell" | "list_dir" | "read_file" => Self::file_or_command(),
-            "skill" => Self::skill(),
-            "web_search" | "fetch_content" | "get_search_content" => Self::web(),
-            "questionnaire" => Self::questionnaire(),
-            _ => Self::default_tool(),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -91,62 +68,6 @@ pub enum ToolError {
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
-
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::for_tool_name(&self.spec().name)
-    }
-
-    /// Controls whether streamed previews need parsed argument values.
-    fn preview_mode(&self) -> ToolPreviewMode {
-        ToolPreviewMode::Arguments
-    }
-
-    fn display_command(&self, _args: &Value) -> Option<String> {
-        None
-    }
-
-    fn display_content(&self, _args: &Value, _ctx: &ToolContext) -> Option<String> {
-        None
-    }
-
-    fn display_start_lines(&self, args: &Value, ctx: &ToolContext) -> Vec<String> {
-        let mut lines = vec![self.spec().name];
-        if let Some(command) = self
-            .display_command(args)
-            .filter(|command| !command.trim().is_empty())
-        {
-            lines.push(command);
-        } else if let Some(content) = self
-            .display_content(args, ctx)
-            .filter(|content| !content.trim().is_empty())
-        {
-            lines.push(content);
-        }
-        lines
-    }
-
-    /// Formats incomplete streamed arguments before tool execution starts.
-    /// Implementors should return stable summary text and avoid result-only content.
-    fn display_preview_lines(&self, args: &Value, ctx: &ToolContext) -> Vec<String> {
-        self.display_start_lines(args, ctx)
-    }
-
-    fn display_lines(&self, args: &Value, ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        let mut lines = vec![self.spec().name];
-        if let Some(command) = self
-            .display_command(args)
-            .filter(|command| !command.trim().is_empty())
-        {
-            lines.push(command);
-        }
-        let content = self
-            .display_content(args, ctx)
-            .unwrap_or_else(|| result.content.clone());
-        if !content.trim().is_empty() {
-            lines.push(content);
-        }
-        lines
-    }
 
     async fn call(
         &self,
@@ -177,46 +98,6 @@ pub trait Tool: Send + Sync {
             result = self.call_with_updates(args, ctx, id, on_update) => result,
             () = cancellation.cancelled() => Err(ToolError::Message("tool interrupted".into())),
         }
-    }
-}
-
-pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn Tool>>,
-    shutdown: Option<Arc<dyn ToolShutdown>>,
-}
-
-pub trait ToolShutdown: Send + Sync {
-    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
-}
-
-impl ToolRegistry {
-    pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-            shutdown: None,
-        }
-    }
-
-    pub fn set_shutdown<T: ToolShutdown + 'static>(&mut self, shutdown: T) {
-        self.shutdown = Some(Arc::new(shutdown));
-    }
-
-    pub async fn shutdown(&self) {
-        if let Some(shutdown) = &self.shutdown {
-            shutdown.shutdown().await;
-        }
-    }
-
-    pub fn register<T: Tool + 'static>(&mut self, tool: T) {
-        self.tools.insert(tool.spec().name, Arc::new(tool));
-    }
-
-    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools.get(name).cloned()
-    }
-
-    pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|t| t.spec()).collect()
     }
 }
 
@@ -283,45 +164,6 @@ fn previous_char_boundary(s: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tool_display_style_is_recovered_from_tool_name() {
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("read_file"),
-            ToolDisplayStyle::FileOrCommand
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("bash"),
-            ToolDisplayStyle::FileOrCommand
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("powershell"),
-            ToolDisplayStyle::FileOrCommand
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("write_file"),
-            ToolDisplayStyle::FileDiff
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("edit_file"),
-            ToolDisplayStyle::FileDiff
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("skill"),
-            ToolDisplayStyle::Skill
-        );
-        for name in ["web_search", "fetch_content", "get_search_content"] {
-            assert_eq!(ToolDisplayStyle::for_tool_name(name), ToolDisplayStyle::Web);
-        }
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("questionnaire"),
-            ToolDisplayStyle::Questionnaire
-        );
-        assert_eq!(
-            ToolDisplayStyle::for_tool_name("custom"),
-            ToolDisplayStyle::DefaultTool
-        );
-    }
 
     #[test]
     fn compact_display_path_renders_cwd_as_dot() {

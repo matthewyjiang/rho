@@ -41,8 +41,9 @@ impl Tool for DownstreamTool {
 
 fn assert_send_sync<T: Send + Sync>() {}
 
-#[allow(dead_code)]
-async fn public_completion_and_streaming_contract() -> Result<(), rho_sdk::Error> {
+pub async fn public_completion_and_streaming_contract() -> Result<(), rho_sdk::Error> {
+    assert_send_sync::<Rho>();
+    assert_send_sync::<DownstreamProvider>();
     let rho = Rho::builder()
         .provider(DownstreamProvider)
         .tool(DownstreamTool)
@@ -57,10 +58,4 @@ async fn public_completion_and_streaming_contract() -> Result<(), rho_sdk::Error
     cancellation.cancel();
     let _history = session.history();
     Ok(())
-}
-
-fn main() {
-    assert_send_sync::<Rho>();
-    assert_send_sync::<DownstreamProvider>();
-    let _ = public_completion_and_streaming_contract;
 }

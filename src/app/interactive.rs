@@ -83,7 +83,6 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
             max_tool_output_lines: config.max_tool_output_lines,
             keybindings: config.keybindings,
             prompt_templates,
-            questionnaire_enabled: !cli.no_tools,
             session_id,
             recovered_messages,
             open_resume_picker,

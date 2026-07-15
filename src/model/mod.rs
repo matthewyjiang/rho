@@ -17,8 +17,6 @@ pub use contract::{
     ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
     PartialToolCall, ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
 };
-#[allow(unused_imports)]
-pub use handoff::HandoffReport;
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
 

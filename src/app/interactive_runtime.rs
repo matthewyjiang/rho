@@ -200,11 +200,6 @@ impl InteractiveRuntime {
         })
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn state(&self) -> InteractiveState {
-        self.state
-    }
-
     pub(crate) fn history(&self) -> Vec<Message> {
         self.session.history()
     }

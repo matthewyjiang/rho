@@ -7,7 +7,6 @@ use crate::{
 };
 
 use super::{
-    display,
     fetch::fetch_target,
     search::{self, SearchBackendConfig},
     storage::{self, StoredContent, StoredItem},
@@ -107,10 +106,6 @@ impl Tool for WebSearch {
                 "required": ["queries"]
             }),
         }
-    }
-
-    fn display_lines(&self, args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::web_search(args, result)]
     }
 
     async fn call(
@@ -231,10 +226,6 @@ impl Tool for FetchContent {
         }
     }
 
-    fn display_lines(&self, _args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::fetch_content(result)]
-    }
-
     async fn call(
         &self,
         args: Value,
@@ -311,10 +302,6 @@ impl Tool for GetSearchContent {
                 "required": ["responseId"]
             }),
         }
-    }
-
-    fn display_lines(&self, _args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::get_search_content(result)]
     }
 
     async fn call(

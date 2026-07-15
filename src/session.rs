@@ -10,6 +10,7 @@ use std::{
 use std::os::unix::fs::OpenOptionsExt;
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use uuid::Uuid;
 
 use crate::model::{ContentBlock, Message, ModelIdentity};
@@ -235,16 +236,11 @@ impl Session {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn create(cwd: &Path) -> anyhow::Result<Self> {
-        Self::create_in_root(&session_root()?, cwd)
-    }
-
     pub(crate) fn create_with_id(cwd: &Path, id: &str) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(&session_root()?, cwd, id)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string())
     }

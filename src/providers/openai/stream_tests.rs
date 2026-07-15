@@ -8,9 +8,7 @@ use super::{
 use crate::{
     cancellation::RunCancellation,
     credentials::{CodexTokens, MemoryCredentialStore},
-    model::{
-        ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
-    },
+    model::{ContentBlock, Message, ModelError, ModelEvent, ModelRequest, ModelResponse},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -54,7 +52,7 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
 
     let mut events = Vec::new();
     let response = provider
-        .send_turn_stream(
+        .stream_turn(
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
@@ -150,7 +148,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     };
     let first_messages = [Message::user_text("first")];
     let mut on_first_event = |_| Ok(());
-    let first_turn = provider.send_turn_stream(
+    let first_turn = provider.stream_turn(
         ModelRequest {
             messages: &first_messages,
             tools: &[],
@@ -164,7 +162,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     assert!(matches!(result, Err(ModelError::Interrupted)));
 
     let response = provider
-        .send_turn_stream(
+        .stream_turn(
             ModelRequest {
                 messages: &[Message::user_text("second")],
                 tools: &[],

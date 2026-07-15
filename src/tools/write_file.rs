@@ -24,46 +24,6 @@ impl Tool for WriteFile {
         }
     }
 
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_diff()
-    }
-
-    fn display_content(&self, args: &serde_json::Value, ctx: &ToolContext) -> Option<String> {
-        args.get("path")
-            .and_then(|path| path.as_str())
-            .map(|path| compact_display_path(&ctx.cwd, path))
-    }
-
-    fn preview_mode(&self) -> ToolPreviewMode {
-        ToolPreviewMode::NameOnly
-    }
-
-    fn display_start_lines(&self, args: &serde_json::Value, ctx: &ToolContext) -> Vec<String> {
-        vec![format!(
-            "write_file {}",
-            self.display_content(args, ctx).unwrap_or_default()
-        )]
-    }
-
-    fn display_lines(
-        &self,
-        args: &serde_json::Value,
-        ctx: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        let mut lines = vec![format!(
-            "write_file {}",
-            self.display_content(args, ctx)
-                .unwrap_or_else(|| result.content.clone())
-        )];
-        if result.ok {
-            if let Some(diff) = super::diff::compact_diff_for_display(&result.content) {
-                lines.push(diff);
-            }
-        }
-        lines
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,
@@ -89,9 +49,7 @@ impl Tool for WriteFile {
 
 pub(super) struct WriteFileOutcome {
     pub content: String,
-    #[allow(dead_code)]
     pub display_path: String,
-    #[allow(dead_code)]
     pub diff: String,
 }
 

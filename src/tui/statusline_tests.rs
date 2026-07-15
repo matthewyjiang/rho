@@ -234,7 +234,6 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         favorite_models: Vec::new(),
         max_tool_output_lines: 10,
         keybindings: Keybindings::default(),
-        questionnaire_enabled: true,
         session_id: None,
         recovered_messages: Vec::new(),
         prompt_templates: Default::default(),

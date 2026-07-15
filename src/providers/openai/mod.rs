@@ -168,33 +168,6 @@ impl ModelProvider for OpenAiProvider {
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.complete_turn(request).await
     }
-
-    async fn send_turn_stream(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-    ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = async {
-                match &self.auth {
-                    Auth::ApiKey(key) => {
-                        self.send_chat_completions_stream(request, key, on_event).await
-                    }
-                    Auth::Codex { tokens, source } => {
-                        self.send_codex_responses_stream(request, tokens.clone(), *source, on_event)
-                            .await
-                    }
-                }
-            } => result,
-            () = cancellation.cancelled() => {
-                if matches!(&self.auth, Auth::Codex { .. }) {
-                    self.codex_ws.reset().await;
-                }
-                Err(ModelError::Interrupted)
-            },
-        }
-    }
 }
 
 impl OpenAiProvider {

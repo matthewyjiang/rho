@@ -8,8 +8,9 @@
 //! [`ApprovalHandler`](rho_sdk::ApprovalHandler). Default SDK construction still
 //! grants no capabilities.
 //!
-//! Automation registers these adapters on the public SDK runtime while the TUI
-//! continues to use the application tool registry during its later migration.
+//! The interactive and automation runtimes register these adapters on the public
+//! SDK runtime. They do not participate in tool presentation, which is derived
+//! from SDK events and metadata by the application presenter.
 
 use std::{path::PathBuf, sync::Arc};
 

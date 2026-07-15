@@ -163,8 +163,6 @@ pub struct TuiInfo {
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
-    #[allow(dead_code)]
-    pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
@@ -482,7 +480,6 @@ enum ToolEntryState {
 #[derive(Clone, Debug)]
 enum Entry {
     User(String),
-    #[allow(dead_code)]
     Assistant(String),
     Reasoning(String),
     Tool(ToolEntry),
@@ -4322,6 +4319,7 @@ impl App {
             ViewModelEvent::ToolCallUpdated { .. } => None,
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
+                self.info.diagnostics.record_context(usage.clone());
                 self.current_context = Some(usage);
                 None
             }
@@ -5739,8 +5737,7 @@ enum HistoryDirection {
 mod tests {
     use super::*;
     use crate::credentials::{
-        save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
-        MemoryCredentialStore,
+        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
     };
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
@@ -5795,7 +5792,7 @@ mod tests {
 
     pub(super) fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
-        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         App::new_with_credentials(
             TuiInfo {
                 cwd: PathBuf::from("/tmp/project"),
@@ -5808,7 +5805,6 @@ mod tests {
                 title_model: None,
                 title_auth: None,
                 favorite_models: Vec::new(),
-                questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
@@ -6949,8 +6945,8 @@ mod tests {
     #[test]
     fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
         let store = MemoryCredentialStore::default();
-        save_openai_api_key(&store, "sk-test").unwrap();
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+        save_provider_api_key(&store, "openai", "sk-test").unwrap();
+        save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
         let picker = provider_picker::logout_provider_picker(&store).unwrap();
         let values = picker
@@ -6975,7 +6971,7 @@ mod tests {
     #[test]
     fn model_picker_uses_all_available_auths() {
         let store = Arc::new(MemoryCredentialStore::default());
-        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         save_codex_tokens(
             store.as_ref(),
             &crate::credentials::CodexTokens {
@@ -6986,7 +6982,7 @@ mod tests {
             },
         )
         .unwrap();
-        save_anthropic_api_key(store.as_ref(), "sk-ant-test").unwrap();
+        save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
         let mut app = App::new_with_credentials(
             TuiInfo {
                 cwd: PathBuf::from("/tmp/project"),
@@ -6999,7 +6995,6 @@ mod tests {
                 title_model: None,
                 title_auth: None,
                 favorite_models: Vec::new(),
-                questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,

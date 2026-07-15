@@ -581,8 +581,6 @@ struct PartialConfig {
     auto_compact: Option<bool>,
     compact_threshold_percent: Option<u8>,
     compact_target_percent: Option<u8>,
-    #[allow(dead_code)]
-    compact_recent_messages: Option<usize>,
     title_provider: Option<String>,
     title_model: Option<String>,
     title_auth: Option<String>,

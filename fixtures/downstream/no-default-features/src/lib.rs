@@ -4,8 +4,7 @@ use rho_sdk::{
     Rho, SessionOptions,
 };
 
-#[allow(dead_code)]
-async fn minimal_surface_contract() -> Result<(), rho_sdk::Error> {
+pub async fn minimal_surface_contract() -> Result<(), rho_sdk::Error> {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("fixture", "local", "scripted"),
         [ScriptedTurn::completed(ModelResponse::Assistant(vec![
@@ -17,8 +16,4 @@ async fn minimal_surface_contract() -> Result<(), rho_sdk::Error> {
     let outcome = session.complete("hello").await?;
     assert_eq!(outcome.text(), "minimal response");
     Ok(())
-}
-
-fn main() {
-    let _ = minimal_surface_contract;
 }

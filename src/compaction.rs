@@ -52,27 +52,6 @@ struct MessageGroup {
     tokens: u64,
 }
 
-#[allow(dead_code)]
-pub fn should_compact(
-    config: &CompactionConfig,
-    estimated_tokens: Option<u64>,
-    context_window: Option<u64>,
-) -> bool {
-    if !config.auto_compact {
-        return false;
-    }
-    let Some(tokens) = estimated_tokens else {
-        return false;
-    };
-    let Some(window) = context_window else {
-        return false;
-    };
-    let Some(threshold_tokens) = config.threshold_tokens(window) else {
-        return false;
-    };
-    tokens >= threshold_tokens
-}
-
 pub fn partition_messages_for_compaction(
     messages: &[Message],
     tools: &[ToolSpec],
@@ -293,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn compaction_decision_requires_enabled_config_and_window() {
+    fn compaction_threshold_requires_enabled_config_and_window() {
         let config = CompactionConfig {
             auto_compact: true,
             threshold_percent: 80,
@@ -301,17 +280,15 @@ mod tests {
         };
 
         assert_eq!(config.threshold_tokens(1_000), Some(800));
-        assert!(should_compact(&config, Some(800), Some(1_000)));
-        assert!(!should_compact(&config, Some(799), Some(1_000)));
-        assert!(!should_compact(&config, Some(900), None));
-        assert!(!should_compact(
-            &CompactionConfig {
+        assert_eq!(config.threshold_tokens(0), None);
+        assert_eq!(
+            CompactionConfig {
                 auto_compact: false,
                 ..config
-            },
-            Some(900),
-            Some(1_000)
-        ));
+            }
+            .threshold_tokens(1_000),
+            None
+        );
     }
 
     #[test]

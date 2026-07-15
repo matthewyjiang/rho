@@ -331,18 +331,6 @@ impl ModelProvider for AnthropicProvider {
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.complete_turn(request).await
     }
-
-    async fn send_turn_stream(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-    ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = self.send_messages_stream(request, on_event) => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        }
-    }
 }
 
 #[cfg(test)]

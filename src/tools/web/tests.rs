@@ -57,20 +57,12 @@ async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
     let ctx = test_context();
     let web_search = super::access_tools(&Config::default()).0;
-    let result = web_search
-        .call(args.clone(), ctx.clone(), "call_1".into())
-        .await
-        .unwrap();
+    let result = web_search.call(args, ctx, "call_1".into()).await.unwrap();
     let value: Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(value["fullContentAvailable"], false);
     assert_eq!(value["sourceContentAvailable"], false);
     assert_eq!(value["storedContentAvailable"], true);
     let response_id = value["responseId"].as_str().unwrap();
-
-    assert_eq!(
-        web_search.display_lines(&args, &ctx, &result),
-        vec!["web search: no live results for \"rho web access\""]
-    );
 
     let retrieved = GetSearchContent
         .call(
@@ -144,28 +136,17 @@ async fn fetch_content_stores_local_file_content() {
     let args = json!({"url": "note.txt"});
     let result = super::access_tools(&Config::default())
         .1
-        .call(args.clone(), ctx.clone(), "call_1".into())
+        .call(args, ctx.clone(), "call_1".into())
         .await
         .unwrap();
     let value: Value = serde_json::from_str(&result.content).unwrap();
     let response_id = value["responseId"].as_str().unwrap();
 
-    assert_eq!(
-        super::access_tools(&Config::default())
-            .1
-            .display_lines(&args, &ctx, &result),
-        vec!["fetch content: fetched 1 item"]
-    );
-
     let get_args = json!({"responseId": response_id, "urlIndex": 0});
     let retrieved = GetSearchContent
-        .call(get_args.clone(), ctx.clone(), "call_2".into())
+        .call(get_args, ctx, "call_2".into())
         .await
         .unwrap();
-    assert_eq!(
-        GetSearchContent.display_lines(&get_args, &ctx, &retrieved),
-        vec!["retrieved content: note.txt"]
-    );
     assert!(retrieved.content.contains("hello from local file"));
 }
 

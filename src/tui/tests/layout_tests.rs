@@ -573,9 +573,6 @@ fn started_tool_display_ignores_late_argument_previews() {
     let mut app = test_app();
 
     app.record_agent_event(ViewModelEvent::ToolStarted {
-        name: "edit_file".into(),
-        command: None,
-        display_style: ToolDisplayStyle::file_diff(),
         display_lines: vec!["edit_file src/main.rs".into()],
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {

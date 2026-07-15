@@ -15,16 +15,11 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
     StepStarted(usize),
-    #[allow(dead_code)]
     ToolStarted {
-        name: String,
-        command: Option<String>,
-        display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
     },
     OutputDelta(String),
     ReasoningDelta(String),
-    #[allow(dead_code)]
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ToolUpdated {
@@ -98,13 +93,11 @@ impl SdkEventAdapter {
                 name,
                 metadata,
             } => {
-                let presented = self.presenter().started(call_id, name.clone(), metadata);
-                ViewEvent::Update(ViewModelEvent::ToolStarted {
-                    name,
-                    command: presented.command,
-                    display_style: presented.display_style,
-                    display_lines: presented.display_lines,
-                })
+                let display_lines = self
+                    .presenter()
+                    .started(call_id, name, metadata)
+                    .display_lines;
+                ViewEvent::Update(ViewModelEvent::ToolStarted { display_lines })
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let display_lines = self.presenter().updated(&call_id, &progress);

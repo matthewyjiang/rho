@@ -12,7 +12,6 @@ mod diagnostics;
 mod export;
 mod herdr;
 mod keybindings;
-#[allow(dead_code)]
 mod model;
 mod paths;
 mod prompt;
@@ -25,9 +24,7 @@ mod questionnaire;
 mod reasoning;
 mod session;
 mod skills;
-#[allow(dead_code)]
 mod tool;
-#[allow(dead_code)]
 mod tools;
 mod transcript;
 mod tui;
