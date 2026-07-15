@@ -36,7 +36,7 @@ impl ApprovalHandler for RecordingApprovals {
 #[tokio::test]
 async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     let root = tempfile::tempdir().unwrap();
-    let command = "printf '%s' '$TOKEN; && | $(touch should-not-exist)'";
+    let command = "touch should-not-exist; printf '%s' '$TOKEN; && | $(touch quoted-not-exist)'";
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
         [
@@ -55,6 +55,22 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     let approvals = Arc::new(RecordingApprovals {
         requests: Mutex::new(Vec::new()),
     });
+    let config = Config {
+        max_output_bytes: 777,
+        rtk: true,
+        ..Config::default()
+    };
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let bash = tool_set
+        .tools()
+        .iter()
+        .find(|tool| tool.spec().name == "bash")
+        .unwrap()
+        .clone();
     let mut builder = Rho::builder()
         .provider(provider)
         .workspace(Workspace::new(root.path()).unwrap())
@@ -64,7 +80,7 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
                 .require_process_approval(),
         )
         .approval_handler_shared(approvals.clone());
-    builder = builder.tool_shared(adapt(super::super::bash::Bash::new(false), 777));
+    builder = builder.tool_shared(bash);
     let runtime = builder.build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("run it")).await.unwrap();
@@ -138,7 +154,7 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn adapted_tools_stream_live_output_as_progress_events() {
+async fn sdk_shell_tools_stream_live_output_as_progress_events() {
     let root = tempfile::tempdir().unwrap();
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
@@ -159,7 +175,9 @@ async fn adapted_tools_stream_live_output_as_progress_events() {
         .provider(provider)
         .workspace(Workspace::new(root.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_processes());
-    builder = builder.tool_shared(adapt(super::super::bash::Bash::new(false), 12_000));
+    builder = builder.tool_shared(Arc::new(super::super::sdk_shell::SdkShellTool::bash(
+        12_000,
+    )));
     let runtime = builder.build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("run it")).await.unwrap();

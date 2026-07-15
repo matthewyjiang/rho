@@ -8,7 +8,7 @@ use super::sdk_support::{required_string, workspace};
 
 pub(super) fn security_for(name: &str) -> ToolSecurity {
     let capabilities = match name {
-        "bash" | "powershell" | "process" => vec![CapabilityKind::Process],
+        "process" => vec![CapabilityKind::Process],
         "web_search" => vec![CapabilityKind::Network],
         "skill" => vec![CapabilityKind::Skill],
         _ => Vec::new(),
@@ -24,32 +24,6 @@ pub(super) async fn authorize_builtin(
 ) -> Result<(), ToolError> {
     let source = CapabilitySource::built_in_tool(name);
     match name {
-        "bash" | "powershell" => {
-            let command = required_string(arguments, "command")?;
-            let timeout = optional_timeout(arguments)?;
-            let executable = if name == "bash" {
-                "bash"
-            } else {
-                "powershell.exe"
-            };
-            let shell_arguments = if name == "bash" {
-                vec!["-lc".into()]
-            } else {
-                vec![
-                    "-NoProfile".into(),
-                    "-NonInteractive".into(),
-                    "-Command".into(),
-                ]
-            };
-            authorize_process(
-                context,
-                ProcessInvocation::shell_from_path(executable, shell_arguments, command),
-                timeout,
-                max_output_bytes,
-                source,
-            )
-            .await
-        }
         "process"
             if arguments.get("action").and_then(serde_json::Value::as_str) == Some("start") =>
         {

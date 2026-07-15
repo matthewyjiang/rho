@@ -72,17 +72,16 @@ impl AppToolSet {
             config.max_output_bytes,
         ));
 
-        let rtk_enabled = config.rtk && super::rtk::is_available();
+        // RTK is intentionally disabled for SDK shell tools. Their immutable
+        // ProcessExecution must be identical during authorization and execution.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        tools.push(adapt(
-            super::bash::Bash::new(rtk_enabled),
+        tools.push(Arc::new(super::sdk_shell::SdkShellTool::bash(
             config.max_output_bytes,
-        ));
+        )));
         #[cfg(windows)]
-        tools.push(adapt(
-            super::powershell::PowerShell::new(rtk_enabled),
+        tools.push(Arc::new(super::sdk_shell::SdkShellTool::powershell(
             config.max_output_bytes,
-        ));
+        )));
         tools.push(Arc::new(SdkSkillTool {
             max_output_bytes: config.max_output_bytes,
         }));
@@ -406,7 +405,7 @@ where
 
 fn metadata_for(name: &str) -> ToolMetadata {
     let operation = match name {
-        "bash" | "powershell" | "process" => OperationKind::Execute,
+        "process" => OperationKind::Execute,
         "web_search" | "fetch_content" => OperationKind::Network,
         "get_search_content" => OperationKind::Read,
         _ => OperationKind::Other(name.to_string()),

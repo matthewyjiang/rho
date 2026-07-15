@@ -13,6 +13,7 @@ pub mod rtk;
 pub mod sdk_adapter;
 pub mod sdk_registry;
 mod sdk_security;
+mod sdk_shell;
 mod sdk_support;
 pub mod skill;
 #[cfg(debug_assertions)]
