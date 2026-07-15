@@ -5,6 +5,19 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      candidate-sha:
+        description: Existing tagged release commit to resume after a workflow failure
+        required: false
+        type: string
+      app-tag:
+        description: Existing rho-coding-agent tag to resume
+        required: false
+        type: string
+      sdk-tag:
+        description: Existing rho-sdk tag to resume
+        required: false
+        type: string
 
 permissions:
   actions: write
@@ -15,18 +28,74 @@ jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
-      release_created: ${{ steps.release.outputs['crates/rho--release_created'] }}
-      sdk_release_created: ${{ steps.release.outputs['crates/rho-sdk--release_created'] }}
-      candidate_sha: ${{ steps.release.outputs['crates/rho--sha'] || steps.release.outputs['crates/rho-sdk--sha'] }}
-      tag_name: ${{ steps.release.outputs['crates/rho--tag_name'] }}
-      sdk_tag_name: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] }}
+      releases_created: ${{ steps.release.outputs.releases_created || steps.recovery.outputs.releases_created }}
+      release_created: ${{ steps.release.outputs['crates/rho--release_created'] || steps.recovery.outputs.release_created }}
+      sdk_release_created: ${{ steps.release.outputs['crates/rho-sdk--release_created'] || steps.recovery.outputs.sdk_release_created }}
+      candidate_sha: ${{ steps.release.outputs['crates/rho--sha'] || steps.release.outputs['crates/rho-sdk--sha'] || steps.recovery.outputs.candidate_sha }}
+      tag_name: ${{ steps.release.outputs['crates/rho--tag_name'] || steps.recovery.outputs.tag_name }}
+      sdk_tag_name: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] || steps.recovery.outputs.sdk_tag_name }}
     steps:
       - id: release
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.candidate-sha == '' }}
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
+      - name: Check out recovery candidate
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate-sha }}
+      - name: Verify existing release tags for recovery
+        id: recovery
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha != '' }}
+        env:
+          APP_TAG: ${{ inputs.app-tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          GH_TOKEN: ${{ github.token }}
+          SDK_TAG: ${{ inputs.sdk-tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate SHA must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          if [[ -z "$APP_TAG" && -z "$SDK_TAG" ]]; then
+            echo "At least one existing release tag is required" >&2
+            exit 1
+          fi
+          verify_tag() {
+            local tag="$1"
+            local expected_tag="$2"
+            if [[ "$tag" != "$expected_tag" ]]; then
+              echo "Recovery tag $tag does not match candidate version $expected_tag" >&2
+              exit 1
+            fi
+            local tagged_sha
+            tagged_sha="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
+            if [[ "$tagged_sha" != "$CANDIDATE_SHA" ]]; then
+              echo "Tag $tag resolves to $tagged_sha instead of $CANDIDATE_SHA" >&2
+              exit 1
+            fi
+            if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "Release $tag is not an unpublished draft" >&2
+              exit 1
+            fi
+          }
+          app_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho/Cargo.toml", "rb"))["package"]["version"])')"
+          sdk_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho-sdk/Cargo.toml", "rb"))["package"]["version"])')"
+          if [[ -n "$APP_TAG" ]]; then
+            verify_tag "$APP_TAG" "rho-coding-agent-v$app_version"
+          fi
+          if [[ -n "$SDK_TAG" ]]; then
+            verify_tag "$SDK_TAG" "rho-sdk-v$sdk_version"
+          fi
+          echo "releases_created=true" >> "$GITHUB_OUTPUT"
+          echo "release_created=$([[ -n "$APP_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "sdk_release_created=$([[ -n "$SDK_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$APP_TAG" >> "$GITHUB_OUTPUT"
+          echo "sdk_tag_name=$SDK_TAG" >> "$GITHUB_OUTPUT"
       # The downstream fixture is a deliberately separate workspace, so the
       # cargo-workspace plugin cannot update its lockfile when rho-sdk changes.
       - name: Check out release pull request
@@ -39,10 +108,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Synchronize downstream SDK lockfile
         if: ${{ steps.release.outputs.prs_created == 'true' }}
-        env:
-          RELEASE_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
         run: |
           set -euo pipefail
+          release_branch="$(git branch --show-current)"
           cargo update --manifest-path fixtures/downstream/Cargo.toml --package rho-sdk
           if git diff --quiet -- fixtures/downstream/Cargo.lock; then
             exit 0
@@ -56,7 +124,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add fixtures/downstream/Cargo.lock
           git commit -m "chore(release): sync downstream SDK lockfile"
-          git push origin "HEAD:$RELEASE_BRANCH"
+          git push origin "HEAD:$release_branch"
 
   sdk-release-evidence:
     needs: release
