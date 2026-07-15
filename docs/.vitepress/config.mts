@@ -11,7 +11,7 @@ export default defineConfig({
       { text: 'Interactive TUI', link: '/interactive-tui' },
       { text: 'Automation', link: '/automation-cli' },
       { text: 'Rust SDK', link: '/sdk/' },
-      { text: 'Changelog', link: '/changelog' }
+      { text: 'App changelog', link: '/changelog' }
     ],
     sidebar: [
       {
@@ -38,7 +38,7 @@ export default defineConfig({
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Sessions', link: '/sessions' },
           { text: 'Development', link: '/development' },
-          { text: 'Changelog', link: '/changelog' }
+          { text: 'App changelog', link: '/changelog' }
         ]
       },
       {
@@ -58,7 +58,8 @@ export default defineConfig({
           { text: 'Performance acceptance', link: '/sdk/performance' },
           { text: 'Upgrade to planned 1.0', link: '/sdk/upgrade-to-1.0' },
           { text: 'Draft 1.0 release notes', link: '/sdk/release-notes-1.0' },
-          { text: 'Release candidates', link: '/sdk/release-candidates' }
+          { text: 'Release candidates', link: '/sdk/release-candidates' },
+          { text: 'SDK changelog', link: '/sdk/changelog' }
         ]
       }
     ],
