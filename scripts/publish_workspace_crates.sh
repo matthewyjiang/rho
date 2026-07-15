@@ -90,12 +90,18 @@ fi
 sdk_version="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]=="rho-sdk"))')"
 app_version="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]=="rho-coding-agent"))')"
 
+crates_io_curl=(
+  curl
+  -fsS
+  --user-agent "rho-release-publisher/1.0 (https://github.com/matthewyjiang/rho)"
+)
+
 wait_for_crate() {
   local name="$1"
   local version="$2"
   local attempt
   for attempt in $(seq 1 36); do
-    if curl -fsS "https://crates.io/api/v1/crates/${name}/${version}" >/dev/null; then
+    if "${crates_io_curl[@]}" "https://crates.io/api/v1/crates/${name}/${version}" >/dev/null; then
       echo "${name}@${version} is visible on crates.io"
       return 0
     fi
@@ -109,7 +115,7 @@ wait_for_crate() {
 crate_already_published() {
   local name="$1"
   local version="$2"
-  curl -fsS "https://crates.io/api/v1/crates/${name}/${version}" >/dev/null 2>&1
+  "${crates_io_curl[@]}" "https://crates.io/api/v1/crates/${name}/${version}" >/dev/null 2>&1
 }
 
 if [[ "$publish_sdk" == true ]]; then
