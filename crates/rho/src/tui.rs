@@ -1136,12 +1136,15 @@ impl App {
         }
         if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
             agent.set_context_window(metadata.display_context_window());
+            let reasoning_capabilities_known = metadata.reasoning_capabilities_known;
             self.model_metadata = Some(metadata);
-            return;
+            if reasoning_capabilities_known {
+                return;
+            }
+        } else {
+            agent.set_context_window(None);
+            self.model_metadata = None;
         }
-
-        agent.set_context_window(None);
-        self.model_metadata = None;
         let provider = self.info.provider.clone();
         let model = self.info.model.clone();
         self.pending_model_metadata = Some(tokio::spawn(async move {
