@@ -158,6 +158,10 @@ impl ToolProgressReceiver {
     pub async fn recv(&mut self) -> Option<ToolProgress> {
         self.receiver.recv().await
     }
+
+    pub(crate) fn try_recv(&mut self) -> Option<ToolProgress> {
+        self.receiver.try_recv().ok()
+    }
 }
 
 pub fn tool_progress_channel(capacity: NonZeroUsize) -> (ToolProgressSender, ToolProgressReceiver) {
@@ -196,26 +200,26 @@ impl ToolInvocation {
 /// Scoped capabilities supplied to one tool invocation.
 #[derive(Clone, Debug)]
 pub struct ToolContext {
-    workspace_root: PathBuf,
+    workspace_root: Option<PathBuf>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 }
 
 impl ToolContext {
     pub fn new(
-        workspace_root: impl Into<PathBuf>,
+        workspace_root: Option<PathBuf>,
         cancellation: CancellationToken,
         progress: ToolProgressSender,
     ) -> Self {
         Self {
-            workspace_root: workspace_root.into(),
+            workspace_root,
             cancellation,
             progress,
         }
     }
 
-    pub fn workspace_root(&self) -> &Path {
-        &self.workspace_root
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
@@ -334,7 +338,7 @@ impl fmt::Display for DuplicateToolName {
 impl std::error::Error for DuplicateToolName {}
 
 /// Deterministically ordered registry of SDK tools.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
 }

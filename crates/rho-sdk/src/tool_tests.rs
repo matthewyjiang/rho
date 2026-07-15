@@ -25,7 +25,7 @@ fn invocation() -> ToolInvocation {
 fn context(cancellation: CancellationToken) -> (ToolContext, super::ToolProgressReceiver) {
     let (progress, receiver) = tool_progress_channel(NonZeroUsize::new(4).unwrap());
     (
-        ToolContext::new("/workspace", cancellation, progress),
+        ToolContext::new(Some(PathBuf::from("/workspace")), cancellation, progress),
         receiver,
     )
 }

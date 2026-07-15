@@ -45,6 +45,10 @@ impl ProviderEventReceiver {
     pub async fn recv(&mut self) -> Option<ModelEvent> {
         self.receiver.recv().await
     }
+
+    pub(crate) fn try_recv(&mut self) -> Option<ModelEvent> {
+        self.receiver.try_recv().ok()
+    }
 }
 
 /// Creates a bounded provider-event channel with explicit backpressure.

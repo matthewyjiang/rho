@@ -217,6 +217,29 @@ impl ModelUsage {
             .saturating_add(self.cache_write_tokens.unwrap_or_default());
         has_input.then_some(total)
     }
+
+    /// Saturating sum used to accumulate usage across model steps.
+    pub fn saturating_add(&self, other: &Self) -> Self {
+        Self {
+            input_tokens: add_optional(self.input_tokens, other.input_tokens),
+            output_tokens: add_optional(self.output_tokens, other.output_tokens),
+            cache_read_tokens: add_optional(self.cache_read_tokens, other.cache_read_tokens),
+            cache_write_tokens: add_optional(self.cache_write_tokens, other.cache_write_tokens),
+            total_tokens: add_optional(self.total_tokens, other.total_tokens),
+            context_window: other.context_window.or(self.context_window),
+            cost_usd_micros: add_optional(self.cost_usd_micros, other.cost_usd_micros),
+        }
+    }
+}
+
+fn add_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (None, None) => None,
+        (left, right) => Some(
+            left.unwrap_or_default()
+                .saturating_add(right.unwrap_or_default()),
+        ),
+    }
 }
 
 /// Semantic event produced while a provider response is streaming.
