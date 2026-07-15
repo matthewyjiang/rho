@@ -123,10 +123,10 @@ pub fn compact_display_path(cwd: &std::path::Path, path: &str) -> String {
             if path.as_os_str().is_empty() {
                 ".".to_string()
             } else {
-                path.display().to_string()
+                crate::paths::display(path)
             }
         })
-        .unwrap_or_else(|| path.display().to_string())
+        .unwrap_or_else(|| crate::paths::display(&path))
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

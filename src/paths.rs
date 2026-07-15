@@ -1,4 +1,20 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
+
+/// Renders paths consistently in user-facing text and structured output.
+pub(crate) fn display(path: &Path) -> String {
+    let rendered = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        rendered.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        rendered.into_owned()
+    }
+}
 
 /// Returns the user's home directory using platform-appropriate environment variables.
 pub(crate) fn home_dir() -> Option<PathBuf> {

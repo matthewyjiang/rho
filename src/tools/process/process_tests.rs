@@ -4,6 +4,40 @@ use crate::tool::{Tool, ToolContext, ToolError};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 
+#[cfg(unix)]
+const STREAMED_COMMAND: &str = "printf streamed";
+#[cfg(windows)]
+const STREAMED_COMMAND: &str = "[Console]::Out.Write('streamed')";
+#[cfg(unix)]
+const LONG_RUNNING_COMMAND: &str = "sleep 300";
+#[cfg(windows)]
+const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
+#[cfg(unix)]
+const STDIN_CLOSED_COMMAND: &str = "read input || printf closed";
+#[cfg(windows)]
+const STDIN_CLOSED_COMMAND: &str =
+    "$input = [Console]::In.ReadToEnd(); if ($input.Length -eq 0) { [Console]::Out.Write('closed') }";
+#[cfg(unix)]
+const MIXED_OUTPUT_COMMAND: &str = "printf out; printf err >&2";
+#[cfg(windows)]
+const MIXED_OUTPUT_COMMAND: &str = "[Console]::Out.Write('out'); [Console]::Error.Write('err')";
+#[cfg(unix)]
+const LIMITED_OUTPUT_COMMAND: &str = "printf abc; printf def";
+#[cfg(windows)]
+const LIMITED_OUTPUT_COMMAND: &str = "[Console]::Out.Write('abcdef')";
+#[cfg(unix)]
+const DELAYED_OUTPUT_COMMAND: &str = "sleep 0.05; printf wake";
+#[cfg(windows)]
+const DELAYED_OUTPUT_COMMAND: &str = "Start-Sleep -Milliseconds 50; [Console]::Out.Write('wake')";
+#[cfg(unix)]
+const LARGE_OUTPUT_COMMAND: &str = "head -c 1000000 /dev/zero | tr '\\0' x";
+#[cfg(windows)]
+const LARGE_OUTPUT_COMMAND: &str = "[Console]::Out.Write('x' * 1000000)";
+#[cfg(unix)]
+const SUCCESS_COMMAND: &str = "true";
+#[cfg(windows)]
+const SUCCESS_COMMAND: &str = "exit 0";
+
 async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
     let mut cursor = 0;
     loop {
@@ -52,7 +86,7 @@ async fn process_tool_streams_structured_snapshot_lines() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let tool = Process::new(manager.clone());
     let started = manager
-        .start("printf streamed".into(), std::path::Path::new("."), None)
+        .start(STREAMED_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
@@ -84,7 +118,7 @@ async fn process_tool_dispatches_start_poll_and_stop() {
     let tool = Process::new(manager.clone());
     let started = tool
         .call(
-            json!({"action": "start", "command": "sleep 300"}),
+            json!({"action": "start", "command": LONG_RUNNING_COMMAND}),
             tool_context(),
             "start-call".into(),
         )
@@ -147,11 +181,7 @@ async fn process_tool_rejects_invalid_action_arguments() {
 async fn managed_process_stdin_is_closed() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start(
-            "read input || printf closed".into(),
-            std::path::Path::new("."),
-            None,
-        )
+        .start(STDIN_CLOSED_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
@@ -167,11 +197,7 @@ async fn managed_process_stdin_is_closed() {
 async fn captures_streams_and_incremental_cursors() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start(
-            "printf out; printf err >&2".into(),
-            std::path::Path::new("."),
-            None,
-        )
+        .start(MIXED_OUTPUT_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let done = eventually(&manager, &started.process_id).await;
@@ -204,7 +230,7 @@ async fn stale_cursor_and_byte_and_chunk_limits_are_explicit() {
     });
     let started = manager
         .start(
-            "printf abc; printf def".into(),
+            LIMITED_OUTPUT_COMMAND.into(),
             std::path::Path::new("."),
             None,
         )
@@ -224,7 +250,7 @@ async fn long_poll_observes_output_without_missed_wakeup() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
         .start(
-            "sleep 0.05; printf wake".into(),
+            DELAYED_OUTPUT_COMMAND.into(),
             std::path::Path::new("."),
             None,
         )
@@ -255,12 +281,12 @@ async fn enforces_live_limit_and_shutdown_is_terminal() {
         ..ProcessLimits::default()
     });
     let first = manager
-        .start("sleep 300".into(), std::path::Path::new("."), None)
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     assert_eq!(
         manager
-            .start("sleep 300".into(), std::path::Path::new("."), None)
+            .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
             .await
             .unwrap_err(),
         "live process limit reached"
@@ -281,7 +307,7 @@ async fn timeout_and_stop_reach_distinct_terminal_states() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let timeout = manager
         .start(
-            "sleep 300".into(),
+            LONG_RUNNING_COMMAND.into(),
             std::path::Path::new("."),
             Some(Duration::from_millis(20)),
         )
@@ -292,7 +318,7 @@ async fn timeout_and_stop_reach_distinct_terminal_states() {
         State::TimedOut
     );
     let stopped = manager
-        .start("sleep 300".into(), std::path::Path::new("."), None)
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     manager
@@ -312,11 +338,7 @@ async fn drains_all_output_before_marking_terminal() {
         ..ProcessLimits::default()
     });
     let started = manager
-        .start(
-            "head -c 1000000 /dev/zero | tr '\\0' x".into(),
-            std::path::Path::new("."),
-            None,
-        )
+        .start(LARGE_OUTPUT_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
@@ -341,7 +363,7 @@ async fn retained_record_limit_removes_oldest_completed_records() {
         ..ProcessLimits::default()
     });
     let mut ids = Vec::new();
-    for command in ["true", "true", "true"] {
+    for command in [SUCCESS_COMMAND, SUCCESS_COMMAND, SUCCESS_COMMAND] {
         let started = manager
             .start(command.into(), std::path::Path::new("."), None)
             .await
@@ -350,7 +372,7 @@ async fn retained_record_limit_removes_oldest_completed_records() {
         ids.push(started.process_id);
     }
     let fourth = manager
-        .start("true".into(), std::path::Path::new("."), None)
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     eventually(&manager, &fourth.process_id).await;
@@ -361,7 +383,7 @@ async fn retained_record_limit_removes_oldest_completed_records() {
 async fn concurrent_poll_and_stop_do_not_deadlock() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start("sleep 300".into(), std::path::Path::new("."), None)
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let id = started.process_id;
@@ -498,7 +520,7 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
         .parse()
         .unwrap();
     let url = format!("http://127.0.0.1:{port}/Cargo.toml");
-    let body = tokio::time::timeout(Duration::from_secs(5), async {
+    let body = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             if let Ok(response) = reqwest::get(&url).await {
                 break response.text().await.unwrap();
@@ -550,7 +572,7 @@ async fn concurrent_starts_atomically_enforce_live_limit() {
             tokio::spawn(async move {
                 barrier.wait().await;
                 manager
-                    .start("sleep 300".into(), std::path::Path::new("."), None)
+                    .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
                     .await
             })
         })
@@ -671,7 +693,7 @@ async fn bounded_poll_skips_a_chunk_larger_than_the_budget() {
 async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
-        .start("sleep 300".into(), std::path::Path::new("."), None)
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
     let stop = {

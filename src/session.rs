@@ -413,7 +413,9 @@ impl Session {
         let mut serialized = serde_json::to_vec(entry)?;
         serialized.push(b'\n');
         let mut options = OpenOptions::new();
-        options.create(true).read(true).append(true);
+        // Windows requires write access, in addition to append access, when
+        // truncating an incomplete trailing JSONL record before appending.
+        options.create(true).read(true).write(true).append(true);
         #[cfg(unix)]
         options.mode(0o600);
 

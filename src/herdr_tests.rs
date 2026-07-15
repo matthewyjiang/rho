@@ -14,6 +14,7 @@ fn disabled_without_complete_herdr_environment() {
     assert!(!reporter.is_enabled());
 }
 
+#[cfg(unix)]
 #[test]
 fn enabled_from_complete_herdr_environment() {
     let values = HashMap::from([
@@ -24,6 +25,19 @@ fn enabled_from_complete_herdr_environment() {
     let reporter = HerdrReporter::from_env_vars(|key| values.get(key).map(|value| (*value).into()));
 
     assert!(reporter.is_enabled());
+}
+
+#[cfg(windows)]
+#[test]
+fn disabled_when_platform_does_not_support_herdr_socket() {
+    let values = HashMap::from([
+        ("HERDR_ENV", "1"),
+        ("HERDR_SOCKET_PATH", r"C:\\temp\\herdr.sock"),
+        ("HERDR_PANE_ID", "w1:p1"),
+    ]);
+    let reporter = HerdrReporter::from_env_vars(|key| values.get(key).map(|value| (*value).into()));
+
+    assert!(!reporter.is_enabled());
 }
 
 #[cfg(unix)]

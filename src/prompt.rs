@@ -225,7 +225,7 @@ mod tests {
         assert!(prompt.contains("<description>rho skill desc</description>"));
         assert!(prompt.contains(&format!(
             "<source>{}</source>",
-            skill_dir.join("SKILL.md").display()
+            crate::paths::display(&skill_dir.join("SKILL.md"))
         )));
         assert!(!prompt.contains("rho skill rules"));
     }
