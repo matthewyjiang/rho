@@ -2,6 +2,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,7 +12,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{ContentBlock, Message};
+use crate::model::{ContentBlock, Message, ModelIdentity};
+use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
 mod index;
 #[cfg(test)]
@@ -21,7 +23,8 @@ mod tests;
 #[path = "session_version_tests.rs"]
 mod version_tests;
 
-const SESSION_VERSION: u32 = 1;
+const MIN_SESSION_VERSION: u32 = 1;
+const SESSION_VERSION: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -30,6 +33,7 @@ pub struct Session {
     session_root: PathBuf,
     cwd: PathBuf,
     workspace_key: String,
+    write_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -77,6 +81,12 @@ pub(super) struct SessionIndexRecord {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredDisplayMessage {
+    timestamp: String,
+    message: Message,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SessionEntry {
     Session {
@@ -94,6 +104,11 @@ enum SessionEntry {
     ReplaceHistory {
         timestamp: String,
         messages: Vec<Message>,
+    },
+    Snapshot {
+        timestamp: String,
+        snapshot: SessionSnapshot,
+        display_messages: Vec<StoredDisplayMessage>,
     },
 }
 
@@ -168,34 +183,26 @@ impl Session {
                     .and_then(|summary| summary.title)
             });
 
-        let mut messages = Vec::new();
-        visit_entries(path, |entry| {
-            if let SessionEntry::Message {
-                timestamp,
-                message,
-                display_message,
-            } = entry
-            {
-                messages.push(ExportedMessage {
-                    timestamp: parse_timestamp(&timestamp),
-                    message: display_message.map_or(message, |message| *message),
-                });
-            }
-            Ok(())
-        })?;
+        let state = read_session_state(path)?;
+        let mut messages = state.display;
         let complete_len = drop_incomplete_tool_turn_tail(
             messages.iter().map(|entry| entry.message.clone()).collect(),
         )
         .len();
         messages.truncate(complete_len);
-
         Ok(SessionExport {
             id: record.summary.id,
             cwd: record.summary.cwd,
             created_at: record.summary.created_at,
             updated_at: record.summary.updated_at,
             title,
-            messages,
+            messages: messages
+                .into_iter()
+                .map(|message| ExportedMessage {
+                    timestamp: parse_timestamp(&message.timestamp),
+                    message: message.message,
+                })
+                .collect(),
         })
     }
 
@@ -258,6 +265,7 @@ impl Session {
         Ok(session)
     }
 
+    #[cfg(test)]
     pub fn append_message(&self, message: &Message) -> anyhow::Result<()> {
         self.append_entry(&SessionEntry::Message {
             timestamp: timestamp(),
@@ -268,6 +276,7 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn append_message_with_display(
         &self,
         message: &Message,
@@ -282,6 +291,7 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn replace_history(&self, messages: &[Message]) -> anyhow::Result<()> {
         self.append_entry(&SessionEntry::ReplaceHistory {
             timestamp: timestamp(),
@@ -291,6 +301,90 @@ impl Session {
         Ok(())
     }
 
+    /// Saves one complete SDK snapshot and its newly visible transcript tail.
+    ///
+    /// The snapshot and display update share one JSONL record. Readers ignore a
+    /// truncated final record, so a failed or interrupted append retains the
+    /// previous complete snapshot and transcript.
+    pub(crate) fn save_snapshot(
+        &self,
+        snapshot: &SessionSnapshot,
+        display_tail: &[Message],
+    ) -> anyhow::Result<()> {
+        if snapshot.session_id().as_str() != self.id {
+            anyhow::bail!(
+                "snapshot session id '{}' does not match store id '{}'",
+                snapshot.session_id(),
+                self.id
+            );
+        }
+        let _guard = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let display_messages = display_tail
+            .iter()
+            .cloned()
+            .map(|message| StoredDisplayMessage {
+                timestamp: timestamp(),
+                message,
+            })
+            .collect();
+        self.append_entry_unlocked(&SessionEntry::Snapshot {
+            timestamp: timestamp(),
+            snapshot: snapshot.clone(),
+            display_messages,
+        })?;
+        let _ = index::record_snapshot(self);
+        Ok(())
+    }
+
+    pub(crate) fn snapshot_for_resume(
+        &self,
+        provider: ModelIdentity,
+        prompt_cache_key: String,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let state = read_session_state(&self.path)?;
+        let history = drop_incomplete_tool_turn_tail(state.model);
+        let mut snapshot = if let Some(snapshot) = state.snapshot {
+            if snapshot.session_id().as_str() != self.id {
+                anyhow::bail!(
+                    "stored snapshot session id '{}' does not match file id '{}'",
+                    snapshot.session_id(),
+                    self.id
+                );
+            }
+            let mut migrated = SessionSnapshot::new(
+                snapshot.session_id().clone(),
+                state.revision,
+                history,
+                snapshot.provider().clone(),
+                state.compaction,
+            );
+            for (key, value) in snapshot.metadata() {
+                migrated = migrated.with_metadata(key.clone(), value.clone());
+            }
+            if let Some(key) = snapshot.prompt_cache_key() {
+                migrated.with_prompt_cache_key(key)
+            } else {
+                migrated.with_prompt_cache_key(prompt_cache_key)
+            }
+        } else {
+            SessionSnapshot::new(
+                SessionId::from_string(self.id.clone())?,
+                state.revision,
+                history,
+                provider,
+                state.compaction,
+            )
+            .with_prompt_cache_key(prompt_cache_key)
+        };
+        if snapshot.schema_version() != rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION {
+            snapshot = SessionSnapshot::from_json(&snapshot.to_json()?)?;
+        }
+        Ok(snapshot)
+    }
+
     fn from_parts(session_root: &Path, cwd: &Path, id: String, path: PathBuf) -> Self {
         Self {
             id,
@@ -298,6 +392,7 @@ impl Session {
             session_root: session_root.to_path_buf(),
             cwd: cwd.to_path_buf(),
             workspace_key: workspace_key(cwd),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -311,47 +406,171 @@ impl Session {
     }
 
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.append_entry_unlocked(entry)
+    }
+
+    fn append_entry_unlocked(&self, entry: &SessionEntry) -> anyhow::Result<()> {
+        let mut serialized = serde_json::to_vec(entry)?;
+        serialized.push(b'\n');
         let mut options = OpenOptions::new();
-        options.create(true).append(true);
+        options.create(true).read(true).append(true);
         #[cfg(unix)]
         options.mode(0o600);
 
+        let original_len = fs::metadata(&self.path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let (previous_len, needs_separator) = recoverable_jsonl_end(&self.path)?;
         let mut file = options.open(&self.path)?;
         set_private_file_permissions(&file)?;
-        serde_json::to_writer(&mut file, entry)?;
-        file.write_all(b"\n")?;
-        file.sync_data()?;
+        if previous_len != original_len {
+            file.set_len(previous_len)?;
+        }
+        if needs_separator {
+            serialized.insert(0, b'\n');
+        }
+        if let Err(error) = file.write_all(&serialized).and_then(|()| file.sync_data()) {
+            let _ = file.set_len(previous_len);
+            let _ = file.sync_data();
+            return Err(error.into());
+        }
         Ok(())
     }
 }
 
+#[derive(Default)]
+struct PersistedSessionState {
+    model: Vec<Message>,
+    display: Vec<StoredDisplayMessage>,
+    snapshot: Option<SessionSnapshot>,
+    revision: Revision,
+    compaction: CompactionState,
+}
+
+impl rho_sdk::SessionStore for Session {
+    fn load<'a>(
+        &'a self,
+        id: &'a SessionId,
+    ) -> rho_sdk::SessionStoreFuture<'a, Option<SessionSnapshot>> {
+        Box::pin(async move {
+            if id.as_str() != self.id {
+                return Ok(None);
+            }
+            let state = read_session_state(&self.path).map_err(persistence_error)?;
+            let Some(stored) = state.snapshot else {
+                return Ok(None);
+            };
+            let cache_key = stored
+                .prompt_cache_key()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("rho:{}", self.id));
+            self.snapshot_for_resume(stored.provider().clone(), cache_key)
+                .map(Some)
+                .map_err(persistence_error)
+        })
+    }
+
+    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> rho_sdk::SessionStoreFuture<'a, ()> {
+        Box::pin(async move {
+            self.save_snapshot(&snapshot, &[])
+                .map_err(persistence_error)
+        })
+    }
+}
+
+fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
+    rho_sdk::Error::Persistence {
+        message: error.to_string(),
+    }
+}
+
+fn recoverable_jsonl_end(path: &Path) -> anyhow::Result<(u64, bool)> {
+    let Ok(contents) = fs::read(path) else {
+        return Ok((0, false));
+    };
+    if contents.is_empty() || contents.ends_with(b"\n") {
+        return Ok((contents.len() as u64, false));
+    }
+    let tail_start = contents
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |position| position + 1);
+    match serde_json::from_slice::<SessionEntry>(&contents[tail_start..]) {
+        Ok(_) => Ok((contents.len() as u64, true)),
+        Err(error) if error.is_eof() => Ok((tail_start as u64, false)),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
-    let mut replacement = Vec::new();
-    let mut model_tail = Vec::new();
-    let mut display = Vec::new();
+    let state = read_session_state(path)?;
+    Ok(SessionHistories {
+        model: drop_incomplete_tool_turn_tail(state.model),
+        display: drop_incomplete_tool_turn_tail(
+            state
+                .display
+                .into_iter()
+                .map(|entry| entry.message)
+                .collect(),
+        ),
+    })
+}
+
+fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
+    let mut state = PersistedSessionState::default();
     visit_entries(path, |entry| {
         match entry {
             SessionEntry::Session { .. } => {}
             SessionEntry::Message {
+                timestamp,
                 message,
                 display_message,
-                ..
             } => {
-                display.push(display_message.map_or_else(|| message.clone(), |message| *message));
-                model_tail.push(message);
+                state.display.push(StoredDisplayMessage {
+                    timestamp,
+                    message: display_message.map_or_else(|| message.clone(), |message| *message),
+                });
+                state.model.push(message);
+                state.revision = next_revision(state.revision)?;
             }
             SessionEntry::ReplaceHistory { messages, .. } => {
-                replacement = messages;
-                model_tail.clear();
+                let previous_messages = state.model.len();
+                state.model = messages;
+                state.revision = next_revision(state.revision)?;
+                state.compaction = CompactionState::from_parts(
+                    state.compaction.completed_compactions().saturating_add(1),
+                    state
+                        .compaction
+                        .removed_messages()
+                        .saturating_add(previous_messages.saturating_sub(state.model.len()) as u64),
+                    Some(state.revision),
+                );
+            }
+            SessionEntry::Snapshot {
+                snapshot,
+                display_messages,
+                ..
+            } => {
+                state.model = snapshot.history().to_vec();
+                state.display.extend(display_messages);
+                state.revision = snapshot.revision();
+                state.compaction = snapshot.compaction().clone();
+                state.snapshot = Some(snapshot);
             }
         }
         Ok(())
     })?;
-    replacement.extend(model_tail);
-    Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(replacement),
-        display: drop_incomplete_tool_turn_tail(display),
-    })
+    Ok(state)
+}
+
+fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
+    revision
+        .checked_next()
+        .ok_or_else(|| anyhow::anyhow!("session revision is exhausted"))
 }
 
 fn visit_entries(
@@ -385,7 +604,7 @@ fn visit_entries(
 
 fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
     match version {
-        0..=SESSION_VERSION => Ok(()),
+        MIN_SESSION_VERSION..=SESSION_VERSION => Ok(()),
         _ => {
             eprintln!(
                 "warning: skipping session {} with unsupported version {version} (maximum supported: {SESSION_VERSION})",
@@ -448,6 +667,16 @@ pub(super) fn summarize_session_file(
                     updated_at = updated_at.max(timestamp);
                 }
                 messages = replacement;
+            }
+            SessionEntry::Snapshot {
+                timestamp,
+                display_messages,
+                ..
+            } => {
+                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                    updated_at = updated_at.max(timestamp);
+                }
+                messages.extend(display_messages.into_iter().map(|entry| entry.message));
             }
         }
         Ok(())

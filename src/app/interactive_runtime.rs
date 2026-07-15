@@ -61,7 +61,7 @@ pub(crate) struct InteractiveRuntime {
     compaction: CompactionConfig,
     context_window: Option<u64>,
     storage: Option<StoredSession>,
-    persisted_history_len: usize,
+    pending_model_user: Option<Message>,
     pending_display_user: Option<Message>,
     pending_session_id: Option<SessionId>,
 }
@@ -120,15 +120,31 @@ impl InteractiveRuntime {
             compaction.clone(),
             context_window,
         )?;
-        let mut options = SessionOptions::new().history(history);
-        if let Some(id) = session_id.as_deref() {
-            options = options.id(SessionId::from_string(id)?).prompt_cache_key(
-                crate::providers::openai::prompt_cache_key_from_session_id(id)
-                    .unwrap_or_else(|| format!("rho:{id}")),
-            );
-        }
+        let cache_key = session_id.as_deref().map(prompt_cache_key);
+        let resumed_snapshot = storage
+            .as_ref()
+            .map(|storage| {
+                storage.snapshot_for_resume(
+                    provider.identity(),
+                    cache_key
+                        .clone()
+                        .unwrap_or_else(|| prompt_cache_key(storage.id())),
+                )
+            })
+            .transpose()?;
+        let options = if let Some(snapshot) = resumed_snapshot {
+            report_resume_omissions(&snapshot, &provider.identity());
+            SessionOptions::from_snapshot(snapshot)
+        } else {
+            let mut options = SessionOptions::new().history(history);
+            if let Some(id) = session_id.as_deref() {
+                options = options
+                    .id(SessionId::from_string(id)?)
+                    .prompt_cache_key(cache_key.unwrap_or_else(|| prompt_cache_key(id)));
+            }
+            options
+        };
         let session = runtime.session(options).await?;
-        let persisted_history_len = session.history().len();
         Ok(Self {
             runtime,
             session,
@@ -142,7 +158,7 @@ impl InteractiveRuntime {
             compaction,
             context_window,
             storage,
-            persisted_history_len,
+            pending_model_user: None,
             pending_display_user: None,
             pending_session_id: None,
         })
@@ -186,8 +202,11 @@ impl InteractiveRuntime {
                     message: error.to_string(),
                 })?;
         }
+        let model_user = Message::User(input.blocks().to_vec());
+        let run = self.session.start(input).await?;
+        self.pending_model_user = Some(model_user);
         self.pending_display_user = display_user;
-        self.active_run = Some(self.session.start(input).await?);
+        self.active_run = Some(run);
         self.state = InteractiveState::Running;
         Ok(())
     }
@@ -240,6 +259,7 @@ impl InteractiveRuntime {
             .ok_or_else(|| anyhow::anyhow!("no active run"))?;
         let outcome = run.outcome().await;
         self.sync_storage()?;
+        self.pending_model_user = None;
         self.pending_display_user = None;
         self.state = InteractiveState::Idle;
         Ok(outcome?)
@@ -271,14 +291,14 @@ impl InteractiveRuntime {
     pub(crate) async fn resume(
         &mut self,
         storage: StoredSession,
-        history: Vec<Message>,
+        _history: Vec<Message>,
     ) -> anyhow::Result<()> {
         if self.active_run.is_some() {
             anyhow::bail!("cannot resume while a run is active");
         }
         let id = storage.id().to_string();
         self.storage = Some(storage);
-        self.rebuild_session(history, Some(id)).await
+        self.rebuild_session(Vec::new(), Some(id)).await
     }
 
     pub(crate) fn replace_provider(
@@ -301,9 +321,8 @@ impl InteractiveRuntime {
         let message = Message::user_text(model);
         self.session.append_message(message.clone())?;
         if let Some(storage) = &self.storage {
-            storage.append_message_with_display(&message, &Message::user_text(display))?;
+            storage.save_snapshot(&self.session.snapshot(), &[Message::user_text(display)])?;
         }
-        self.persisted_history_len = self.session.history().len();
         Ok(())
     }
 
@@ -319,9 +338,8 @@ impl InteractiveRuntime {
         ));
         self.session.append_message(message.clone())?;
         if let Some(storage) = &self.storage {
-            storage.append_message(&message)?;
+            storage.save_snapshot(&self.session.snapshot(), std::slice::from_ref(&message))?;
         }
-        self.persisted_history_len = self.session.history().len();
         Ok(())
     }
 
@@ -353,16 +371,26 @@ impl InteractiveRuntime {
             self.compaction.clone(),
             self.context_window,
         )?;
-        let mut options = SessionOptions::new().history(history);
-        if let Some(id) = id.as_deref() {
-            options = options.id(SessionId::from_string(id)?).prompt_cache_key(
-                crate::providers::openai::prompt_cache_key_from_session_id(id)
-                    .unwrap_or_else(|| format!("rho:{id}")),
-            );
-        }
+        let options = if let Some(storage) = &self.storage {
+            let snapshot = storage.snapshot_for_resume(
+                self.provider.identity(),
+                id.as_deref()
+                    .map(prompt_cache_key)
+                    .unwrap_or_else(|| prompt_cache_key(storage.id())),
+            )?;
+            report_resume_omissions(&snapshot, &self.provider.identity());
+            SessionOptions::from_snapshot(snapshot)
+        } else {
+            let mut options = SessionOptions::new().history(history);
+            if let Some(id) = id.as_deref() {
+                options = options
+                    .id(SessionId::from_string(id)?)
+                    .prompt_cache_key(prompt_cache_key(id));
+            }
+            options
+        };
         self.session = self.runtime.session(options).await?;
         self.pending_session_id = None;
-        self.persisted_history_len = self.session.history().len();
         self.state = InteractiveState::Idle;
         Ok(())
     }
@@ -370,29 +398,46 @@ impl InteractiveRuntime {
     fn sync_storage(&mut self) -> anyhow::Result<()> {
         let history = self.session.history();
         let Some(storage) = &self.storage else {
-            self.persisted_history_len = history.len();
             return Ok(());
         };
-        for (offset, message) in history[self.persisted_history_len..].iter().enumerate() {
-            if offset == 0 {
-                if let Some(display) = &self.pending_display_user {
-                    storage.append_message_with_display(message, display)?;
-                    continue;
-                }
-            }
-            storage.append_message(message)?;
+        let display_start = self
+            .pending_model_user
+            .as_ref()
+            .and_then(|user| history.iter().rposition(|message| message == user))
+            .unwrap_or(history.len());
+        let mut display_tail = history[display_start..].to_vec();
+        if let (Some(display), Some(first)) = (&self.pending_display_user, display_tail.first_mut())
+        {
+            *first = display.clone();
         }
-        self.persisted_history_len = history.len();
+        storage.save_snapshot(&self.session.snapshot(), &display_tail)?;
         Ok(())
     }
 
     fn sync_storage_replace(&mut self) -> anyhow::Result<()> {
-        let history = self.session.history();
         if let Some(storage) = &self.storage {
-            storage.replace_history(&history)?;
+            storage.save_snapshot(&self.session.snapshot(), &[])?;
         }
-        self.persisted_history_len = history.len();
         Ok(())
+    }
+}
+
+fn prompt_cache_key(id: &str) -> String {
+    crate::providers::openai::prompt_cache_key_from_session_id(id)
+        .unwrap_or_else(|| format!("rho:{id}"))
+}
+
+fn report_resume_omissions(
+    snapshot: &rho_sdk::SessionSnapshot,
+    target: &rho_sdk::model::ModelIdentity,
+) {
+    let report = snapshot.provider_context_omissions(target);
+    if report.has_omissions() {
+        eprintln!(
+            "warning: omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
+            report.omitted_provider_context,
+            report.omitted_kinds.join(", ")
+        );
     }
 }
 

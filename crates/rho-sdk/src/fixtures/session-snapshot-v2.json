@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "session_id": "22222222-2222-4222-8222-222222222222",
+  "revision": 5,
+  "history": [
+    {"User": [{"Text": "current prompt"}]},
+    {"Assistant": [{"Text": "current answer"}]}
+  ],
+  "provider": {
+    "provider": "fixture-provider",
+    "api": "fixture-api",
+    "model": "fixture-model"
+  },
+  "compaction": {
+    "completed_compactions": 2,
+    "removed_messages": 7,
+    "last_revision": 4
+  },
+  "metadata": {"title": "snapshot v2"},
+  "prompt_cache_key": "rho:fixture-cache"
+}

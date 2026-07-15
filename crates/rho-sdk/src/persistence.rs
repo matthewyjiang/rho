@@ -1,14 +1,16 @@
-use std::{collections::BTreeMap, fmt, sync::Mutex};
+use std::{collections::BTreeMap, fmt, future::Future, pin::Pin, sync::Mutex};
 
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     model::{Message, ModelIdentity},
     CompactionState, Error, Revision, SessionId,
 };
 
+/// Oldest portable session snapshot schema accepted by this SDK.
+pub const MIN_SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 /// Current portable session snapshot schema.
-pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// Versioned, portable state required to continue an SDK session.
 ///
@@ -16,8 +18,20 @@ pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 /// exact provider/API/model identity. Restoring with another provider leaves
 /// those blocks in history but they are omitted by handoff logic. Raw reasoning
 /// is always cleared before a snapshot is created or serialized.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionSnapshot {
+    schema_version: u32,
+    session_id: SessionId,
+    revision: Revision,
+    history: Vec<Message>,
+    provider: ModelIdentity,
+    compaction: CompactionState,
+    metadata: BTreeMap<String, String>,
+    prompt_cache_key: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionSnapshotWire {
     schema_version: u32,
     session_id: SessionId,
     revision: Revision,
@@ -27,10 +41,13 @@ pub struct SessionSnapshot {
     compaction: CompactionState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prompt_cache_key: Option<String>,
 }
 
 impl SessionSnapshot {
-    pub(crate) fn new(
+    /// Constructs a portable snapshot for a host persistence adapter.
+    pub fn new(
         session_id: SessionId,
         revision: Revision,
         history: Vec<Message>,
@@ -45,6 +62,7 @@ impl SessionSnapshot {
             provider,
             compaction,
             metadata: BTreeMap::new(),
+            prompt_cache_key: None,
         }
     }
 
@@ -76,9 +94,27 @@ impl SessionSnapshot {
         &self.metadata
     }
 
+    /// Returns the opaque, non-secret provider prompt-cache identity.
+    pub fn prompt_cache_key(&self) -> Option<&str> {
+        self.prompt_cache_key.as_deref()
+    }
+
+    pub fn with_prompt_cache_key(mut self, prompt_cache_key: impl Into<String>) -> Self {
+        self.prompt_cache_key = Some(prompt_cache_key.into());
+        self
+    }
+
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
+    }
+
+    /// Reports provider-native blocks that cannot replay to `target`.
+    pub fn provider_context_omissions(
+        &self,
+        target: &ModelIdentity,
+    ) -> crate::model::handoff::HandoffReport {
+        crate::model::handoff::report_message_omissions(&self.history, target)
     }
 
     pub fn to_json(&self) -> Result<String, Error> {
@@ -88,20 +124,57 @@ impl SessionSnapshot {
     }
 
     pub fn from_json(json: &str) -> Result<Self, Error> {
-        let mut snapshot: Self =
-            serde_json::from_str(json).map_err(|error| Error::Persistence {
-                message: format!("failed to deserialize session snapshot: {error}"),
-            })?;
-        if snapshot.schema_version != SESSION_SNAPSHOT_SCHEMA_VERSION {
-            return Err(Error::Persistence {
-                message: format!(
-                    "unsupported session snapshot schema {}; expected {}",
-                    snapshot.schema_version, SESSION_SNAPSHOT_SCHEMA_VERSION
-                ),
-            });
+        serde_json::from_str(json).map_err(|error| Error::Persistence {
+            message: format!("failed to deserialize session snapshot: {error}"),
+        })
+    }
+}
+
+impl Serialize for SessionSnapshot {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SessionSnapshotWire {
+            schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
+            session_id: self.session_id.clone(),
+            revision: self.revision,
+            history: sanitized_history(self.history.clone()),
+            provider: self.provider.clone(),
+            compaction: self.compaction.clone(),
+            metadata: self.metadata.clone(),
+            prompt_cache_key: self.prompt_cache_key.clone(),
         }
-        snapshot.history = sanitized_history(snapshot.history);
-        Ok(snapshot)
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionSnapshot {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = SessionSnapshotWire::deserialize(deserializer)?;
+        if !(MIN_SESSION_SNAPSHOT_SCHEMA_VERSION..=SESSION_SNAPSHOT_SCHEMA_VERSION)
+            .contains(&wire.schema_version)
+        {
+            return Err(D::Error::custom(format!(
+                "unsupported session snapshot schema {}; supported versions are {} through {}",
+                wire.schema_version,
+                MIN_SESSION_SNAPSHOT_SCHEMA_VERSION,
+                SESSION_SNAPSHOT_SCHEMA_VERSION
+            )));
+        }
+        Ok(Self {
+            schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
+            session_id: wire.session_id,
+            revision: wire.revision,
+            history: sanitized_history(wire.history),
+            provider: wire.provider,
+            compaction: wire.compaction,
+            metadata: wire.metadata,
+            prompt_cache_key: wire.prompt_cache_key,
+        })
     }
 }
 
@@ -112,6 +185,21 @@ fn sanitized_history(mut history: Vec<Message>) -> Vec<Message> {
         }
     }
     history
+}
+
+/// Future returned by [`SessionStore`] operations.
+pub type SessionStoreFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>;
+
+/// Storage boundary for complete, versioned session snapshots.
+///
+/// A successful save atomically replaces the complete prior snapshot for the
+/// session ID. A failed save must leave the prior snapshot loadable. Stores do
+/// not support concurrent writers to one session unless they document stronger
+/// revision-conflict behavior.
+pub trait SessionStore: Send + Sync {
+    fn load<'a>(&'a self, id: &'a SessionId) -> SessionStoreFuture<'a, Option<SessionSnapshot>>;
+
+    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> SessionStoreFuture<'a, ()>;
 }
 
 /// Concrete in-memory snapshot adapter for hosts, tests, and examples.
@@ -159,6 +247,19 @@ impl InMemorySessionStore {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+impl SessionStore for InMemorySessionStore {
+    fn load<'a>(&'a self, id: &'a SessionId) -> SessionStoreFuture<'a, Option<SessionSnapshot>> {
+        Box::pin(async move { Ok(InMemorySessionStore::load(self, id)) })
+    }
+
+    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> SessionStoreFuture<'a, ()> {
+        Box::pin(async move {
+            InMemorySessionStore::save(self, snapshot);
+            Ok(())
+        })
     }
 }
 

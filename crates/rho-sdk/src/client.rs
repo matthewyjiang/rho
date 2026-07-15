@@ -148,7 +148,7 @@ impl SessionOptions {
             history: snapshot.history().to_vec(),
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
-            prompt_cache_key: None,
+            prompt_cache_key: snapshot.prompt_cache_key().map(str::to_owned),
             apply_system_prompt: false,
         }
     }

@@ -38,7 +38,7 @@ A compactor must preserve valid conversation structure and all information the h
 
 ## Snapshot schema
 
-`Session::snapshot` returns `SessionSnapshot`, the stable persistence boundary proposed for 1.0. Schema version 1 contains:
+`Session::snapshot` returns `SessionSnapshot`, the stable persistence boundary proposed for 1.0. Schema version 2 contains:
 
 - schema version
 - session ID
@@ -47,8 +47,9 @@ A compactor must preserve valid conversation structure and all information the h
 - provider identity
 - compaction continuation state
 - string metadata
+- an optional opaque, non-secret prompt-cache key
 
-Snapshots are cloneable, comparable, Serde serializable/deserializable, and available through `to_json` and `from_json`. JSON import rejects a schema version other than the current `SESSION_SNAPSHOT_SCHEMA_VERSION` rather than guessing a migration.
+Schema version 1 remains readable and migrates in memory to version 2 with no prompt-cache key. Serialization always emits the current schema. JSON import and direct Serde deserialization reject malformed, older-than-supported, and newer schemas rather than guessing a migration.
 
 The schema intentionally does **not** contain:
 
@@ -69,7 +70,7 @@ Provider-native context remains in snapshot history tagged with the exact provid
 
 ## Store and atomicity responsibilities
 
-The SDK includes `InMemorySessionStore` for examples, tests, and simple hosts. It replaces a complete snapshot while holding one mutex, so readers see either the previous value or the complete replacement. It is not durable and is not a public transactional `SessionStore` abstraction.
+The SDK exposes a `SessionStore` interface that loads and atomically replaces complete snapshots. Its `Send` futures allow durable adapters to move blocking work off the runtime thread. A failed save must leave the previous complete snapshot loadable. The included `InMemorySessionStore` implements this contract for examples, tests, and simple hosts by replacing a snapshot while holding one mutex.
 
 A durable host adapter should:
 
@@ -86,7 +87,7 @@ The SDK does not currently call a store automatically after each message. The ho
 
 ## Migration and compatibility
 
-Schema 1 has no older SDK snapshot schema to migrate. Historical Rho application sessions use an application-owned SQLite representation and are not automatically discovered or imported by the SDK. Adapting those sessions to snapshots requires an explicit application adapter and fixture-tested migration.
+Historical Rho application JSONL session schema 1 is migrated by the application adapter to complete SDK snapshots. Current JSONL schema 2 stores each SDK snapshot and its display-history update in one recoverable record, while the versioned SQLite index remains application-owned. Historical JSONL and SQLite fixtures cover every supported application schema.
 
 Compatibility rules are documented in [public contracts](/sdk/compatibility#serialization-contract). The [1.0 upgrade guide](/sdk/upgrade-to-1.0) distinguishes application config, application sessions, and SDK snapshots.
 

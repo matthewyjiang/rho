@@ -285,13 +285,17 @@ impl Session {
 
     pub fn snapshot(&self) -> crate::SessionSnapshot {
         let (history, revision) = self.core.snapshot();
-        crate::SessionSnapshot::new(
+        let mut snapshot = crate::SessionSnapshot::new(
             self.id().clone(),
             revision,
             history,
             self.core.runtime().provider.identity(),
             self.core.compaction_state(),
-        )
+        );
+        if let Some(prompt_cache_key) = self.core.prompt_cache_key() {
+            snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
+        }
+        snapshot
     }
 
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {

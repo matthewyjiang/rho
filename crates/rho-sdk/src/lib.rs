@@ -151,7 +151,10 @@ pub use host_input::{
     HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
 pub use id::{HostInputId, InvalidId, Revision, RunId, SessionId, ToolCallId};
-pub use persistence::{InMemorySessionStore, SessionSnapshot, SESSION_SNAPSHOT_SCHEMA_VERSION};
+pub use persistence::{
+    InMemorySessionStore, SessionSnapshot, SessionStore, SessionStoreFuture,
+    MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SESSION_SNAPSHOT_SCHEMA_VERSION,
+};
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
 pub use run::Run;
 pub use secret::SecretString;

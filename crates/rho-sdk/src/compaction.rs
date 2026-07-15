@@ -19,6 +19,19 @@ pub struct CompactionState {
 }
 
 impl CompactionState {
+    /// Reconstructs persisted compaction continuation state in a storage adapter.
+    pub const fn from_parts(
+        completed_compactions: u64,
+        removed_messages: u64,
+        last_revision: Option<Revision>,
+    ) -> Self {
+        Self {
+            completed_compactions,
+            removed_messages,
+            last_revision,
+        }
+    }
+
     pub fn completed_compactions(&self) -> u64 {
         self.completed_compactions
     }
