@@ -8,7 +8,7 @@ GitHub Copilot uses GitHub device-code auth (`provider = "github-copilot"`, `aut
 /login github-copilot
 ```
 
-`/login github-copilot` starts GitHub device code login. Credentials are stored in the native OS credential store, not in config or transcripts. Stored credentials can be exchanged for short-lived Copilot API tokens and refreshed once after an unauthorized response.
+`/login github-copilot` starts GitHub device code login. Credentials are stored in the native OS credential store, not in config or transcripts. Rho can exchange stored credentials for short-lived Copilot API tokens and refresh them once after an unauthorized response.
 
 ## Sign out
 

@@ -74,7 +74,7 @@ Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use
 
 ## Login and logout
 
-`/login` opens a provider picker; passing a provider name (for example `/login openai`) targets it directly. The exact flow differs per provider — masked API-key entry, browser or device-code OAuth, or GitHub device code login — and is documented on each [provider page](/authentication-and-models#providers). Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login` opens a provider picker; passing a provider name (for example `/login openai`) targets it directly. The exact flow differs per provider: masked API-key entry, browser or device-code OAuth, or GitHub device code login. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials are stored in the native OS credential store, not in config or transcripts.
 
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout.
 
