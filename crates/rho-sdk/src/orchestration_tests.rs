@@ -526,7 +526,8 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
         Vec::new(),
         Revision::INITIAL,
         CompactionState::default(),
-        None,
+        /*metadata*/ Default::default(),
+        /*prompt_cache_key*/ None,
         runtime.clone(),
     );
     let cancellation = CancellationToken::new();
