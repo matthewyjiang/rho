@@ -298,6 +298,7 @@ struct App {
     file_query: Option<String>,
     file_palette_dismissed: bool,
     file_match_cache: Option<FileMatchCache>,
+    skill_match_cache: Option<SkillMatchCache>,
     composer: ComposerMode,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
@@ -379,6 +380,13 @@ struct InputDraft {
 struct FileMatchCache {
     query: String,
     matches: std::sync::Arc<Vec<String>>,
+    refreshed_at: Instant,
+}
+
+/// Discovered skills reused across command palette queries, so typing a slash
+/// command does not re-walk skill directories on every keystroke.
+struct SkillMatchCache {
+    skills: std::sync::Arc<Vec<crate::skills::Skill>>,
     refreshed_at: Instant,
 }
 
@@ -663,6 +671,7 @@ impl App {
             file_query: None,
             file_palette_dismissed: false,
             file_match_cache: None,
+            skill_match_cache: None,
             composer: ComposerMode::Input,
             credential_store,
             available_auths,
@@ -1930,6 +1939,9 @@ impl App {
         if self.command_prefix != prefix {
             self.command_prefix = prefix;
             self.command_selection = 0;
+        }
+        if self.command_prefix.is_some() {
+            self.refresh_skill_match_cache();
         }
 
         let match_count = self.command_matches().len();
