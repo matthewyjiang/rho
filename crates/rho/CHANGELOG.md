@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.3...rho-coding-agent-v1.0.4) (2026-07-15)
+
+
+### Bug Fixes
+
+* **provider:** handle callback stream bursts ([#288](https://github.com/matthewyjiang/rho/issues/288)) ([0c996cf](https://github.com/matthewyjiang/rho/commit/0c996cf97f116d689e4363d2f28091a87468a12d))
+* **reasoning:** refresh incomplete model metadata ([#289](https://github.com/matthewyjiang/rho/issues/289)) ([c2115f3](https://github.com/matthewyjiang/rho/commit/c2115f3103847ddff15dcbcdeeb091998dee1451))
+
 ## [1.0.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.2...rho-coding-agent-v1.0.3) (2026-07-15)
 
 
