@@ -40,7 +40,7 @@ def check_metadata() -> None:
             f"rho-coding-agent rust-version must be {APPLICATION_MSRV}"
         )
 
-    policy = (ROOT / "docs" / "sdk-compatibility.md").read_text(encoding="utf-8")
+    policy = (ROOT / "docs" / "sdk" / "compatibility.md").read_text(encoding="utf-8")
     policy_markers = {
         "rho-sdk": f"`rho-sdk` minimum supported Rust version (MSRV) is **{SDK_MSRV}**",
         "rho-coding-agent": (

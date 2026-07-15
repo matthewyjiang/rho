@@ -37,7 +37,6 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Sessions', link: '/sessions' },
-          { text: 'SDK compatibility', link: '/sdk-compatibility' },
           { text: 'Development', link: '/development' },
           { text: 'Changelog', link: '/changelog' }
         ]
@@ -57,8 +56,8 @@ export default defineConfig({
           { text: 'Threat model', link: '/sdk/threat-model' },
           { text: 'Redaction audit', link: '/sdk/redaction-audit' },
           { text: 'Performance acceptance', link: '/sdk/performance' },
-          { text: 'Upgrade to 1.0', link: '/sdk/upgrade-to-1.0' },
-          { text: '1.0 release notes', link: '/sdk/release-notes-1.0' },
+          { text: 'Upgrade to planned 1.0', link: '/sdk/upgrade-to-1.0' },
+          { text: 'Draft 1.0 release notes', link: '/sdk/release-notes-1.0' },
           { text: 'Release candidates', link: '/sdk/release-candidates' }
         ]
       }

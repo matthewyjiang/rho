@@ -280,7 +280,7 @@ async fn request_valid_response(
                 control.events,
                 control.cancellation,
                 RunEvent::ProviderActivity {
-                    kind: "invalid_response_retry".into(),
+                    kind: crate::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
                     detail: format!("retrying malformed provider response after attempt {attempt}"),
                 },
             )
@@ -432,7 +432,7 @@ async fn handle_provider_event(
             RunEvent::ReasoningSummaryDelta { text }
         }
         ModelEvent::WebSearch(detail) => RunEvent::ProviderActivity {
-            kind: "web_search".into(),
+            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
             detail,
         },
         ModelEvent::ToolCallDelta {

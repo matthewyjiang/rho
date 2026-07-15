@@ -27,18 +27,32 @@ use crate::{
 use super::{
     process::{Process, ProcessLimits, ProcessManager},
     sdk_adapter::{coding_tools, CodingToolOptions},
+    sdk_security::{authorize_builtin, authorize_request, security_for},
+    sdk_support::{check_cancelled, required_string, workspace, workspace_root},
 };
 
-#[path = "sdk_security.rs"]
-mod sdk_security;
-use sdk_security::{authorize_builtin, authorize_request, required_string, security_for};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolSetOptions {
+    questionnaire: bool,
+}
 
-pub struct AutomationToolSet {
+impl ToolSetOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn questionnaire(mut self, enabled: bool) -> Self {
+        self.questionnaire = enabled;
+        self
+    }
+}
+
+pub struct AppToolSet {
     tools: Vec<Arc<dyn SdkTool>>,
     processes: Option<ProcessManager>,
 }
 
-impl AutomationToolSet {
+impl AppToolSet {
     pub fn disabled() -> Self {
         Self {
             tools: Vec::new(),
@@ -46,19 +60,7 @@ impl AutomationToolSet {
         }
     }
 
-    pub fn enabled(config: &Config, diagnostics: RuntimeDiagnostics) -> Self {
-        Self::build(config, diagnostics, /*questionnaire*/ false)
-    }
-
-    pub fn interactive(
-        config: &Config,
-        diagnostics: RuntimeDiagnostics,
-        questionnaire: bool,
-    ) -> Self {
-        Self::build(config, diagnostics, questionnaire)
-    }
-
-    fn build(config: &Config, diagnostics: RuntimeDiagnostics, questionnaire: bool) -> Self {
+    pub fn new(config: &Config, diagnostics: RuntimeDiagnostics, options: ToolSetOptions) -> Self {
         let mut tools =
             coding_tools(CodingToolOptions::new().max_output_bytes(config.max_output_bytes));
         let processes = ProcessManager::new(ProcessLimits {
@@ -88,7 +90,7 @@ impl AutomationToolSet {
             super::rho::Rho::new(diagnostics),
             config.max_output_bytes,
         ));
-        if questionnaire {
+        if options.questionnaire {
             tools.push(Arc::new(QuestionnaireTool));
         }
         #[cfg(debug_assertions)]
@@ -157,9 +159,7 @@ impl SdkTool for SdkSkillTool {
                     self.max_output_bytes,
                 )));
             }
-            let workspace = context.workspace().ok_or_else(|| {
-                SdkToolError::new(ToolErrorKind::Execution, "workspace is required for skills")
-            })?;
+            let workspace = workspace(&context)?;
             let requested = std::path::Path::new(".agents")
                 .join("skills")
                 .join(name)
@@ -339,9 +339,7 @@ where
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            if context.cancellation().is_cancelled() {
-                return Err(SdkToolError::cancelled());
-            }
+            check_cancelled(&context)?;
             let spec = self.inner.spec();
             authorize_builtin(
                 &spec.name,
@@ -350,12 +348,7 @@ where
                 self.max_output_bytes,
             )
             .await?;
-            let cwd = context.workspace_root().ok_or_else(|| {
-                SdkToolError::new(
-                    ToolErrorKind::Execution,
-                    "workspace is required for built-in tools",
-                )
-            })?;
+            let cwd = workspace_root(&context)?;
             let id = invocation.id().to_string();
             let arguments = invocation.arguments().clone();
             let app_context = AppToolContext {

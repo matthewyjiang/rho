@@ -28,18 +28,19 @@ use rho_sdk::{
 #[cfg(test)]
 use rho_sdk::tool::{DuplicateToolName, ToolRegistry};
 
-use crate::tool::{compact_display_path, truncate, Tool as AppTool, ToolError as AppToolError};
+use crate::{
+    config::DEFAULT_MAX_OUTPUT_BYTES,
+    tool::{compact_display_path, truncate, Tool as AppTool, ToolError as AppToolError},
+};
 
 use super::{
     edit_file::{apply_edits, EditFile},
     edit_file_args::Args as EditArgs,
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
+    sdk_support::{check_cancelled, workspace, workspace_root},
     write_file::{write_file_content, WriteFile},
 };
-
-/// Default tool-output budget, matching the application configuration default.
-pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
 
 /// Options for coding tools registered on an SDK runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,23 +360,6 @@ fn parse_args<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError>
     })
 }
 
-fn check_cancelled(context: &ToolContext) -> Result<(), ToolError> {
-    if context.cancellation().is_cancelled() {
-        Err(ToolError::cancelled())
-    } else {
-        Ok(())
-    }
-}
-
-fn workspace_root(context: &ToolContext) -> Result<&std::path::Path, ToolError> {
-    context.workspace_root().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "workspace is required for coding tools",
-        )
-    })
-}
-
 fn display_path(context: &ToolContext, path: &str) -> String {
     match context.workspace_root() {
         Some(root) => compact_display_path(root, path),
@@ -389,12 +373,7 @@ async fn authorize_existing_path(
     capability: PathCapability,
     tool_name: &str,
 ) -> Result<PathBuf, ToolError> {
-    let workspace = context.workspace().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "workspace is required for coding tools",
-        )
-    })?;
+    let workspace = workspace(context)?;
     let resolved = workspace.resolve_for_read(path).map_err(map_path_error)?;
     authorize_path(context, &resolved, capability, tool_name).await?;
     workspace.revalidate(&resolved).map_err(map_path_error)?;
@@ -406,12 +385,7 @@ async fn authorize_write_path(
     path: &str,
     tool_name: &str,
 ) -> Result<PathBuf, ToolError> {
-    let workspace = context.workspace().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "workspace is required for coding tools",
-        )
-    })?;
+    let workspace = workspace(context)?;
     let resolved = workspace.resolve_for_write(path).map_err(map_path_error)?;
     authorize_path(context, &resolved, PathCapability::Write, tool_name).await?;
     workspace.revalidate(&resolved).map_err(map_path_error)?;

@@ -20,7 +20,7 @@ use crate::{
     prompt,
     providers::{build_sdk_provider_with_source, UnavailableProvider},
     session::Session as StoredSession,
-    tools::sdk_registry::AutomationToolSet,
+    tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,7 +84,7 @@ pub(crate) struct InteractiveRuntime {
     active_run: Option<Run>,
     state: InteractiveState,
     provider: Arc<dyn ModelProvider>,
-    tools: AutomationToolSet,
+    tools: AppToolSet,
     workspace: Workspace,
     system_prompt: SystemPrompt,
     reasoning: rho_sdk::ReasoningLevel,
@@ -126,9 +126,13 @@ impl InteractiveRuntime {
             }
         };
         let tools = if no_tools {
-            AutomationToolSet::disabled()
+            AppToolSet::disabled()
         } else {
-            AutomationToolSet::interactive(config, diagnostics.clone(), questionnaire_enabled)
+            AppToolSet::new(
+                config,
+                diagnostics.clone(),
+                ToolSetOptions::new().questionnaire(questionnaire_enabled),
+            )
         };
         let specs = tools.specs();
         let system_prompt = if no_system_prompt {
@@ -619,7 +623,7 @@ fn running_unless_cancelling(current: InteractiveState, phase: RunPhase) -> Inte
 
 fn build_runtime(
     provider: Arc<dyn ModelProvider>,
-    tools: &AutomationToolSet,
+    tools: &AppToolSet,
     workspace: Workspace,
     system_prompt: SystemPrompt,
     reasoning: rho_sdk::ReasoningLevel,

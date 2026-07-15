@@ -4,15 +4,13 @@
 
 Use this procedure to audit logs, errors, `Debug`, diagnostics, snapshots, events, provider adapters, tools, and application bridges for secret exposure before a release candidate.
 
-::: danger Current audit is complete but release-blocked
-The current repository audit is recorded in
-[`audits/sdk-redaction-current.json`](../../audits/sdk-redaction-current.json)
-and summarized alongside it. The synthetic canary test passed for SDK Debug,
-errors, events, diagnostics, snapshots, and provider context. Static review
-found three credential containers with derived `Debug` implementations, so the
-release decision remains blocked until the capability/security owner replaces
-those implementations and this audit is rerun. This is a repository-maintainer
-audit, not an independent audit.
+::: warning Audit evidence is generated, not committed
+Run the release-evidence workflow for the candidate commit and download its
+`sdk-redaction-<commit>` artifact from
+[GitHub Actions](https://github.com/matthewyjiang/rho/actions/workflows/sdk-release-evidence.yml).
+The synthetic canary and static audit are repository-maintainer checks, not an
+independent audit. A passing artifact applies only to the commit recorded in its
+JSON payload.
 :::
 
 Run the same release gate with:

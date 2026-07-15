@@ -1,3 +1,6 @@
+// Shared across test binaries; not every binary uses every helper.
+#![allow(dead_code)]
+
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},

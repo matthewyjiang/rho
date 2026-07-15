@@ -30,6 +30,20 @@ fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")
 }
 
+#[test]
+fn runtime_debug_reports_compactor_presence() {
+    let provider = ScriptedProvider::new(identity(), Vec::<ScriptedTurn>::new());
+    let without_compactor = Rho::builder().provider(provider.clone()).build().unwrap();
+    let with_compactor = Rho::builder()
+        .provider(provider)
+        .compactor(crate::ScriptedCompactor::new([]))
+        .build()
+        .unwrap();
+
+    assert!(format!("{without_compactor:?}").contains("compactor: false"));
+    assert!(format!("{with_compactor:?}").contains("compactor: true"));
+}
+
 #[tokio::test]
 async fn simple_completion_and_streaming_share_one_history_path() {
     let provider = ScriptedProvider::new(

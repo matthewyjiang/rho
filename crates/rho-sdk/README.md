@@ -278,7 +278,7 @@ hosts that need coordinated teardown should call `shutdown`.
 
 Session history is replaced under one lock only after a successful run or
 explicit cancellation, so provider, tool, or persistence failure leaves the prior
-revision intact. The 1.0 persistence boundary is the snapshot rather than a
+revision intact. The intended 1.0 persistence boundary is the snapshot rather than a
 public transactional store trait.
 
 ## Features and compatibility
@@ -294,7 +294,7 @@ and separately compiles downstream-only fixture crates. See the
 [SDK compatibility policy][compatibility-policy] for supported platforms,
 SemVer, deprecation, MSRV, feature, and package guarantees.
 
-[compatibility-policy]: https://github.com/matthewyjiang/rho/blob/main/docs/sdk-compatibility.md
+[compatibility-policy]: https://github.com/matthewyjiang/rho/blob/main/docs/sdk/compatibility.md
 
 ## Security defaults
 

@@ -1,4 +1,10 @@
-# Coordinated 1.0 release notes
+# Draft coordinated 1.0 release notes
+
+::: warning Forward-looking contract
+The published SDK version is currently `rho-sdk 0.1.0`. These notes describe
+what will become the 1.0 contract after the release-candidate gates pass; they
+do not announce a 1.0 release.
+:::
 
 Status: draft release notes for the coordinated `rho-sdk` and
 `rho-coding-agent` 1.0 release. Publishing remains blocked on the release gates
@@ -61,8 +67,8 @@ listed in the [release-candidate process](/sdk/release-candidates).
   stderr.
 - Uses exit status 0 for success, 1 for ordinary failures, 130 for SIGINT, and
   143 for SIGTERM after runtime and managed-process cleanup.
-- Does not add a JSON Lines mode in 1.0. Rust `RunEvent` remains the versioned
-  machine-readable streaming contract.
+- Does not add a JSON Lines mode in 1.0. Rust `RunEvent` remains the typed
+  in-process streaming contract, not a versioned serialization format.
 
 ### Interactive compatibility
 

@@ -4,6 +4,8 @@ use rho_sdk::{
     ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
+use super::sdk_support::{required_string, workspace};
+
 pub(super) fn security_for(name: &str) -> ToolSecurity {
     let capabilities = match name {
         "bash" | "powershell" | "process" => vec![CapabilityKind::Process],
@@ -128,12 +130,7 @@ async fn authorize_process(
     max_output_bytes: usize,
     source: CapabilitySource,
 ) -> Result<(), ToolError> {
-    let workspace = context.workspace().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "workspace is required for process tools",
-        )
-    })?;
+    let workspace = workspace(context)?;
     let cwd = workspace
         .resolve_for_read(workspace.root())
         .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
@@ -147,21 +144,6 @@ async fn authorize_process(
     workspace
         .revalidate(&cwd)
         .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))
-}
-
-pub(super) fn required_string<'a>(
-    arguments: &'a serde_json::Value,
-    field: &str,
-) -> Result<&'a str, ToolError> {
-    arguments
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            ToolError::new(
-                ToolErrorKind::InvalidArguments,
-                format!("missing string argument '{field}'"),
-            )
-        })
 }
 
 fn optional_timeout(

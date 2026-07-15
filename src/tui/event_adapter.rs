@@ -1,6 +1,7 @@
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
-    HostInputRequest, HostInputResponse, RunEvent,
+    HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
+    PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 
 use crate::{
@@ -117,10 +118,10 @@ impl SdkEventAdapter {
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
             RunEvent::ProviderActivity { kind, detail } => {
-                if kind == "invalid_response_retry" {
+                if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
                     self.presenter().step_started();
                     ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
-                } else if kind == "web_search" {
+                } else if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),

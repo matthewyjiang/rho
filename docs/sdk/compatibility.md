@@ -1,8 +1,14 @@
 # SDK compatibility and public contracts
 
+## Published and intended versions
+
+The repository currently contains `rho-sdk 0.1.0`; this branch is not the 1.0
+release. The intended first stable version is `rho-sdk 1.0.0`, and the 1.0
+documentation is forward-looking until that crate version is published.
+
 ## Stability labels
 
-The repository currently contains `rho-sdk 0.1.0`. Until 1.0:
+Until 1.0:
 
 - public APIs and documented behavior are release candidates, not a stable 1.x promise
 - breaking changes may occur in a minor `0.x` release
@@ -12,6 +18,97 @@ The repository currently contains `rho-sdk 0.1.0`. Until 1.0:
 At 1.0, the stable contract will include the documented public API, snapshot schema rules, event lifecycle, cancellation/drop/shutdown behavior, capability defaults, and other behavior explicitly marked as contract. Internal modules, task/channel implementation details, exact allocation, delta chunk boundaries, provider-private payloads, application UI, and undocumented formatting remain implementation details.
 
 A public item being exported does not by itself make every derived representation a persistence contract. The durable boundary is explicitly documented below.
+
+## Features and capability defaults
+
+`rho-sdk` deliberately declares an empty default feature set:
+
+```toml
+rho-sdk = { version = "0.1", default-features = false }
+```
+
+The crate currently has no optional Cargo features. Default,
+`--no-default-features`, and `--all-features` therefore select the same minimal
+headless surface, and CI tests all three modes. Built-in provider transports,
+SQLite persistence, operating-system keychain access, web access, and coding
+tools remain application-owned adapters. If any moves into `rho-sdk`, it must
+use a named opt-in feature and must not grant workspace capabilities without
+explicit runtime configuration.
+
+Removing or renaming a public feature, or moving an existing API behind a
+feature, is a breaking change. Adding an opt-in feature is additive unless it
+changes existing behavior.
+
+## Runtime and supported platforms
+
+The SDK requires a host-provided Tokio runtime when it creates sessions or
+runs. Public provider and tool futures are `Send`, and the SDK does not
+initialize a runtime, terminal, logger, credential store, network client, or
+global configuration for the host.
+
+CI compiles and tests the workspace on the current GitHub-hosted stable Rust
+toolchain for Linux, macOS, and Windows. The release binary matrix additionally
+builds Linux x86_64 GNU, macOS x86_64 and arm64, and Windows x86_64 MSVC
+artifacts. Other Rust targets may work, but are not part of the supported CI
+platform contract.
+
+## Public API inventory
+
+The intentional SDK surface is grouped below. Application provider transports,
+login flows, `Config`, OS credential storage, the TUI, and built-in coding tools
+are not SDK exports.
+
+### Crate-root runtime surface
+
+- Runtime construction: `Rho`, `RhoBuilder`, `SystemPrompt`, `ShutdownOutcome`
+- Sessions and runs: `SessionOptions`, `Session`, `SessionState`, `UserInput`,
+  `Run`, `RunEvent`, `RunOutcome`, `StopReason`
+- Cancellation and reasoning: `CancellationToken`, `ReasoningLevel`,
+  `ParseReasoningLevelError`
+- IDs: `SessionId`, `RunId`, `ToolCallId`, `HostInputId`, `Revision`, `InvalidId`
+- Host input: `HostChoice`, `HostQuestion`, `SelectionMode`, `HostInputRequest`,
+  `HostInputResponse`
+- Diagnostics: `DiagnosticsSnapshot`, `PromptSource`, `PromptSourceKind`
+- Errors and secrets: `Error`, `ProviderError`, `ProviderErrorKind`,
+  `Retryability`, `SecretString`
+- Compaction: `CompactionPolicy`, `CompactionRequest`, `CompactionOutput`,
+  `CompactionOutcome`, `CompactionState`, `CompactionTrigger`, `Compactor`,
+  `CompactionFuture`, `ScriptedCompactor`
+- Persistence: `SessionSnapshot`, `SessionStore`, `SessionStoreFuture`,
+  `InMemorySessionStore`, and the supported schema-version constants
+- Workspace and approvals: `Workspace`, capability and process types, policies,
+  approvals, authorization outcomes, and resolved workspace paths
+- Tool results and provider activity kind constants re-exported at the root
+
+### `rho_sdk::model`
+
+The provider-neutral model exports are the tool-call, content, message, model
+identity, provider-context, request/response/event, and usage DTOs. Their public
+fields and variants support provider implementations and serialized history.
+Adding a required field or exhaustive variant is source-breaking. Compatible
+serialized additions must be optional or defaulted. Provider-native context is
+opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
+
+### `rho_sdk::provider` and `rho_sdk::tool`
+
+The provider extension surface includes `ModelProvider`, its explicit future
+and event-channel types, and scripted downstream test support. The tool
+extension surface includes `Tool`, `ToolRegistry`, `ToolInvocation`,
+`ToolContext`, output/error/metadata/progress types, security declarations, and
+scripted downstream test support. Both extension traits are object-safe, require
+`Send + Sync`, and return `Send` futures.
+
+`ToolInvocation::arguments` and `into_arguments` intentionally support borrowed
+and owned argument parsing. `ToolRegistry::len` and `is_empty` intentionally
+allow hosts to inspect registry construction without relying on tool specs.
+These convenience methods are part of the planned stable public surface.
+
+### Application compatibility shims
+
+Private provider construction shims remain tracked for removal by issue #256.
+They delegate through explicit application credential sources and do not form
+part of the SDK API. New application code must use `ProviderBuildOptions`, an
+explicit `ProviderCredentialSource`, and `build_sdk_provider_with_source`.
 
 ## Public data behavior
 
@@ -93,15 +190,34 @@ After 1.0:
 
 Before 1.0, deprecation attributes are encouraged for migration clarity but the `0.x` SemVer rules still apply.
 
-## Rust-version policy
+## Minimum supported Rust version
 
-No numeric MSRV is currently declared. Until the first release candidate, the supported compiler is current stable Rust. A numerical MSRV must be selected, declared in Cargo metadata, and tested before 1.0.
+The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
+`rho-coding-agent` application MSRV is **1.88** because its terminal and
+credential dependencies require a newer compiler. Both values are declared as
+`package.rust-version` in Cargo metadata and tested in CI.
 
-For the 1.x line, once declared:
+An MSRV increase must not ship as a patch release. It must update Cargo
+metadata, this page, and CI together, and release notes must call it out. After
+1.0, an SDK MSRV increase requires at least a minor version increase. Emergency
+compiler requirements caused by a security or soundness fix may skip normal
+notice, but still require coordinated metadata and CI updates.
 
-- patch releases must not raise MSRV
-- a minor release may raise MSRV only when necessary, with prominent release-note notice and CI validation at the new minimum
-- the declared `rust-version`, installation docs, and release notes must agree
-- optional features included in the support matrix must also build at the declared MSRV
+## Semantic-version and downstream checks
 
-See [installation support status](/sdk/installation#minimum-supported-rust-version) and the [release-candidate gate](/sdk/release-candidates).
+Public Rust items, documented event ordering and cancellation behavior, feature
+names, and versioned persisted formats are compatibility contracts. CI runs
+`cargo-semver-checks` against the pull-request base when that revision contains
+`rho-sdk`. During `0.x`, breaking changes require a minor version bump and must
+not ship in a patch.
+
+The excluded workspace in `fixtures/downstream` has its own committed lockfile
+and crates with exactly one direct dependency, `rho-sdk`. CI compiles those
+representative integrations from their reproducible dependency graph. It also
+checks all SDK feature modes, workspace tests, Clippy, rustdoc tests,
+architecture rules, package contents, and publish dry runs. Run the local
+compatibility checks with:
+
+```sh
+python3 scripts/check_sdk_compatibility.py --test-features --test-downstream
+```

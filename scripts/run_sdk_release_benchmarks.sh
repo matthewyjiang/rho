@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
-output=${RHO_BENCH_OUTPUT:-benchmarks/results/sdk-release-current.json}
+output=${RHO_BENCH_OUTPUT:-target/sdk-release-evidence/sdk-release-benchmarks.json}
 if [[ "$output" != /* ]]; then
   output="$repo_root/$output"
 fi

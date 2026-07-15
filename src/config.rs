@@ -13,6 +13,8 @@ use crate::{
     reasoning::ReasoningLevel,
 };
 
+pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
+
 /// Persisted application configuration owned by `rho-coding-agent`.
 ///
 /// This type is not part of the SDK contract. Convert it through
@@ -54,7 +56,7 @@ impl Default for Config {
         Self {
             provider: "openai".into(),
             model: "gpt-5.5".into(),
-            max_output_bytes: 12000,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             max_tool_output_lines: 10,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,

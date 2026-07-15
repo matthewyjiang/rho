@@ -12,7 +12,7 @@ use super::{
     active_run_disposition, begin_provider_switch, build_runtime, state_after_event,
     ActiveRunCommand, ActiveRunDisposition, InteractiveState, RunPhase,
 };
-use crate::{compaction::CompactionConfig, tools::sdk_registry::AutomationToolSet};
+use crate::{compaction::CompactionConfig, tools::sdk_registry::AppToolSet};
 
 fn questionnaire_event() -> RunEvent {
     let question = HostQuestion::new(
@@ -159,7 +159,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         ],
     );
     let shared_provider: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let tools = AutomationToolSet::disabled();
+    let tools = AppToolSet::disabled();
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
     let runtime = build_runtime(
         shared_provider,

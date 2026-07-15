@@ -4,6 +4,11 @@ use crate::{
     Revision, RunId, ToolCallId,
 };
 
+/// Provider activity kind emitted when a malformed response is retried.
+pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
+/// Provider activity kind emitted for provider-native web searches.
+pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
+
 /// Reason a successful run stopped producing model turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

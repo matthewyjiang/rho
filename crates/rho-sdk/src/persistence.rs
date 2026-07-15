@@ -39,9 +39,9 @@ struct SessionSnapshotWire {
     provider: ModelIdentity,
     #[serde(default)]
     compaction: CompactionState,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     metadata: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     prompt_cache_key: Option<String>,
 }
 

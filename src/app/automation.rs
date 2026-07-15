@@ -18,7 +18,7 @@ use crate::{
     herdr::{HerdrReporter, HerdrState},
     prompt,
     providers::build_automation_provider,
-    tools::sdk_registry::AutomationToolSet,
+    tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
 use super::sdk_config::SdkBootstrapOptions;
@@ -89,9 +89,13 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let tool_set = if startup.no_tools {
-        AutomationToolSet::disabled()
+        AppToolSet::disabled()
     } else {
-        AutomationToolSet::enabled(startup.config, startup.diagnostics.clone())
+        AppToolSet::new(
+            startup.config,
+            startup.diagnostics.clone(),
+            ToolSetOptions::default(),
+        )
     };
     let tool_specs = tool_set.specs();
     let system_prompt = if startup.no_system_prompt {

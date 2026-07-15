@@ -16,6 +16,19 @@ pub enum CapabilityKind {
     InstructionDiscovery,
 }
 
+impl CapabilityKind {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Process => "process",
+            Self::Network => "network",
+            Self::Skill => "skill",
+            Self::InstructionDiscovery => "instruction discovery",
+        }
+    }
+}
+
 /// Identifies whether an operation comes from trusted host code or an SDK/application built-in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]

@@ -408,6 +408,7 @@ impl std::fmt::Debug for Rho {
             .field("workspace", &self.workspace)
             .field("workspace_policy", &self.workspace_policy)
             .field("approval_handler", &self.approval_handler)
+            .field("compactor", &self.compactor.is_some())
             .field("compaction_policy", &self.compaction_policy)
             .field("reasoning_level", &self.reasoning_level)
             .finish()

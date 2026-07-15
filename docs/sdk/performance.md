@@ -45,18 +45,15 @@ Run the reproducible suite from the repository root:
 ```
 
 The script uses the release benchmark profile, 20 samples by default, the
-in-target `pre-sdk-retained-fixture-v1` baseline, and writes
-[`benchmarks/results/sdk-release-current.json`](../../benchmarks/results/sdk-release-current.json).
-Override `RHO_BENCH_SAMPLES` or `RHO_BENCH_OUTPUT` without changing benchmark
-boundaries.
+in-target `pre-sdk-retained-fixture-v1` baseline, and writes to
+`target/sdk-release-evidence/sdk-release-benchmarks.json`. Override
+`RHO_BENCH_SAMPLES` or `RHO_BENCH_OUTPUT` without changing benchmark boundaries.
 
-The current repository evidence was recorded on an AMD Ryzen 5 5600X with
-Rust 1.96.1. All nine machine-evaluated budget checks passed: 370 ns median
-startup (1.057x baseline), 3.98 us simple completion, 2.09 million events per
-second with 130 us reported p99 delivery latency, 301 us snapshot median with a
-2.762x measured peak allocation ratio, 1.028x baseline compaction, and 4.76 us
-p99 slow-consumer cancellation. These figures are machine-specific, so release
-candidates must rerun the suite and commit their own raw artifact.
+For release evidence, run the
+[SDK release evidence workflow](https://github.com/matthewyjiang/rho/actions/workflows/sdk-release-evidence.yml)
+on the candidate commit and download its `sdk-release-benchmarks-<commit>`
+artifact. Artifacts are point-in-time measurements tied to the source commit;
+they are not maintained as a `current` repository snapshot.
 
 The release candidate must attach:
 
@@ -67,6 +64,5 @@ The release candidate must attach:
 - baseline and SDK-backed deltas; and
 - an explanation and approval for every material regression.
 
-The committed artifact satisfies these evidence requirements for the measured
-source tree. A later release candidate must regenerate it after all code and
-toolchain changes.
+A release-candidate artifact satisfies these evidence requirements only for its
+recorded source commit. Rerun the workflow after code or toolchain changes.

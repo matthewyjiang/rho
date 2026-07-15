@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
-output=${RHO_AUDIT_OUTPUT:-audits/sdk-redaction-current.json}
+output=${RHO_AUDIT_OUTPUT:-target/sdk-release-evidence/sdk-redaction.json}
 if [[ "$output" != /* ]]; then
   output="$repo_root/$output"
 fi

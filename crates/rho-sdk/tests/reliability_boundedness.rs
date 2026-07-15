@@ -1,4 +1,4 @@
-pub mod support;
+mod support;
 
 use std::{
     future::Future,

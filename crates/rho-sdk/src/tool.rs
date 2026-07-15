@@ -431,7 +431,7 @@ impl ToolError {
             ToolErrorKind::PolicyDenied,
             format!(
                 "{} capability denied: {}",
-                capability_label(error.capability()),
+                error.capability().label(),
                 error.message()
             ),
         )
@@ -449,17 +449,6 @@ impl fmt::Display for ToolError {
 }
 
 impl std::error::Error for ToolError {}
-
-fn capability_label(capability: CapabilityKind) -> &'static str {
-    match capability {
-        CapabilityKind::Read => "read",
-        CapabilityKind::Write => "write",
-        CapabilityKind::Process => "process",
-        CapabilityKind::Network => "network",
-        CapabilityKind::Skill => "skill",
-        CapabilityKind::InstructionDiscovery => "instruction discovery",
-    }
-}
 
 /// Extension point for tools available to SDK sessions.
 ///

@@ -146,7 +146,10 @@ pub use compaction::{
 };
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
-pub use event::{RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure};
+pub use event::{
+    RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure,
+    PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,
+};
 pub use host_input::{
     HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
