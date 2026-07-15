@@ -8,7 +8,7 @@ enum GoalLoopAction {
     Continue,
     /// Transient failure; wait, then keep working while the goal remains active.
     RetryAfterFailure,
-    /// User interrupt or other terminal stop; leave the goal loop.
+    /// User interrupt/cancel or other terminal stop; leave the goal loop.
     Stop,
 }
 
@@ -17,14 +17,14 @@ pub(super) fn should_resume_goal_after_turn(
     goal_active: bool,
     should_quit: bool,
 ) -> bool {
-    goal_active && !should_quit && !matches!(outcome, TurnOutcome::Interrupted)
+    goal_active && !should_quit && matches!(outcome, TurnOutcome::Completed | TurnOutcome::Failed)
 }
 
 fn goal_loop_action_after_turn(outcome: TurnOutcome) -> GoalLoopAction {
     match outcome {
         TurnOutcome::Completed => GoalLoopAction::Continue,
         TurnOutcome::Failed => GoalLoopAction::RetryAfterFailure,
-        TurnOutcome::Interrupted => GoalLoopAction::Stop,
+        TurnOutcome::Interrupted | TurnOutcome::Cancelled => GoalLoopAction::Stop,
     }
 }
 
@@ -239,15 +239,19 @@ impl App {
                 evaluation.reason
             );
             let mut stop_goal_loop = false;
+            let mut retry_without_new_prompt = false;
             loop {
-                let outcome = self
-                    .run_prompt_turn(
+                let outcome = if retry_without_new_prompt {
+                    self.retry_failed_prompt_turn(terminal, agent).await?
+                } else {
+                    self.run_prompt_turn(
                         TurnPrompt::standard(continuation.clone(), "continuing active goal".into()),
                         Vec::new(),
                         terminal,
                         agent,
                     )
-                    .await?;
+                    .await?
+                };
                 match goal_loop_action_after_turn(outcome) {
                     GoalLoopAction::Continue => break,
                     GoalLoopAction::RetryAfterFailure => {
@@ -260,6 +264,7 @@ impl App {
                             stop_goal_loop = true;
                             break;
                         }
+                        retry_without_new_prompt = true;
                     }
                     GoalLoopAction::Stop => {
                         stop_goal_loop = true;
@@ -424,6 +429,11 @@ mod tests {
             /*should_quit*/ false
         ));
         assert!(!should_resume_goal_after_turn(
+            TurnOutcome::Cancelled,
+            /*goal_active*/ true,
+            /*should_quit*/ false
+        ));
+        assert!(!should_resume_goal_after_turn(
             TurnOutcome::Failed,
             /*goal_active*/ false,
             /*should_quit*/ false
@@ -436,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn goal_loop_retries_failed_turns_and_stops_on_interrupt() {
+    fn goal_loop_retries_failed_turns_and_stops_on_interrupt_or_cancel() {
         assert_eq!(
             goal_loop_action_after_turn(TurnOutcome::Completed),
             GoalLoopAction::Continue
@@ -447,6 +457,10 @@ mod tests {
         );
         assert_eq!(
             goal_loop_action_after_turn(TurnOutcome::Interrupted),
+            GoalLoopAction::Stop
+        );
+        assert_eq!(
+            goal_loop_action_after_turn(TurnOutcome::Cancelled),
             GoalLoopAction::Stop
         );
     }
