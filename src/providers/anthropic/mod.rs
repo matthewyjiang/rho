@@ -81,6 +81,18 @@ impl AnthropicProvider {
         })
     }
 
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("anthropic", "anthropic-messages", &self.model)
+    }
+
+    /// Completes one turn using inherent async methods so the future is `Send`.
+    pub(crate) async fn complete_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_messages(request).await
+    }
+
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
         let response = self
@@ -274,11 +286,7 @@ async fn error_for_status_with_body(
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for AnthropicProvider {
     fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new(
-            "anthropic",
-            "anthropic-messages",
-            &self.model,
-        ))
+        Some(self.model_identity())
     }
 
     fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
@@ -290,7 +298,7 @@ impl ModelProvider for AnthropicProvider {
     }
 
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.send_messages(request).await
+        self.complete_turn(request).await
     }
 
     async fn send_turn_stream(

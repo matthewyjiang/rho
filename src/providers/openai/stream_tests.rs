@@ -59,6 +59,7 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
             &mut |event| {
@@ -154,6 +155,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             messages: &first_messages,
             tools: &[],
             cancellation,
+            reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
         &mut on_first_event,
@@ -167,6 +169,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
                 messages: &[Message::user_text("second")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
             &mut |_| Ok(()),

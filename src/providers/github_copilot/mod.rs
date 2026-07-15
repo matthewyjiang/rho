@@ -130,17 +130,16 @@ impl GitHubCopilotProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for GitHubCopilotProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new(
-            "github-copilot",
-            "openai-chat-completions",
-            &self.model,
-        ))
+impl GitHubCopilotProvider {
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("github-copilot", "openai-chat-completions", &self.model)
     }
 
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+    /// Completes one turn using inherent async methods so the future is `Send`.
+    pub(crate) async fn complete_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
@@ -149,6 +148,17 @@ impl ModelProvider for GitHubCopilotProvider {
         }
         let response: ChatResponse = response.json().await?;
         convert_openai_response(response)
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl ModelProvider for GitHubCopilotProvider {
+    fn identity(&self) -> Option<ModelIdentity> {
+        Some(self.model_identity())
+    }
+
+    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        self.complete_turn(request).await
     }
 
     async fn send_turn_stream(
@@ -253,6 +263,7 @@ mod tests {
                     messages: &[Message::user_text("hello")],
                     tools: &[],
                     cancellation: Default::default(),
+                    reasoning_level: Default::default(),
                     prompt_cache_key: None,
                 },
                 true,
@@ -341,6 +352,7 @@ mod tests {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             })
             .await

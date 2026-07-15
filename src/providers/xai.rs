@@ -101,10 +101,30 @@ impl XaiProvider {
     }
 }
 
+impl XaiProvider {
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("xai", "openai-responses", &self.model)
+    }
+
+    /// Completes one turn using a `Send` future suitable for the public SDK trait.
+    pub(crate) async fn complete_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.send_request(request).await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ModelError::HttpStatus { status, body });
+        }
+        crate::providers::send_stream::collect_codex_model_response_silent(response).await
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl ModelProvider for XaiProvider {
     fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new("xai", "openai-responses", &self.model))
+        Some(self.model_identity())
     }
 
     fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
@@ -113,7 +133,7 @@ impl ModelProvider for XaiProvider {
     }
 
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.send_responses_turn(request, None).await
+        self.complete_turn(request).await
     }
 
     async fn send_turn_stream(

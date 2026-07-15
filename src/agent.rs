@@ -428,6 +428,7 @@ impl Agent {
                         messages: &self.messages,
                         tools: &specs,
                         cancellation: cancellation.clone(),
+                        reasoning_level: Default::default(),
                         prompt_cache_key: self.prompt_cache_key.as_deref(),
                     },
                     &mut |event| {
@@ -867,6 +868,7 @@ impl Agent {
                     messages: &summary_messages,
                     tools: &[],
                     cancellation,
+                    reasoning_level: Default::default(),
                     prompt_cache_key: self.prompt_cache_key.as_deref(),
                 },
                 &mut |event| match event {

@@ -32,6 +32,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             messages: &messages,
             tools: &tools,
             cancellation: Default::default(),
+            reasoning_level: Default::default(),
             prompt_cache_key: Some("rho:session"),
         },
         xai_reasoning_effort("grok-4.5", ReasoningLevel::High),
@@ -130,6 +131,7 @@ async fn provider_posts_to_responses_and_collects_stream() {
             messages: &[Message::user_text("hello")],
             tools: &[],
             cancellation: Default::default(),
+            reasoning_level: Default::default(),
             prompt_cache_key: None,
         })
         .await

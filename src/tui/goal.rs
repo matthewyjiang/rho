@@ -63,6 +63,7 @@ pub(super) async fn evaluate(
             messages: &request_messages,
             tools: &[],
             cancellation: Default::default(),
+            reasoning_level: Default::default(),
             prompt_cache_key: None,
         })
         .await?;

@@ -17,6 +17,7 @@ use crate::{
             OpenAiProvider,
         },
         xai::XaiProvider,
+        SdkProviderAdapter,
     },
     reasoning::ReasoningLevel,
 };
@@ -26,6 +27,48 @@ pub fn build_provider(
     model: &str,
     reasoning: ReasoningLevel,
 ) -> Result<DynModelProvider, ModelError> {
+    Ok(
+        match build_adaptable_provider(provider, model, reasoning)? {
+            BuiltProvider::OpenAi(provider) => Box::new(*provider) as DynModelProvider,
+            BuiltProvider::Anthropic(provider) => Box::new(*provider) as DynModelProvider,
+            BuiltProvider::GithubCopilot(provider) => Box::new(*provider) as DynModelProvider,
+            BuiltProvider::Xai(provider) => Box::new(*provider) as DynModelProvider,
+        },
+    )
+}
+
+/// Builds a 1.0 provider adapted to the public SDK [`rho_sdk::provider::ModelProvider`] contract.
+///
+/// This is the application-side entrypoint for embedding built-in providers in the
+/// headless SDK runtime. It is intentionally available before `rho run` migrates.
+#[allow(dead_code)]
+pub fn build_sdk_provider(
+    provider: &str,
+    model: &str,
+    reasoning: ReasoningLevel,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    Ok(
+        match build_adaptable_provider(provider, model, reasoning)? {
+            BuiltProvider::OpenAi(provider) => SdkProviderAdapter::shared(*provider),
+            BuiltProvider::Anthropic(provider) => SdkProviderAdapter::shared(*provider),
+            BuiltProvider::GithubCopilot(provider) => SdkProviderAdapter::shared(*provider),
+            BuiltProvider::Xai(provider) => SdkProviderAdapter::shared(*provider),
+        },
+    )
+}
+
+enum BuiltProvider {
+    OpenAi(Box<OpenAiProvider>),
+    Anthropic(Box<AnthropicProvider>),
+    GithubCopilot(Box<GitHubCopilotProvider>),
+    Xai(Box<XaiProvider>),
+}
+
+fn build_adaptable_provider(
+    provider: &str,
+    model: &str,
+    reasoning: ReasoningLevel,
+) -> Result<BuiltProvider, ModelError> {
     let supported_reasoning = cached_reasoning_levels(provider, model);
     let reasoning = reasoning.normalize(supported_reasoning.as_deref());
     let reasoning_effort = cached_reasoning_effort(provider, model, reasoning);
@@ -39,13 +82,15 @@ pub fn build_provider(
                 AuthMode::ApiKey => load_api_key_auth(credential_store.as_ref())?,
                 AuthMode::Codex => load_codex_auth(credential_store.as_ref())?,
             };
-            Ok(Box::new(OpenAiProvider::new_with_auth(
-                model.to_string(),
-                auth,
-                credential_store,
-                reasoning_effort,
-                reasoning_summary,
-            )) as DynModelProvider)
+            Ok(BuiltProvider::OpenAi(Box::new(
+                OpenAiProvider::new_with_auth(
+                    model.to_string(),
+                    auth,
+                    credential_store,
+                    reasoning_effort,
+                    reasoning_summary,
+                ),
+            )))
         }
         ProviderRuntime::Anthropic => {
             let mut provider = AnthropicProvider::new(
@@ -54,17 +99,19 @@ pub fn build_provider(
                 anthropic_max_tokens,
             );
             provider.set_reasoning(reasoning);
-            Ok(Box::new(provider) as DynModelProvider)
+            Ok(BuiltProvider::Anthropic(Box::new(provider)))
         }
-        ProviderRuntime::GithubCopilot => Ok(Box::new(GitHubCopilotProvider::new(
-            model.to_string(),
-            GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
-        )?) as DynModelProvider),
-        ProviderRuntime::Xai => Ok(Box::new(XaiProvider::new(
+        ProviderRuntime::GithubCopilot => Ok(BuiltProvider::GithubCopilot(Box::new(
+            GitHubCopilotProvider::new(
+                model.to_string(),
+                GitHubCopilotAuthManager::new(Arc::new(OsCredentialStore)),
+            )?,
+        ))),
+        ProviderRuntime::Xai => Ok(BuiltProvider::Xai(Box::new(XaiProvider::new(
             model.to_string(),
             Arc::new(OsCredentialStore),
             reasoning,
-        )?) as DynModelProvider),
+        )?))),
     }
 }
 
