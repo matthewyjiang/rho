@@ -44,6 +44,7 @@
 mod cancellation;
 mod client;
 mod compaction;
+mod diagnostics;
 mod error;
 mod event;
 mod id;
@@ -62,6 +63,7 @@ pub use compaction::{
     CompactionFuture, CompactionOutcome, CompactionOutput, CompactionPolicy, CompactionRequest,
     CompactionState, CompactionTrigger, Compactor, ScriptedCompactor,
 };
+pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure};
 pub use id::{InvalidId, Revision, RunId, SessionId, ToolCallId};

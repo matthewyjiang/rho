@@ -190,6 +190,28 @@ impl Rho {
         RhoBuilder::default()
     }
 
+    pub fn diagnostics(&self) -> crate::DiagnosticsSnapshot {
+        let prompt_sources = match &self.system_prompt {
+            SystemPrompt::None => Vec::new(),
+            SystemPrompt::Custom(_) => vec![crate::diagnostics::PromptSource::custom()],
+        };
+        crate::DiagnosticsSnapshot::new(
+            self.provider.identity(),
+            self.tools
+                .specs()
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect(),
+            self.workspace_root.clone(),
+            prompt_sources,
+            self.event_capacity.get(),
+            self.max_steps.get(),
+            self.compaction_policy
+                .as_ref()
+                .map(|policy| policy.trigger_messages().get()),
+        )
+    }
+
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
         let mut history = options.history;
         if options.apply_system_prompt {

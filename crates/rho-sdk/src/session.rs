@@ -266,6 +266,10 @@ impl Session {
         )
     }
 
+    pub fn diagnostics(&self) -> crate::DiagnosticsSnapshot {
+        self.core.runtime().diagnostics()
+    }
+
     pub fn state(&self) -> SessionState {
         self.core.state()
     }

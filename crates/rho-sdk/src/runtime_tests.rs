@@ -439,6 +439,27 @@ async fn dropping_a_run_cancels_work_and_releases_the_session() {
 }
 
 #[test]
+fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() {
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(identity(), []))
+        .system_prompt(SystemPrompt::Custom("secret prompt contents".into()))
+        .build()
+        .unwrap();
+
+    let diagnostics = runtime.diagnostics();
+
+    assert_eq!(diagnostics.provider(), &identity());
+    assert_eq!(diagnostics.prompt_sources().len(), 1);
+    assert_eq!(
+        diagnostics.prompt_sources()[0].label(),
+        "custom system prompt"
+    );
+    assert_eq!(diagnostics.workspace_root(), None);
+    assert!(diagnostics.enabled_features().is_empty());
+    assert!(!format!("{diagnostics:?}").contains("secret prompt contents"));
+}
+
+#[test]
 fn construction_rejects_missing_provider_and_duplicate_tools() {
     assert!(matches!(
         Rho::builder().build(),
