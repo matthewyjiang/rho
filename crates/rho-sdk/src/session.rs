@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    Arc, Mutex, RwLock,
+    Arc, Mutex, MutexGuard, RwLock,
 };
 
 use crate::{
@@ -104,7 +104,8 @@ pub(crate) struct SessionCore {
     data: Mutex<SessionData>,
     runtime: RwLock<Rho>,
     approvals: Arc<crate::workspace::SessionApprovals>,
-    lifecycle_lock: Mutex<()>,
+    // Run ownership remains active until its guard finalizes, independently of presentation state.
+    active_run: Mutex<Option<RunId>>,
     state: AtomicU8,
 }
 
@@ -127,7 +128,7 @@ impl SessionCore {
             }),
             runtime: RwLock::new(runtime),
             approvals: Arc::default(),
-            lifecycle_lock: Mutex::new(()),
+            active_run: Mutex::new(None),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
     }
@@ -218,30 +219,44 @@ impl SessionCore {
         SessionState::from_code(self.state.load(Ordering::Acquire))
     }
 
-    pub(crate) fn begin_run(&self) -> Result<(), Error> {
-        let _lifecycle = self
-            .lifecycle_lock
+    pub(crate) fn begin_run(&self, run_id: &RunId) -> Result<(), Error> {
+        let mut active_run = self.lock_inactive()?;
+        *active_run = Some(run_id.clone());
+        self.set_state(SessionState::Running);
+        Ok(())
+    }
+
+    fn lock_inactive(&self) -> Result<MutexGuard<'_, Option<RunId>>, Error> {
+        let active_run = self
+            .active_run
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match self.state() {
-            SessionState::Idle | SessionState::Completed | SessionState::Failed => {
-                self.set_state(SessionState::Running);
-                Ok(())
-            }
-            SessionState::Running
-            | SessionState::WaitingForHostInput
-            | SessionState::Cancelling => Err(Error::SessionBusy),
+        if active_run.is_some() {
+            Err(Error::SessionBusy)
+        } else {
+            Ok(active_run)
         }
     }
 
-    pub(crate) fn finish_run(&self) {
-        let _lifecycle = self
-            .lifecycle_lock
+    pub(crate) fn finish_run(&self, run_id: &RunId) {
+        let mut active_run = self
+            .active_run
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active_run.as_ref() != Some(run_id) {
+            return;
+        }
+        *active_run = None;
         if !matches!(self.state(), SessionState::Completed | SessionState::Failed) {
             self.set_state(SessionState::Idle);
         }
+    }
+
+    fn has_active_run(&self) -> bool {
+        self.active_run
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
     }
 }
 
@@ -268,7 +283,7 @@ impl ActiveRunGuard {
 impl Drop for ActiveRunGuard {
     fn drop(&mut self) {
         self.lifecycle.unregister(&self.run_id);
-        self.core.finish_run();
+        self.core.finish_run(&self.run_id);
     }
 }
 
@@ -315,14 +330,7 @@ impl Session {
     }
 
     pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
-        let _lifecycle = self
-            .core
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.is_running() {
-            return Err(Error::SessionBusy);
-        }
+        let _inactive = self.core.lock_inactive()?;
         self.core
             .runtime
             .write()
@@ -340,16 +348,13 @@ impl Session {
     }
 
     pub fn is_running(&self) -> bool {
-        matches!(
-            self.state(),
-            SessionState::Running | SessionState::WaitingForHostInput | SessionState::Cancelling
-        )
+        self.core.has_active_run()
     }
 
     pub async fn start(&self, input: UserInput) -> Result<Run, Error> {
-        self.core.begin_run()?;
-
         let run_id = RunId::new();
+        self.core.begin_run(&run_id)?;
+
         let cancellation = crate::CancellationToken::new();
         let runtime = self.core.runtime();
         let core = Arc::clone(&self.core);
@@ -408,8 +413,8 @@ impl Session {
                 .ok_or_else(|| Error::InvalidConfiguration {
                     message: "no compactor is configured".into(),
                 })?;
-        self.core.begin_run()?;
         let run_id = RunId::new();
+        self.core.begin_run(&run_id)?;
         let cancellation = crate::CancellationToken::new();
         let _guard = ActiveRunGuard::new(
             Arc::clone(&self.core),
@@ -428,28 +433,14 @@ impl Session {
 
     /// Appends host-provided context while the session is idle.
     pub fn append_message(&self, message: Message) -> Result<Revision, Error> {
-        let _lifecycle = self
-            .core
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.is_running() {
-            return Err(Error::SessionBusy);
-        }
+        let _inactive = self.core.lock_inactive()?;
         let mut history = self.history();
         history.push(message);
         self.core.commit(history)
     }
 
     pub fn reset(&self) -> Result<(), Error> {
-        let _lifecycle = self
-            .core
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.is_running() {
-            return Err(Error::SessionBusy);
-        }
+        let _inactive = self.core.lock_inactive()?;
         let system_prompt = match &self.core.runtime().system_prompt {
             crate::SystemPrompt::Custom(prompt) => Some(Message::System(prompt.clone())),
             crate::SystemPrompt::None => None,
@@ -474,14 +465,7 @@ impl Session {
         &self,
         provider: Arc<dyn ModelProvider>,
     ) -> Result<crate::model::handoff::HandoffReport, Error> {
-        let _lifecycle = self
-            .core
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.is_running() {
-            return Err(Error::SessionBusy);
-        }
+        let _inactive = self.core.lock_inactive()?;
         let report =
             crate::model::handoff::report_message_omissions(&self.history(), &provider.identity());
         self.core
@@ -492,6 +476,10 @@ impl Session {
         Ok(report)
     }
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;
 
 impl std::fmt::Debug for Session {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
