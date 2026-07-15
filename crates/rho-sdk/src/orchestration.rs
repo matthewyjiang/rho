@@ -496,6 +496,8 @@ async fn execute_tool(
         runtime.workspace.clone(),
         Arc::clone(&runtime.workspace_policy),
         Arc::clone(&runtime.approval_handler),
+        core.approvals(),
+        Arc::clone(&runtime.approval_audit),
         cancellation.clone(),
         progress,
     )

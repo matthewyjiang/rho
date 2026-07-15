@@ -103,6 +103,7 @@ pub(crate) struct SessionCore {
     id: SessionId,
     data: Mutex<SessionData>,
     runtime: RwLock<Rho>,
+    approvals: Arc<crate::workspace::SessionApprovals>,
     state: AtomicU8,
 }
 
@@ -124,6 +125,7 @@ impl SessionCore {
                 prompt_cache_key,
             }),
             runtime: RwLock::new(runtime),
+            approvals: Arc::default(),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
     }
@@ -133,6 +135,10 @@ impl SessionCore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    pub(crate) fn approvals(&self) -> Arc<crate::workspace::SessionApprovals> {
+        Arc::clone(&self.approvals)
     }
 
     pub(crate) fn prompt_cache_key(&self) -> Option<String> {

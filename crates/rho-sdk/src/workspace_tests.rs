@@ -1,17 +1,49 @@
-use std::sync::Mutex;
+use std::{
+    num::NonZeroUsize,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
+use proptest::prelude::*;
 use tempfile::TempDir;
 
 use super::{
-    authorize, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    CapabilityRequest, DenyAllPolicy, DenyApprovals, PolicyDecision, ScopedWorkspacePolicy,
-    Workspace, WorkspacePolicy,
+    approval_channel, authorize, ApprovalAuditDecision, ApprovalAuditLog, ApprovalDecision,
+    ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind, CapabilityOperation,
+    CapabilityRequest, CapabilitySource, DenyAllPolicy, DenyApprovals, NetworkTarget, PathScope,
+    PolicyDecision, ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ScopedWorkspacePolicy, SessionApprovals, Workspace, WorkspacePathErrorKind, WorkspacePathState,
+    WorkspacePolicy,
 };
 
+fn source(name: &str) -> CapabilitySource {
+    CapabilitySource::built_in_tool(name)
+}
+
+fn read_request(path: impl Into<PathBuf>) -> CapabilityRequest {
+    CapabilityRequest::read_path(path, PathScope::PrimaryWorkspace, source("read_file"))
+}
+
+fn process_request(command: &str) -> CapabilityRequest {
+    CapabilityRequest::process(
+        ProcessExecution::new(
+            "/workspace",
+            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command),
+            ProcessEnvironment::InheritAll,
+            ProcessOutputLimits::new(4096, Some(Duration::from_secs(30))),
+        ),
+        source("bash"),
+    )
+}
+
 #[test]
-fn workspace_requires_absolute_root_and_rejects_lexical_escapes() {
-    assert!(Workspace::new("relative").is_err());
+fn workspace_defines_absolute_parent_missing_and_platform_path_behavior() {
+    assert_eq!(
+        Workspace::new("relative").unwrap_err().kind(),
+        WorkspacePathErrorKind::RootNotAbsolute
+    );
     let root = TempDir::new().unwrap();
     let workspace = Workspace::new(root.path()).unwrap();
 
@@ -19,46 +51,210 @@ fn workspace_requires_absolute_root_and_rejects_lexical_escapes() {
         workspace.resolve("src/lib.rs").unwrap(),
         workspace.root().join("src/lib.rs")
     );
-    assert!(workspace.resolve("../secret").is_err());
-    assert!(workspace
-        .resolve(root.path().with_extension("outside"))
-        .is_err());
+    assert_eq!(
+        workspace.resolve("../secret").unwrap_err().kind(),
+        WorkspacePathErrorKind::ParentTraversal
+    );
+    assert_eq!(
+        workspace
+            .resolve(root.path().with_extension("outside"))
+            .unwrap_err()
+            .kind(),
+        WorkspacePathErrorKind::OutsideGrantedRoots
+    );
+    assert_eq!(
+        workspace.resolve_for_read("missing").unwrap_err().kind(),
+        WorkspacePathErrorKind::Missing
+    );
+    let missing = workspace.resolve_for_write("new/child.txt").unwrap();
+    assert_eq!(missing.state(), WorkspacePathState::MissingWriteTarget);
+    assert_eq!(missing.scope(), &PathScope::PrimaryWorkspace);
     assert!(Workspace::new(root.path().join("missing")).is_err());
+
+    #[cfg(unix)]
+    assert_eq!(
+        workspace
+            .resolve(PathBuf::from("bad\0path"))
+            .unwrap_err()
+            .kind(),
+        WorkspacePathErrorKind::InvalidPlatformPath
+    );
+}
+
+proptest! {
+    #[test]
+    fn any_parent_component_is_rejected(
+        prefix in prop::collection::vec("[a-zA-Z0-9_-]{1,12}", 0..5),
+        suffix in prop::collection::vec("[a-zA-Z0-9_-]{1,12}", 0..5),
+    ) {
+        let root = TempDir::new().unwrap();
+        let workspace = Workspace::new(root.path()).unwrap();
+        let mut path = PathBuf::new();
+        path.extend(prefix);
+        path.push("..");
+        path.extend(suffix);
+        prop_assert_eq!(
+            workspace.resolve(path).unwrap_err().kind(),
+            WorkspacePathErrorKind::ParentTraversal
+        );
+    }
 }
 
 #[cfg(unix)]
 #[test]
-fn existing_path_resolution_rejects_symlinks_outside_workspace() {
+fn symlinks_require_deliberate_outside_root_grants_and_policy_grants() {
     use std::os::unix::fs::symlink;
 
     let root = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     std::fs::write(outside.path().join("secret"), "secret").unwrap();
     symlink(outside.path(), root.path().join("escape")).unwrap();
-    let workspace = Workspace::new(root.path()).unwrap();
 
-    assert!(workspace.resolve_existing("escape/secret").is_err());
+    let workspace = Workspace::new(root.path()).unwrap();
+    assert_eq!(
+        workspace
+            .resolve_for_read("escape/secret")
+            .unwrap_err()
+            .kind(),
+        WorkspacePathErrorKind::OutsideGrantedRoots
+    );
+
+    let workspace = workspace.with_granted_root(outside.path()).unwrap();
+    let resolved = workspace.resolve_for_read("escape/secret").unwrap();
+    assert_eq!(
+        resolved.scope(),
+        &PathScope::GrantedRoot {
+            root: std::fs::canonicalize(outside.path()).unwrap(),
+        }
+    );
+    let request = CapabilityRequest::read_path(
+        resolved.path(),
+        resolved.scope().clone(),
+        source("read_file"),
+    );
+    assert!(matches!(
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .evaluate(&request),
+        PolicyDecision::Deny { .. }
+    ));
+    assert_eq!(
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .allow_outside_workspace_paths()
+            .evaluate(&request),
+        PolicyDecision::Allow
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_resolution_canonicalizes_parent_and_detects_post_approval_change() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join("safe")).unwrap();
+    let workspace = Workspace::new(root.path()).unwrap();
+    let resolved = workspace.resolve_for_write("safe/new.txt").unwrap();
+    std::fs::remove_dir(root.path().join("safe")).unwrap();
+    symlink(outside.path(), root.path().join("safe")).unwrap();
+
+    assert!(matches!(
+        workspace.revalidate(&resolved).unwrap_err().kind(),
+        WorkspacePathErrorKind::OutsideGrantedRoots
+            | WorkspacePathErrorKind::ChangedAfterAuthorization
+    ));
 }
 
 #[test]
-fn default_policy_denies_files_processes_and_network() {
+fn capabilities_are_independent_and_network_urls_are_strict() {
+    let policy = ScopedWorkspacePolicy::new()
+        .allow_read_paths()
+        .allow_skills()
+        .allow_network_host("example.com");
+    assert_eq!(
+        policy.evaluate(&read_request("/workspace/file")),
+        PolicyDecision::Allow
+    );
+    assert_eq!(
+        policy.evaluate(&CapabilityRequest::skill("test", None, source("skill"))),
+        PolicyDecision::Allow
+    );
+    for request in [
+        CapabilityRequest::write_path(
+            "/workspace/file",
+            PathScope::PrimaryWorkspace,
+            source("write_file"),
+        ),
+        process_request("cargo test"),
+        CapabilityRequest::instruction_discovery(
+            "/workspace/AGENTS.md",
+            PathScope::PrimaryWorkspace,
+            CapabilitySource::PromptConstruction,
+        ),
+    ] {
+        assert!(matches!(
+            policy.evaluate(&request),
+            PolicyDecision::Deny { .. }
+        ));
+    }
+
+    for url in ["https://example.com/path", "https://EXAMPLE.com./path"] {
+        assert_eq!(
+            policy.evaluate(&CapabilityRequest::network(
+                NetworkTarget::Url(url.into()),
+                source("fetch_content"),
+            )),
+            PolicyDecision::Allow
+        );
+    }
+    for url in [
+        "https://user:secret@example.com/path",
+        "file:///etc/passwd",
+        "https://example.com.evil.test/path",
+        "not a url",
+    ] {
+        assert!(matches!(
+            policy.evaluate(&CapabilityRequest::network(
+                NetworkTarget::Url(url.into()),
+                source("fetch_content"),
+            )),
+            PolicyDecision::Deny { .. }
+        ));
+    }
+}
+
+#[test]
+fn default_policy_denies_every_capability_class() {
     let policy = DenyAllPolicy;
     let requests = [
-        CapabilityRequest::ReadPath {
-            path: "/workspace/file".into(),
-        },
-        CapabilityRequest::WritePath {
-            path: "/workspace/file".into(),
-        },
-        CapabilityRequest::ExecuteProcess {
-            program: "cargo".into(),
-            arguments: vec!["test".into()],
-        },
-        CapabilityRequest::NetworkAccess {
-            url: "https://example.com".into(),
-        },
+        read_request("/workspace/file"),
+        CapabilityRequest::write_path(
+            "/workspace/file",
+            PathScope::PrimaryWorkspace,
+            source("write_file"),
+        ),
+        process_request("cargo test"),
+        CapabilityRequest::network(NetworkTarget::ToolManaged, source("web_search")),
+        CapabilityRequest::skill("test", None, source("skill")),
+        CapabilityRequest::instruction_discovery(
+            "/workspace/AGENTS.md",
+            PathScope::PrimaryWorkspace,
+            CapabilitySource::PromptConstruction,
+        ),
     ];
-
+    assert_eq!(
+        requests.each_ref().map(|request| request.kind()),
+        [
+            CapabilityKind::Read,
+            CapabilityKind::Write,
+            CapabilityKind::Process,
+            CapabilityKind::Network,
+            CapabilityKind::Skill,
+            CapabilityKind::InstructionDiscovery,
+        ]
+    );
     for request in requests {
         assert!(matches!(
             policy.evaluate(&request),
@@ -68,36 +264,27 @@ fn default_policy_denies_files_processes_and_network() {
 }
 
 #[test]
-fn scoped_policy_grants_only_named_capabilities_and_hosts() {
-    let policy = ScopedWorkspacePolicy::new()
-        .allow_read_paths()
-        .allow_network_host("example.com");
-
+fn structured_process_context_never_requires_shell_parsing() {
+    let request = process_request("printf '%s' '$TOKEN; rm -rf -- /'");
+    let CapabilityOperation::ExecuteProcess(execution) = request.operation() else {
+        panic!("expected process operation");
+    };
     assert_eq!(
-        policy.evaluate(&CapabilityRequest::ReadPath {
-            path: "/workspace/file".into(),
-        }),
-        PolicyDecision::Allow
+        execution.working_directory(),
+        std::path::Path::new("/workspace")
     );
     assert_eq!(
-        policy.evaluate(&CapabilityRequest::NetworkAccess {
-            url: "https://example.com/path".into(),
-        }),
-        PolicyDecision::Allow
+        execution.invocation().executable_path(),
+        std::path::Path::new("bash")
     );
-    assert!(matches!(
-        policy.evaluate(&CapabilityRequest::NetworkAccess {
-            url: "https://other.example/path".into(),
-        }),
-        PolicyDecision::Deny { .. }
-    ));
-    assert!(matches!(
-        policy.evaluate(&CapabilityRequest::ExecuteProcess {
-            program: "cargo".into(),
-            arguments: Vec::new(),
-        }),
-        PolicyDecision::Deny { .. }
-    ));
+    assert_eq!(execution.invocation().arguments(), ["-lc"]);
+    assert_eq!(
+        execution.invocation().shell_command(),
+        Some("printf '%s' '$TOKEN; rm -rf -- /'")
+    );
+    assert_eq!(execution.environment(), &ProcessEnvironment::InheritAll);
+    assert_eq!(execution.output_limits().max_output_bytes(), 4096);
+    assert!(!format!("{request:?}").contains("$TOKEN"));
 }
 
 #[derive(Debug)]
@@ -119,38 +306,106 @@ impl ApprovalHandler for RecordingApproval {
 }
 
 #[tokio::test]
-async fn required_approval_is_explicit_and_deny_by_default() {
-    let policy: std::sync::Arc<dyn WorkspacePolicy> = std::sync::Arc::new(
+async fn remembered_approval_matches_only_the_exact_session_request() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
         ScopedWorkspacePolicy::new()
             .allow_processes()
             .require_process_approval(),
     );
-    let request = CapabilityRequest::ExecuteProcess {
-        program: "cargo".into(),
-        arguments: vec!["test".into()],
-    };
-
-    let deny_approvals: std::sync::Arc<dyn ApprovalHandler> = std::sync::Arc::new(DenyApprovals);
-    assert!(authorize(&policy, &deny_approvals, request.clone())
-        .await
-        .is_err());
-
-    let approvals = std::sync::Arc::new(RecordingApproval {
+    let approvals = Arc::new(RecordingApproval {
         requests: Mutex::new(Vec::new()),
-        decision: ApprovalDecision::AllowOnce,
+        decision: ApprovalDecision::AllowForSession,
     });
-    let erased: std::sync::Arc<dyn ApprovalHandler> = approvals.clone();
-    authorize(&policy, &erased, request.clone()).await.unwrap();
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+    let request = process_request("cargo test");
 
+    let first = authorize(&policy, &erased, &remembered, &audit, request.clone())
+        .await
+        .unwrap();
+    let repeated = authorize(&policy, &erased, &remembered, &audit, request)
+        .await
+        .unwrap();
+    authorize(
+        &policy,
+        &erased,
+        &remembered,
+        &audit,
+        process_request("cargo test --all"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(first, super::AuthorizationOutcome::AllowedForSession);
+    assert_eq!(
+        repeated,
+        super::AuthorizationOutcome::AllowedByRememberedApproval
+    );
     assert_eq!(
         approvals
             .requests
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .as_slice(),
-        [ApprovalRequest {
-            capability: request,
-            reason: "host approval is required".into(),
-        }]
+            .len(),
+        2
     );
+    assert_eq!(
+        audit
+            .snapshot()
+            .into_iter()
+            .map(|record| record.decision())
+            .collect::<Vec<_>>(),
+        vec![
+            ApprovalAuditDecision::AllowedForSession,
+            ApprovalAuditDecision::AllowedByRememberedApproval,
+            ApprovalAuditDecision::AllowedForSession,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn approval_channel_handles_drop_and_exactly_once_response() {
+    let (handler, mut receiver) = approval_channel(NonZeroUsize::new(1).unwrap());
+    let request = ApprovalRequest::new(process_request("cargo test"), "approval required");
+    let waiting = tokio::spawn({
+        let handler = handler.clone();
+        let request = request.clone();
+        async move { handler.request(request).await }
+    });
+    let mut pending = receiver.recv().await.unwrap();
+    assert!(pending.respond(ApprovalDecision::AllowOnce).is_ok());
+    assert_eq!(
+        pending.respond(ApprovalDecision::AllowOnce),
+        Err(ApprovalDecision::AllowOnce)
+    );
+    assert_eq!(waiting.await.unwrap(), ApprovalDecision::AllowOnce);
+
+    let waiting = tokio::spawn(async move { handler.request(request).await });
+    drop(receiver.recv().await.unwrap());
+    assert!(matches!(
+        waiting.await.unwrap(),
+        ApprovalDecision::Deny { reason } if reason.contains("dropped")
+    ));
+}
+
+#[tokio::test]
+async fn no_approval_handler_returns_typed_host_denial() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals: Arc<dyn ApprovalHandler> = Arc::new(DenyApprovals);
+    let error = authorize(
+        &policy,
+        &approvals,
+        &Arc::default(),
+        &Arc::default(),
+        process_request("cargo test"),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), super::AuthorizationDenialKind::Host);
+    assert_eq!(error.capability(), CapabilityKind::Process);
 }

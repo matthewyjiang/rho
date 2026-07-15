@@ -12,8 +12,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
-    model::ToolSpec, ApprovalHandler, CancellationToken, CapabilityRequest, DenyAllPolicy,
-    DenyApprovals, HostInputRequest, HostInputResponse, ToolCallId, Workspace, WorkspacePolicy,
+    model::ToolSpec, ApprovalHandler, AuthorizationError, AuthorizationOutcome, CancellationToken,
+    CapabilityKind, CapabilityRequest, DenyAllPolicy, DenyApprovals, HostInputRequest,
+    HostInputResponse, ToolCallId, Workspace, WorkspacePolicy,
 };
 
 /// Future returned by [`Tool`] implementations.
@@ -28,6 +29,56 @@ pub enum OperationKind {
     Execute,
     Network,
     Other(String),
+}
+
+/// Trust origin of a registered tool implementation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolOrigin {
+    /// In-process code supplied by the embedding host. SDK policy cannot sandbox it.
+    HostProvided,
+    /// A built-in adapter expected to authorize every declared capability.
+    BuiltIn,
+}
+
+/// Static security declaration exposed before a tool is invoked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolSecurity {
+    origin: ToolOrigin,
+    capabilities: Vec<CapabilityKind>,
+}
+
+impl ToolSecurity {
+    pub fn host_provided() -> Self {
+        Self {
+            origin: ToolOrigin::HostProvided,
+            capabilities: Vec::new(),
+        }
+    }
+
+    pub fn built_in(capabilities: impl IntoIterator<Item = CapabilityKind>) -> Self {
+        let mut capabilities = capabilities.into_iter().collect::<Vec<_>>();
+        capabilities.sort();
+        capabilities.dedup();
+        Self {
+            origin: ToolOrigin::BuiltIn,
+            capabilities,
+        }
+    }
+
+    pub fn origin(&self) -> ToolOrigin {
+        self.origin
+    }
+
+    pub fn capabilities(&self) -> &[CapabilityKind] {
+        &self.capabilities
+    }
+}
+
+impl Default for ToolSecurity {
+    fn default() -> Self {
+        Self::host_provided()
+    }
 }
 
 /// Structured presentation metadata for a tool result or progress update.
@@ -206,6 +257,8 @@ pub struct ToolContext {
     workspace: Option<Workspace>,
     policy: Arc<dyn WorkspacePolicy>,
     approvals: Arc<dyn ApprovalHandler>,
+    remembered_approvals: Arc<crate::workspace::SessionApprovals>,
+    approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     host_input: Option<crate::host_input::HostInputRequester>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
@@ -221,6 +274,8 @@ impl ToolContext {
             workspace,
             policy: Arc::new(DenyAllPolicy),
             approvals: Arc::new(DenyApprovals),
+            remembered_approvals: Arc::default(),
+            approval_audit: Arc::default(),
             host_input: None,
             cancellation,
             progress,
@@ -231,6 +286,8 @@ impl ToolContext {
         workspace: Option<Workspace>,
         policy: Arc<dyn WorkspacePolicy>,
         approvals: Arc<dyn ApprovalHandler>,
+        remembered_approvals: Arc<crate::workspace::SessionApprovals>,
+        approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
         cancellation: CancellationToken,
         progress: ToolProgressSender,
     ) -> Self {
@@ -238,6 +295,8 @@ impl ToolContext {
             workspace,
             policy,
             approvals,
+            remembered_approvals,
+            approval_audit,
             host_input: None,
             cancellation,
             progress,
@@ -273,10 +332,26 @@ impl ToolContext {
         self.workspace.as_ref().map(Workspace::root)
     }
 
-    pub async fn authorize(&self, request: CapabilityRequest) -> Result<(), crate::Error> {
+    pub async fn authorize(
+        &self,
+        request: CapabilityRequest,
+    ) -> Result<AuthorizationOutcome, AuthorizationError> {
+        let capability = request.kind();
         tokio::select! {
-            result = crate::workspace::authorize(&self.policy, &self.approvals, request) => result,
-            () = self.cancellation.cancelled() => Err(crate::Error::Cancelled),
+            result = crate::workspace::authorize(
+                &self.policy,
+                &self.approvals,
+                &self.remembered_approvals,
+                &self.approval_audit,
+                request,
+            ) => result,
+            () = self.cancellation.cancelled() => {
+                self.approval_audit.record(
+                    capability,
+                    crate::ApprovalAuditDecision::Cancelled,
+                );
+                Err(AuthorizationError::cancelled(capability))
+            },
         }
     }
 
@@ -324,6 +399,7 @@ impl ToolOutput {
 pub enum ToolErrorKind {
     InvalidArguments,
     Execution,
+    PolicyDenied,
     Cancelled,
 }
 
@@ -350,6 +426,17 @@ impl ToolError {
         &self.message
     }
 
+    pub fn policy_denied(error: &AuthorizationError) -> Self {
+        Self::new(
+            ToolErrorKind::PolicyDenied,
+            format!(
+                "{} capability denied: {}",
+                capability_label(error.capability()),
+                error.message()
+            ),
+        )
+    }
+
     pub fn cancelled() -> Self {
         Self::new(ToolErrorKind::Cancelled, "tool call cancelled")
     }
@@ -363,6 +450,17 @@ impl fmt::Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
+fn capability_label(capability: CapabilityKind) -> &'static str {
+    match capability {
+        CapabilityKind::Read => "read",
+        CapabilityKind::Write => "write",
+        CapabilityKind::Process => "process",
+        CapabilityKind::Network => "network",
+        CapabilityKind::Skill => "skill",
+        CapabilityKind::InstructionDiscovery => "instruction discovery",
+    }
+}
+
 /// Extension point for tools available to SDK sessions.
 ///
 /// Implementors provide a stable JSON schema, use only capabilities explicitly
@@ -371,6 +469,12 @@ impl std::error::Error for ToolError {}
 /// preformatted terminal lines.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+
+    /// Declares trust origin and capabilities for diagnostics. Host-provided
+    /// tools default to trusted in-process code with no SDK-enforced claims.
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::host_provided()
+    }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a>;
 }
@@ -428,6 +532,13 @@ impl ToolRegistry {
 
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools.values().map(|tool| tool.spec()).collect()
+    }
+
+    pub(crate) fn diagnostics(&self) -> Vec<(String, ToolSecurity)> {
+        self.tools
+            .values()
+            .map(|tool| (tool.spec().name, tool.security()))
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {

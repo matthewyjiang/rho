@@ -144,7 +144,7 @@ pub use compaction::{
     CompactionFuture, CompactionOutcome, CompactionOutput, CompactionPolicy, CompactionRequest,
     CompactionState, CompactionTrigger, Compactor, ScriptedCompactor,
 };
-pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind};
+pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure};
 pub use host_input::{
@@ -157,9 +157,14 @@ pub use run::Run;
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use workspace::{
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
-    DenyAllPolicy, DenyApprovals, PolicyDecision, ScopedWorkspacePolicy, Workspace,
-    WorkspacePolicy,
+    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
+    ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, AuthorizationDenialKind,
+    AuthorizationError, AuthorizationOutcome, CapabilityKind, CapabilityOperation,
+    CapabilityRequest, CapabilitySource, ChannelApprovalHandler, DenyAllPolicy, DenyApprovals,
+    ExecutableSelection, NetworkTarget, PathScope, PendingApproval, PolicyDecision,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ResolvedWorkspacePath, ScopedWorkspacePolicy, Workspace, WorkspacePathError,
+    WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 
 #[cfg(test)]

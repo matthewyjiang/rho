@@ -1,0 +1,148 @@
+use std::sync::{Arc, Mutex};
+
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
+    provider::{ScriptedProvider, ScriptedTurn},
+    tool::{ToolErrorKind, ToolOrigin},
+    ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    CapabilityKind, CapabilityOperation, CapabilitySource, ProcessEnvironment, Rho, RunEvent,
+    ScopedWorkspacePolicy, SessionOptions, ToolCompletion, UserInput, Workspace,
+};
+use serde_json::json;
+
+use super::*;
+
+#[derive(Debug)]
+struct RecordingApprovals {
+    requests: Mutex<Vec<ApprovalRequest>>,
+}
+
+impl ApprovalHandler for RecordingApprovals {
+    fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request);
+            ApprovalDecision::Deny {
+                reason: "host rejected process execution".into(),
+            }
+        })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
+    let root = tempfile::tempdir().unwrap();
+    let command = "printf '%s' '$TOKEN; && | $(touch should-not-exist)'";
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "shell-1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": command, "timeout_seconds": 9}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "denial handled".into(),
+            )])),
+        ],
+    );
+    let approvals = Arc::new(RecordingApprovals {
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut builder = Rho::builder()
+        .provider(provider)
+        .workspace(Workspace::new(root.path()).unwrap())
+        .workspace_policy(
+            ScopedWorkspacePolicy::new()
+                .allow_processes()
+                .require_process_approval(),
+        )
+        .approval_handler_shared(approvals.clone());
+    builder = builder.tool_shared(adapt(super::super::bash::Bash::new(false), 777));
+    let runtime = builder.build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("run it")).await.unwrap();
+    let mut failure = None;
+    while let Some(event) = run.next_event().await {
+        match event {
+            RunEvent::ToolFinished {
+                result: ToolCompletion::Failure(tool_failure),
+                ..
+            } => failure = Some(tool_failure),
+            RunEvent::Completed { outcome } => {
+                assert_eq!(outcome.text(), "denial handled");
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let failure = failure.unwrap();
+    assert_eq!(failure.kind(), ToolErrorKind::PolicyDenied);
+    assert!(failure.message().contains("process capability denied"));
+    assert!(!root.path().join("should-not-exist").exists());
+
+    let requests = approvals
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(
+        request.capability().source(),
+        &CapabilitySource::built_in_tool("bash")
+    );
+    let CapabilityOperation::ExecuteProcess(execution) = request.capability().operation() else {
+        panic!("expected process approval");
+    };
+    assert_eq!(
+        execution.working_directory(),
+        root.path().canonicalize().unwrap()
+    );
+    assert_eq!(
+        execution.invocation().executable_path(),
+        std::path::Path::new("bash")
+    );
+    assert_eq!(execution.invocation().arguments(), ["-lc"]);
+    assert_eq!(execution.invocation().shell_command(), Some(command));
+    assert_eq!(execution.environment(), &ProcessEnvironment::InheritAll);
+    assert_eq!(execution.output_limits().max_output_bytes(), 777);
+    assert_eq!(execution.output_limits().timeout().unwrap().as_secs(), 9);
+    assert!(!format!("{request:?}").contains("$TOKEN"));
+    drop(requests);
+
+    let diagnostics = runtime.diagnostics();
+    let bash = diagnostics
+        .tools()
+        .iter()
+        .find(|tool| tool.name() == "bash")
+        .unwrap();
+    assert_eq!(bash.origin(), ToolOrigin::BuiltIn);
+    assert_eq!(bash.capabilities(), [CapabilityKind::Process]);
+    assert_eq!(
+        diagnostics
+            .approval_audit()
+            .iter()
+            .map(|record| (record.capability(), record.decision()))
+            .collect::<Vec<_>>(),
+        [(CapabilityKind::Process, ApprovalAuditDecision::DeniedByHost)]
+    );
+    assert!(!format!("{diagnostics:?}").contains("$TOKEN"));
+}
+
+#[test]
+fn security_declarations_distinguish_network_builtins_from_host_tools() {
+    assert_eq!(security_for("web_search").origin(), ToolOrigin::BuiltIn);
+    assert_eq!(
+        security_for("web_search").capabilities(),
+        [CapabilityKind::Network]
+    );
+    assert_eq!(security_for("rho").origin(), ToolOrigin::BuiltIn);
+    assert!(security_for("rho").capabilities().is_empty());
+}

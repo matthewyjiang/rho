@@ -5,7 +5,8 @@ use serde_json::json;
 
 use crate::{
     model::ToolSpec, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    CancellationToken, CapabilityRequest, ScopedWorkspacePolicy, ToolCallId,
+    CancellationToken, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation, ProcessOutputLimits, ScopedWorkspacePolicy, ToolCallId,
 };
 
 use super::{
@@ -110,19 +111,29 @@ async fn cancellation_interrupts_a_pending_host_approval() {
                 .require_process_approval(),
         ),
         Arc::new(PendingApproval),
+        Arc::default(),
+        Arc::default(),
         cancellation,
         progress,
     );
 
     let (result, ()) = tokio::join!(
-        context.authorize(CapabilityRequest::ExecuteProcess {
-            program: "cargo".into(),
-            arguments: vec!["test".into()],
-        }),
+        context.authorize(CapabilityRequest::process(
+            ProcessExecution::new(
+                "/workspace",
+                ProcessInvocation::executable("/usr/bin/cargo", vec!["test".into()]),
+                ProcessEnvironment::Empty,
+                ProcessOutputLimits::new(1024, None),
+            ),
+            CapabilitySource::host_tool("test"),
+        )),
         async move { cancel.cancel() }
     );
 
-    assert!(matches!(result, Err(crate::Error::Cancelled)));
+    assert!(matches!(
+        result,
+        Err(error) if error.kind() == crate::AuthorizationDenialKind::Cancelled
+    ));
 }
 
 #[test]

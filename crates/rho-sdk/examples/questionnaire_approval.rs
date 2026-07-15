@@ -9,7 +9,8 @@ use rho_sdk::{
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
-    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, Rho, RunEvent,
+    CapabilitySource, HostChoice, HostInputRequest, HostInputResponse, HostQuestion,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, Rho, RunEvent,
     ScopedWorkspacePolicy, SelectionMode, SessionOptions, UserInput,
 };
 use serde_json::json;
@@ -70,10 +71,15 @@ impl Tool for ProcessTool {
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             context
-                .authorize(CapabilityRequest::ExecuteProcess {
-                    program: "cargo".into(),
-                    arguments: vec!["test".into()],
-                })
+                .authorize(CapabilityRequest::process(
+                    ProcessExecution::new(
+                        "/workspace",
+                        ProcessInvocation::executable("/usr/bin/cargo", vec!["test".into()]),
+                        ProcessEnvironment::Empty,
+                        ProcessOutputLimits::new(4096, None),
+                    ),
+                    CapabilitySource::host_tool("run_process"),
+                ))
                 .await
                 .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
             Ok(ToolOutput::text("process approved"))
@@ -88,15 +94,9 @@ impl ApprovalHandler for AllowOnceApprovals {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
             println!(
-                "approval requested: {} ({})",
+                "approval requested: {} ({:?})",
                 request.reason(),
-                match request.capability() {
-                    CapabilityRequest::ExecuteProcess { program, .. } => program.as_str(),
-                    CapabilityRequest::ReadPath { .. } => "read",
-                    CapabilityRequest::WritePath { .. } => "write",
-                    CapabilityRequest::NetworkAccess { .. } => "network",
-                    _ => "capability",
-                }
+                request.capability().kind(),
             );
             ApprovalDecision::AllowOnce
         })

@@ -11,21 +11,26 @@ use std::sync::Arc;
 use rho_sdk::{
     tool::{
         OperationKind, Tool as SdkTool, ToolContext as SdkToolContext, ToolError as SdkToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolSecurity,
     },
-    HostChoice, HostInputRequest, HostQuestion, SelectionMode,
+    CapabilityKind, CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest,
+    HostQuestion, SelectionMode,
 };
 
 use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    tool::{Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError},
+    tool::{truncate, Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError},
 };
 
 use super::{
     process::{Process, ProcessLimits, ProcessManager},
     sdk_adapter::{coding_tools, CodingToolOptions},
 };
+
+#[path = "sdk_security.rs"]
+mod sdk_security;
+use sdk_security::{authorize_builtin, authorize_request, required_string, security_for};
 
 pub struct AutomationToolSet {
     tools: Vec<Arc<dyn SdkTool>>,
@@ -55,7 +60,10 @@ impl AutomationToolSet {
     fn build(config: &Config, diagnostics: RuntimeDiagnostics, questionnaire: bool) -> Self {
         let mut tools =
             coding_tools(CodingToolOptions::new().max_output_bytes(config.max_output_bytes));
-        let processes = ProcessManager::new(ProcessLimits::default());
+        let processes = ProcessManager::new(ProcessLimits {
+            max_bytes: config.max_output_bytes,
+            ..ProcessLimits::default()
+        });
         tools.push(adapt(
             Process::new(processes.clone()),
             config.max_output_bytes,
@@ -72,7 +80,9 @@ impl AutomationToolSet {
             super::powershell::PowerShell::new(rtk_enabled),
             config.max_output_bytes,
         ));
-        tools.push(adapt(super::skill::Skill, config.max_output_bytes));
+        tools.push(Arc::new(SdkSkillTool {
+            max_output_bytes: config.max_output_bytes,
+        }));
         tools.push(adapt(
             super::rho::Rho::new(diagnostics),
             config.max_output_bytes,
@@ -109,11 +119,85 @@ impl AutomationToolSet {
     }
 }
 
+struct SdkSkillTool {
+    max_output_bytes: usize,
+}
+
+impl SdkTool for SdkSkillTool {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        super::skill::Skill.spec()
+    }
+
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Skill])
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let name = required_string(invocation.arguments(), "name")?;
+            if !valid_skill_name(name) {
+                return Err(SdkToolError::new(
+                    ToolErrorKind::InvalidArguments,
+                    "skill name must contain only ASCII letters, digits, '-' or '_'",
+                ));
+            }
+            if name == "rho-diagnostics" {
+                authorize_request(
+                    &context,
+                    CapabilityRequest::skill(name, None, CapabilitySource::built_in_tool("skill")),
+                )
+                .await?;
+                return Ok(ToolOutput::text(truncate(
+                    include_str!("../builtin_skills/rho-diagnostics/SKILL.md").into(),
+                    self.max_output_bytes,
+                )));
+            }
+            let workspace = context.workspace().ok_or_else(|| {
+                SdkToolError::new(ToolErrorKind::Execution, "workspace is required for skills")
+            })?;
+            let requested = std::path::Path::new(".agents")
+                .join("skills")
+                .join(name)
+                .join("SKILL.md");
+            let resolved = workspace
+                .resolve_for_read(&requested)
+                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            authorize_request(
+                &context,
+                CapabilityRequest::skill(
+                    name,
+                    Some(resolved.path().to_path_buf()),
+                    CapabilitySource::built_in_tool("skill"),
+                ),
+            )
+            .await?;
+            workspace.revalidate(&resolved).map_err(|error| {
+                SdkToolError::new(ToolErrorKind::PolicyDenied, error.to_string())
+            })?;
+            let contents = tokio::fs::read_to_string(resolved.path())
+                .await
+                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            Ok(ToolOutput::text(truncate(contents, self.max_output_bytes)))
+        })
+    }
+}
+
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 struct QuestionnaireTool;
 
 impl SdkTool for QuestionnaireTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         crate::questionnaire::tool_spec()
+    }
+
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([])
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
@@ -240,11 +324,23 @@ where
         self.inner.spec()
     }
 
+    fn security(&self) -> ToolSecurity {
+        security_for(&self.inner.spec().name)
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             if context.cancellation().is_cancelled() {
                 return Err(SdkToolError::cancelled());
             }
+            let spec = self.inner.spec();
+            authorize_builtin(
+                &spec.name,
+                invocation.arguments(),
+                &context,
+                self.max_output_bytes,
+            )
+            .await?;
             let cwd = context.workspace_root().ok_or_else(|| {
                 SdkToolError::new(
                     ToolErrorKind::Execution,
@@ -295,3 +391,7 @@ fn map_app_error(error: AppToolError) -> SdkToolError {
     };
     SdkToolError::new(kind, error.to_string())
 }
+
+#[cfg(test)]
+#[path = "sdk_registry_tests.rs"]
+mod tests;

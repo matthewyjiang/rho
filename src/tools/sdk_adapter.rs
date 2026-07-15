@@ -19,9 +19,9 @@ use serde_json::Value;
 use rho_sdk::{
     tool::{
         OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolProgress,
+        ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
     },
-    CapabilityRequest, Error as SdkError,
+    CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError,
 };
 
 #[cfg(test)]
@@ -143,11 +143,17 @@ impl Tool for ListDirTool {
         ListDir.spec()
     }
 
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Read])
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
             let args: PathArgs = parse_args(invocation.into_arguments())?;
-            let path = authorize_existing_path(&context, &args.path, PathCapability::Read).await?;
+            let path =
+                authorize_existing_path(&context, &args.path, PathCapability::Read, "list_dir")
+                    .await?;
             let content = list_directory(&path).await.map_err(map_app_error)?;
             let display = display_path(&context, &args.path);
             Ok(
@@ -166,11 +172,17 @@ impl Tool for ReadFileTool {
         ReadFile.spec()
     }
 
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Read])
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
             let args: ReadArgs = parse_args(invocation.into_arguments())?;
-            let path = authorize_existing_path(&context, &args.path, PathCapability::Read).await?;
+            let path =
+                authorize_existing_path(&context, &args.path, PathCapability::Read, "read_file")
+                    .await?;
             let content = read_file_content(&path, args.offset, args.limit)
                 .await
                 .map_err(map_app_error)?;
@@ -198,11 +210,15 @@ impl Tool for WriteFileTool {
         WriteFile.spec()
     }
 
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Write])
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
             let args: WriteArgs = parse_args(invocation.into_arguments())?;
-            let path = authorize_write_path(&context, &args.path).await?;
+            let path = authorize_write_path(&context, &args.path, "write_file").await?;
             let display = display_path(&context, &args.path);
             let _ = context
                 .progress()
@@ -229,15 +245,26 @@ impl Tool for EditFileTool {
         EditFile.spec()
     }
 
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Write])
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
             let args: EditArgs = parse_args(invocation.into_arguments())?;
             let edits = args.into_edits().map_err(map_app_error)?;
             let root = workspace_root(&context)?.to_path_buf();
+            let mut authorized_paths = std::collections::HashMap::new();
             for edit in &edits {
-                let _ =
-                    authorize_existing_path(&context, &edit.path, PathCapability::Write).await?;
+                let path = authorize_existing_path(
+                    &context,
+                    &edit.path,
+                    PathCapability::Write,
+                    "edit_file",
+                )
+                .await?;
+                authorized_paths.insert(edit.path.clone(), path);
             }
             let total = edits.len() as u64;
             let _ = context
@@ -251,7 +278,12 @@ impl Tool for EditFileTool {
 
             let outcome = apply_edits(
                 edits,
-                |path| resolve_workspace_path(&context, path),
+                |path| {
+                    authorized_paths
+                        .get(path)
+                        .cloned()
+                        .unwrap_or_else(|| root.join(path))
+                },
                 |path| compact_display_path(&root, path),
                 self.max_output_bytes,
             )
@@ -309,15 +341,6 @@ fn workspace_root(context: &ToolContext) -> Result<&std::path::Path, ToolError> 
     })
 }
 
-fn resolve_workspace_path(context: &ToolContext, path: &str) -> PathBuf {
-    match context.workspace() {
-        Some(workspace) => workspace
-            .resolve(path)
-            .unwrap_or_else(|_| workspace.root().join(path)),
-        None => PathBuf::from(path),
-    }
-}
-
 fn display_path(context: &ToolContext, path: &str) -> String {
     match context.workspace_root() {
         Some(root) => compact_display_path(root, path),
@@ -329,6 +352,7 @@ async fn authorize_existing_path(
     context: &ToolContext,
     path: &str,
     capability: PathCapability,
+    tool_name: &str,
 ) -> Result<PathBuf, ToolError> {
     let workspace = context.workspace().ok_or_else(|| {
         ToolError::new(
@@ -336,49 +360,66 @@ async fn authorize_existing_path(
             "workspace is required for coding tools",
         )
     })?;
-    let lexical = workspace.resolve(path).map_err(map_sdk_error)?;
-    authorize_path(context, lexical.clone(), capability).await?;
-    match workspace.resolve_existing(path) {
-        Ok(path) => Ok(path),
-        Err(error) if lexical.exists() => Err(map_sdk_error(error)),
-        // Missing paths keep the lexical location so callers see normal I/O errors.
-        Err(_) => Ok(lexical),
-    }
+    let resolved = workspace.resolve_for_read(path).map_err(map_path_error)?;
+    authorize_path(context, &resolved, capability, tool_name).await?;
+    workspace.revalidate(&resolved).map_err(map_path_error)?;
+    Ok(resolved.path().to_path_buf())
 }
 
-async fn authorize_write_path(context: &ToolContext, path: &str) -> Result<PathBuf, ToolError> {
+async fn authorize_write_path(
+    context: &ToolContext,
+    path: &str,
+    tool_name: &str,
+) -> Result<PathBuf, ToolError> {
     let workspace = context.workspace().ok_or_else(|| {
         ToolError::new(
             ToolErrorKind::Execution,
             "workspace is required for coding tools",
         )
     })?;
-    let lexical = workspace.resolve(path).map_err(map_sdk_error)?;
-    authorize_path(context, lexical.clone(), PathCapability::Write).await?;
-    Ok(lexical)
+    let resolved = workspace.resolve_for_write(path).map_err(map_path_error)?;
+    authorize_path(context, &resolved, PathCapability::Write, tool_name).await?;
+    workspace.revalidate(&resolved).map_err(map_path_error)?;
+    Ok(resolved.path().to_path_buf())
 }
 
 async fn authorize_path(
     context: &ToolContext,
-    path: PathBuf,
+    path: &rho_sdk::ResolvedWorkspacePath,
     capability: PathCapability,
+    tool_name: &str,
 ) -> Result<(), ToolError> {
+    let source = CapabilitySource::built_in_tool(tool_name);
     let request = match capability {
-        PathCapability::Read => CapabilityRequest::ReadPath { path },
-        PathCapability::Write => CapabilityRequest::WritePath { path },
+        PathCapability::Read => {
+            CapabilityRequest::read_path(path.path(), path.scope().clone(), source)
+        }
+        PathCapability::Write => {
+            CapabilityRequest::write_path(path.path(), path.scope().clone(), source)
+        }
     };
-    context.authorize(request).await.map_err(map_sdk_error)
+    context
+        .authorize(request)
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            if error.kind() == rho_sdk::AuthorizationDenialKind::Cancelled {
+                ToolError::cancelled()
+            } else {
+                ToolError::policy_denied(&error)
+            }
+        })
 }
 
-fn map_sdk_error(error: SdkError) -> ToolError {
-    match error {
-        SdkError::Cancelled => ToolError::cancelled(),
-        SdkError::PolicyDenied { message } => ToolError::new(ToolErrorKind::Execution, message),
-        SdkError::InvalidConfiguration { message } => {
-            ToolError::new(ToolErrorKind::Execution, message)
-        }
-        other => ToolError::new(ToolErrorKind::Execution, other.to_string()),
-    }
+fn map_path_error(error: WorkspacePathError) -> ToolError {
+    let kind = match error.kind() {
+        rho_sdk::WorkspacePathErrorKind::ParentTraversal
+        | rho_sdk::WorkspacePathErrorKind::OutsideGrantedRoots
+        | rho_sdk::WorkspacePathErrorKind::InvalidPlatformPath
+        | rho_sdk::WorkspacePathErrorKind::ChangedAfterAuthorization => ToolErrorKind::PolicyDenied,
+        _ => ToolErrorKind::Execution,
+    };
+    ToolError::new(kind, error.to_string())
 }
 
 fn map_app_error(error: AppToolError) -> ToolError {

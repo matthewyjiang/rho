@@ -1,6 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use crate::model::ModelIdentity;
+use crate::{
+    model::ModelIdentity,
+    tool::{ToolOrigin, ToolSecurity},
+    ApprovalAuditRecord, CapabilityKind,
+};
 
 /// Kind of source included in the effective system prompt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,18 +46,60 @@ impl PromptSource {
     }
 }
 
+/// Secret-free declaration for one registered tool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolDiagnostic {
+    name: String,
+    origin: ToolOrigin,
+    capabilities: Vec<CapabilityKind>,
+}
+
+impl ToolDiagnostic {
+    pub(crate) fn new(name: String, security: ToolSecurity) -> Self {
+        Self {
+            name,
+            origin: security.origin(),
+            capabilities: security.capabilities().to_vec(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn origin(&self) -> ToolOrigin {
+        self.origin
+    }
+
+    pub fn capabilities(&self) -> &[CapabilityKind] {
+        &self.capabilities
+    }
+}
+
 /// Stable snapshot of effective runtime configuration without secrets.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticsSnapshot {
     provider: ModelIdentity,
     tool_names: Vec<String>,
+    tools: Vec<ToolDiagnostic>,
     workspace_root: Option<PathBuf>,
+    granted_workspace_roots: Vec<PathBuf>,
     prompt_sources: Vec<PromptSource>,
+    approval_audit: Vec<ApprovalAuditRecord>,
     event_capacity: usize,
     max_steps: usize,
     compaction_trigger_messages: Option<usize>,
     reasoning_level: crate::ReasoningLevel,
     default_features: Vec<String>,
+}
+
+pub(crate) struct SecuritySettings {
+    pub(crate) tool_names: Vec<String>,
+    pub(crate) tool_security: Vec<(String, ToolSecurity)>,
+    pub(crate) workspace_root: Option<PathBuf>,
+    pub(crate) granted_workspace_roots: Vec<PathBuf>,
+    pub(crate) prompt_sources: Vec<PromptSource>,
+    pub(crate) approval_audit: Vec<ApprovalAuditRecord>,
 }
 
 pub(crate) struct ExecutionSettings {
@@ -66,16 +112,22 @@ pub(crate) struct ExecutionSettings {
 impl DiagnosticsSnapshot {
     pub(crate) fn new(
         provider: ModelIdentity,
-        tool_names: Vec<String>,
-        workspace_root: Option<PathBuf>,
-        prompt_sources: Vec<PromptSource>,
+        security: SecuritySettings,
         execution: ExecutionSettings,
     ) -> Self {
+        let tools = security
+            .tool_security
+            .into_iter()
+            .map(|(name, security)| ToolDiagnostic::new(name, security))
+            .collect();
         Self {
             provider,
-            tool_names,
-            workspace_root,
-            prompt_sources,
+            tool_names: security.tool_names,
+            tools,
+            workspace_root: security.workspace_root,
+            granted_workspace_roots: security.granted_workspace_roots,
+            prompt_sources: security.prompt_sources,
+            approval_audit: security.approval_audit,
             event_capacity: execution.event_capacity,
             max_steps: execution.max_steps,
             compaction_trigger_messages: execution.compaction_trigger_messages,
@@ -92,12 +144,24 @@ impl DiagnosticsSnapshot {
         &self.tool_names
     }
 
+    pub fn tools(&self) -> &[ToolDiagnostic] {
+        &self.tools
+    }
+
     pub fn workspace_root(&self) -> Option<&Path> {
         self.workspace_root.as_deref()
     }
 
+    pub fn granted_workspace_roots(&self) -> &[PathBuf] {
+        &self.granted_workspace_roots
+    }
+
     pub fn prompt_sources(&self) -> &[PromptSource] {
         &self.prompt_sources
+    }
+
+    pub fn approval_audit(&self) -> &[ApprovalAuditRecord] {
+        &self.approval_audit
     }
 
     pub fn event_capacity(&self) -> usize {

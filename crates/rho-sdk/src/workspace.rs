@@ -1,121 +1,25 @@
-use std::{
-    collections::BTreeSet,
-    fmt,
-    future::Future,
-    path::{Component, Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
+use std::{collections::BTreeSet, fmt};
+
+mod approval;
+mod capability;
+mod path;
+
+pub use approval::{
+    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
+    ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, AuthorizationDenialKind,
+    AuthorizationError, AuthorizationOutcome, ChannelApprovalHandler, DenyApprovals,
+    PendingApproval,
 };
-
-use crate::Error;
-
-/// Explicit filesystem scope supplied to tools.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Workspace {
-    root: PathBuf,
-}
-
-impl Workspace {
-    pub fn new(root: impl Into<PathBuf>) -> Result<Self, Error> {
-        let root = root.into();
-        if !root.is_absolute() {
-            return Err(Error::InvalidConfiguration {
-                message: "workspace root must be an absolute path".into(),
-            });
-        }
-        if root
-            .components()
-            .any(|component| component == Component::ParentDir)
-        {
-            return Err(Error::InvalidConfiguration {
-                message: "workspace root must not contain parent traversal".into(),
-            });
-        }
-        let root = std::fs::canonicalize(&root).map_err(|error| Error::InvalidConfiguration {
-            message: format!("workspace root must be an existing directory: {error}"),
-        })?;
-        if !root.is_dir() {
-            return Err(Error::InvalidConfiguration {
-                message: "workspace root must be a directory".into(),
-            });
-        }
-        Ok(Self { root })
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Resolves a path lexically and rejects traversal outside the workspace.
-    pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, Error> {
-        let path = path.as_ref();
-        let relative = if path.is_absolute() {
-            path.strip_prefix(&self.root)
-                .map_err(|_| Error::PolicyDenied {
-                    message: format!(
-                        "path '{}' is outside workspace '{}'",
-                        path.display(),
-                        self.root.display()
-                    ),
-                })?
-        } else {
-            path
-        };
-        let mut resolved = self.root.clone();
-        for component in relative.components() {
-            match component {
-                Component::Normal(part) => resolved.push(part),
-                Component::CurDir => {}
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(Error::PolicyDenied {
-                        message: format!("path '{}' escapes the workspace", path.display()),
-                    });
-                }
-            }
-        }
-        Ok(resolved)
-    }
-
-    /// Resolves an existing path and rejects symlinks that leave the workspace.
-    pub fn resolve_existing(&self, path: impl AsRef<Path>) -> Result<PathBuf, Error> {
-        let lexical = self.resolve(path)?;
-        let canonical_root =
-            std::fs::canonicalize(&self.root).map_err(|error| Error::PolicyDenied {
-                message: format!("workspace root cannot be resolved: {error}"),
-            })?;
-        let canonical = std::fs::canonicalize(&lexical).map_err(|error| Error::PolicyDenied {
-            message: format!("workspace path cannot be resolved: {error}"),
-        })?;
-        if !canonical.starts_with(&canonical_root) {
-            return Err(Error::PolicyDenied {
-                message: format!(
-                    "path '{}' resolves outside the workspace",
-                    lexical.display()
-                ),
-            });
-        }
-        Ok(canonical)
-    }
-}
-
-/// Security-sensitive capability requested by a tool or adapter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CapabilityRequest {
-    ReadPath {
-        path: PathBuf,
-    },
-    WritePath {
-        path: PathBuf,
-    },
-    ExecuteProcess {
-        program: String,
-        arguments: Vec<String>,
-    },
-    NetworkAccess {
-        url: String,
-    },
-}
+pub(crate) use approval::{authorize, ApprovalAuditLog, SessionApprovals};
+pub use capability::{
+    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
+    NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,
+    ProcessOutputLimits,
+};
+pub use path::{
+    ResolvedWorkspacePath, Workspace, WorkspacePathError, WorkspacePathErrorKind,
+    WorkspacePathState,
+};
 
 /// Decision returned by a [`WorkspacePolicy`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,7 +30,7 @@ pub enum PolicyDecision {
     RequireApproval { reason: String },
 }
 
-/// Host policy for filesystem, process, and network capabilities.
+/// Host policy for filesystem, process, network, skill, and instruction capabilities.
 pub trait WorkspacePolicy: Send + Sync {
     fn evaluate(&self, request: &CapabilityRequest) -> PolicyDecision;
 }
@@ -143,22 +47,14 @@ impl WorkspacePolicy for DenyAllPolicy {
     }
 }
 
-/// Explicit opt-in policy for common workspace capabilities.
+/// Explicit opt-in policy for independently scoped workspace capabilities.
 #[derive(Clone, Debug, Default)]
 pub struct ScopedWorkspacePolicy {
-    read_paths: bool,
-    write_paths: bool,
-    processes: bool,
+    allowed: BTreeSet<CapabilityKind>,
     network_hosts: BTreeSet<String>,
-    require_approval: BTreeSet<CapabilityClass>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum CapabilityClass {
-    Read,
-    Write,
-    Process,
-    Network,
+    network_tools: BTreeSet<String>,
+    require_approval: BTreeSet<CapabilityKind>,
+    outside_workspace_paths: bool,
 }
 
 impl ScopedWorkspacePolicy {
@@ -167,68 +63,111 @@ impl ScopedWorkspacePolicy {
     }
 
     pub fn allow_read_paths(mut self) -> Self {
-        self.read_paths = true;
+        self.allowed.insert(CapabilityKind::Read);
         self
     }
 
     pub fn allow_write_paths(mut self) -> Self {
-        self.write_paths = true;
+        self.allowed.insert(CapabilityKind::Write);
         self
     }
 
     pub fn allow_processes(mut self) -> Self {
-        self.processes = true;
+        self.allowed.insert(CapabilityKind::Process);
+        self
+    }
+
+    pub fn allow_skills(mut self) -> Self {
+        self.allowed.insert(CapabilityKind::Skill);
+        self
+    }
+
+    pub fn allow_instruction_discovery(mut self) -> Self {
+        self.allowed.insert(CapabilityKind::InstructionDiscovery);
+        self
+    }
+
+    /// Allows capability checks for paths under roots deliberately attached to
+    /// [`Workspace::with_granted_root`]. This does not grant read or write by
+    /// itself.
+    pub fn allow_outside_workspace_paths(mut self) -> Self {
+        self.outside_workspace_paths = true;
         self
     }
 
     pub fn allow_network_host(mut self, host: impl Into<String>) -> Self {
-        self.network_hosts.insert(host.into().to_ascii_lowercase());
+        self.allowed.insert(CapabilityKind::Network);
+        self.network_hosts
+            .insert(host.into().trim_end_matches('.').to_ascii_lowercase());
         self
     }
 
-    pub fn require_read_approval(mut self) -> Self {
-        self.require_approval.insert(CapabilityClass::Read);
+    /// Allows a built-in whose destination is selected internally. URL-taking
+    /// built-ins should use [`Self::allow_network_host`] instead.
+    pub fn allow_network_tool(mut self, tool_name: impl Into<String>) -> Self {
+        self.allowed.insert(CapabilityKind::Network);
+        self.network_tools.insert(tool_name.into());
         self
     }
 
-    pub fn require_write_approval(mut self) -> Self {
-        self.require_approval.insert(CapabilityClass::Write);
-        self
+    pub fn require_read_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::Read)
     }
 
-    pub fn require_process_approval(mut self) -> Self {
-        self.require_approval.insert(CapabilityClass::Process);
-        self
+    pub fn require_write_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::Write)
     }
 
-    pub fn require_network_approval(mut self) -> Self {
-        self.require_approval.insert(CapabilityClass::Network);
+    pub fn require_process_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::Process)
+    }
+
+    pub fn require_network_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::Network)
+    }
+
+    pub fn require_skill_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::Skill)
+    }
+
+    pub fn require_instruction_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::InstructionDiscovery)
+    }
+
+    fn require_approval_for(mut self, capability: CapabilityKind) -> Self {
+        self.require_approval.insert(capability);
         self
     }
 }
 
 impl WorkspacePolicy for ScopedWorkspacePolicy {
     fn evaluate(&self, request: &CapabilityRequest) -> PolicyDecision {
-        let (class, allowed) = match request {
-            CapabilityRequest::ReadPath { .. } => (CapabilityClass::Read, self.read_paths),
-            CapabilityRequest::WritePath { .. } => (CapabilityClass::Write, self.write_paths),
-            CapabilityRequest::ExecuteProcess { .. } => (CapabilityClass::Process, self.processes),
-            CapabilityRequest::NetworkAccess { url } => {
-                let host = url::Url::parse(url)
-                    .ok()
-                    .and_then(|url| url.host_str().map(str::to_ascii_lowercase));
-                (
-                    CapabilityClass::Network,
-                    host.is_some_and(|host| self.network_hosts.contains(&host)),
-                )
-            }
-        };
-        if !allowed {
+        let kind = request.kind();
+        if !self.allowed.contains(&kind) {
+            return denied();
+        }
+        if request.is_outside_primary_root() && !self.outside_workspace_paths {
             return PolicyDecision::Deny {
-                reason: "capability is outside the configured policy".into(),
+                reason: "access to a granted root requires an explicit outside-workspace grant"
+                    .into(),
             };
         }
-        if self.require_approval.contains(&class) {
+        if let CapabilityOperation::NetworkAccess(target) = request.operation() {
+            let allowed = match target {
+                NetworkTarget::Url(url) => allowed_url_host(url, &self.network_hosts),
+                NetworkTarget::ToolManaged => match request.source() {
+                    CapabilitySource::BuiltInTool { name } => self.network_tools.contains(name),
+                    CapabilitySource::HostProvidedTool { .. }
+                    | CapabilitySource::PromptConstruction => false,
+                },
+            };
+            if !allowed {
+                return PolicyDecision::Deny {
+                    reason: "network destination is outside the configured policy".into(),
+                };
+            }
+        }
+        if self.require_approval.contains(&kind) {
             PolicyDecision::RequireApproval {
                 reason: "host approval is required".into(),
             }
@@ -238,85 +177,30 @@ impl WorkspacePolicy for ScopedWorkspacePolicy {
     }
 }
 
-/// Host decision for one approval request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ApprovalDecision {
-    AllowOnce,
-    Deny { reason: String },
-}
-
-/// Owned request supplied to an [`ApprovalHandler`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApprovalRequest {
-    capability: CapabilityRequest,
-    reason: String,
-}
-
-impl ApprovalRequest {
-    pub fn capability(&self) -> &CapabilityRequest {
-        &self.capability
+fn allowed_url_host(url: &str, hosts: &BTreeSet<String>) -> bool {
+    let Ok(url) = url::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
     }
-
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
+    url.host_str()
+        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+        .is_some_and(|host| hosts.contains(&host))
 }
 
-/// Future returned by approval handlers.
-pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ApprovalDecision> + Send + 'a>>;
-
-/// Host extension point for interactive or remote approval decisions.
-pub trait ApprovalHandler: Send + Sync {
-    fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a>;
-}
-
-/// Approval handler that denies every request.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DenyApprovals;
-
-impl ApprovalHandler for DenyApprovals {
-    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
-        Box::pin(async {
-            ApprovalDecision::Deny {
-                reason: "no approval handler is configured".into(),
-            }
-        })
-    }
-}
-
-pub(crate) async fn authorize(
-    policy: &Arc<dyn WorkspacePolicy>,
-    approvals: &Arc<dyn ApprovalHandler>,
-    request: CapabilityRequest,
-) -> Result<(), Error> {
-    match policy.evaluate(&request) {
-        PolicyDecision::Allow => Ok(()),
-        PolicyDecision::Deny { reason } => Err(Error::PolicyDenied { message: reason }),
-        PolicyDecision::RequireApproval { reason } => {
-            match approvals
-                .request(ApprovalRequest {
-                    capability: request,
-                    reason,
-                })
-                .await
-            {
-                ApprovalDecision::AllowOnce => Ok(()),
-                ApprovalDecision::Deny { reason } => Err(Error::PolicyDenied { message: reason }),
-            }
-        }
+fn denied() -> PolicyDecision {
+    PolicyDecision::Deny {
+        reason: "capability is outside the configured policy".into(),
     }
 }
 
 impl fmt::Debug for dyn WorkspacePolicy {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("WorkspacePolicy(..)")
-    }
-}
-
-impl fmt::Debug for dyn ApprovalHandler {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ApprovalHandler(..)")
     }
 }
 

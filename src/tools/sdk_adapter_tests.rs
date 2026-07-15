@@ -61,7 +61,7 @@ async fn default_context_denies_read_without_policy() {
         .await
         .unwrap_err();
 
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
+    assert_eq!(error.kind(), ToolErrorKind::PolicyDenied);
     assert!(error.message().contains("denied"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
@@ -244,6 +244,41 @@ async fn default_runtime_policy_keeps_coding_tools_inert() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
         "safe"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn hostile_paths_are_rejected_before_file_io() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "unchanged").unwrap();
+    symlink(outside.path(), root.path().join("escape")).unwrap();
+    let tool = coding_tools(CodingToolOptions::default())
+        .into_iter()
+        .find(|tool| tool.spec().name == "write_file")
+        .unwrap();
+
+    for path in [
+        "../secret.txt".to_string(),
+        outside.path().join("secret.txt").display().to_string(),
+        "escape/secret.txt".to_string(),
+    ] {
+        let (context, _progress) = deny_context(Some(workspace(&root)));
+        let error = tool
+            .call(
+                invocation(json!({"path": path, "content": "overwritten"})),
+                context,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ToolErrorKind::PolicyDenied);
+    }
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("secret.txt")).unwrap(),
+        "unchanged"
     );
 }
 

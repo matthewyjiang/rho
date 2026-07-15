@@ -19,17 +19,19 @@ A provider is required because a runtime without a provider cannot execute, but 
 
 ## Capability model
 
-Sensitive operations are represented as `CapabilityRequest` values for path reads, path writes, process execution, and network access. A host policy returns allow, deny, or require approval. Defaults deny. An approval handler can grant only `AllowOnce` or deny.
+Sensitive operations are represented as separate `CapabilityKind` values for path reads, path writes, process execution, network access, skill loading, and instruction discovery. A request also records whether it came from host-provided code, a built-in adapter, or prompt construction. A host policy returns allow, deny, or require approval. Defaults deny.
 
-Security decisions must be made from structured requests, not model prose, shell display strings, tool names, or presentation metadata. A tool must authorize every operation immediately before it acts. Approval does not imply that arguments are valid, a path is race-free, a URL is safe, or output is non-sensitive.
+Security decisions are made from `CapabilityOperation`, not model prose, shell display strings, tool names, or presentation metadata. Process requests include cwd, shell versus direct execution, executable lookup, arguments, environment inheritance, timeout, and output bounds. Built-ins declare their origin and capability classes in diagnostics. Host-provided tools remain trusted in-process code.
 
-Capabilities not currently modeled separately include skill loading and instruction discovery. Those features are not core SDK defaults. An adapter that adds them must treat both as explicit read/execute authority, scope discovery to a workspace, show prompt sources in diagnostics, and account for symlinks and generated content.
+An approval can be one-shot or remembered for the exact structured request in the current session. Remembered rules never override the current policy and are not persisted. Sanitized approval audit records contain only sequence, capability class, and decision. Reasons and operation details are excluded.
 
 ## Workspace scope
 
-A `Workspace` is an absolute, canonical, existing directory used to resolve paths. It is a scope, not a grant. Use `resolve_existing` for existing targets so symlinks are checked, and harden new-file creation against parent symlinks and races. Process working directories and instruction/skill discovery should derive from the same canonical root.
+A `Workspace` stores a canonical primary root and optional canonical roots deliberately attached by the host. Roots are scopes, not grants. Read resolution requires an existing canonical target. Write resolution canonicalizes either the target or its nearest existing parent. Both return a `ResolvedWorkspacePath` with primary or granted-root scope. Built-ins authorize that object, revalidate it immediately before I/O, and use its canonical path.
 
-Do not silently grant access outside the primary root. If a host needs another root, model it as a separate explicit policy decision and display the actual canonical target to the approver.
+Parent traversal is rejected even when it would normalize back inside. Absolute paths must be under the primary or an attached root. Missing reads fail; missing writes have an explicit state. Symlinks outside configured roots fail. A granted root still requires the policy's explicit outside-workspace grant.
+
+These controls narrow normalization and check/use disagreement but cannot eliminate every mutable-filesystem race. Use descriptor-relative safe-open techniques or OS sandboxing where stronger guarantees are required. Process working directories and instruction/skill discovery must use the same resolved workspace rules.
 
 Detailed path, process, and network limitations are in [tools and workspaces](/sdk/tools).
 

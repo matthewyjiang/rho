@@ -235,6 +235,11 @@ impl RhoBuilder {
         self
     }
 
+    pub fn approval_handler_shared(mut self, handler: Arc<dyn crate::ApprovalHandler>) -> Self {
+        self.approval_handler = Some(handler);
+        self
+    }
+
     pub fn compactor<C>(mut self, compactor: C) -> Self
     where
         C: crate::Compactor + 'static,
@@ -290,6 +295,7 @@ impl RhoBuilder {
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
+            approval_audit: Arc::default(),
             lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
     }
@@ -309,6 +315,7 @@ pub struct Rho {
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
 
@@ -328,15 +335,26 @@ impl Rho {
         };
         crate::DiagnosticsSnapshot::new(
             self.provider.identity(),
-            self.tools
-                .specs()
-                .into_iter()
-                .map(|spec| spec.name)
-                .collect(),
-            self.workspace
-                .as_ref()
-                .map(|workspace| workspace.root().to_path_buf()),
-            prompt_sources,
+            crate::diagnostics::SecuritySettings {
+                tool_names: self
+                    .tools
+                    .specs()
+                    .into_iter()
+                    .map(|spec| spec.name)
+                    .collect(),
+                tool_security: self.tools.diagnostics(),
+                workspace_root: self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+                granted_workspace_roots: self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.granted_roots().to_vec())
+                    .unwrap_or_default(),
+                prompt_sources,
+                approval_audit: self.approval_audit.snapshot(),
+            },
             crate::diagnostics::ExecutionSettings {
                 event_capacity: self.event_capacity.get(),
                 max_steps: self.max_steps.get(),
