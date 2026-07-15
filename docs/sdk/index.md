@@ -2,9 +2,7 @@
 
 `rho-sdk` is Rho's embeddable, headless Rust agent runtime. It provides provider-neutral messages, sessions, completion and streaming runs, custom provider and tool extension points, cancellation, host input, compaction, workspace policy, approvals, diagnostics, and versioned snapshots.
 
-::: warning Pre-1.0 status
-The crate in this repository is `0.1.0` and is still being stabilized. The pages in this section distinguish implemented behavior from the intended 1.0 compatibility policy. They do not announce a published release candidate or a completed external integration, security audit, fuzzing campaign, or benchmark run.
-:::
+`rho-sdk 1.0.0` is published on [crates.io](https://crates.io/crates/rho-sdk). The pages in this section document the stable 1.0 public API and compatibility policy. See [known limitations](/sdk/events-and-cancellation#lifecycle-sequence) for behavior that did not fully meet the drafted release-candidate gates before publication.
 
 ## Start here
 

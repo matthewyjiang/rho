@@ -2,20 +2,19 @@
 
 ## Published and intended versions
 
-The repository currently contains `rho-sdk 0.1.0`; this branch is not the 1.0
-release. The intended first stable version is `rho-sdk 1.0.0`, and the 1.0
-documentation is forward-looking until that crate version is published.
+`rho-sdk 1.0.0` is published on [crates.io](https://crates.io/crates/rho-sdk). This is the first stable version, and this page documents its actual public contract rather than a forward-looking intent.
 
 ## Stability labels
 
-Until 1.0:
+At 1.0:
 
-- public APIs and documented behavior are release candidates, not a stable 1.x promise
-- breaking changes may occur in a minor `0.x` release
-- consumers should pin an exact version or Git revision and read the [upgrade guide](/sdk/upgrade-to-1.0)
+- the documented public API, snapshot schema rules, event lifecycle, cancellation/drop/shutdown behavior, capability defaults, and other behavior explicitly marked as contract are stable
+- breaking changes to that contract require a major version bump, not a minor or patch release
+- consumers should pin a `1.x` version range and read the [upgrade guide](/sdk/upgrade-to-1.0) when migrating from a pre-1.0 checkout
 - provider-private wire formats and upstream service behavior are never stabilized by the core crate
+- some documented behavior did not fully meet the drafted release-candidate gates before publication; see [known limitations](/sdk/events-and-cancellation#known-limitations)
 
-At 1.0, the stable contract will include the documented public API, snapshot schema rules, event lifecycle, cancellation/drop/shutdown behavior, capability defaults, and other behavior explicitly marked as contract. Internal modules, task/channel implementation details, exact allocation, delta chunk boundaries, provider-private payloads, application UI, and undocumented formatting remain implementation details.
+Internal modules, task/channel implementation details, exact allocation, delta chunk boundaries, provider-private payloads, application UI, and undocumented formatting remain implementation details.
 
 A public item being exported does not by itself make every derived representation a persistence contract. The durable boundary is explicitly documented below.
 
@@ -24,7 +23,7 @@ A public item being exported does not by itself make every derived representatio
 `rho-sdk` deliberately declares an empty default feature set:
 
 ```toml
-rho-sdk = { version = "0.1", default-features = false }
+rho-sdk = { version = "1.0", default-features = false }
 ```
 
 The crate currently has no optional Cargo features. Default,
@@ -167,14 +166,14 @@ Changing application configuration does not mutate an existing snapshot. Restori
 
 ## Behavioral contracts
 
-The following pages are normative for the implemented pre-1.0 behavior and are candidates for the 1.0 contract:
+The following pages are normative for the stable 1.0 behavioral contract:
 
 - [event ordering, bounded buffering, retry, cancellation, drop, and shutdown](/sdk/events-and-cancellation)
 - [history commits, compaction, snapshot atomicity, failure, and restore](/sdk/sessions-and-persistence)
 - [tools, workspace paths, process/network limits, and approval behavior](/sdk/tools)
 - [security defaults and host obligations](/sdk/security)
 
-Where code and documentation disagree before 1.0, treat it as a bug to resolve before release candidates, not permission to select the less secure behavior.
+Where code and documentation disagree, treat it as a bug to resolve in the next release, not permission to select the less secure behavior. See [known limitations](/sdk/events-and-cancellation#known-limitations) for gaps that shipped in 1.0.0 despite the drafted release-candidate gates.
 
 ## Deprecation policy
 
@@ -188,7 +187,6 @@ After 1.0:
 6. Provider or feature deprecations caused by upstream shutdown are announced as early as practical, but an upstream service cannot be kept operational by SemVer.
 7. Compatibility shims must have an owner, replacement, and tracked removal target. They are not permanent hidden contracts.
 
-Before 1.0, deprecation attributes are encouraged for migration clarity but the `0.x` SemVer rules still apply.
 
 ## Minimum supported Rust version
 
@@ -208,8 +206,8 @@ notice, but still require coordinated metadata and CI updates.
 Public Rust items, documented event ordering and cancellation behavior, feature
 names, and versioned persisted formats are compatibility contracts. CI runs
 `cargo-semver-checks` against the pull-request base when that revision contains
-`rho-sdk`. During `0.x`, breaking changes require a minor version bump and must
-not ship in a patch.
+`rho-sdk`. Post-1.0, breaking changes require a major version bump and must not
+ship in a minor or patch release.
 
 The excluded workspace in `fixtures/downstream` has its own committed lockfile
 and crates with exactly one direct dependency, `rho-sdk`. CI compiles those

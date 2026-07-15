@@ -1,6 +1,6 @@
 # SDK events, retries, cancellation, drop, and shutdown
 
-This page defines the implemented behavioral contract that hosts should rely on. The crate remains pre-1.0, so changes before 1.0 must be called out in the [upgrade guide](/sdk/upgrade-to-1.0).
+This page defines the implemented behavioral contract that hosts should rely on in the published `rho-sdk 1.0.0`. It also documents a [known limitation](#known-limitations) that shipped unresolved; a breaking fix for it will be called out in release notes and the [upgrade guide](/sdk/upgrade-to-1.0).
 
 ## Event ordering and buffering
 
@@ -27,7 +27,7 @@ The significant ordering rules are:
 
 A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation.
 
-The current pre-1.0 implementation does not yet guarantee a terminal event for every worker exit. Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success. Closing these gaps and testing exactly one attached terminal event is a release-candidate requirement.
+The 1.0.0 implementation does not guarantee a terminal event for every worker exit; see [known limitations](#known-limitations). Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success.
 
 ## Host input and steering
 
@@ -59,7 +59,7 @@ When cancellation reaches the cooperative cancellation completion path:
 - `Cancelled { revision }` is emitted when delivery succeeds
 - `Run::outcome` returns `Error::Cancelled`
 
-Cancellation can race with event delivery or other failing work in the current pre-1.0 implementation. In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event. A 1.0 release candidate must test and resolve these edge paths according to its final terminal-event contract.
+Cancellation can race with event delivery or other failing work; see [known limitations](#known-limitations). In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event.
 
 Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. Design tools for idempotency and record enough operation identity for reconciliation.
 
@@ -91,3 +91,15 @@ Shutdown requests cancellation but does not asynchronously join every extension-
 ## Session state visibility
 
 `SessionState` exposes `Idle`, `Running`, `WaitingForHostInput`, `Cancelling`, `Completed`, and `Failed`. `Completed` and `Failed` remain observable after the worker exits; a later run may transition either terminal state back to `Running`. Cancelled runs return to `Idle` after cleanup. These values are lifecycle observations, not a lock token. Use run outcomes and revisions for durable decisions rather than polling state for event reconstruction.
+
+## Known limitations
+
+`rho-sdk 1.0.0` shipped without closing a gap the [release-candidate process](/sdk/release-candidates) called out as an entry gate: the runtime does not guarantee delivery of exactly one terminal event (`Completed`, `Cancelled`, or `Failed`) for every run.
+
+- Dropping an unfinished `Run` aborts its worker task without sending a terminal event onto the channel.
+- The worker task is not panic-guarded; a panic inside run execution surfaces to `Run::outcome` as `Error::Interrupted` from a `JoinError`, with no corresponding event.
+- Terminal event delivery at the normal completion/failure/cancellation sites is best-effort: if the consumer or channel is gone, the send is silently dropped.
+
+No shipped test asserts "exactly one terminal event" across drop, abort, or panic paths; existing tests only cover the ordinary success and cancellation streams.
+
+Hosts must not rely on stream end-of-file to infer a run's result. Always call `Run::outcome` (or check `Session::history`/`SessionState` after a run ends) for the authoritative outcome, and do not treat a missing terminal event as evidence of success or failure. A fix for this gap is expected in a future `rho-sdk` release and will be called out in release notes as a behavioral change, not a silent patch.

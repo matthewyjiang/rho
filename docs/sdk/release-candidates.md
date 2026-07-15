@@ -2,9 +2,9 @@
 
 ## Current status
 
-No release candidate or final 1.0 publication is announced by this document. It also does not claim an external SDK integration, benchmark, fuzzing campaign, semver check, security audit, or registry verification has occurred.
+`rho-sdk 1.0.0` and `rho-coding-agent 1.0.0`/`1.0.1` are published (see the [1.0 release notes](/sdk/release-notes-1.0)). Publication did not follow the fully sequenced coordinated flow below: both packages shipped from the same release-please run rather than SDK-first-then-verify, and not every entry gate in this document was evidenced before publication. Most notably, the terminal-event delivery guarantee under "Public contract" was not closed; see [known limitations](/sdk/events-and-cancellation#known-limitations).
 
-The current repository metadata is not yet sufficient for coordinated independent publication: `rho-sdk` is `0.1.0`, no numeric MSRV is declared, and release automation must be verified for separate `rho-sdk` and `rho-coding-agent` package versions and tags. Treat those as release blockers, not documentation-only completions.
+This document remains the process to follow for the next release candidate (major or minor). Treat any gate that was skipped for 1.0.0 as still owed, not waived, for the next coordinated release.
 
 ## Roles
 
