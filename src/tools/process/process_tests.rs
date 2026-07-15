@@ -495,13 +495,48 @@ async fn drop_kills_descendants() {
 }
 
 #[cfg(unix)]
+#[test]
+fn managed_process_http_server_fixture() {
+    use std::io::{Read, Write};
+
+    if std::env::var_os("RHO_PROCESS_SERVER_FIXTURE").is_none() {
+        return;
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    println!(
+        "RHO_PROCESS_SERVER {} {}",
+        std::process::id(),
+        listener.local_addr().unwrap().port()
+    );
+    std::io::stdout().flush().unwrap();
+    for stream in listener.incoming() {
+        let mut stream = stream.unwrap();
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request);
+        let body = "rho-coding-agent";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    }
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     use std::net::TcpListener;
     let manager = ProcessManager::new(ProcessLimits::default());
-    let command = "python3 -u -c 'import http.server, os; s = http.server.ThreadingHTTPServer((\"127.0.0.1\", 0), http.server.SimpleHTTPRequestHandler); print(os.getpid(), s.server_port, flush=True); s.serve_forever()'";
+    let executable = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\'', "'\\''");
+    let command = format!(
+        "RHO_PROCESS_SERVER_FIXTURE=1 '{executable}' --exact tools::process::tests::managed_process_http_server_fixture --nocapture"
+    );
     let started = manager
-        .start(command.into(), std::path::Path::new("."), None)
+        .start(command, std::path::Path::new("."), None)
         .await
         .unwrap();
     let (pid, port, output_cursor) = tokio::time::timeout(Duration::from_secs(15), async {
@@ -520,12 +555,14 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
                     .filter(|chunk| chunk.stream == Stream::Stdout)
                     .map(|chunk| chunk.text.as_str()),
             );
-            let numbers = stdout
-                .split_whitespace()
-                .filter_map(|value| value.parse::<u32>().ok())
-                .collect::<Vec<_>>();
-            if let [pid, port, ..] = numbers.as_slice() {
-                break (*pid as i32, *port as u16, cursor);
+            let fields = stdout.split_whitespace().collect::<Vec<_>>();
+            if let Some(marker) = fields
+                .windows(3)
+                .find(|fields| fields[0] == "RHO_PROCESS_SERVER")
+            {
+                let pid = marker[1].parse::<i32>().unwrap();
+                let port = marker[2].parse::<u16>().unwrap();
+                break (pid, port, cursor);
             }
             assert!(
                 !terminal(snapshot.state),
