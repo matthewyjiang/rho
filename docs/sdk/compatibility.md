@@ -211,10 +211,11 @@ ship in a minor or patch release.
 
 The excluded workspace in `fixtures/downstream` has its own committed lockfile
 and crates with exactly one direct dependency, `rho-sdk`. CI compiles those
-representative integrations from their reproducible dependency graph. It also
-checks all SDK feature modes, workspace tests, Clippy, rustdoc tests,
-architecture rules, package contents, and publish dry runs. Run the local
-compatibility checks with:
+representative integrations from their reproducible dependency graph. Because
+the fixture is outside the Cargo workspace, the release workflow regenerates
+its lockfile after release-please changes the SDK version. It also checks all
+SDK feature modes, workspace tests, Clippy, rustdoc tests, architecture rules,
+package contents, and publish dry runs. Run the local compatibility checks with:
 
 ```sh
 python3 scripts/check_sdk_compatibility.py --test-features --test-downstream
