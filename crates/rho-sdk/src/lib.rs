@@ -10,3 +10,16 @@
 //! interactive rendering, keybindings, updates, and application configuration.
 
 #![forbid(unsafe_code)]
+
+mod cancellation;
+mod error;
+mod id;
+pub mod model;
+pub mod provider;
+mod reasoning;
+pub mod tool;
+
+pub use cancellation::CancellationToken;
+pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
+pub use id::{InvalidId, Revision, RunId, SessionId, ToolCallId};
+pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};

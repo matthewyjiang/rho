@@ -2338,6 +2338,14 @@ dependencies = [
 [[package]]
 name = "rho-sdk"
 version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "ring"
