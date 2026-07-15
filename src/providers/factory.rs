@@ -106,6 +106,15 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingGithubCopilotAuth => ModelError::MissingGithubCopilotAuth,
         ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
+        ModelError::UnsupportedReasoning {
+            provider,
+            model,
+            requested,
+        } => ModelError::UnsupportedReasoning {
+            provider,
+            model: model.clone(),
+            requested: *requested,
+        },
         ModelError::UnsupportedProvider(provider) => {
             ModelError::UnsupportedProvider(provider.clone())
         }

@@ -99,6 +99,7 @@ impl GitHubCopilotProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            reasoning_effort: None,
         })
     }
 

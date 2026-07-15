@@ -25,7 +25,6 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
-    reasoning: ReasoningLevel,
 }
 
 impl AnthropicProvider {
@@ -47,14 +46,12 @@ impl AnthropicProvider {
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        let reasoning = default_reasoning(&model);
         Self {
             client,
             api_key,
             api_base,
             model,
             max_tokens,
-            reasoning,
         }
     }
 
@@ -65,7 +62,8 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.identity().expect("Anthropic provider has an identity");
         let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) = thinking_config(&self.model, self.reasoning, max_tokens);
+        let (thinking, output_config) =
+            thinking_config(&self.model, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
@@ -175,28 +173,38 @@ fn thinking_config(
     model: &str,
     reasoning: ReasoningLevel,
     max_tokens: u32,
-) -> (
-    Option<AnthropicThinkingConfig>,
-    Option<AnthropicOutputConfig>,
-) {
+) -> Result<
+    (
+        Option<AnthropicThinkingConfig>,
+        Option<AnthropicOutputConfig>,
+    ),
+    ModelError,
+> {
+    if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(model) {
+        return Err(ModelError::UnsupportedReasoning {
+            provider: "anthropic",
+            model: model.to_string(),
+            requested: reasoning,
+        });
+    }
     if reasoning == ReasoningLevel::Off {
         let thinking =
             supports_disabled_thinking(model).then_some(AnthropicThinkingConfig::Disabled);
-        return (thinking, None);
+        return Ok((thinking, None));
     }
     if supports_adaptive_thinking(model) {
-        return (
+        return Ok((
             Some(AnthropicThinkingConfig::Adaptive {
                 display: "summarized",
             }),
             Some(AnthropicOutputConfig {
                 effort: adaptive_effort(model, reasoning),
             }),
-        );
+        ));
     }
 
     let requested_budget = match reasoning {
-        ReasoningLevel::Off => return (None, None),
+        ReasoningLevel::Off => return Ok((None, None)),
         ReasoningLevel::Minimal => 1_024,
         ReasoningLevel::Low => 2_048,
         ReasoningLevel::Medium => 4_096,
@@ -205,10 +213,17 @@ fn thinking_config(
         ReasoningLevel::Max => 32_768,
     };
     let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
-    let thinking = (available >= 1_024).then_some(AnthropicThinkingConfig::Enabled {
-        budget_tokens: requested_budget.min(available),
-    });
-    (thinking, None)
+    if available < 1_024 {
+        return Err(ModelError::InvalidResponse(format!(
+            "Anthropic max output tokens {max_tokens} cannot reserve a reasoning budget"
+        )));
+    }
+    Ok((
+        Some(AnthropicThinkingConfig::Enabled {
+            budget_tokens: requested_budget.min(available),
+        }),
+        None,
+    ))
 }
 
 fn supports_adaptive_thinking(model: &str) -> bool {
@@ -223,14 +238,6 @@ fn supports_adaptive_thinking(model: &str) -> bool {
         "claude-mythos-preview",
     ];
     MODELS.iter().any(|prefix| model_matches(model, prefix))
-}
-
-fn default_reasoning(model: &str) -> ReasoningLevel {
-    if adaptive_thinking_is_mandatory(model) {
-        ReasoningLevel::Low
-    } else {
-        ReasoningLevel::Off
-    }
 }
 
 fn adaptive_thinking_is_mandatory(model: &str) -> bool {
@@ -318,14 +325,6 @@ async fn error_for_status_with_body(
 impl ModelProvider for AnthropicProvider {
     fn identity(&self) -> Option<ModelIdentity> {
         Some(self.model_identity())
-    }
-
-    fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-        if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(&self.model) {
-            return false;
-        }
-        self.reasoning = reasoning;
-        true
     }
 
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {

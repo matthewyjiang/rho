@@ -11,20 +11,21 @@ fn test_provider(model: &str) -> AnthropicProvider {
     provider
 }
 
-fn request_body(provider: &AnthropicProvider) -> AnthropicRequest {
+fn request_body(
+    provider: &AnthropicProvider,
+    reasoning_level: ReasoningLevel,
+) -> Result<AnthropicRequest, ModelError> {
     let messages = [Message::user_text("hello")];
-    provider
-        .request_body(
-            ModelRequest {
-                messages: &messages,
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-            false,
-        )
-        .unwrap()
+    provider.request_body(
+        ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level,
+            prompt_cache_key: None,
+        },
+        false,
+    )
 }
 
 #[test]
@@ -76,10 +77,9 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
 
 #[test]
 fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
-    let mut provider = test_provider("claude-opus-4-8");
-    provider.set_reasoning(ReasoningLevel::Medium);
+    let provider = test_provider("claude-opus-4-8");
 
-    let body = request_body(&provider);
+    let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
     let value = serde_json::to_value(&body).unwrap();
 
     assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
@@ -99,6 +99,23 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
     );
     assert_eq!(value["output_config"], json!({"effort": "medium"}));
     assert!(value["thinking"].get("budget_tokens").is_none());
+}
+
+#[test]
+fn adaptive_thinking_uses_each_request_reasoning_level() {
+    let provider = test_provider("claude-opus-4-8");
+
+    let low = request_body(&provider, ReasoningLevel::Low).unwrap();
+    let xhigh = request_body(&provider, ReasoningLevel::Xhigh).unwrap();
+
+    assert_eq!(
+        low.output_config,
+        Some(AnthropicOutputConfig { effort: "low" })
+    );
+    assert_eq!(
+        xhigh.output_config,
+        Some(AnthropicOutputConfig { effort: "xhigh" })
+    );
 }
 
 #[test]
@@ -126,7 +143,7 @@ fn provider_context_replay_follows_effective_thinking_mode() {
 fn reasoning_off_disables_adaptive_thinking_when_supported() {
     let provider = test_provider("claude-sonnet-5");
 
-    let body = request_body(&provider);
+    let body = request_body(&provider, ReasoningLevel::Off).unwrap();
     let value = serde_json::to_value(&body).unwrap();
 
     assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
@@ -136,29 +153,19 @@ fn reasoning_off_disables_adaptive_thinking_when_supported() {
 
 #[test]
 fn reasoning_off_is_rejected_when_adaptive_thinking_is_mandatory() {
-    let mut provider = test_provider("claude-fable-5");
+    let provider = test_provider("claude-fable-5");
 
-    assert!(!provider.set_reasoning(ReasoningLevel::Off));
-    let body = request_body(&provider);
-
-    assert_eq!(
-        body.thinking,
-        Some(AnthropicThinkingConfig::Adaptive {
-            display: "summarized"
-        })
-    );
-    assert_eq!(
-        body.output_config,
-        Some(AnthropicOutputConfig { effort: "low" })
-    );
+    assert!(matches!(
+        request_body(&provider, ReasoningLevel::Off),
+        Err(ModelError::UnsupportedReasoning { .. })
+    ));
 }
 
 #[test]
 fn legacy_thinking_still_reserves_answer_tokens() {
-    let mut provider = test_provider("claude-sonnet-4-5");
-    provider.set_reasoning(ReasoningLevel::Medium);
+    let provider = test_provider("claude-sonnet-4-5");
 
-    let body = request_body(&provider);
+    let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
 
     assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
     assert_eq!(

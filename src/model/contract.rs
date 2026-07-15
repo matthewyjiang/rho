@@ -38,6 +38,14 @@ pub enum ModelError {
     StreamFailedAfterOutput { message: String },
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
+    #[error(
+        "provider '{provider}' model '{model}' does not support reasoning level '{requested}'"
+    )]
+    UnsupportedReasoning {
+        provider: &'static str,
+        model: String,
+        requested: crate::reasoning::ReasoningLevel,
+    },
     #[error("unsupported provider '{0}'")]
     UnsupportedProvider(String),
 }
@@ -54,10 +62,6 @@ impl ModelError {
 pub trait ModelProvider: Send + Sync {
     fn identity(&self) -> Option<ModelIdentity> {
         None
-    }
-
-    fn set_reasoning(&mut self, _reasoning: crate::reasoning::ReasoningLevel) -> bool {
-        false
     }
 
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError>;

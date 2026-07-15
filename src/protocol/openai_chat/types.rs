@@ -11,6 +11,8 @@ pub(crate) struct ChatRequest {
     pub(crate) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream_options: Option<ChatStreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_effort: Option<String>,
 }
 
 #[derive(Serialize)]

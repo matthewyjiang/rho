@@ -17,10 +17,9 @@
 //!
 //! # Per-request reasoning
 //!
-//! SDK orchestration passes [`ModelRequest::reasoning_level`]. Application
-//! transports still apply reasoning through construction-time configuration and
-//! [`crate::model::ModelProvider::set_reasoning`]. Request-level reasoning is
-//! accepted by the adapter but not yet applied by the underlying transports.
+//! SDK orchestration passes [`ModelRequest::reasoning_level`] directly to each
+//! application transport. The request value is canonical and provider
+//! construction does not cache a separate reasoning selection.
 //!
 //! # Removal plan
 //!
@@ -274,6 +273,17 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
         ModelError::InvalidResponse(_) => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
             "provider returned an invalid response",
+            Retryability::Permanent,
+        ),
+        ModelError::UnsupportedReasoning {
+            provider,
+            model,
+            requested,
+        } => ProviderError::new(
+            ProviderErrorKind::Other,
+            format!(
+                "provider '{provider}' model '{model}' does not support reasoning level '{requested}'"
+            ),
             Retryability::Permanent,
         ),
         ModelError::UnsupportedProvider(provider) => ProviderError::new(

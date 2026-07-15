@@ -141,6 +141,15 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             false,
         ),
         (
+            ModelError::UnsupportedReasoning {
+                provider: "xai",
+                model: "grok-build-0.1".into(),
+                requested: ReasoningLevel::High,
+            },
+            ProviderErrorKind::Other,
+            false,
+        ),
+        (
             ModelError::UnsupportedProvider("unknown".into()),
             ProviderErrorKind::Other,
             false,
@@ -347,8 +356,6 @@ async fn concrete_openai_provider_adapts_to_sdk_model_provider() {
         "gpt-4.1".into(),
         Auth::ApiKey("test-key".into()),
         Arc::new(MemoryCredentialStore::default()),
-        None,
-        None,
     );
     let adapter = SdkProviderAdapter::new(provider);
     let sdk: Arc<dyn SdkModelProvider> = Arc::new(adapter);

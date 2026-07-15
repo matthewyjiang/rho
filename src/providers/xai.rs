@@ -21,24 +21,20 @@ pub struct XaiProvider {
     model: String,
     auth: XaiAuthManager,
     api_base: String,
-    reasoning_effort: Option<String>,
 }
 
 impl XaiProvider {
     pub(crate) fn new_with_transport(
         model: String,
         auth: XaiAuthManager,
-        reasoning: ReasoningLevel,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        let reasoning_effort = xai_reasoning_effort(&model, reasoning).map(str::to_string);
         Self {
             client,
             model,
             auth,
             api_base,
-            reasoning_effort,
         }
     }
 
@@ -46,13 +42,11 @@ impl XaiProvider {
     fn new_with_api_base(
         model: String,
         store: Arc<dyn CredentialStore>,
-        reasoning: ReasoningLevel,
         api_base: String,
     ) -> Result<Self, ModelError> {
         Ok(Self::new_with_transport(
             model,
             XaiAuthManager::new(store)?,
-            reasoning,
             provider_client(),
             api_base,
         ))
@@ -62,8 +56,7 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<reqwest::Response, ModelError> {
-        let body =
-            build_xai_responses_body(&self.model, request, self.reasoning_effort.as_deref())?;
+        let body = build_xai_responses_body(&self.model, request)?;
         let auth = self.auth.auth_material().await?;
         let response = self
             .send_request_with_token(&body, &auth.access_token)
@@ -149,21 +142,13 @@ impl ModelProvider for XaiProvider {
         Some(self.model_identity())
     }
 
-    fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-        self.reasoning_effort = xai_reasoning_effort(&self.model, reasoning).map(str::to_string);
-        true
-    }
-
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.complete_turn(request).await
     }
 }
 
-fn build_xai_responses_body(
-    model: &str,
-    request: ModelRequest<'_>,
-    reasoning_effort: Option<&str>,
-) -> Result<Value, ModelError> {
+fn build_xai_responses_body(model: &str, request: ModelRequest<'_>) -> Result<Value, ModelError> {
+    let reasoning_effort = xai_reasoning_effort(model, request.reasoning_level)?;
     let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new("xai", "openai-responses", model);
     let input =
@@ -197,8 +182,11 @@ fn build_xai_responses_body(
     Ok(body)
 }
 
-fn xai_reasoning_effort(model: &str, reasoning: ReasoningLevel) -> Option<&'static str> {
-    match model {
+fn xai_reasoning_effort(
+    model: &str,
+    reasoning: ReasoningLevel,
+) -> Result<Option<&'static str>, ModelError> {
+    let effort = match model {
         "grok-4.5" => match reasoning {
             ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
             ReasoningLevel::Medium => Some("medium"),
@@ -212,7 +200,15 @@ fn xai_reasoning_effort(model: &str, reasoning: ReasoningLevel) -> Option<&'stat
         },
         "grok-build-0.1" | "grok-composer-2.5-fast" => None,
         _ => None,
+    };
+    if effort.is_none() && reasoning != ReasoningLevel::Off {
+        return Err(ModelError::UnsupportedReasoning {
+            provider: "xai",
+            model: model.to_string(),
+            requested: reasoning,
+        });
     }
+    Ok(effort)
 }
 
 #[cfg(test)]

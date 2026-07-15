@@ -7,6 +7,7 @@ use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
 };
+use crate::reasoning::ReasoningLevel;
 use crate::tool::{ToolCall, ToolResult, ToolSpec};
 use serde_json::json;
 
@@ -57,6 +58,101 @@ fn reasoning_level_maps_to_codex_reasoning_param() {
 }
 
 #[test]
+fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
+    let supported = [
+        ReasoningLevel::Off,
+        ReasoningLevel::Low,
+        ReasoningLevel::High,
+    ];
+    assert_eq!(
+        reasoning::normalize_openai_reasoning_level(ReasoningLevel::Minimal, Some(&supported)),
+        Some(ReasoningLevel::Low)
+    );
+    assert_eq!(
+        reasoning::normalize_openai_reasoning_level(
+            ReasoningLevel::High,
+            Some(&[ReasoningLevel::Off])
+        ),
+        None
+    );
+}
+
+#[test]
+fn chat_completions_body_uses_each_request_reasoning_level() {
+    let provider = OpenAiProvider::new_with_auth(
+        "rho-request-reasoning-test".into(),
+        Auth::ApiKey("test-key".into()),
+        std::sync::Arc::new(crate::credentials::MemoryCredentialStore::default()),
+    );
+    let messages = [Message::user_text("hello")];
+    let low = provider
+        .chat_completions_request(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Low,
+                prompt_cache_key: None,
+            },
+            /*stream*/ false,
+        )
+        .unwrap();
+    let high = provider
+        .chat_completions_request(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::High,
+                prompt_cache_key: None,
+            },
+            /*stream*/ true,
+        )
+        .unwrap();
+
+    assert_eq!(low.reasoning_effort.as_deref(), Some("low"));
+    assert_eq!(high.reasoning_effort.as_deref(), Some("high"));
+    assert!(!low.stream);
+    assert!(high.stream);
+}
+
+#[test]
+fn codex_responses_body_uses_each_request_reasoning_level() {
+    let messages = [Message::user_text("hello")];
+    let low = build_codex_responses_body(
+        "rho-request-reasoning-test",
+        ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+    let high = build_codex_responses_body(
+        "rho-request-reasoning-test",
+        ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        low["reasoning"],
+        json!({"effort": "low", "summary": "auto"})
+    );
+    assert_eq!(
+        high["reasoning"],
+        json!({"effort": "high", "summary": "auto"})
+    );
+}
+
+#[test]
 fn codex_responses_body_includes_prompt_cache_key_when_present() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
@@ -67,8 +163,6 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
             reasoning_level: Default::default(),
             prompt_cache_key: Some("rho:session-1"),
         },
-        None,
-        None,
     )
     .unwrap();
 
@@ -89,8 +183,6 @@ fn codex_responses_body_omits_prompt_cache_key_when_absent() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        None,
-        None,
     )
     .unwrap();
 
@@ -112,8 +204,6 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        None,
-        None,
     )
     .unwrap();
 
@@ -138,10 +228,12 @@ fn chat_completions_request_does_not_serialize_prompt_cache_key() {
         tool_choice: None,
         stream: false,
         stream_options: None,
+        reasoning_effort: Some("high".into()),
     })
     .unwrap();
 
     assert!(body.get("prompt_cache_key").is_none());
+    assert_eq!(body["reasoning_effort"], "high");
 }
 
 #[test]

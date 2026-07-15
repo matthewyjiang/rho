@@ -44,8 +44,6 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
         "gpt-4.1".into(),
         Auth::ApiKey("test-key".into()),
         Arc::new(MemoryCredentialStore::default()),
-        None,
-        None,
     );
     provider.api_base = api_base;
     provider.client = reqwest::Client::new();
@@ -57,7 +55,7 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
-                reasoning_level: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
             &mut |event| {
@@ -133,8 +131,6 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             source: CodexAuthSource::Env,
         },
         Arc::new(MemoryCredentialStore::default()),
-        None,
-        None,
     );
     provider.codex_ws = CodexWsTransport::new_with_url(ws_url);
 

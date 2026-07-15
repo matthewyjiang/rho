@@ -7,9 +7,8 @@ use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
     credentials::CredentialStore,
     model::{
-        models_dev::{cached_reasoning_effort, cached_reasoning_levels},
         registry::{provider_runtime, AuthMode, ProviderRuntime},
-        DynModelProvider, ModelError, ModelProvider as AppModelProvider,
+        DynModelProvider, ModelError,
     },
     providers::{
         anthropic::AnthropicProvider,
@@ -36,16 +35,17 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 pub(crate) struct ProviderBuildOptions {
     provider: String,
     model: String,
-    reasoning: ReasoningLevel,
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
 }
 
 impl ProviderBuildOptions {
+    /// The reasoning argument is retained for application bootstrap compatibility.
+    /// Providers intentionally do not cache it; each request owns its reasoning level.
     pub(crate) fn new(
         provider: impl Into<String>,
         model: impl Into<String>,
-        reasoning: ReasoningLevel,
+        _reasoning: ReasoningLevel,
     ) -> Result<Self, ModelError> {
         let provider = provider.into();
         let model = model.into();
@@ -65,7 +65,6 @@ impl ProviderBuildOptions {
         Ok(Self {
             provider,
             model,
-            reasoning,
             endpoint: None,
             request_timeout: None,
         })
@@ -153,12 +152,6 @@ impl ProviderBuilder {
     pub(crate) fn build_application(self) -> Result<DynModelProvider, ModelError> {
         let runtime = provider_runtime(&self.options.provider)
             .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
-        let supported_reasoning =
-            cached_reasoning_levels(&self.options.provider, &self.options.model);
-        let reasoning = self
-            .options
-            .reasoning
-            .normalize(supported_reasoning.as_deref());
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 
@@ -170,28 +163,22 @@ impl ProviderBuilder {
                     refresh_store,
                 },
             ) if auth_matches_mode(&auth, auth_mode) => {
-                let reasoning_effort =
-                    cached_reasoning_effort(&self.options.provider, &self.options.model, reasoning);
-                let reasoning_summary = reasoning.summary().map(str::to_string);
                 Ok(Box::new(OpenAiProvider::new_with_transport(
                     self.options.model,
                     auth,
                     refresh_store,
-                    reasoning_effort,
-                    reasoning_summary,
                     client,
                     endpoint,
                 )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
-                let mut provider = AnthropicProvider::new_with_transport(
+                let provider = AnthropicProvider::new_with_transport(
                     self.options.model,
                     api_key.into_secret(),
                     anthropic_max_tokens,
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
-                provider.set_reasoning(reasoning);
                 Ok(Box::new(provider))
             }
             (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => {
@@ -206,7 +193,6 @@ impl ProviderBuilder {
                 Ok(Box::new(XaiProvider::new_with_transport(
                     self.options.model,
                     auth,
-                    reasoning,
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
                 )))
@@ -221,12 +207,6 @@ impl ProviderBuilder {
     pub(crate) fn build(self) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
         let runtime = provider_runtime(&self.options.provider)
             .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
-        let supported_reasoning =
-            cached_reasoning_levels(&self.options.provider, &self.options.model);
-        let reasoning = self
-            .options
-            .reasoning
-            .normalize(supported_reasoning.as_deref());
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 
@@ -238,9 +218,6 @@ impl ProviderBuilder {
                     refresh_store,
                 },
             ) if auth_matches_mode(&auth, auth_mode) => {
-                let reasoning_effort =
-                    cached_reasoning_effort(&self.options.provider, &self.options.model, reasoning);
-                let reasoning_summary = reasoning.summary().map(str::to_string);
                 let endpoint = endpoint.or_else(|| {
                     Some(
                         match auth_mode {
@@ -255,22 +232,19 @@ impl ProviderBuilder {
                         self.options.model,
                         auth,
                         refresh_store,
-                        reasoning_effort,
-                        reasoning_summary,
                         client,
                         endpoint,
                     ),
                 ))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
-                let mut provider = AnthropicProvider::new_with_transport(
+                let provider = AnthropicProvider::new_with_transport(
                     self.options.model,
                     api_key.into_secret(),
                     anthropic_max_tokens,
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
-                provider.set_reasoning(reasoning);
                 Ok(SdkProviderAdapter::shared(provider))
             }
             (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => Ok(
@@ -285,7 +259,6 @@ impl ProviderBuilder {
                 Ok(SdkProviderAdapter::shared(XaiProvider::new_with_transport(
                     self.options.model,
                     auth,
-                    reasoning,
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
                 )))

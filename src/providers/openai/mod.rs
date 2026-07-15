@@ -8,6 +8,7 @@ pub mod cache;
 mod codex_continuation;
 mod codex_request;
 mod codex_ws;
+mod reasoning;
 
 pub(crate) use cache::prompt_cache_key_from_session_id;
 
@@ -20,6 +21,7 @@ use crate::protocol::openai_responses::collect_codex_sse_response;
 use auth::{refresh_codex_token, Auth, CodexAuthSource};
 use codex_request::{build_codex_responses_body, CodexRequestMode};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
+use reasoning::openai_reasoning_config;
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
@@ -36,8 +38,6 @@ pub struct OpenAiProvider {
     api_base: String,
     model: String,
     provider: &'static str,
-    reasoning_effort: Option<String>,
-    reasoning_summary: Option<String>,
     codex_ws: CodexWsTransport,
     credential_store: Arc<dyn CredentialStore>,
 }
@@ -48,26 +48,14 @@ impl OpenAiProvider {
         model: String,
         auth: Auth,
         credential_store: Arc<dyn CredentialStore>,
-        reasoning_effort: Option<String>,
-        reasoning_summary: Option<String>,
     ) -> Self {
-        Self::new_with_transport(
-            model,
-            auth,
-            credential_store,
-            reasoning_effort,
-            reasoning_summary,
-            provider_client(),
-            None,
-        )
+        Self::new_with_transport(model, auth, credential_store, provider_client(), None)
     }
 
     pub(crate) fn new_with_transport(
         model: String,
         auth: Auth,
         credential_store: Arc<dyn CredentialStore>,
-        reasoning_effort: Option<String>,
-        reasoning_summary: Option<String>,
         client: reqwest::Client,
         api_base_override: Option<String>,
     ) -> Self {
@@ -86,8 +74,6 @@ impl OpenAiProvider {
             api_base,
             model,
             provider,
-            reasoning_effort,
-            reasoning_summary,
             codex_ws,
             credential_store,
         }
@@ -152,30 +138,17 @@ impl ModelProvider for OpenAiProvider {
         Some(self.model_identity())
     }
 
-    fn set_reasoning(&mut self, reasoning: crate::reasoning::ReasoningLevel) -> bool {
-        let supported_reasoning =
-            crate::model::models_dev::cached_reasoning_levels(self.provider, &self.model);
-        let reasoning = reasoning.normalize(supported_reasoning.as_deref());
-        self.reasoning_effort = crate::model::models_dev::cached_reasoning_effort(
-            self.provider,
-            &self.model,
-            reasoning,
-        );
-        self.reasoning_summary = reasoning.summary().map(str::to_string);
-        true
-    }
-
     async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         self.complete_turn(request).await
     }
 }
 
 impl OpenAiProvider {
-    async fn send_chat_completions(
+    fn chat_completions_request(
         &self,
         request: ModelRequest<'_>,
-        key: &str,
-    ) -> Result<ModelResponse, ModelError> {
+        stream: bool,
+    ) -> Result<ChatRequest, ModelError> {
         let target = self.identity().expect("OpenAI provider has an identity");
         let messages = request
             .messages
@@ -190,19 +163,33 @@ impl OpenAiProvider {
             .map(to_openai_tool)
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
+        let reasoning =
+            openai_reasoning_config(self.provider, &self.model, request.reasoning_level)?;
+        Ok(ChatRequest {
+            model: self.model.clone(),
+            messages,
+            tools: has_tools.then_some(tools),
+            tool_choice: has_tools.then_some("auto"),
+            stream,
+            stream_options: stream.then_some(ChatStreamOptions {
+                include_usage: true,
+            }),
+            reasoning_effort: reasoning.effort,
+        })
+    }
+
+    async fn send_chat_completions(
+        &self,
+        request: ModelRequest<'_>,
+        key: &str,
+    ) -> Result<ModelResponse, ModelError> {
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
+        let body = self.chat_completions_request(request, /*stream*/ false)?;
         let response: ChatResponse = self
             .client
             .post(url)
             .bearer_auth(key)
-            .json(&ChatRequest {
-                model: self.model.clone(),
-                messages,
-                tools: has_tools.then_some(tools),
-                tool_choice: has_tools.then_some("auto"),
-                stream: false,
-                stream_options: None,
-            })
+            .json(&body)
             .send()
             .await?
             .error_for_status()?
@@ -217,35 +204,13 @@ impl OpenAiProvider {
         key: &str,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let target = self.identity().expect("OpenAI provider has an identity");
-        let messages = request
-            .messages
-            .iter()
-            .cloned()
-            .map(|message| to_openai_message_for_target(message, Some(&target)))
-            .collect::<Result<Vec<_>, _>>()?;
-        let tools = request
-            .tools
-            .iter()
-            .cloned()
-            .map(to_openai_tool)
-            .collect::<Vec<_>>();
-        let has_tools = !tools.is_empty();
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
+        let body = self.chat_completions_request(request, /*stream*/ true)?;
         let response = self
             .client
             .post(url)
             .bearer_auth(key)
-            .json(&ChatRequest {
-                model: self.model.clone(),
-                messages,
-                tools: has_tools.then_some(tools),
-                tool_choice: has_tools.then_some("auto"),
-                stream: true,
-                stream_options: Some(ChatStreamOptions {
-                    include_usage: true,
-                }),
-            })
+            .json(&body)
             .send()
             .await?
             .error_for_status()?;
@@ -279,12 +244,7 @@ impl OpenAiProvider {
         tokens: CodexTokens,
         source: CodexAuthSource,
     ) -> Result<ModelResponse, ModelError> {
-        let body = build_codex_responses_body(
-            &self.model,
-            request,
-            self.reasoning_effort.as_deref(),
-            self.reasoning_summary.as_deref(),
-        )?;
+        let body = build_codex_responses_body(&self.model, request)?;
         let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
@@ -382,12 +342,7 @@ impl OpenAiProvider {
         source: CodexAuthSource,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = build_codex_responses_body(
-            &self.model,
-            request,
-            self.reasoning_effort.as_deref(),
-            self.reasoning_summary.as_deref(),
-        )?;
+        let body = build_codex_responses_body(&self.model, request)?;
         let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
