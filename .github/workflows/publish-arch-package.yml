@@ -5,11 +5,6 @@ on:
     tags:
       - "rho-coding-agent-v*"
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish the built package to mjiang-extras
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -41,7 +36,6 @@ jobs:
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm"
 
       - name: Checkout mjiang-extras
-        if: github.event_name != 'workflow_dispatch' || inputs.publish
         uses: actions/checkout@v4
         with:
           repository: matthewyjiang/mjiang-extras
@@ -49,7 +43,6 @@ jobs:
           path: mjiang-extras
 
       - name: Publish package files
-        if: github.event_name != 'workflow_dispatch' || inputs.publish
         run: |
           set -euo pipefail
 
