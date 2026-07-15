@@ -473,8 +473,7 @@ pub(super) fn render_entry(
     let inner_width = padded_inner_width(width);
     let (lines, code_blocks) = match entry {
         Entry::Assistant(text) => {
-            let mut in_code_block = false;
-            let rendered = render_markdown(text, inner_width, &mut in_code_block);
+            let rendered = render_assistant_content(text, width);
             (rendered.lines, rendered.code_blocks)
         }
         _ => {
@@ -496,6 +495,15 @@ pub(super) fn render_entry(
     RenderedEntry {
         lines: padded,
         code_blocks,
+    }
+}
+
+pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
+    let mut in_code_block = false;
+    let rendered = render_markdown(text, padded_inner_width(width), &mut in_code_block);
+    RenderedEntry {
+        lines: rendered.lines,
+        code_blocks: rendered.code_blocks,
     }
 }
 
@@ -680,6 +688,10 @@ pub(super) fn styled_line(
 
 fn padded_inner_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
+}
+
+pub(super) fn pad_entry_line(line: Line<'static>) -> Line<'static> {
+    pad_line(line)
 }
 
 fn pad_line(line: Line<'static>) -> Line<'static> {

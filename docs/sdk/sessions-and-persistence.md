@@ -90,7 +90,7 @@ The SDK does not currently call a store automatically after each message. The ho
 
 ## Migration and compatibility
 
-Historical Rho application JSONL session schema 1 is migrated by the application adapter to complete SDK snapshots. Current JSONL schema 2 stores each SDK snapshot and its display-history update in one recoverable record, while the versioned SQLite index remains application-owned. Historical JSONL and SQLite fixtures cover every supported application schema.
+Historical Rho application JSONL session schemas 1 and 2 are migrated by the application adapter to complete SDK snapshots. Current JSONL schema 3 stores a complete snapshot base followed by atomic records containing only newly appended model history and the display-history update. History replacement, such as compaction, writes a new complete base. The versioned SQLite index remains application-owned. Historical JSONL and SQLite fixtures cover every supported application schema.
 
 Compatibility rules are documented in [public contracts](/sdk/compatibility#serialization-contract). The [1.0 upgrade guide](/sdk/upgrade-to-1.0) distinguishes application config, application sessions, and SDK snapshots.
 

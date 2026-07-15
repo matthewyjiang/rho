@@ -5305,7 +5305,7 @@ impl App {
                 Some(Entry::Assistant(previous)) => {
                     previous.push_str(&text);
                     self.history_lines
-                        .invalidate_from(self.transcript.len().saturating_sub(1));
+                        .assistant_appended(self.transcript.len().saturating_sub(1));
                 }
                 _ => {
                     self.history_lines.invalidate_from(self.transcript.len());

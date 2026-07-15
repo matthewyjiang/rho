@@ -26,6 +26,10 @@ pub(super) fn markdown_table_lines(
     render_markdown_table(&table, width).map(|lines| (lines, consumed_lines))
 }
 
+pub(super) fn markdown_table_line_count(lines: &[&str]) -> Option<usize> {
+    parse_markdown_table(lines).map(|(_, consumed_lines)| consumed_lines)
+}
+
 fn parse_markdown_table(lines: &[&str]) -> Option<(MarkdownTable, usize)> {
     let [header, separator, ..] = lines else {
         return None;

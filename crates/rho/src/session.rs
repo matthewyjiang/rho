@@ -17,6 +17,8 @@ use crate::model::{ContentBlock, Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
 mod index;
+mod snapshot_delta;
+mod snapshot_store;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
@@ -24,8 +26,10 @@ mod tests;
 #[path = "session_version_tests.rs"]
 mod version_tests;
 
+use snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
+
 const MIN_SESSION_VERSION: u32 = 1;
-const SESSION_VERSION: u32 = 2;
+const SESSION_VERSION: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -47,6 +51,7 @@ pub struct Session {
 #[derive(Debug, Default)]
 struct AppendCursor {
     valid_len: Option<u64>,
+    last_snapshot: Option<SnapshotDeltaBase>,
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +126,11 @@ enum SessionEntry {
     Snapshot {
         timestamp: String,
         snapshot: Box<SessionSnapshot>,
+        display_messages: Vec<StoredDisplayMessage>,
+    },
+    SnapshotDelta {
+        timestamp: String,
+        delta: Box<StoredSnapshotDelta>,
         display_messages: Vec<StoredDisplayMessage>,
     },
 }
@@ -309,93 +319,6 @@ impl Session {
         Ok(())
     }
 
-    /// Saves one complete SDK snapshot and its newly visible transcript tail.
-    ///
-    /// The snapshot and display update share one JSONL record. Readers ignore a
-    /// truncated final record, so a failed or interrupted append retains the
-    /// previous complete snapshot and transcript.
-    pub(crate) fn save_snapshot(
-        &self,
-        snapshot: &SessionSnapshot,
-        display_tail: &[Message],
-    ) -> anyhow::Result<()> {
-        if snapshot.session_id().as_str() != self.id {
-            anyhow::bail!(
-                "snapshot session id '{}' does not match store id '{}'",
-                snapshot.session_id(),
-                self.id
-            );
-        }
-        let mut cursor = self
-            .write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let display_messages = display_tail
-            .iter()
-            .cloned()
-            .map(|message| StoredDisplayMessage {
-                timestamp: timestamp(),
-                message,
-            })
-            .collect();
-        self.append_entry_unlocked(
-            &mut cursor,
-            &SessionEntry::Snapshot {
-                timestamp: timestamp(),
-                snapshot: Box::new(snapshot.clone()),
-                display_messages,
-            },
-        )?;
-        let _ = index::record_snapshot(self);
-        Ok(())
-    }
-
-    pub(crate) fn snapshot_for_resume(
-        &self,
-        provider: ModelIdentity,
-        prompt_cache_key: String,
-    ) -> anyhow::Result<SessionSnapshot> {
-        let state = read_session_state(&self.path)?;
-        let history = drop_incomplete_tool_turn_tail(state.model);
-        let mut snapshot = if let Some(snapshot) = state.snapshot {
-            if snapshot.session_id().as_str() != self.id {
-                anyhow::bail!(
-                    "stored snapshot session id '{}' does not match file id '{}'",
-                    snapshot.session_id(),
-                    self.id
-                );
-            }
-            let mut migrated = SessionSnapshot::new(
-                snapshot.session_id().clone(),
-                state.revision,
-                history,
-                snapshot.provider().clone(),
-                state.compaction,
-            );
-            for (key, value) in snapshot.metadata() {
-                migrated = migrated.with_metadata(key.clone(), value.clone());
-            }
-            if let Some(key) = snapshot.prompt_cache_key() {
-                migrated.with_prompt_cache_key(key)
-            } else {
-                migrated.with_prompt_cache_key(prompt_cache_key)
-            }
-        } else {
-            SessionSnapshot::new(
-                SessionId::from_string(self.id.clone())?,
-                state.revision,
-                history,
-                provider,
-                state.compaction,
-            )
-            .with_prompt_cache_key(prompt_cache_key)
-        };
-        if snapshot.schema_version() != rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION {
-            snapshot = SessionSnapshot::from_json(&snapshot.to_json()?)?;
-        }
-        Ok(snapshot)
-    }
-
     fn from_parts(session_root: &Path, cwd: &Path, id: String, path: PathBuf) -> Self {
         Self {
             id,
@@ -421,6 +344,12 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !matches!(
+            entry,
+            SessionEntry::Snapshot { .. } | SessionEntry::SnapshotDelta { .. }
+        ) {
+            cursor.last_snapshot = None;
+        }
         self.append_entry_unlocked(&mut cursor, entry)
     }
 
@@ -475,43 +404,6 @@ struct PersistedSessionState {
     snapshot: Option<SessionSnapshot>,
     revision: Revision,
     compaction: CompactionState,
-}
-
-impl rho_sdk::SessionStore for Session {
-    fn load<'a>(
-        &'a self,
-        id: &'a SessionId,
-    ) -> rho_sdk::SessionStoreFuture<'a, Option<SessionSnapshot>> {
-        Box::pin(async move {
-            if id.as_str() != self.id {
-                return Ok(None);
-            }
-            let state = read_session_state(&self.path).map_err(persistence_error)?;
-            let Some(stored) = state.snapshot else {
-                return Ok(None);
-            };
-            let cache_key = stored
-                .prompt_cache_key()
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("rho:{}", self.id));
-            self.snapshot_for_resume(stored.provider().clone(), cache_key)
-                .map(Some)
-                .map_err(persistence_error)
-        })
-    }
-
-    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> rho_sdk::SessionStoreFuture<'a, ()> {
-        Box::pin(async move {
-            self.save_snapshot(&snapshot, &[])
-                .map_err(persistence_error)
-        })
-    }
-}
-
-fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
-    rho_sdk::Error::Persistence {
-        message: error.to_string(),
-    }
 }
 
 fn restore_file_len(path: &Path, len: u64) -> std::io::Result<()> {
@@ -602,6 +494,21 @@ fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
                 state.revision = snapshot.revision();
                 state.compaction = snapshot.compaction().clone();
                 state.snapshot = Some(*snapshot);
+            }
+            SessionEntry::SnapshotDelta {
+                delta,
+                display_messages,
+                ..
+            } => {
+                let previous = state.snapshot.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("snapshot delta does not have a complete base snapshot")
+                })?;
+                let snapshot = delta.restore(previous)?;
+                state.model = snapshot.history().to_vec();
+                state.display.extend(display_messages);
+                state.revision = snapshot.revision();
+                state.compaction = snapshot.compaction().clone();
+                state.snapshot = Some(snapshot);
             }
         }
         Ok(())
@@ -711,6 +618,11 @@ pub(super) fn summarize_session_file(
                 messages = replacement;
             }
             SessionEntry::Snapshot {
+                timestamp,
+                display_messages,
+                ..
+            }
+            | SessionEntry::SnapshotDelta {
                 timestamp,
                 display_messages,
                 ..
