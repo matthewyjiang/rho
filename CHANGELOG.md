@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.1...rho-coding-agent-v1.0.0) (2026-07-15)
+
+
+### Features
+
+* **sdk:** add embeddable Rho runtime ([#262](https://github.com/matthewyjiang/rho/issues/262)) ([6fdac81](https://github.com/matthewyjiang/rho/commit/6fdac81b2a2d68331b72ecf768ad7631dada9d72))
+
+
+### Bug Fixes
+
+* **tui:** retry goal loop after incomplete runs ([#263](https://github.com/matthewyjiang/rho/issues/263)) ([35a6008](https://github.com/matthewyjiang/rho/commit/35a600899491129e290726e10067d08db1ce2498))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 0.1.0 to 1.0.0
+
 ## [0.29.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.0...rho-coding-agent-v0.29.1) (2026-07-15)
 
 
