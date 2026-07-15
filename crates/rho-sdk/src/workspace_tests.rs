@@ -149,6 +149,23 @@ fn symlinks_require_deliberate_outside_root_grants_and_policy_grants() {
 
 #[cfg(unix)]
 #[test]
+fn write_resolution_rejects_broken_symlinks_instead_of_authorizing_them() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let missing_outside = outside.path().join("secret.txt");
+    symlink(&missing_outside, root.path().join("out")).unwrap();
+
+    let workspace = Workspace::new(root.path()).unwrap();
+    assert_eq!(
+        workspace.resolve_for_write("out").unwrap_err().kind(),
+        WorkspacePathErrorKind::Missing
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn write_resolution_canonicalizes_parent_and_detects_post_approval_change() {
     use std::os::unix::fs::symlink;
 

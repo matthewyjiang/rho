@@ -17,7 +17,9 @@ use crate::{
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
-use super::runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions};
+use super::runtime_builder::{
+    build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum InteractiveState {
@@ -185,13 +187,17 @@ impl InteractiveRuntime {
             }
             SessionOptions::from_snapshot(snapshot)
         } else {
-            let mut options = SessionOptions::new().history(history);
-            if let Some(id) = session_id.as_deref() {
-                options = options
-                    .id(SessionId::from_string(id)?)
-                    .prompt_cache_key(cache_key.unwrap_or_else(|| prompt_cache_key(id)));
-            }
-            options
+            // Always seed a prompt-cache key, including brand-new sessions that
+            // do not yet have durable storage. ensure_session later reuses this
+            // session id when creating the on-disk transcript.
+            let id = match session_id.as_deref() {
+                Some(id) => SessionId::from_string(id)?,
+                None => SessionId::new(),
+            };
+            SessionOptions::new()
+                .history(history)
+                .id(id.clone())
+                .prompt_cache_key(prompt_cache_key(id.as_str()))
         };
         let session = runtime.session(options).await?;
         Ok(Self {
@@ -230,6 +236,9 @@ impl InteractiveRuntime {
 
     pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) {
         self.context_window = context_window;
+        if self.active_run.is_none() {
+            let _ = self.refresh_compaction();
+        }
     }
 
     pub(crate) fn take_context_usage(&mut self) -> Option<rho_sdk::model::ContextUsage> {
@@ -424,8 +433,24 @@ impl InteractiveRuntime {
         }
         self.provider = provider;
         self.reasoning = reasoning;
+        if let Err(error) = self.refresh_compaction() {
+            self.state = InteractiveState::Idle;
+            return Err(error);
+        }
         self.state = InteractiveState::Idle;
         Ok(report)
+    }
+
+    fn refresh_compaction(&mut self) -> Result<(), Error> {
+        let (compactor, policy) = build_compaction(
+            Arc::clone(&self.provider),
+            self.tools.tools(),
+            self.reasoning,
+            self.compaction.clone(),
+            self.context_window,
+        );
+        self.session
+            .set_compaction(Some(Arc::new(compactor)), policy)
     }
 
     pub(crate) fn append_user_context_with_display(

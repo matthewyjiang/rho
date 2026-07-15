@@ -3,8 +3,8 @@ use std::{num::NonZeroU64, sync::Arc};
 use rho_sdk::{
     model::{ContentBlock, ModelRequest, ModelResponse},
     provider::ModelProvider,
-    CompactionFuture, CompactionOutput, CompactionRequest, Compactor, Error, Rho, SystemPrompt,
-    Workspace, WorkspacePolicy,
+    CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error, Rho,
+    SystemPrompt, Workspace, WorkspacePolicy,
 };
 
 use crate::{
@@ -41,16 +41,13 @@ where
         compaction,
         context_window,
     } = options;
-    let automatic_compaction_threshold = context_window
-        .and_then(|window| compaction.threshold_tokens(window))
-        .and_then(NonZeroU64::new);
-    let compactor = ModelCompactor {
-        provider: Arc::clone(&provider),
-        tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
+    let (compactor, policy) = build_compaction(
+        Arc::clone(&provider),
+        tools,
         reasoning,
-        config: compaction,
+        compaction,
         context_window,
-    };
+    );
     let mut builder = Rho::builder()
         .provider_shared(provider)
         .system_prompt(system_prompt)
@@ -59,9 +56,8 @@ where
         .reasoning_level(reasoning)
         .max_steps(super::sdk_config::run_step_limit())
         .compactor(compactor);
-    if let Some(trigger_tokens) = automatic_compaction_threshold {
-        builder =
-            builder.compaction_policy(rho_sdk::CompactionPolicy::at_context_tokens(trigger_tokens));
+    if let Some(policy) = policy {
+        builder = builder.compaction_policy(policy);
     }
     for tool in tools {
         builder = builder.tool_shared(tool.clone());
@@ -69,12 +65,40 @@ where
     builder.build()
 }
 
+pub(crate) fn build_compaction(
+    provider: Arc<dyn ModelProvider>,
+    tools: &[Arc<dyn rho_sdk::tool::Tool>],
+    reasoning: rho_sdk::ReasoningLevel,
+    compaction: CompactionConfig,
+    context_window: Option<u64>,
+) -> (ModelCompactor, Option<CompactionPolicy>) {
+    let policy = automatic_compaction_policy(&compaction, context_window);
+    let compactor = ModelCompactor {
+        provider,
+        tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
+        reasoning,
+        config: compaction,
+        context_window,
+    };
+    (compactor, policy)
+}
+
+pub(crate) fn automatic_compaction_policy(
+    compaction: &CompactionConfig,
+    context_window: Option<u64>,
+) -> Option<CompactionPolicy> {
+    context_window
+        .and_then(|window| compaction.threshold_tokens(window))
+        .and_then(NonZeroU64::new)
+        .map(CompactionPolicy::at_context_tokens)
+}
+
 pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
     cached_model_metadata(&config.provider, &config.model)
         .and_then(|metadata| metadata.display_context_window())
 }
 
-struct ModelCompactor {
+pub(crate) struct ModelCompactor {
     provider: Arc<dyn ModelProvider>,
     tool_specs: Vec<rho_sdk::model::ToolSpec>,
     reasoning: rho_sdk::ReasoningLevel,

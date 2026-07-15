@@ -172,29 +172,63 @@ impl Workspace {
         path: impl AsRef<Path>,
     ) -> Result<ResolvedWorkspacePath, WorkspacePathError> {
         let (lexical, _) = self.lexical_path(path.as_ref())?;
-        if lexical.exists() {
-            let canonical = std::fs::canonicalize(&lexical).map_err(|error| {
-                WorkspacePathError::new(
+        // Use symlink_metadata so a broken final-component symlink is treated as
+        // an existing target instead of a creatable missing path. Path::exists()
+        // returns false for broken symlinks, which would otherwise authorize the
+        // link path and let later write I/O follow it outside granted roots.
+        match std::fs::symlink_metadata(&lexical) {
+            Ok(_) => {
+                let canonical = std::fs::canonicalize(&lexical).map_err(|error| {
+                    let kind = if error.kind() == std::io::ErrorKind::NotFound {
+                        WorkspacePathErrorKind::Missing
+                    } else {
+                        WorkspacePathErrorKind::Io
+                    };
+                    WorkspacePathError::new(
+                        kind,
+                        format!(
+                            "workspace write path '{}' cannot be resolved: {error}",
+                            lexical.display()
+                        ),
+                    )
+                })?;
+                let scope = self
+                    .scope_for(&canonical)
+                    .ok_or_else(|| outside_error(&lexical))?;
+                return Ok(ResolvedWorkspacePath {
+                    path: canonical,
+                    scope,
+                    state: WorkspacePathState::Existing,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(WorkspacePathError::new(
                     WorkspacePathErrorKind::Io,
                     format!(
                         "workspace write path '{}' cannot be resolved: {error}",
                         lexical.display()
                     ),
-                )
-            })?;
-            let scope = self
-                .scope_for(&canonical)
-                .ok_or_else(|| outside_error(&lexical))?;
-            return Ok(ResolvedWorkspacePath {
-                path: canonical,
-                scope,
-                state: WorkspacePathState::Existing,
-            });
+                ));
+            }
         }
 
         let mut ancestor = lexical.as_path();
         let mut missing = Vec::new();
-        while !ancestor.exists() {
+        loop {
+            match std::fs::symlink_metadata(ancestor) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(WorkspacePathError::new(
+                        WorkspacePathErrorKind::Io,
+                        format!(
+                            "write parent '{}' cannot be resolved: {error}",
+                            ancestor.display()
+                        ),
+                    ));
+                }
+            }
             let name = ancestor.file_name().ok_or_else(|| {
                 WorkspacePathError::new(
                     WorkspacePathErrorKind::Missing,

@@ -446,6 +446,103 @@ async fn manual_and_automatic_compaction_use_separate_policy_transport_and_mutat
     );
 }
 
+#[tokio::test]
+async fn stream_usage_events_merge_within_a_turn() {
+    use crate::model::ModelUsage;
+
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            vec![
+                ModelEvent::Usage(ModelUsage {
+                    input_tokens: Some(7),
+                    cache_read_tokens: Some(3),
+                    ..ModelUsage::default()
+                }),
+                ModelEvent::OutputDelta("hi".into()),
+                ModelEvent::Usage(ModelUsage {
+                    output_tokens: Some(5),
+                    ..ModelUsage::default()
+                }),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("hi".into())]),
+        )],
+    );
+    let runtime = Rho::builder().provider(provider).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("hello")).await.unwrap();
+    let mut last_usage = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::UsageUpdated { usage } = event {
+            last_usage = Some(usage);
+        }
+    }
+    let outcome = run.outcome().await.unwrap();
+
+    assert_eq!(
+        last_usage,
+        Some(ModelUsage {
+            input_tokens: Some(7),
+            output_tokens: Some(5),
+            cache_read_tokens: Some(3),
+            ..ModelUsage::default()
+        })
+    );
+    assert_eq!(outcome.usage().input_tokens, Some(7));
+    assert_eq!(outcome.usage().output_tokens, Some(5));
+    assert_eq!(outcome.usage().cache_read_tokens, Some(3));
+}
+
+#[tokio::test]
+async fn automatic_compaction_counts_in_flight_history() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("done".into()),
+        ]))],
+    );
+    let automatic_runtime = Rho::builder()
+        .provider(provider)
+        .compactor(crate::ScriptedCompactor::new([
+            crate::CompactionOutput::new(vec![
+                Message::System("automatic summary".into()),
+                Message::user_text("current"),
+            ])
+            .unwrap(),
+        ]))
+        .compaction_policy(crate::CompactionPolicy::after_messages(
+            NonZeroUsize::new(3).unwrap(),
+        ))
+        .build()
+        .unwrap();
+    // Persisted history is only two messages. The in-flight user message makes
+    // the run history three messages before compaction.
+    let automatic_session = automatic_runtime
+        .session(SessionOptions::new().history(vec![
+            Message::user_text("old one"),
+            Message::assistant_text("old two"),
+        ]))
+        .await
+        .unwrap();
+    let mut run = automatic_session
+        .start(UserInput::text("current"))
+        .await
+        .unwrap();
+    let mut previous_messages = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::CompactionCompleted { outcome, .. } = event {
+            previous_messages = Some(outcome.previous_messages());
+        }
+    }
+    run.outcome().await.unwrap();
+
+    assert_eq!(previous_messages, Some(3));
+    assert_eq!(
+        automatic_session.snapshot().compaction().removed_messages(),
+        1
+    );
+}
+
 #[derive(Debug)]
 struct QuestionnaireTool;
 

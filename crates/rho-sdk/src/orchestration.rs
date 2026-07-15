@@ -236,7 +236,7 @@ async fn maybe_compact(
         () = cancellation.cancelled() => return Err(Error::Cancelled),
     };
     let (replacement, usage) = output.into_parts();
-    let outcome = core.commit_compaction(replacement.clone(), usage)?;
+    let outcome = core.commit_compaction(history, replacement.clone(), usage)?;
     *history = replacement;
     emit(
         events,
@@ -487,7 +487,10 @@ async fn handle_provider_event(
             RunEvent::ProviderContextUpdated { kind }
         }
         ModelEvent::Usage(usage) => {
-            capture.usage = usage;
+            // Providers may emit partial usage across multiple stream events
+            // (for example Anthropic input/cache at message_start and later
+            // output deltas). Merge within the turn instead of overwriting.
+            capture.usage = capture.usage.saturating_add(&usage);
             RunEvent::UsageUpdated {
                 usage: accumulated_usage.saturating_add(&capture.usage),
             }

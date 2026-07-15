@@ -225,6 +225,104 @@ impl Compactor for PendingCompactor {
     }
 }
 
+#[tokio::test]
+async fn set_context_window_installs_automatic_compaction_when_idle() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.compaction = CompactionConfig {
+        auto_compact: true,
+        threshold_percent: 1,
+        target_percent: 1,
+    };
+    assert_eq!(
+        interactive
+            .session
+            .diagnostics()
+            .compaction_trigger_tokens(),
+        None
+    );
+
+    interactive.set_context_window(Some(1_000));
+
+    assert_eq!(
+        interactive
+            .session
+            .diagnostics()
+            .compaction_trigger_tokens(),
+        Some(10)
+    );
+}
+
+#[tokio::test]
+async fn replace_provider_rebuilds_compactor_with_current_context_window() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.compaction = CompactionConfig {
+        auto_compact: true,
+        threshold_percent: 80,
+        target_percent: 50,
+    };
+    interactive.context_window = Some(2_000);
+    let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("replacement", "test", "model"),
+        Vec::<ScriptedTurn>::new(),
+    ));
+
+    interactive
+        .replace_provider(Arc::clone(&replacement), rho_sdk::ReasoningLevel::Low)
+        .unwrap();
+
+    assert_eq!(
+        interactive
+            .session
+            .diagnostics()
+            .compaction_trigger_tokens(),
+        Some(1_600)
+    );
+    assert_eq!(
+        interactive.session.diagnostics().provider(),
+        &ModelIdentity::new("replacement", "test", "model")
+    );
+    assert_eq!(
+        interactive.session.reasoning_level(),
+        rho_sdk::ReasoningLevel::Low
+    );
+}
+
+#[tokio::test]
+async fn new_sessions_seed_prompt_cache_keys() {
+    let provider = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        Vec::<ScriptedTurn>::new(),
+    ));
+    let tools = AppToolSet::disabled();
+    let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
+    let runtime = build_runtime(RuntimeBuildOptions {
+        provider: Arc::clone(&provider) as Arc<dyn ModelProvider>,
+        tools: tools.tools(),
+        workspace: workspace.clone(),
+        workspace_policy: InteractiveWorkspacePolicy,
+        system_prompt: SystemPrompt::None,
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig::default(),
+        context_window: None,
+    })
+    .unwrap();
+    let id = SessionId::new();
+    let cache_key = format!("rho:{}", id.as_str());
+    let session = runtime
+        .session(
+            SessionOptions::new()
+                .id(id.clone())
+                .prompt_cache_key(cache_key.clone()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        session.snapshot().prompt_cache_key(),
+        Some(cache_key.as_str())
+    );
+}
+
 async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),

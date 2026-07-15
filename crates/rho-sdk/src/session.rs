@@ -200,6 +200,7 @@ impl SessionCore {
 
     pub(crate) fn commit_compaction(
         &self,
+        previous_history: &[Message],
         history: Vec<Message>,
         usage: crate::model::ModelUsage,
     ) -> Result<crate::CompactionOutcome, Error> {
@@ -213,9 +214,12 @@ impl SessionCore {
             .ok_or_else(|| Error::Persistence {
                 message: "session revision is exhausted".into(),
             })?;
-        let previous_messages = data.history.len();
+        // Count the history that was actually compacted. Automatic compaction
+        // may include uncommitted in-flight messages that are not yet in the
+        // persisted session history.
+        let previous_messages = previous_history.len();
         let current_messages = history.len();
-        let previous_tokens = crate::compaction::estimate_history_tokens(&data.history);
+        let previous_tokens = crate::compaction::estimate_history_tokens(previous_history);
         let current_tokens = crate::compaction::estimate_history_tokens(&history);
         data.compaction.record(
             previous_messages.saturating_sub(current_messages),
@@ -367,6 +371,28 @@ impl Session {
         Ok(())
     }
 
+    /// Replaces the host-supplied compactor and automatic compaction policy while idle.
+    pub fn set_compaction(
+        &self,
+        compactor: Option<Arc<dyn crate::Compactor>>,
+        policy: Option<crate::CompactionPolicy>,
+    ) -> Result<(), Error> {
+        let _inactive = self.core.lock_inactive()?;
+        if policy.is_some() && compactor.is_none() {
+            return Err(Error::InvalidConfiguration {
+                message: "automatic compaction policy requires a compactor".into(),
+            });
+        }
+        let mut runtime = self
+            .core
+            .runtime
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        runtime.compactor = compactor;
+        runtime.compaction_policy = policy;
+        Ok(())
+    }
+
     pub fn diagnostics(&self) -> crate::DiagnosticsSnapshot {
         self.core.runtime().diagnostics()
     }
@@ -452,10 +478,10 @@ impl Session {
         runtime.lifecycle.register(run_id, cancellation.clone())?;
         let history = self.history();
         let output = compactor
-            .compact(crate::CompactionRequest::new(history, cancellation))
+            .compact(crate::CompactionRequest::new(history.clone(), cancellation))
             .await?;
         let (replacement, usage) = output.into_parts();
-        let outcome = self.core.commit_compaction(replacement, usage)?;
+        let outcome = self.core.commit_compaction(&history, replacement, usage)?;
         self.core.set_state(SessionState::Completed);
         Ok(outcome)
     }

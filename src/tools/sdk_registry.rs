@@ -414,13 +414,17 @@ fn metadata_for(name: &str) -> ToolMetadata {
 }
 
 fn map_app_error(error: AppToolError) -> SdkToolError {
-    let kind = match error {
-        AppToolError::InvalidArguments(_) => ToolErrorKind::InvalidArguments,
-        AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
-            ToolErrorKind::Execution
+    match &error {
+        AppToolError::InvalidArguments(_) => {
+            SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
         }
-    };
-    SdkToolError::new(kind, error.to_string())
+        AppToolError::Message(message) if message == "tool interrupted" => {
+            SdkToolError::cancelled()
+        }
+        AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
+            SdkToolError::new(ToolErrorKind::Execution, error.to_string())
+        }
+    }
 }
 
 #[cfg(test)]

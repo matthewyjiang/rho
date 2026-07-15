@@ -274,14 +274,15 @@ async fn execute_with_progress(
 }
 
 fn map_app_error(error: AppToolError) -> ToolError {
-    let message = error.to_string();
-    let kind = match error {
-        AppToolError::InvalidArguments(_) => ToolErrorKind::InvalidArguments,
-        AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
-            ToolErrorKind::Execution
+    match &error {
+        AppToolError::InvalidArguments(_) => {
+            ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
         }
-    };
-    ToolError::new(kind, message)
+        AppToolError::Message(message) if message == "tool interrupted" => ToolError::cancelled(),
+        AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
+            ToolError::new(ToolErrorKind::Execution, error.to_string())
+        }
+    }
 }
 
 #[cfg(test)]
