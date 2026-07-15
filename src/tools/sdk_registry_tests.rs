@@ -136,6 +136,49 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     assert!(!format!("{diagnostics:?}").contains("$TOKEN"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn adapted_tools_stream_live_output_as_progress_events() {
+    let root = tempfile::tempdir().unwrap();
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "shell-1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "printf 'live-marker\\n'; sleep 0.3"}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
+    );
+    let mut builder = Rho::builder()
+        .provider(provider)
+        .workspace(Workspace::new(root.path()).unwrap())
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_processes());
+    builder = builder.tool_shared(adapt(super::super::bash::Bash::new(false), 12_000));
+    let runtime = builder.build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("run it")).await.unwrap();
+    let mut progress_messages = Vec::new();
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolUpdated { progress, .. } = event {
+            progress_messages.push(progress.text().to_string());
+        }
+    }
+    run.outcome().await.unwrap();
+
+    assert!(
+        progress_messages
+            .iter()
+            .any(|message| message.contains("live-marker")),
+        "expected live output in progress events: {progress_messages:?}"
+    );
+}
+
 #[test]
 fn security_declarations_distinguish_network_builtins_from_host_tools() {
     assert_eq!(security_for("web_search").origin(), ToolOrigin::BuiltIn);

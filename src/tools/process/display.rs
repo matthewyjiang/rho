@@ -1,8 +1,8 @@
 use super::types::{Snapshot, State, Stream};
 
-pub(super) fn snapshot_lines(snapshot: &Snapshot) -> Vec<String> {
-    let mut lines = vec!["process".into(), snapshot.command.clone()];
-    lines.push(status_line(snapshot));
+/// Progress lines rendered beneath the presenter-owned tool header.
+pub(super) fn snapshot_progress_lines(snapshot: &Snapshot) -> Vec<String> {
+    let mut lines = vec![status_line(snapshot)];
 
     if snapshot.truncated {
         lines.push(format!(

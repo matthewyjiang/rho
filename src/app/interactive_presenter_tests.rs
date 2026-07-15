@@ -17,6 +17,22 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
 }
 
 #[test]
+fn step_boundary_resets_streamed_previews_for_reused_indexes() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    assert_eq!(
+        presenter.preview(0, Some("bash".into()), r#"{"command":"cargo test"}"#),
+        Some(vec!["bash cargo test".into()])
+    );
+
+    presenter.step_started();
+
+    assert_eq!(
+        presenter.preview(0, Some("bash".into()), r#"{"command":"cargo build"}"#),
+        Some(vec!["bash cargo build".into()])
+    );
+}
+
+#[test]
 fn command_preview_and_result_preserve_command_summary() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     assert_eq!(

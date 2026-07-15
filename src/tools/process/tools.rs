@@ -94,7 +94,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(display::snapshot_lines(&snapshot));
+                on_update(display::snapshot_progress_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Poll {
@@ -117,7 +117,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(display::snapshot_lines(&snapshot));
+                on_update(display::snapshot_progress_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Stop { process_id } => {
@@ -125,10 +125,7 @@ impl Tool for Process {
                     .stop(&process_id, STOP_GRACE)
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(vec![
-                    "process".into(),
-                    format!("stop requested: {process_id}"),
-                ]);
+                on_update(vec![format!("stop requested: {process_id}")]);
                 result!(id, json!({"process_id":process_id,"stop_requested":true}))
             }
         }

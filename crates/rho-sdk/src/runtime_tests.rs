@@ -630,6 +630,43 @@ async fn cancellation_recovers_partial_assistant_and_prevents_overlapping_runs()
 }
 
 #[tokio::test]
+async fn cancellation_before_the_first_provider_turn_still_commits_the_user_message() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("unused".into()),
+        ]))],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    // With capacity 1, `Started` fills the channel and the worker blocks on
+    // `StepStarted` until cancellation fires, exercising the early-cancel path.
+    let mut run = session.start(UserInput::text("hi")).await.unwrap();
+    run.cancel();
+    let mut saw_cancelled_event = false;
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::Cancelled { .. }) {
+            saw_cancelled_event = true;
+        }
+    }
+    let outcome = run.outcome().await;
+
+    assert!(matches!(outcome, Err(Error::Cancelled)));
+    assert!(saw_cancelled_event, "expected a terminal Cancelled event");
+    assert!(
+        session.history().contains(&Message::user_text("hi")),
+        "cancelled run should still commit the user message: {:?}",
+        session.history()
+    );
+    assert_eq!(session.revision().get(), 1);
+}
+
+#[tokio::test]
 async fn explicit_shutdown_cancels_active_runs_and_rejects_new_work() {
     let runtime = Rho::builder().provider(PartialProvider).build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();

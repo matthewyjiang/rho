@@ -110,6 +110,7 @@ impl App {
         agent
             .start(failed_turn.input.clone(), failed_turn.display_user.clone())
             .await?;
+        self.insert_runtime_notices(agent);
         if let Some(context) = agent.take_context_usage() {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
         }

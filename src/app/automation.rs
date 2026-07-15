@@ -112,6 +112,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .system_prompt(system_prompt)
         .workspace(workspace)
         .workspace_policy(AutomationWorkspacePolicy)
+        .max_steps(super::sdk_config::run_step_limit())
         .reasoning_level(sdk_options.runtime.reasoning);
     for tool in tool_set.tools() {
         builder = builder.tool_shared(tool.clone());
@@ -147,7 +148,7 @@ async fn complete_run(
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
     tokio::select! {
-        outcome = run.outcome() => Ok(outcome?),
+        outcome = drive_headless_run(&mut run) => outcome,
         signal = shutdown_signal() => {
             let signal = signal?;
             cancellation.cancel();
@@ -155,6 +156,25 @@ async fn complete_run(
             Err(AutomationInterrupted::new(signal).into())
         }
     }
+}
+
+/// Drains run events with no interactive host attached.
+///
+/// Host input requests cannot be answered headlessly; cancel instead of
+/// leaving the requesting tool suspended until a signal arrives.
+async fn drive_headless_run(run: &mut rho_sdk::Run) -> anyhow::Result<rho_sdk::RunOutcome> {
+    while let Some(event) = run.next_event().await {
+        if let rho_sdk::RunEvent::HostInputRequested { request } = event {
+            run.cancel();
+            let _ = run.outcome().await;
+            anyhow::bail!(
+                "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
+                request.id(),
+                request.title(),
+            );
+        }
+    }
+    Ok(run.outcome().await?)
 }
 
 #[cfg(unix)]

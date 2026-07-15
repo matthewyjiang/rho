@@ -42,12 +42,19 @@ pub(crate) async fn execute_run(
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
     history.push(Message::User(input.into_blocks()));
-    emit(
+    match emit(
         &events,
         &cancellation,
         RunEvent::Started { run_id, revision },
     )
-    .await?;
+    .await
+    {
+        Ok(()) => {}
+        Err(Error::Cancelled) => {
+            return commit_cancelled_history(core, history, &events).await;
+        }
+        Err(error) => return Err(error),
+    }
 
     let mut accumulated_usage = ModelUsage::default();
     let mut steering = Vec::new();
@@ -64,7 +71,13 @@ pub(crate) async fn execute_run(
                 return Err(error);
             }
         }
-        emit(&events, &cancellation, RunEvent::StepStarted { step }).await?;
+        match emit(&events, &cancellation, RunEvent::StepStarted { step }).await {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => return Err(error),
+        }
 
         let mut control = RunControl {
             cancellation: &cancellation,
@@ -131,12 +144,19 @@ pub(crate) async fn execute_run(
         }
 
         for call in tool_calls {
-            emit(
+            match emit(
                 &events,
                 &cancellation,
                 RunEvent::ToolProposed { call: call.clone() },
             )
-            .await?;
+            .await
+            {
+                Ok(()) => {}
+                Err(Error::Cancelled) => {
+                    return commit_cancelled_history(core, history, &events).await;
+                }
+                Err(error) => return Err(error),
+            }
             let result = match execute_tool(&core, &runtime, &call, &mut control).await {
                 Ok(result) => result,
                 Err(Error::Cancelled) => {

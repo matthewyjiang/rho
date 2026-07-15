@@ -68,7 +68,11 @@ async fn process_tool_streams_structured_snapshot_lines() {
     .unwrap();
 
     assert_eq!(updates.len(), 1);
-    assert_eq!(updates[0][0], "process");
+    assert!(
+        updates[0][0].contains(&started.process_id),
+        "first progress line should be the status line: {:?}",
+        updates[0]
+    );
     assert!(updates[0].iter().any(|line| line == "stdout:"));
     assert!(updates[0].iter().any(|line| line.contains("streamed")));
     assert!(updates[0].iter().all(|line| !line.starts_with('{')));

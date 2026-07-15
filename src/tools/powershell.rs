@@ -71,12 +71,10 @@ impl Tool for PowerShell {
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        let mut raw_args = args.clone();
         let mut args: Args = serde_json::from_value(args)?;
         if self.rtk_enabled {
             if let Some(command) = super::rtk::rewrite(&args.command).await {
                 args.command = command;
-                raw_args["command"] = serde_json::Value::String(args.command.clone());
             }
         }
         let start = Instant::now();
@@ -113,10 +111,7 @@ impl Tool for PowerShell {
             }
 
             if last_update.elapsed() >= std::time::Duration::from_millis(50) {
-                on_update(display_lines_with_content(
-                    &raw_args,
-                    &running_content(&stdout, &stderr),
-                ));
+                on_update(vec![running_content(&stdout, &stderr)]);
                 last_update = Instant::now();
             }
 
@@ -168,7 +163,6 @@ impl Tool for PowerShell {
         if self.rtk_enabled {
             super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
         }
-        on_update(display_lines_with_content(&raw_args, &result.content));
         Ok(result)
     }
 }
@@ -259,26 +253,6 @@ async fn drain_stream_chunks(
     }
 }
 
-fn command_line(args: &serde_json::Value) -> String {
-    match args.get("command").and_then(|command| command.as_str()) {
-        Some(command) if !command.trim().is_empty() => format!("powershell {command}"),
-        _ => "powershell".into(),
-    }
-}
-
-fn command_lines(args: &serde_json::Value) -> Vec<String> {
-    vec![command_line(args), format_timeout(args)]
-}
-
-fn display_lines_with_content(args: &serde_json::Value, content: &str) -> Vec<String> {
-    let mut lines = command_lines(args);
-    if !content.trim().is_empty() {
-        lines.push(String::new());
-        lines.push(content.to_string());
-    }
-    lines
-}
-
 fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
     format!(
         "stdout:\n{}\n\nstderr:\n{}\n\ntime: running",
@@ -299,13 +273,6 @@ fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
         String::from_utf8_lossy(stdout),
         String::from_utf8_lossy(stderr)
     )
-}
-
-fn format_timeout(args: &serde_json::Value) -> String {
-    match args.get("timeout_seconds").and_then(|value| value.as_u64()) {
-        Some(seconds) => format!("timeout: {seconds}s"),
-        None => "timeout: none".into(),
-    }
 }
 
 pub(crate) fn wrapped_command(command: &str) -> String {

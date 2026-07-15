@@ -11,7 +11,8 @@ use std::sync::Arc;
 use rho_sdk::{
     tool::{
         OperationKind, Tool as SdkTool, ToolContext as SdkToolContext, ToolError as SdkToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolSecurity,
+        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolProgress,
+        ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest,
     HostQuestion, SelectionMode,
@@ -357,18 +358,40 @@ where
                 cwd: cwd.to_path_buf(),
                 max_output_bytes: self.max_output_bytes,
             };
-            let mut ignore_updates = |_| {};
-            let result = self
-                .inner
-                .call_with_updates_and_cancellation(
-                    arguments,
-                    app_context,
-                    id,
-                    context.cancellation().clone(),
-                    &mut ignore_updates,
-                )
-                .await
-                .map_err(map_app_error)?;
+            // Bridge the tool's synchronous update callback into the SDK
+            // progress channel so hosts see live output while the tool runs.
+            let (update_sender, mut updates) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
+            let mut on_update = move |lines: Vec<String>| {
+                let _ = update_sender.send(lines);
+            };
+            let call = self.inner.call_with_updates_and_cancellation(
+                arguments,
+                app_context,
+                id,
+                context.cancellation().clone(),
+                &mut on_update,
+            );
+            tokio::pin!(call);
+            let result = loop {
+                tokio::select! {
+                    result = &mut call => break result,
+                    update = updates.recv() => {
+                        if let Some(lines) = update {
+                            let _ = context
+                                .progress()
+                                .send(ToolProgress::message(lines.join("\n")))
+                                .await;
+                        }
+                    }
+                }
+            };
+            while let Ok(lines) = updates.try_recv() {
+                let _ = context
+                    .progress()
+                    .send(ToolProgress::message(lines.join("\n")))
+                    .await;
+            }
+            let result = result.map_err(map_app_error)?;
             if !result.ok {
                 return Err(SdkToolError::new(ToolErrorKind::Execution, result.content));
             }

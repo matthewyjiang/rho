@@ -105,6 +105,13 @@ impl InteractiveToolPresenter {
         }
     }
 
+    /// Discards streamed previews from the previous model step. Provider
+    /// tool-call indexes restart at zero every step, so stale entries would
+    /// otherwise absorb the next step's argument deltas.
+    pub(crate) fn step_started(&mut self) {
+        self.streamed.clear();
+    }
+
     pub(crate) fn preview(
         &mut self,
         index: usize,

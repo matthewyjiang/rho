@@ -4166,9 +4166,16 @@ impl App {
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
+        self.insert_runtime_notices(agent);
         self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
         self.status = format!("resumed {short_id}");
         Ok(())
+    }
+
+    fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
+        for notice in agent.take_notices() {
+            self.insert_entry(&Entry::Notice(notice));
+        }
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {

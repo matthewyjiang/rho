@@ -76,6 +76,10 @@ pub trait Tool: Send + Sync {
         id: String,
     ) -> Result<ToolResult, ToolError>;
 
+    /// Runs the tool, reporting interim progress through `on_update`.
+    ///
+    /// Each update replaces the previous one and contains only progress
+    /// content; the presenter renders the tool name and command header.
     async fn call_with_updates(
         &self,
         args: Value,

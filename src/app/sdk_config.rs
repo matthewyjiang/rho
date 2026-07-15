@@ -10,6 +10,15 @@ use crate::{
     providers::ProviderBuildOptions, reasoning::ReasoningLevel,
 };
 
+/// Step budget for one application run.
+///
+/// The agent loop historically had no step limit; long goal-mode turns rely on
+/// that. This keeps the SDK's small default from truncating turns while still
+/// bounding a runaway loop.
+pub(crate) fn run_step_limit() -> std::num::NonZeroUsize {
+    std::num::NonZeroUsize::new(10_000).expect("step limit is nonzero")
+}
+
 /// Application-owned conversion from persisted Rho config to SDK bootstrap data.
 ///
 /// These values deliberately live in `rho-coding-agent`, not `rho-sdk`. They

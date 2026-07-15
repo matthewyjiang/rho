@@ -95,6 +95,7 @@ pub(crate) struct InteractiveRuntime {
     pending_display_user: Option<Message>,
     pending_session_id: Option<SessionId>,
     pending_context_usage: Option<rho_sdk::model::ContextUsage>,
+    pending_notices: Vec<String>,
     cumulative_input_tokens: u64,
     step_input_token_baseline: u64,
 }
@@ -166,7 +167,10 @@ impl InteractiveRuntime {
             })
             .transpose()?;
         let options = if let Some(snapshot) = resumed_snapshot {
-            report_resume_omissions(&snapshot, &provider.identity());
+            // The TUI has not started yet, so stderr is still safe here.
+            if let Some(notice) = resume_omissions_notice(&snapshot, &provider.identity()) {
+                eprintln!("warning: {notice}");
+            }
             SessionOptions::from_snapshot(snapshot)
         } else {
             let mut options = SessionOptions::new().history(history);
@@ -195,6 +199,7 @@ impl InteractiveRuntime {
             pending_display_user: None,
             pending_session_id: None,
             pending_context_usage: None,
+            pending_notices: Vec::new(),
             cumulative_input_tokens: 0,
             step_input_token_baseline: 0,
         })
@@ -216,6 +221,11 @@ impl InteractiveRuntime {
 
     pub(crate) fn take_context_usage(&mut self) -> Option<rho_sdk::model::ContextUsage> {
         self.pending_context_usage.take()
+    }
+
+    /// Warnings queued while the TUI owns the terminal (e.g. resume omissions).
+    pub(crate) fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_notices)
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
@@ -482,7 +492,11 @@ impl InteractiveRuntime {
                     .map(prompt_cache_key)
                     .unwrap_or_else(|| prompt_cache_key(storage.id())),
             )?;
-            report_resume_omissions(&snapshot, &self.provider.identity());
+            // The TUI owns the terminal here; queue the warning for the
+            // transcript instead of writing to stderr.
+            if let Some(notice) = resume_omissions_notice(&snapshot, &self.provider.identity()) {
+                self.pending_notices.push(notice);
+            }
             SessionOptions::from_snapshot(snapshot)
         } else {
             let mut options = SessionOptions::new().history(history);
@@ -504,12 +518,26 @@ impl InteractiveRuntime {
         let Some(storage) = &self.storage else {
             return Ok(());
         };
-        let display_start = self
+        let mut display_tail = match self
             .pending_model_user
             .as_ref()
             .and_then(|user| history.iter().rposition(|message| message == user))
-            .unwrap_or(history.len());
-        let mut display_tail = history[display_start..].to_vec();
+        {
+            Some(display_start) => history[display_start..].to_vec(),
+            // Compaction replaced the turn's messages mid-run. Preserve at
+            // least the user's prompt and the final reply in the transcript.
+            None => self
+                .pending_model_user
+                .clone()
+                .into_iter()
+                .chain(
+                    history
+                        .last()
+                        .filter(|message| message.completed_assistant_content().is_some())
+                        .cloned(),
+                )
+                .collect(),
+        };
         if let (Some(display), Some(first)) = (&self.pending_display_user, display_tail.first_mut())
         {
             *first = display.clone();
@@ -531,18 +559,18 @@ fn prompt_cache_key(id: &str) -> String {
         .unwrap_or_else(|| format!("rho:{id}"))
 }
 
-fn report_resume_omissions(
+fn resume_omissions_notice(
     snapshot: &rho_sdk::SessionSnapshot,
     target: &rho_sdk::model::ModelIdentity,
-) {
+) -> Option<String> {
     let report = snapshot.provider_context_omissions(target);
-    if report.has_omissions() {
-        eprintln!(
-            "warning: omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
+    report.has_omissions().then(|| {
+        format!(
+            "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
             report.omitted_provider_context,
             report.omitted_kinds.join(", ")
-        );
-    }
+        )
+    })
 }
 
 fn begin_provider_switch(current: InteractiveState) -> Result<InteractiveState, Error> {
@@ -614,6 +642,7 @@ fn build_runtime(
         .workspace(workspace)
         .workspace_policy(InteractiveWorkspacePolicy)
         .reasoning_level(reasoning)
+        .max_steps(super::sdk_config::run_step_limit())
         .compactor(compactor);
     if let Some(trigger_tokens) = automatic_compaction_threshold {
         builder =
