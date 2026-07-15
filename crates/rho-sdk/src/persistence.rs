@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     model::{Message, ModelIdentity},
-    Error, Revision, SessionId,
+    CompactionState, Error, Revision, SessionId,
 };
 
 /// Current portable session snapshot schema.
@@ -23,6 +23,8 @@ pub struct SessionSnapshot {
     revision: Revision,
     history: Vec<Message>,
     provider: ModelIdentity,
+    #[serde(default)]
+    compaction: CompactionState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, String>,
 }
@@ -33,6 +35,7 @@ impl SessionSnapshot {
         revision: Revision,
         history: Vec<Message>,
         provider: ModelIdentity,
+        compaction: CompactionState,
     ) -> Self {
         Self {
             schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
@@ -40,6 +43,7 @@ impl SessionSnapshot {
             revision,
             history: sanitized_history(history),
             provider,
+            compaction,
             metadata: BTreeMap::new(),
         }
     }
@@ -62,6 +66,10 @@ impl SessionSnapshot {
 
     pub fn provider(&self) -> &ModelIdentity {
         &self.provider
+    }
+
+    pub fn compaction(&self) -> &CompactionState {
+        &self.compaction
     }
 
     pub fn metadata(&self) -> &BTreeMap<String, String> {

@@ -43,6 +43,7 @@
 
 mod cancellation;
 mod client;
+mod compaction;
 mod error;
 mod event;
 mod id;
@@ -57,6 +58,10 @@ pub mod tool;
 
 pub use cancellation::CancellationToken;
 pub use client::{Rho, RhoBuilder, SessionOptions, SystemPrompt};
+pub use compaction::{
+    CompactionFuture, CompactionOutcome, CompactionOutput, CompactionPolicy, CompactionRequest,
+    CompactionState, CompactionTrigger, Compactor, ScriptedCompactor,
+};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure};
 pub use id::{InvalidId, Revision, RunId, SessionId, ToolCallId};

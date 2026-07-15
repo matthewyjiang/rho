@@ -148,6 +148,14 @@ pub enum RunEvent {
     ProviderContextUpdated {
         kind: String,
     },
+    CompactionStarted {
+        trigger: crate::CompactionTrigger,
+        message_count: usize,
+    },
+    CompactionCompleted {
+        trigger: crate::CompactionTrigger,
+        outcome: crate::CompactionOutcome,
+    },
     Completed {
         outcome: RunOutcome,
     },

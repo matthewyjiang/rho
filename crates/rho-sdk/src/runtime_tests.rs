@@ -284,6 +284,88 @@ async fn session_snapshot_restores_identity_history_and_revision_without_sqlite(
     assert_eq!(restored.history().len(), 4);
 }
 
+#[tokio::test]
+async fn manual_and_automatic_compaction_use_separate_policy_transport_and_mutation() {
+    let manual_runtime = Rho::builder()
+        .provider(ScriptedProvider::new(identity(), []))
+        .compactor(crate::ScriptedCompactor::new([
+            crate::CompactionOutput::new(vec![Message::System("manual summary".into())]).unwrap(),
+        ]))
+        .build()
+        .unwrap();
+    let manual_session = manual_runtime
+        .session(SessionOptions::new().history(vec![
+            Message::user_text("one"),
+            Message::assistant_text("two"),
+        ]))
+        .await
+        .unwrap();
+
+    let manual = manual_session.compact().await.unwrap();
+    assert_eq!(manual.previous_messages(), 2);
+    assert_eq!(manual.current_messages(), 1);
+    assert_eq!(
+        manual_session
+            .snapshot()
+            .compaction()
+            .completed_compactions(),
+        1
+    );
+
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("done".into()),
+        ]))],
+    );
+    let automatic_runtime = Rho::builder()
+        .provider(provider.clone())
+        .compactor(crate::ScriptedCompactor::new([
+            crate::CompactionOutput::new(vec![
+                Message::System("automatic summary".into()),
+                Message::user_text("current"),
+            ])
+            .unwrap(),
+        ]))
+        .compaction_policy(crate::CompactionPolicy::after_messages(
+            NonZeroUsize::new(3).unwrap(),
+        ))
+        .build()
+        .unwrap();
+    let automatic_session = automatic_runtime
+        .session(SessionOptions::new().history(vec![
+            Message::user_text("old one"),
+            Message::assistant_text("old two"),
+        ]))
+        .await
+        .unwrap();
+    let mut run = automatic_session
+        .start(UserInput::text("current"))
+        .await
+        .unwrap();
+    let mut compacted = false;
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::CompactionCompleted { .. }) {
+            compacted = true;
+        }
+    }
+    let outcome = run.outcome().await.unwrap();
+
+    assert!(compacted);
+    assert_eq!(outcome.revision(), crate::Revision::from_u64(2));
+    assert_eq!(
+        provider.recorded_requests()[0].messages,
+        [
+            Message::System("automatic summary".into()),
+            Message::user_text("current"),
+        ]
+    );
+    assert_eq!(
+        automatic_session.snapshot().compaction().last_revision(),
+        Some(crate::Revision::from_u64(1))
+    );
+}
+
 #[derive(Debug)]
 struct PartialProvider;
 

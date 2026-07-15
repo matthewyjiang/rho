@@ -27,6 +27,7 @@ pub struct SessionOptions {
     id: SessionId,
     history: Vec<Message>,
     revision: crate::Revision,
+    compaction: crate::CompactionState,
     apply_system_prompt: bool,
 }
 
@@ -36,6 +37,7 @@ impl Default for SessionOptions {
             id: SessionId::default(),
             history: Vec::new(),
             revision: crate::Revision::INITIAL,
+            compaction: crate::CompactionState::default(),
             apply_system_prompt: true,
         }
     }
@@ -61,6 +63,7 @@ impl SessionOptions {
             id: snapshot.session_id().clone(),
             history: snapshot.history().to_vec(),
             revision: snapshot.revision(),
+            compaction: snapshot.compaction().clone(),
             apply_system_prompt: false,
         }
     }
@@ -75,6 +78,8 @@ pub struct RhoBuilder {
     event_capacity: Option<NonZeroUsize>,
     max_steps: Option<NonZeroUsize>,
     workspace_root: Option<PathBuf>,
+    compactor: Option<Arc<dyn crate::Compactor>>,
+    compaction_policy: Option<crate::CompactionPolicy>,
 }
 
 impl RhoBuilder {
@@ -120,6 +125,19 @@ impl RhoBuilder {
         self
     }
 
+    pub fn compactor<C>(mut self, compactor: C) -> Self
+    where
+        C: crate::Compactor + 'static,
+    {
+        self.compactor = Some(Arc::new(compactor));
+        self
+    }
+
+    pub fn compaction_policy(mut self, policy: crate::CompactionPolicy) -> Self {
+        self.compaction_policy = Some(policy);
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
@@ -132,6 +150,11 @@ impl RhoBuilder {
                     message: error.to_string(),
                 })?;
         }
+        if self.compaction_policy.is_some() && self.compactor.is_none() {
+            return Err(Error::InvalidConfiguration {
+                message: "automatic compaction policy requires a compactor".into(),
+            });
+        }
         Ok(Rho {
             provider,
             tools,
@@ -143,6 +166,8 @@ impl RhoBuilder {
                 .max_steps
                 .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_MAX_STEPS).unwrap()),
             workspace_root: self.workspace_root,
+            compactor: self.compactor,
+            compaction_policy: self.compaction_policy,
         })
     }
 }
@@ -156,6 +181,8 @@ pub struct Rho {
     pub(crate) event_capacity: NonZeroUsize,
     pub(crate) max_steps: NonZeroUsize,
     pub(crate) workspace_root: Option<PathBuf>,
+    pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
+    pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
 }
 
 impl Rho {
@@ -174,6 +201,7 @@ impl Rho {
             options.id,
             history,
             options.revision,
+            options.compaction,
             self.clone(),
         )))
     }
@@ -189,6 +217,7 @@ impl std::fmt::Debug for Rho {
             .field("event_capacity", &self.event_capacity)
             .field("max_steps", &self.max_steps)
             .field("workspace_root", &self.workspace_root)
+            .field("compaction_policy", &self.compaction_policy)
             .finish()
     }
 }

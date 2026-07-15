@@ -95,6 +95,7 @@ impl SessionState {
 struct SessionData {
     history: Vec<Message>,
     revision: Revision,
+    compaction: crate::CompactionState,
 }
 
 pub(crate) struct SessionCore {
@@ -109,11 +110,16 @@ impl SessionCore {
         id: SessionId,
         history: Vec<Message>,
         revision: Revision,
+        compaction: crate::CompactionState,
         runtime: Rho,
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
-            data: Mutex::new(SessionData { history, revision }),
+            data: Mutex::new(SessionData {
+                history,
+                revision,
+                compaction,
+            }),
             runtime: RwLock::new(runtime),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
@@ -148,6 +154,41 @@ impl SessionCore {
         data.history = history;
         data.revision = revision;
         Ok(revision)
+    }
+
+    pub(crate) fn compaction_state(&self) -> crate::CompactionState {
+        self.data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .compaction
+            .clone()
+    }
+
+    pub(crate) fn commit_compaction(
+        &self,
+        history: Vec<Message>,
+    ) -> Result<crate::CompactionOutcome, Error> {
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let revision = data
+            .revision
+            .checked_next()
+            .ok_or_else(|| Error::Persistence {
+                message: "session revision is exhausted".into(),
+            })?;
+        let previous_messages = data.history.len();
+        let current_messages = history.len();
+        data.compaction
+            .record(previous_messages.saturating_sub(current_messages), revision);
+        data.history = history;
+        data.revision = revision;
+        Ok(crate::CompactionOutcome::new(
+            previous_messages,
+            current_messages,
+            revision,
+        ))
     }
 
     pub(crate) fn set_state(&self, state: SessionState) {
@@ -221,6 +262,7 @@ impl Session {
             revision,
             history,
             self.core.runtime().provider.identity(),
+            self.core.compaction_state(),
         )
     }
 
@@ -264,6 +306,27 @@ impl Session {
         run.outcome().await
     }
 
+    pub async fn compact(&self) -> Result<crate::CompactionOutcome, Error> {
+        let runtime = self.core.runtime();
+        let compactor = runtime
+            .compactor
+            .ok_or_else(|| Error::InvalidConfiguration {
+                message: "no compactor is configured".into(),
+            })?;
+        self.core.begin_run()?;
+        let _guard = ActiveRunGuard::new(Arc::clone(&self.core));
+        let history = self.history();
+        let output = compactor
+            .compact(crate::CompactionRequest::new(
+                history,
+                crate::CancellationToken::new(),
+            ))
+            .await?;
+        let outcome = self.core.commit_compaction(output.into_messages())?;
+        self.core.set_state(SessionState::Completed);
+        Ok(outcome)
+    }
+
     pub fn reset(&self) -> Result<(), Error> {
         if self.is_running() {
             return Err(Error::SessionBusy);
@@ -278,6 +341,7 @@ impl Session {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.history = system_prompt.into_iter().collect();
+        data.compaction = crate::CompactionState::default();
         data.revision = data
             .revision
             .checked_next()

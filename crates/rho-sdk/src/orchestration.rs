@@ -49,6 +49,17 @@ pub(crate) async fn execute_run(
 
     let mut accumulated_usage = ModelUsage::default();
     for step in 1..=runtime.max_steps.get() {
+        match maybe_compact(&core, &runtime, &mut history, &cancellation, &events).await {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => {
+                core.set_state(SessionState::Failed);
+                emit_failure(&events, &error).await;
+                return Err(error);
+            }
+        }
         emit(&events, &cancellation, RunEvent::StepStarted { step }).await?;
 
         let (response, capture) = match request_valid_response(
@@ -136,6 +147,51 @@ pub(crate) async fn execute_run(
     core.set_state(SessionState::Failed);
     emit_failure(&events, &error).await;
     Err(error)
+}
+
+async fn maybe_compact(
+    core: &Arc<SessionCore>,
+    runtime: &Rho,
+    history: &mut Vec<Message>,
+    cancellation: &CancellationToken,
+    events: &mpsc::Sender<RunEvent>,
+) -> Result<(), Error> {
+    let Some(policy) = &runtime.compaction_policy else {
+        return Ok(());
+    };
+    if !policy.should_compact(history.len()) {
+        return Ok(());
+    }
+    let compactor = runtime
+        .compactor
+        .as_ref()
+        .expect("builder requires a compactor for automatic policy");
+    emit(
+        events,
+        cancellation,
+        RunEvent::CompactionStarted {
+            trigger: crate::CompactionTrigger::Automatic,
+            message_count: history.len(),
+        },
+    )
+    .await?;
+    let request = crate::CompactionRequest::new(history.clone(), cancellation.clone());
+    let output = tokio::select! {
+        result = compactor.compact(request) => result?,
+        () = cancellation.cancelled() => return Err(Error::Cancelled),
+    };
+    let replacement = output.into_messages();
+    let outcome = core.commit_compaction(replacement.clone())?;
+    *history = replacement;
+    emit(
+        events,
+        cancellation,
+        RunEvent::CompactionCompleted {
+            trigger: crate::CompactionTrigger::Automatic,
+            outcome,
+        },
+    )
+    .await
 }
 
 struct RequestFailure {

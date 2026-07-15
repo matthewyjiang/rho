@@ -27,6 +27,7 @@ fn snapshot() -> SessionSnapshot {
             ..AbortedAssistant::default()
         }))],
         identity,
+        crate::CompactionState::default(),
     )
 }
 
@@ -72,6 +73,7 @@ fn in_memory_store_replaces_complete_snapshots_atomically() {
         Revision::from_u64(5),
         vec![Message::user_text("new revision")],
         first.provider().clone(),
+        crate::CompactionState::default(),
     );
 
     assert_eq!(store.save(first.clone()), None);
