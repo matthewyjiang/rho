@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicU8, Ordering},
-    Arc, Mutex, MutexGuard, RwLock,
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex, MutexGuard, RwLock,
+    },
 };
 
 use crate::{
@@ -96,6 +99,7 @@ struct SessionData {
     history: Vec<Message>,
     revision: Revision,
     compaction: crate::CompactionState,
+    metadata: BTreeMap<String, String>,
     prompt_cache_key: Option<String>,
 }
 
@@ -115,6 +119,7 @@ impl SessionCore {
         history: Vec<Message>,
         revision: Revision,
         compaction: crate::CompactionState,
+        metadata: BTreeMap<String, String>,
         prompt_cache_key: Option<String>,
         runtime: Rho,
     ) -> Arc<Self> {
@@ -124,6 +129,7 @@ impl SessionCore {
                 history,
                 revision,
                 compaction,
+                metadata,
                 prompt_cache_key,
             }),
             runtime: RwLock::new(runtime),
@@ -142,6 +148,14 @@ impl SessionCore {
 
     pub(crate) fn approvals(&self) -> Arc<crate::workspace::SessionApprovals> {
         Arc::clone(&self.approvals)
+    }
+
+    pub(crate) fn metadata(&self) -> BTreeMap<String, String> {
+        self.data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .metadata
+            .clone()
     }
 
     pub(crate) fn prompt_cache_key(&self) -> Option<String> {
@@ -319,6 +333,9 @@ impl Session {
             self.core.runtime().provider.identity(),
             self.core.compaction_state(),
         );
+        for (key, value) in self.core.metadata() {
+            snapshot = snapshot.with_metadata(key, value);
+        }
         if let Some(prompt_cache_key) = self.core.prompt_cache_key() {
             snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
         }

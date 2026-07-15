@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -307,6 +308,60 @@ async fn session_snapshot_restores_identity_history_and_revision_without_sqlite(
     assert_eq!(restored.id(), snapshot.session_id());
     assert_eq!(outcome.revision(), crate::Revision::from_u64(2));
     assert_eq!(restored.history().len(), 4);
+}
+
+#[tokio::test]
+async fn snapshot_metadata_survives_restore_and_session_mutations() {
+    let expected_metadata = BTreeMap::from([
+        ("host".to_string(), "rho-cli".to_string()),
+        ("title".to_string(), "metadata restore".to_string()),
+    ]);
+    let source = crate::SessionSnapshot::new(
+        crate::SessionId::from_string("metadata-session").unwrap(),
+        crate::Revision::INITIAL,
+        vec![Message::user_text("persist me")],
+        identity(),
+        crate::CompactionState::default(),
+    )
+    .with_metadata("host", "rho-cli")
+    .with_metadata("title", "metadata restore");
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(identity(), []))
+        .compactor(crate::ScriptedCompactor::new([
+            crate::CompactionOutput::new(vec![Message::System("summary".into())]).unwrap(),
+        ]))
+        .build()
+        .unwrap();
+    let session = runtime
+        .session(SessionOptions::from_snapshot(source))
+        .await
+        .unwrap();
+
+    assert_eq!(session.snapshot().metadata(), &expected_metadata);
+
+    session.reset().unwrap();
+    assert_eq!(session.snapshot().metadata(), &expected_metadata);
+
+    session
+        .append_message(Message::user_text("compact this"))
+        .unwrap();
+    session
+        .append_message(Message::assistant_text("old response"))
+        .unwrap();
+    session.compact().await.unwrap();
+    assert_eq!(session.snapshot().metadata(), &expected_metadata);
+
+    let replacement_identity = ModelIdentity::new("scripted", "test", "replacement");
+    session
+        .replace_provider(Arc::new(ScriptedProvider::new(
+            replacement_identity.clone(),
+            [],
+        )))
+        .unwrap();
+    let final_snapshot = session.snapshot();
+
+    assert_eq!(final_snapshot.metadata(), &expected_metadata);
+    assert_eq!(final_snapshot.provider(), &replacement_identity);
 }
 
 #[tokio::test]

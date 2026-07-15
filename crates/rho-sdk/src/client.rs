@@ -104,6 +104,7 @@ pub struct SessionOptions {
     history: Vec<Message>,
     revision: crate::Revision,
     compaction: crate::CompactionState,
+    metadata: BTreeMap<String, String>,
     prompt_cache_key: Option<String>,
     apply_system_prompt: bool,
 }
@@ -115,6 +116,7 @@ impl Default for SessionOptions {
             history: Vec::new(),
             revision: crate::Revision::INITIAL,
             compaction: crate::CompactionState::default(),
+            metadata: BTreeMap::new(),
             prompt_cache_key: None,
             apply_system_prompt: true,
         }
@@ -148,6 +150,7 @@ impl SessionOptions {
             history: snapshot.history().to_vec(),
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
+            metadata: snapshot.metadata().clone(),
             prompt_cache_key: snapshot.prompt_cache_key().map(str::to_owned),
             apply_system_prompt: false,
         }
@@ -390,6 +393,7 @@ impl Rho {
             history,
             options.revision,
             options.compaction,
+            options.metadata,
             options.prompt_cache_key,
             self.clone(),
         )))
