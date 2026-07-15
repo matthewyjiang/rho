@@ -11,7 +11,7 @@ use crate::{
     },
     provider::{provider_event_channel, ModelProvider},
     run::RunCommand,
-    session::{SessionCore, SessionState, UserInput},
+    session::{HistoryMetrics, SessionCore, SessionState, UserInput},
     CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
 };
 
@@ -230,13 +230,14 @@ async fn maybe_compact(
         },
     )
     .await?;
+    let previous = HistoryMetrics::from_history(history);
     let request = crate::CompactionRequest::new(history.clone(), cancellation.clone());
     let output = tokio::select! {
         result = compactor.compact(request) => result?,
         () = cancellation.cancelled() => return Err(Error::Cancelled),
     };
     let (replacement, usage) = output.into_parts();
-    let outcome = core.commit_compaction(history, replacement.clone(), usage)?;
+    let outcome = core.commit_compaction(previous, replacement.clone(), usage)?;
     *history = replacement;
     emit(
         events,
