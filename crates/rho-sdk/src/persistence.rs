@@ -30,7 +30,7 @@ pub struct SessionSnapshot {
     prompt_cache_key: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct SessionSnapshotWire {
     schema_version: u32,
     session_id: SessionId,
@@ -43,6 +43,20 @@ struct SessionSnapshotWire {
     metadata: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prompt_cache_key: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SessionSnapshotWireRef<'a> {
+    schema_version: u32,
+    session_id: &'a SessionId,
+    revision: Revision,
+    history: &'a [Message],
+    provider: &'a ModelIdentity,
+    compaction: &'a CompactionState,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    metadata: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache_key: Option<&'a str>,
 }
 
 impl SessionSnapshot {
@@ -135,15 +149,15 @@ impl Serialize for SessionSnapshot {
     where
         S: Serializer,
     {
-        SessionSnapshotWire {
+        SessionSnapshotWireRef {
             schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
-            session_id: self.session_id.clone(),
+            session_id: &self.session_id,
             revision: self.revision,
-            history: sanitized_history(self.history.clone()),
-            provider: self.provider.clone(),
-            compaction: self.compaction.clone(),
-            metadata: self.metadata.clone(),
-            prompt_cache_key: self.prompt_cache_key.clone(),
+            history: &self.history,
+            provider: &self.provider,
+            compaction: &self.compaction,
+            metadata: &self.metadata,
+            prompt_cache_key: self.prompt_cache_key.as_deref(),
         }
         .serialize(serializer)
     }
