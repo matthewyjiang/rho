@@ -38,7 +38,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho update` | Update Rho using the detected installation method. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 
-Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers) — for example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
+Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
 `--no-system-prompt` and `--no-tools` only affect the current invocation and are not written to config. `--resume` cannot be combined with a subcommand such as `run` or `update`.
 

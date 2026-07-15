@@ -67,7 +67,7 @@ The SDK supplies mechanics, not ambient authority. The embedding host owns:
 - calling shutdown and waiting for host-owned resources
 - setting logging and telemetry policy
 
-A custom provider or tool is trusted host code. The SDK cannot prevent it from opening files, spawning processes, or using the network outside `ToolContext`. Sandboxing must be enforced by the host or operating system when plugin code is not fully trusted.
+A custom provider or tool is trusted host code. The SDK cannot prevent it from opening files, spawning processes, or using the network outside `ToolContext`. The host or operating system must enforce sandboxing when plugin code is not fully trusted.
 
 ## Diagnostics and prompt sources
 

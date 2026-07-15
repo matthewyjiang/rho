@@ -4,7 +4,7 @@
 
 `ModelProvider` is the provider extension point. It is object-safe, `Send + Sync`, and returns explicit `Send` futures. A provider reports an exact `ModelIdentity` containing provider, API, and model names, and receives a borrowed `ModelRequest` for each turn.
 
-The current core crate includes `ScriptedProvider` for deterministic examples and tests. Production provider implementations used by the Rho application are not automatically exposed or configured by `rho-sdk`, and the SDK has no provider Cargo features today. Do not infer SDK availability from the application's [provider list](/authentication-and-models#providers).
+The current core crate includes `ScriptedProvider` for deterministic examples and tests. `rho-sdk` does not automatically expose or configure production provider implementations used by the Rho application, and the SDK has no provider Cargo features today. Do not infer SDK availability from the application's [provider list](/authentication-and-models#providers).
 
 ## Implementor contract
 
