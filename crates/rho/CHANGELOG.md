@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.2...rho-coding-agent-v1.0.3) (2026-07-15)
+
+
+### Bug Fixes
+
+* **skills:** load discovered skills outside workspace ([#285](https://github.com/matthewyjiang/rho/issues/285)) ([386173b](https://github.com/matthewyjiang/rho/commit/386173bad15f6ceafbee129cc1f4308004f0f924))
+
+
+### Performance Improvements
+
+* reduce hot-path allocations and redundant I/O ([#280](https://github.com/matthewyjiang/rho/issues/280)) ([c18e582](https://github.com/matthewyjiang/rho/commit/c18e5823156254dccf59080864e775990c1b89cb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.0.1 to 1.0.2
+
 ## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.1...rho-coding-agent-v1.0.2) (2026-07-15)
 
 

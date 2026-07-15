@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.1...rho-sdk-v1.0.2) (2026-07-15)
+
+
+### Performance Improvements
+
+* reduce hot-path allocations and redundant I/O ([#280](https://github.com/matthewyjiang/rho/issues/280)) ([c18e582](https://github.com/matthewyjiang/rho/commit/c18e5823156254dccf59080864e775990c1b89cb))
+
 ## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.0...rho-sdk-v1.0.1) (2026-07-15)
 
 
