@@ -169,6 +169,8 @@ fn builtin_gpt_56_codex_overrides_use_temporary_context_limit() {
         assert_eq!(metadata.effective_context_window, Some(272_000));
         assert_eq!(metadata.usable_context_window, Some(272_000));
         assert_eq!(metadata.display_context_window(), Some(272_000));
+        assert_eq!(metadata.supported_reasoning_levels, None);
+        assert!(!metadata.reasoning_capabilities_known);
     }
 }
 
