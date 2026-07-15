@@ -2032,7 +2032,11 @@ impl App {
                 )
                 .await?;
         }
-        if matches!(outcome, TurnOutcome::Completed) && self.goal.is_some() {
+        if goal_command::should_resume_goal_after_turn(
+            outcome,
+            self.goal.is_some(),
+            self.should_quit,
+        ) {
             self.continue_goal(terminal, agent).await?;
         }
         Ok(())

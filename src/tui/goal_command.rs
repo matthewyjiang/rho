@@ -1,5 +1,33 @@
 use super::*;
 
+const GOAL_RETRY_DELAY: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GoalLoopAction {
+    /// Turn finished normally; re-enter the evaluate/work cycle.
+    Continue,
+    /// Transient failure; wait, then keep working while the goal remains active.
+    RetryAfterFailure,
+    /// User interrupt or other terminal stop; leave the goal loop.
+    Stop,
+}
+
+pub(super) fn should_resume_goal_after_turn(
+    outcome: TurnOutcome,
+    goal_active: bool,
+    should_quit: bool,
+) -> bool {
+    goal_active && !should_quit && !matches!(outcome, TurnOutcome::Interrupted)
+}
+
+fn goal_loop_action_after_turn(outcome: TurnOutcome) -> GoalLoopAction {
+    match outcome {
+        TurnOutcome::Completed => GoalLoopAction::Continue,
+        TurnOutcome::Failed => GoalLoopAction::RetryAfterFailure,
+        TurnOutcome::Interrupted => GoalLoopAction::Stop,
+    }
+}
+
 impl App {
     pub(super) fn execute_goal_command_during_turn(
         &mut self,
@@ -102,7 +130,7 @@ impl App {
                 agent,
             )
             .await?;
-        if matches!(outcome, TurnOutcome::Completed) {
+        if should_resume_goal_after_turn(outcome, self.goal.is_some(), self.should_quit) {
             self.continue_goal(terminal, agent).await?;
         }
         Ok(())
@@ -176,10 +204,13 @@ impl App {
                 Ok(evaluation) => evaluation,
                 Err(err) => {
                     self.insert_entry(&Entry::Error(format!(
-                        "goal evaluation failed; goal remains active: {err}"
+                        "goal evaluation failed; retrying while goal remains active: {err}"
                     )));
-                    self.status = "goal evaluation failed".into();
-                    break;
+                    self.status = "goal retrying".into();
+                    if !self.wait_for_goal_retry(terminal).await? {
+                        break;
+                    }
+                    continue;
                 }
             };
             let Some(goal) = self.goal.as_mut() else {
@@ -207,21 +238,86 @@ impl App {
                 "Continue working toward this goal:\n\n{condition}\n\nThe goal evaluator says it is not yet met: {}\n\nMake concrete progress and verify the completion condition before stopping.",
                 evaluation.reason
             );
-            let outcome = self
-                .run_prompt_turn(
-                    TurnPrompt::standard(continuation, "continuing active goal".into()),
-                    Vec::new(),
-                    terminal,
-                    agent,
-                )
-                .await?;
-            if !matches!(outcome, TurnOutcome::Completed) {
+            let mut stop_goal_loop = false;
+            loop {
+                let outcome = self
+                    .run_prompt_turn(
+                        TurnPrompt::standard(continuation.clone(), "continuing active goal".into()),
+                        Vec::new(),
+                        terminal,
+                        agent,
+                    )
+                    .await?;
+                match goal_loop_action_after_turn(outcome) {
+                    GoalLoopAction::Continue => break,
+                    GoalLoopAction::RetryAfterFailure => {
+                        self.insert_entry(&Entry::Notice(
+                            "goal still active; retrying after the run stopped before the goal was met"
+                                .into(),
+                        ));
+                        self.status = "goal retrying".into();
+                        if !self.wait_for_goal_retry(terminal).await? {
+                            stop_goal_loop = true;
+                            break;
+                        }
+                    }
+                    GoalLoopAction::Stop => {
+                        stop_goal_loop = true;
+                        break;
+                    }
+                }
+            }
+            if stop_goal_loop {
                 break;
             }
         }
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    async fn wait_for_goal_retry(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if self.should_quit || self.goal.is_none() {
+            return Ok(false);
+        }
+
+        self.loading_spinner.start();
+        terminal.draw(|frame| self.draw(frame))?;
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
+        let deadline = tokio::time::Instant::now() + GOAL_RETRY_DELAY;
+        let should_retry = loop {
+            if self.should_quit || self.goal.is_none() {
+                break false;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break true;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break true,
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    let control = self.handle_running_terminal_events(
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Turn,
+                    )?;
+                    if matches!(control, StreamControl::Interrupt) {
+                        self.clear_goal();
+                        break false;
+                    }
+                    if self.goal.is_none() || self.should_quit {
+                        break false;
+                    }
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+            }
+        };
+        self.loading_spinner.stop();
+        Ok(should_retry && self.goal.is_some() && !self.should_quit)
     }
 }
 
@@ -307,6 +403,51 @@ mod tests {
         assert!(
             status.contains("last evaluation: one test still fails"),
             "{status}"
+        );
+    }
+
+    #[test]
+    fn resumes_goal_after_completed_or_failed_turns() {
+        assert!(should_resume_goal_after_turn(
+            TurnOutcome::Completed,
+            /*goal_active*/ true,
+            /*should_quit*/ false
+        ));
+        assert!(should_resume_goal_after_turn(
+            TurnOutcome::Failed,
+            /*goal_active*/ true,
+            /*should_quit*/ false
+        ));
+        assert!(!should_resume_goal_after_turn(
+            TurnOutcome::Interrupted,
+            /*goal_active*/ true,
+            /*should_quit*/ false
+        ));
+        assert!(!should_resume_goal_after_turn(
+            TurnOutcome::Failed,
+            /*goal_active*/ false,
+            /*should_quit*/ false
+        ));
+        assert!(!should_resume_goal_after_turn(
+            TurnOutcome::Failed,
+            /*goal_active*/ true,
+            /*should_quit*/ true
+        ));
+    }
+
+    #[test]
+    fn goal_loop_retries_failed_turns_and_stops_on_interrupt() {
+        assert_eq!(
+            goal_loop_action_after_turn(TurnOutcome::Completed),
+            GoalLoopAction::Continue
+        );
+        assert_eq!(
+            goal_loop_action_after_turn(TurnOutcome::Failed),
+            GoalLoopAction::RetryAfterFailure
+        );
+        assert_eq!(
+            goal_loop_action_after_turn(TurnOutcome::Interrupted),
+            GoalLoopAction::Stop
         );
     }
 }
