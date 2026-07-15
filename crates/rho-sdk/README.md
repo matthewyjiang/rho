@@ -1,7 +1,9 @@
 # rho-sdk
 
 `rho-sdk` is the embeddable, headless agent runtime used by the Rho coding agent.
-The crate is under active development toward its first stable release.
+The crate is under active development toward its first stable release. See the
+[private-API migration guide](MIGRATION.md) when moving existing Rho integrations
+to the SDK.
 
 Construction is explicit and side-effect-free by default: no automatic writes to
 `~/.rho`, no implicit environment reads, no credential-store access, and no
