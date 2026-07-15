@@ -1,10 +1,10 @@
 use ratatui::{layout::Position, style::Style, text::Line};
 
-use crate::questionnaire::{QuestionnaireQuestion, QuestionnaireQuestionKind};
+use crate::questionnaire::QuestionnaireQuestionKind;
 
 use super::{
     choice_count, questionnaire_default_display, FieldSelection, QuestionnaireComposer,
-    QuestionnaireFieldState,
+    QuestionnaireFieldState, QuestionnaireQuestion,
 };
 use crate::tui::{
     render::{
@@ -179,7 +179,7 @@ fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
     if let Some(default) = &question.default {
         hints.push(format!(
             "default: {}",
-            questionnaire_default_display(default)
+            questionnaire_default_display(question, default)
         ));
     }
     hints.join(" · ")
@@ -217,17 +217,15 @@ fn questionnaire_selection_marker(
 
 fn questionnaire_choice_label(question: &QuestionnaireQuestion, choice_index: usize) -> String {
     match question.kind {
-        QuestionnaireQuestionKind::Confirm => {
-            if choice_index == 0 {
-                "yes".into()
-            } else {
-                "no".into()
-            }
-        }
+        QuestionnaireQuestionKind::Confirm => question
+            .choices
+            .get(choice_index)
+            .map(|choice| choice.label().to_string())
+            .unwrap_or_else(|| if choice_index == 0 { "yes" } else { "no" }.into()),
         QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => question
             .choices
             .get(choice_index)
-            .cloned()
+            .map(|choice| choice.label().to_string())
             .unwrap_or_else(|| "Other".into()),
         QuestionnaireQuestionKind::Text => String::new(),
     }

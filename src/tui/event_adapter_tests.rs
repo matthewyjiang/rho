@@ -7,7 +7,13 @@ use rho_sdk::{
 };
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
-use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse};
+use crate::{
+    questionnaire::{QuestionnaireQuestionKind, QuestionnaireResponse},
+    tui::questionnaire::{
+        QuestionnaireChoice, QuestionnaireComposer, QuestionnaireReply,
+        QuestionnaireResponseChannel,
+    },
+};
 
 #[test]
 fn translates_streaming_and_usage_events_without_rendering_state() {
@@ -76,7 +82,7 @@ fn retains_structured_tool_metadata_until_completion() {
 }
 
 #[test]
-fn converts_questionnaires_and_answers_through_typed_sdk_values() {
+fn choice_round_trip_renders_label_and_returns_machine_value() {
     let question = HostQuestion::new(
         "language",
         "Language?",
@@ -86,16 +92,109 @@ fn converts_questionnaires_and_answers_through_typed_sdk_values() {
     .unwrap()
     .help("Choose one");
     let request = HostInputRequest::questionnaire("Setup", vec![question]).unwrap();
-
     let translated = questionnaire_request(&request);
-    assert_eq!(translated.title.as_deref(), Some("Setup"));
-    assert_eq!(translated.questions[0].choices, vec!["Rust", "Go"]);
 
-    let response = host_response(QuestionnaireResponse {
-        answers: vec![QuestionnaireAnswer {
-            id: "language".into(),
-            answer: serde_json::Value::String("rust".into()),
-        }],
+    assert_eq!(translated.title.as_deref(), Some("Setup"));
+    assert_eq!(
+        translated.questions[0].choices,
+        vec![
+            QuestionnaireChoice::new("rust", "Rust"),
+            QuestionnaireChoice::new("go", "Go"),
+        ]
+    );
+
+    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let host = host_response(response);
+
+    assert_eq!(display, "Rust");
+    assert_eq!(host.answers()["language"], ["rust"]);
+    assert!(request.validate(&host).is_ok());
+}
+
+#[test]
+fn yes_no_round_trip_preserves_confirm_semantics_and_values() {
+    let question = HostQuestion::new(
+        "apply",
+        "Apply changes?",
+        vec![HostChoice::new("yes", "Yes"), HostChoice::new("no", "No")],
+        SelectionMode::One,
+    )
+    .unwrap();
+    let request = HostInputRequest::questionnaire("Confirm", vec![question]).unwrap();
+    let translated = questionnaire_request(&request);
+
+    assert_eq!(
+        translated.questions[0].kind,
+        QuestionnaireQuestionKind::Confirm
+    );
+
+    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let host = host_response(response);
+
+    assert_eq!(display, "Yes");
+    assert_eq!(host.answers()["apply"], ["yes"]);
+    assert!(request.validate(&host).is_ok());
+}
+
+#[test]
+fn optional_unanswered_round_trip_omits_the_answer() {
+    let question = HostQuestion::new(
+        "language",
+        "Language?",
+        vec![HostChoice::new("rust", "Rust")],
+        SelectionMode::One,
+    )
+    .unwrap()
+    .optional();
+    let request = HostInputRequest::questionnaire("Optional", vec![question]).unwrap();
+    let translated = questionnaire_request(&request);
+
+    let (response, _display) = submit(translated, |_| {});
+    let host = host_response(response);
+
+    assert!(host.answers().is_empty());
+    assert!(request.validate(&host).is_ok());
+}
+
+#[test]
+fn multi_select_round_trip_renders_labels_and_returns_values() {
+    let question = HostQuestion::new(
+        "tests",
+        "Test suites?",
+        vec![
+            HostChoice::new("unit_tests", "Unit tests"),
+            HostChoice::new("e2e", "End to end"),
+        ],
+        SelectionMode::Many,
+    )
+    .unwrap();
+    let request = HostInputRequest::questionnaire("Tests", vec![question]).unwrap();
+    let translated = questionnaire_request(&request);
+
+    let (response, display) = submit(translated, |composer| {
+        composer.toggle_active_choice();
+        composer.move_active_choice_next();
+        composer.toggle_active_choice();
     });
-    assert_eq!(response.answers()["language"], vec!["rust"]);
+    let host = host_response(response);
+
+    assert_eq!(display, "Unit tests, End to end");
+    assert_eq!(host.answers()["tests"], ["unit_tests", "e2e"]);
+    assert!(request.validate(&host).is_ok());
+}
+
+fn submit(
+    request: crate::tui::questionnaire::QuestionnaireRequest,
+    interact: impl FnOnce(&mut QuestionnaireComposer),
+) -> (QuestionnaireResponse, String) {
+    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+    let mut composer =
+        QuestionnaireComposer::new(request, QuestionnaireResponseChannel::new(reply_tx));
+    interact(&mut composer);
+    let submitted = composer.submit().unwrap();
+    let reply = reply_rx.try_recv().unwrap();
+    let QuestionnaireReply::Answer(response) = reply else {
+        panic!("expected questionnaire answer");
+    };
+    (response, submitted.display)
 }

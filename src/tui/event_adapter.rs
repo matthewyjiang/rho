@@ -6,12 +6,11 @@ use rho_sdk::{
 
 use crate::{
     app::interactive_presenter::InteractiveToolPresenter,
-    questionnaire::{
-        QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind,
-        QuestionnaireRequest, QuestionnaireResponse,
-    },
+    questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
     tool::ToolDisplayStyle,
 };
+
+use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest};
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -156,39 +155,57 @@ pub(super) fn questionnaire_request(request: &HostInputRequest) -> Questionnaire
         questions: request
             .questions()
             .iter()
-            .map(|question| QuestionnaireQuestion {
-                id: question.id().to_string(),
-                question: question.prompt().to_string(),
-                help: question.help_text().map(str::to_string),
-                default: question.default_value_ref().cloned(),
-                kind: match question.selection() {
-                    rho_sdk::SelectionMode::One => QuestionnaireQuestionKind::Choice,
-                    rho_sdk::SelectionMode::Many => QuestionnaireQuestionKind::MultiSelect,
-                    _ => QuestionnaireQuestionKind::Choice,
-                },
-                required: question.is_required(),
-                choices: question
+            .map(|question| {
+                let choices = question
                     .choices()
                     .iter()
-                    .map(|choice| choice.label().to_string())
-                    .collect(),
-                allow_other: question.permits_other(),
+                    .map(|choice| QuestionnaireChoice::new(choice.value(), choice.label()))
+                    .collect::<Vec<_>>();
+                QuestionnaireQuestion {
+                    id: question.id().to_string(),
+                    question: question.prompt().to_string(),
+                    help: question.help_text().map(str::to_string),
+                    default: question.default_value_ref().cloned(),
+                    kind: questionnaire_kind(question),
+                    required: question.is_required(),
+                    choices,
+                    allow_other: question.permits_other(),
+                }
             })
             .collect(),
     }
 }
 
+fn questionnaire_kind(question: &rho_sdk::HostQuestion) -> QuestionnaireQuestionKind {
+    match question.selection() {
+        rho_sdk::SelectionMode::Many => QuestionnaireQuestionKind::MultiSelect,
+        rho_sdk::SelectionMode::One if is_yes_no_question(question) => {
+            QuestionnaireQuestionKind::Confirm
+        }
+        rho_sdk::SelectionMode::One => QuestionnaireQuestionKind::Choice,
+        _ => QuestionnaireQuestionKind::Choice,
+    }
+}
+
+fn is_yes_no_question(question: &rho_sdk::HostQuestion) -> bool {
+    matches!(
+        question.choices(),
+        [yes, no]
+            if yes.value().eq_ignore_ascii_case("yes")
+                && no.value().eq_ignore_ascii_case("no")
+    )
+}
+
 pub(super) fn host_response(response: QuestionnaireResponse) -> HostInputResponse {
     response.answers.into_iter().fold(
         HostInputResponse::new(),
-        |response, QuestionnaireAnswer { id, answer }| {
-            let values = match answer {
-                serde_json::Value::Array(values) => {
-                    values.into_iter().map(answer_text).collect::<Vec<_>>()
-                }
-                value => vec![answer_text(value)],
-            };
-            response.answer(id, values)
+        |response, QuestionnaireAnswer { id, answer }| match answer {
+            serde_json::Value::Null => response,
+            serde_json::Value::Array(values) if values.is_empty() => response,
+            serde_json::Value::Array(values) => {
+                response.answer(id, values.into_iter().map(answer_text).collect::<Vec<_>>())
+            }
+            value => response.answer(id, vec![answer_text(value)]),
         },
     )
 }
@@ -198,7 +215,6 @@ fn answer_text(value: serde_json::Value) -> String {
         serde_json::Value::String(value) => value,
         serde_json::Value::Bool(value) => value.to_string(),
         serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
         value => value.to_string(),
     }
 }

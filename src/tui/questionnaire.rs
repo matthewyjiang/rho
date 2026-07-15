@@ -6,10 +6,70 @@ pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lin
 #[cfg(test)]
 use render::{questionnaire_frame, questionnaire_question_cursor};
 
-use crate::questionnaire::{
-    QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind, QuestionnaireRequest,
-    QuestionnaireResponse,
-};
+use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct QuestionnaireRequest {
+    pub(super) title: Option<String>,
+    pub(super) reason: Option<String>,
+    pub(super) questions: Vec<QuestionnaireQuestion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct QuestionnaireQuestion {
+    pub(super) id: String,
+    pub(super) question: String,
+    pub(super) help: Option<String>,
+    pub(super) default: Option<serde_json::Value>,
+    pub(super) kind: QuestionnaireQuestionKind,
+    pub(super) required: bool,
+    pub(super) choices: Vec<QuestionnaireChoice>,
+    pub(super) allow_other: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct QuestionnaireChoice {
+    value: String,
+    label: String,
+}
+
+impl QuestionnaireChoice {
+    pub(super) fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+        }
+    }
+
+    fn same(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self::new(value.clone(), value)
+    }
+
+    pub(super) fn value(&self) -> &str {
+        &self.value
+    }
+
+    pub(super) fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn matches_default(&self, default: &str) -> bool {
+        self.value.eq_ignore_ascii_case(default) || self.label.eq_ignore_ascii_case(default)
+    }
+}
+
+impl From<String> for QuestionnaireChoice {
+    fn from(value: String) -> Self {
+        Self::same(value)
+    }
+}
+
+impl From<&str> for QuestionnaireChoice {
+    fn from(value: &str) -> Self {
+        Self::same(value)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum QuestionnaireCancelReason {
@@ -474,7 +534,7 @@ fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection
     if let Some(index) = question
         .choices
         .iter()
-        .position(|choice| choice.eq_ignore_ascii_case(&default))
+        .position(|choice| choice.matches_default(&default))
     {
         return (FieldSelection::Single(index), index, String::new());
     }
@@ -496,7 +556,7 @@ fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection,
         if let Some(index) = question
             .choices
             .iter()
-            .position(|choice| choice.eq_ignore_ascii_case(&value))
+            .position(|choice| choice.matches_default(&value))
         {
             selected.push(index);
         } else if question.allow_other {
@@ -561,15 +621,11 @@ fn questionnaire_default_string(default: &serde_json::Value) -> String {
     }
 }
 
-fn questionnaire_default_display(default: &serde_json::Value) -> String {
-    match default {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(questionnaire_default_display)
-            .collect::<Vec<_>>()
-            .join(", "),
-        value => questionnaire_default_string(value),
-    }
+fn questionnaire_default_display(
+    question: &QuestionnaireQuestion,
+    default: &serde_json::Value,
+) -> String {
+    questionnaire_answer_display(Some(question), default)
 }
 
 fn choice_count(question: &QuestionnaireQuestion) -> usize {
@@ -594,12 +650,28 @@ pub(super) fn questionnaire_answers(
         .map(|(index, (question, field))| {
             let answer = normalize_questionnaire_answer(question, field)
                 .map_err(|error| format!("question {}: {error}", index + 1))?;
-            Ok(QuestionnaireAnswer {
+            Ok((question, answer))
+        })
+        .filter_map(|result| match result {
+            Ok((question, answer)) if !question.required && answer_is_empty(&answer) => None,
+            Ok((question, answer)) => Some(Ok(QuestionnaireAnswer {
                 id: question.id.clone(),
                 answer,
-            })
+            })),
+            Err(error) => Some(Err(error)),
         })
         .collect()
+}
+
+fn answer_is_empty(answer: &serde_json::Value) -> bool {
+    match answer {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(value) => value.trim().is_empty(),
+        serde_json::Value::Array(values) => values.is_empty(),
+        serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::Object(_) => false,
+    }
 }
 
 fn normalize_questionnaire_answer(
@@ -614,8 +686,7 @@ fn normalize_questionnaire_answer(
             FieldSelection::Single(index) => question
                 .choices
                 .get(*index)
-                .cloned()
-                .map(serde_json::Value::String)
+                .map(|choice| serde_json::Value::String(choice.value().to_string()))
                 .ok_or_else(|| "answer is not selected".into()),
             FieldSelection::Other => {
                 normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
@@ -629,7 +700,8 @@ fn normalize_questionnaire_answer(
             FieldSelection::Multi { selected, other } => {
                 let mut answers = selected
                     .iter()
-                    .filter_map(|index| question.choices.get(*index).cloned())
+                    .filter_map(|index| question.choices.get(*index))
+                    .map(|choice| choice.value().to_string())
                     .collect::<Vec<_>>();
                 if *other {
                     let other_answer = normalize_text_answer(question, &field.other_value)?;
@@ -650,8 +722,15 @@ fn normalize_questionnaire_answer(
             | FieldSelection::Other => Err("answer is not selected".into()),
         },
         QuestionnaireQuestionKind::Confirm => match field.selection {
-            FieldSelection::Single(0) => Ok(serde_json::json!("yes")),
-            FieldSelection::Single(1) => Ok(serde_json::json!("no")),
+            FieldSelection::Single(index @ 0..=1) => Ok(serde_json::Value::String(
+                question
+                    .choices
+                    .get(index)
+                    .map_or(if index == 0 { "yes" } else { "no" }, |choice| {
+                        choice.value()
+                    })
+                    .to_string(),
+            )),
             FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
             FieldSelection::Text
             | FieldSelection::None
@@ -675,8 +754,12 @@ pub(super) fn submitted_questionnaire_entry(
     request: &QuestionnaireRequest,
     response: &QuestionnaireResponse,
 ) -> String {
-    if response.answers.len() == 1 {
-        return questionnaire_answer_display(&response.answers[0].answer);
+    if let [answer] = response.answers.as_slice() {
+        let question = request
+            .questions
+            .iter()
+            .find(|question| question.id == answer.id);
+        return questionnaire_answer_display(question, &answer.answer);
     }
     let mut lines = Vec::new();
     if let Some(title) = &request.title {
@@ -691,22 +774,36 @@ pub(super) fn submitted_questionnaire_entry(
             .find(|question| question.id == answer.id)
             .map(|question| question.question.as_str())
             .unwrap_or(answer.id.as_str());
+        let question = request
+            .questions
+            .iter()
+            .find(|question| question.id == answer.id);
         lines.push(format!(
             "{label}: {}",
-            questionnaire_answer_display(&answer.answer)
+            questionnaire_answer_display(question, &answer.answer)
         ));
     }
     lines.join("\n")
 }
 
-fn questionnaire_answer_display(answer: &serde_json::Value) -> String {
+fn questionnaire_answer_display(
+    question: Option<&QuestionnaireQuestion>,
+    answer: &serde_json::Value,
+) -> String {
     match answer {
         serde_json::Value::Array(values) => values
             .iter()
-            .map(questionnaire_answer_display)
+            .map(|answer| questionnaire_answer_display(question, answer))
             .collect::<Vec<_>>()
             .join(", "),
-        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::String(value) => question
+            .and_then(|question| {
+                question
+                    .choices
+                    .iter()
+                    .find(|choice| choice.value() == value)
+            })
+            .map_or_else(|| value.clone(), |choice| choice.label().to_string()),
         serde_json::Value::Bool(value) => value.to_string(),
         serde_json::Value::Number(value) => value.to_string(),
         serde_json::Value::Null => String::new(),

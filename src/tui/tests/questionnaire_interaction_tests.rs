@@ -1,6 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::questionnaire::{QuestionnaireQuestion, QuestionnaireQuestionKind};
+use crate::{
+    questionnaire::QuestionnaireQuestionKind,
+    tui::questionnaire::{QuestionnaireQuestion, QuestionnaireRequest},
+};
 
 use super::*;
 

@@ -11,8 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(test)]
-use crate::questionnaire::QuestionnaireRequest;
 use futures_util::{task::noop_waker_ref, FutureExt};
 use history_cache::{CachedCodeBlock, HistoryLineCache};
 use questionnaire::QuestionnaireCancelReason;
