@@ -1,9 +1,12 @@
-use std::{num::NonZeroUsize, path::PathBuf, str::FromStr};
+use std::{future::pending, num::NonZeroUsize, path::PathBuf, str::FromStr, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use crate::{model::ToolSpec, CancellationToken, ToolCallId};
+use crate::{
+    model::ToolSpec, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    CancellationToken, CapabilityRequest, ScopedWorkspacePolicy, ToolCallId,
+};
 
 use super::{
     tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolContext,
@@ -25,7 +28,11 @@ fn invocation() -> ToolInvocation {
 fn context(cancellation: CancellationToken) -> (ToolContext, super::ToolProgressReceiver) {
     let (progress, receiver) = tool_progress_channel(NonZeroUsize::new(4).unwrap());
     (
-        ToolContext::new(Some(PathBuf::from("/workspace")), cancellation, progress),
+        ToolContext::new(
+            Some(crate::Workspace::new(std::env::temp_dir()).unwrap()),
+            cancellation,
+            progress,
+        ),
         receiver,
     )
 }
@@ -79,6 +86,43 @@ async fn every_tool_call_receives_cooperative_cancellation() {
     });
 
     assert_eq!(result.unwrap_err().kind(), ToolErrorKind::Cancelled);
+}
+
+#[derive(Debug)]
+struct PendingApproval;
+
+impl ApprovalHandler for PendingApproval {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(pending::<ApprovalDecision>())
+    }
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_a_pending_host_approval() {
+    let cancellation = CancellationToken::new();
+    let cancel = cancellation.clone();
+    let (progress, _receiver) = tool_progress_channel(NonZeroUsize::new(1).unwrap());
+    let context = ToolContext::with_security(
+        None,
+        Arc::new(
+            ScopedWorkspacePolicy::new()
+                .allow_processes()
+                .require_process_approval(),
+        ),
+        Arc::new(PendingApproval),
+        cancellation,
+        progress,
+    );
+
+    let (result, ()) = tokio::join!(
+        context.authorize(CapabilityRequest::ExecuteProcess {
+            program: "cargo".into(),
+            arguments: vec!["test".into()],
+        }),
+        async move { cancel.cancel() }
+    );
+
+    assert!(matches!(result, Err(crate::Error::Cancelled)));
 }
 
 #[test]

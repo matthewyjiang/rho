@@ -56,6 +56,7 @@ mod reasoning;
 mod run;
 mod session;
 pub mod tool;
+mod workspace;
 
 pub use cancellation::CancellationToken;
 pub use client::{Rho, RhoBuilder, SessionOptions, SystemPrompt};
@@ -71,6 +72,11 @@ pub use persistence::{InMemorySessionStore, SessionSnapshot, SESSION_SNAPSHOT_SC
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
 pub use run::Run;
 pub use session::{Session, SessionState, UserInput};
+pub use workspace::{
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
+    DenyAllPolicy, DenyApprovals, PolicyDecision, ScopedWorkspacePolicy, Workspace,
+    WorkspacePolicy,
+};
 
 #[cfg(test)]
 #[path = "runtime_tests.rs"]

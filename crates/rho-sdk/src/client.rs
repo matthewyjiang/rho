@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use crate::{
     model::Message,
@@ -77,7 +77,9 @@ pub struct RhoBuilder {
     system_prompt: SystemPrompt,
     event_capacity: Option<NonZeroUsize>,
     max_steps: Option<NonZeroUsize>,
-    workspace_root: Option<PathBuf>,
+    workspace: Option<crate::Workspace>,
+    workspace_policy: Option<Arc<dyn crate::WorkspacePolicy>>,
+    approval_handler: Option<Arc<dyn crate::ApprovalHandler>>,
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
 }
@@ -119,9 +121,25 @@ impl RhoBuilder {
         self
     }
 
-    /// Grants custom tools an explicit workspace root.
-    pub fn workspace_root(mut self, workspace_root: impl Into<PathBuf>) -> Self {
-        self.workspace_root = Some(workspace_root.into());
+    /// Supplies an explicit filesystem scope without granting capabilities.
+    pub fn workspace(mut self, workspace: crate::Workspace) -> Self {
+        self.workspace = Some(workspace);
+        self
+    }
+
+    pub fn workspace_policy<P>(mut self, policy: P) -> Self
+    where
+        P: crate::WorkspacePolicy + 'static,
+    {
+        self.workspace_policy = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn approval_handler<A>(mut self, handler: A) -> Self
+    where
+        A: crate::ApprovalHandler + 'static,
+    {
+        self.approval_handler = Some(Arc::new(handler));
         self
     }
 
@@ -165,7 +183,13 @@ impl RhoBuilder {
             max_steps: self
                 .max_steps
                 .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_MAX_STEPS).unwrap()),
-            workspace_root: self.workspace_root,
+            workspace: self.workspace,
+            workspace_policy: self
+                .workspace_policy
+                .unwrap_or_else(|| Arc::new(crate::DenyAllPolicy)),
+            approval_handler: self
+                .approval_handler
+                .unwrap_or_else(|| Arc::new(crate::DenyApprovals)),
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
         })
@@ -180,7 +204,9 @@ pub struct Rho {
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) event_capacity: NonZeroUsize,
     pub(crate) max_steps: NonZeroUsize,
-    pub(crate) workspace_root: Option<PathBuf>,
+    pub(crate) workspace: Option<crate::Workspace>,
+    pub(crate) workspace_policy: Arc<dyn crate::WorkspacePolicy>,
+    pub(crate) approval_handler: Arc<dyn crate::ApprovalHandler>,
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
 }
@@ -202,7 +228,9 @@ impl Rho {
                 .into_iter()
                 .map(|spec| spec.name)
                 .collect(),
-            self.workspace_root.clone(),
+            self.workspace
+                .as_ref()
+                .map(|workspace| workspace.root().to_path_buf()),
             prompt_sources,
             self.event_capacity.get(),
             self.max_steps.get(),
@@ -238,7 +266,9 @@ impl std::fmt::Debug for Rho {
             .field("system_prompt", &self.system_prompt)
             .field("event_capacity", &self.event_capacity)
             .field("max_steps", &self.max_steps)
-            .field("workspace_root", &self.workspace_root)
+            .field("workspace", &self.workspace)
+            .field("workspace_policy", &self.workspace_policy)
+            .field("approval_handler", &self.approval_handler)
             .field("compaction_policy", &self.compaction_policy)
             .finish()
     }

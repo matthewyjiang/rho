@@ -11,7 +11,10 @@ use std::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{model::ToolSpec, CancellationToken, ToolCallId};
+use crate::{
+    model::ToolSpec, ApprovalHandler, CancellationToken, CapabilityRequest, DenyAllPolicy,
+    DenyApprovals, ToolCallId, Workspace, WorkspacePolicy,
+};
 
 /// Future returned by [`Tool`] implementations.
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
@@ -200,26 +203,57 @@ impl ToolInvocation {
 /// Scoped capabilities supplied to one tool invocation.
 #[derive(Clone, Debug)]
 pub struct ToolContext {
-    workspace_root: Option<PathBuf>,
+    workspace: Option<Workspace>,
+    policy: Arc<dyn WorkspacePolicy>,
+    approvals: Arc<dyn ApprovalHandler>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 }
 
 impl ToolContext {
     pub fn new(
-        workspace_root: Option<PathBuf>,
+        workspace: Option<Workspace>,
         cancellation: CancellationToken,
         progress: ToolProgressSender,
     ) -> Self {
         Self {
-            workspace_root,
+            workspace,
+            policy: Arc::new(DenyAllPolicy),
+            approvals: Arc::new(DenyApprovals),
             cancellation,
             progress,
         }
     }
 
+    pub(crate) fn with_security(
+        workspace: Option<Workspace>,
+        policy: Arc<dyn WorkspacePolicy>,
+        approvals: Arc<dyn ApprovalHandler>,
+        cancellation: CancellationToken,
+        progress: ToolProgressSender,
+    ) -> Self {
+        Self {
+            workspace,
+            policy,
+            approvals,
+            cancellation,
+            progress,
+        }
+    }
+
+    pub fn workspace(&self) -> Option<&Workspace> {
+        self.workspace.as_ref()
+    }
+
     pub fn workspace_root(&self) -> Option<&Path> {
-        self.workspace_root.as_deref()
+        self.workspace.as_ref().map(Workspace::root)
+    }
+
+    pub async fn authorize(&self, request: CapabilityRequest) -> Result<(), crate::Error> {
+        tokio::select! {
+            result = crate::workspace::authorize(&self.policy, &self.approvals, request) => result,
+            () = self.cancellation.cancelled() => Err(crate::Error::Cancelled),
+        }
     }
 
     pub fn cancellation(&self) -> &CancellationToken {

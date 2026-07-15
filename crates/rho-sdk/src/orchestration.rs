@@ -440,8 +440,10 @@ async fn execute_tool(
     let (progress, mut progress_receiver) =
         tool_progress_channel(NonZeroUsize::new(TOOL_PROGRESS_CAPACITY).unwrap());
     let invocation = ToolInvocation::new(call_id.clone(), call.arguments.clone());
-    let context = ToolContext::new(
-        runtime.workspace_root.clone(),
+    let context = ToolContext::with_security(
+        runtime.workspace.clone(),
+        Arc::clone(&runtime.workspace_policy),
+        Arc::clone(&runtime.approval_handler),
         cancellation.clone(),
         progress,
     );
