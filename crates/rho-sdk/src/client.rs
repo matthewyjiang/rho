@@ -1,4 +1,8 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     model::Message,
@@ -11,6 +15,78 @@ use crate::{
 
 const DEFAULT_EVENT_CAPACITY: usize = 64;
 const DEFAULT_MAX_STEPS: usize = 32;
+
+#[derive(Debug, Default)]
+struct LifecycleState {
+    shutdown: bool,
+    runs: BTreeMap<crate::RunId, crate::CancellationToken>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RuntimeLifecycle {
+    state: Mutex<LifecycleState>,
+}
+
+impl RuntimeLifecycle {
+    pub(crate) fn register(
+        &self,
+        run_id: crate::RunId,
+        cancellation: crate::CancellationToken,
+    ) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.shutdown {
+            return Err(Error::RuntimeShutdown);
+        }
+        state.runs.insert(run_id, cancellation);
+        Ok(())
+    }
+
+    pub(crate) fn unregister(&self, run_id: &crate::RunId) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .runs
+            .remove(run_id);
+    }
+
+    fn shutdown(&self) -> ShutdownOutcome {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.shutdown {
+            return ShutdownOutcome::default();
+        }
+        state.shutdown = true;
+        let cancelled_runs = state.runs.len();
+        for cancellation in state.runs.values() {
+            cancellation.cancel();
+        }
+        ShutdownOutcome { cancelled_runs }
+    }
+
+    pub(crate) fn is_shutdown(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .shutdown
+    }
+}
+
+/// Result of explicitly shutting down an SDK runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShutdownOutcome {
+    cancelled_runs: usize,
+}
+
+impl ShutdownOutcome {
+    pub fn cancelled_runs(&self) -> usize {
+        self.cancelled_runs
+    }
+}
 
 /// Explicit system-prompt policy for a runtime.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -199,6 +275,7 @@ impl RhoBuilder {
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
+            lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
     }
 }
@@ -217,11 +294,16 @@ pub struct Rho {
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
 
 impl Rho {
     pub fn builder() -> RhoBuilder {
         RhoBuilder::default()
+    }
+
+    pub fn shutdown(&self) -> ShutdownOutcome {
+        self.lifecycle.shutdown()
     }
 
     pub fn diagnostics(&self) -> crate::DiagnosticsSnapshot {
@@ -253,6 +335,9 @@ impl Rho {
     }
 
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
+        if self.lifecycle.is_shutdown() {
+            return Err(Error::RuntimeShutdown);
+        }
         let mut history = options.history;
         if options.apply_system_prompt {
             if let SystemPrompt::Custom(prompt) = &self.system_prompt {

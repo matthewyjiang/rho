@@ -630,6 +630,31 @@ async fn cancellation_recovers_partial_assistant_and_prevents_overlapping_runs()
 }
 
 #[tokio::test]
+async fn explicit_shutdown_cancels_active_runs_and_rejects_new_work() {
+    let runtime = Rho::builder().provider(PartialProvider).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("wait")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::AssistantTextDelta { .. }) {
+            break;
+        }
+    }
+
+    assert_eq!(runtime.shutdown().cancelled_runs(), 1);
+    assert_eq!(runtime.shutdown().cancelled_runs(), 0);
+    while run.next_event().await.is_some() {}
+    assert!(matches!(run.outcome().await, Err(Error::Cancelled)));
+    assert!(matches!(
+        session.start(UserInput::text("again")).await,
+        Err(Error::RuntimeShutdown)
+    ));
+    assert!(matches!(
+        runtime.session(SessionOptions::default()).await,
+        Err(Error::RuntimeShutdown)
+    ));
+}
+
+#[tokio::test]
 async fn dropping_a_run_cancels_work_and_releases_the_session() {
     let runtime = Rho::builder().provider(PartialProvider).build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();

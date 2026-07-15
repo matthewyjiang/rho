@@ -218,16 +218,27 @@ impl SessionCore {
 
 pub(crate) struct ActiveRunGuard {
     core: Arc<SessionCore>,
+    run_id: RunId,
+    lifecycle: Arc<crate::client::RuntimeLifecycle>,
 }
 
 impl ActiveRunGuard {
-    pub(crate) fn new(core: Arc<SessionCore>) -> Self {
-        Self { core }
+    pub(crate) fn new(
+        core: Arc<SessionCore>,
+        run_id: RunId,
+        lifecycle: Arc<crate::client::RuntimeLifecycle>,
+    ) -> Self {
+        Self {
+            core,
+            run_id,
+            lifecycle,
+        }
     }
 }
 
 impl Drop for ActiveRunGuard {
     fn drop(&mut self) {
+        self.lifecycle.unregister(&self.run_id);
         self.core.finish_run();
     }
 }
@@ -305,7 +316,14 @@ impl Session {
         let (commands, command_receiver) = tokio::sync::mpsc::channel(runtime.event_capacity.get());
         let worker_cancellation = cancellation.clone();
         let worker_run_id = run_id.clone();
-        let guard = ActiveRunGuard::new(Arc::clone(&core));
+        let guard = ActiveRunGuard::new(
+            Arc::clone(&core),
+            run_id.clone(),
+            Arc::clone(&runtime.lifecycle),
+        );
+        runtime
+            .lifecycle
+            .register(run_id.clone(), cancellation.clone())?;
         let worker = tokio::spawn(async move {
             let _guard = guard;
             execute_run(
@@ -341,19 +359,26 @@ impl Session {
 
     pub async fn compact(&self) -> Result<crate::CompactionOutcome, Error> {
         let runtime = self.core.runtime();
-        let compactor = runtime
-            .compactor
-            .ok_or_else(|| Error::InvalidConfiguration {
-                message: "no compactor is configured".into(),
-            })?;
+        let compactor =
+            runtime
+                .compactor
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| Error::InvalidConfiguration {
+                    message: "no compactor is configured".into(),
+                })?;
         self.core.begin_run()?;
-        let _guard = ActiveRunGuard::new(Arc::clone(&self.core));
+        let run_id = RunId::new();
+        let cancellation = crate::CancellationToken::new();
+        let _guard = ActiveRunGuard::new(
+            Arc::clone(&self.core),
+            run_id.clone(),
+            Arc::clone(&runtime.lifecycle),
+        );
+        runtime.lifecycle.register(run_id, cancellation.clone())?;
         let history = self.history();
         let output = compactor
-            .compact(crate::CompactionRequest::new(
-                history,
-                crate::CancellationToken::new(),
-            ))
+            .compact(crate::CompactionRequest::new(history, cancellation))
             .await?;
         let outcome = self.core.commit_compaction(output.into_messages())?;
         self.core.set_state(SessionState::Completed);

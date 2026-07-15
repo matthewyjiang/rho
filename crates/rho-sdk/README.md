@@ -36,7 +36,11 @@ without requiring hosts to reconstruct it from deltas. Dropping a run cancels
 and aborts provider or tool work.
 
 The SDK currently requires a Tokio runtime. Provider and tool extension points
-return explicit `Send` futures and may be used as trait objects.
+return explicit `Send` futures and may be used as trait objects. `Rho::shutdown`
+is idempotent, cancels all registered runs and compactions, and rejects new
+sessions or runs. Dropping a `Run` cancels and aborts that worker; dropping a
+runtime handle alone does not shut down clones, so hosts that need coordinated
+teardown should call `shutdown`.
 
 ## Session snapshots
 

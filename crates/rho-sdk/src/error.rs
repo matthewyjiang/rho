@@ -12,6 +12,7 @@ pub enum Error {
     Tool(ToolError),
     Persistence { message: String },
     PolicyDenied { message: String },
+    RuntimeShutdown,
     SessionBusy,
     Cancelled,
     Interrupted { message: String },
@@ -40,6 +41,7 @@ impl fmt::Display for Error {
             Self::PolicyDenied { message } => {
                 write!(formatter, "policy denied operation: {message}")
             }
+            Self::RuntimeShutdown => formatter.write_str("runtime has been shut down"),
             Self::SessionBusy => formatter.write_str("session already has an active run"),
             Self::Cancelled => formatter.write_str("operation cancelled"),
             Self::Interrupted { message } => write!(formatter, "operation interrupted: {message}"),
@@ -59,6 +61,7 @@ impl std::error::Error for Error {
             | Self::Authentication { .. }
             | Self::Persistence { .. }
             | Self::PolicyDenied { .. }
+            | Self::RuntimeShutdown
             | Self::SessionBusy
             | Self::Cancelled
             | Self::Interrupted { .. }
