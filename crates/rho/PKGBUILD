@@ -28,7 +28,8 @@ build() {
 check() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
-    cargo test --release --locked --no-default-features
+    # Test fixtures use debug assertions and are not included in the release binary.
+    cargo test --locked --no-default-features
 }
 
 package() {
