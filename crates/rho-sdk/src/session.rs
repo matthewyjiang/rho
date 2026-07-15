@@ -103,6 +103,20 @@ struct SessionData {
     prompt_cache_key: Option<String>,
 }
 
+pub(crate) struct HistoryMetrics {
+    message_count: usize,
+    estimated_tokens: u64,
+}
+
+impl HistoryMetrics {
+    pub(crate) fn from_history(history: &[Message]) -> Self {
+        Self {
+            message_count: history.len(),
+            estimated_tokens: crate::compaction::estimate_history_tokens(history),
+        }
+    }
+}
+
 pub(crate) struct SessionCore {
     id: SessionId,
     data: Mutex<SessionData>,
@@ -200,7 +214,7 @@ impl SessionCore {
 
     pub(crate) fn commit_compaction(
         &self,
-        previous_history: &[Message],
+        previous: HistoryMetrics,
         history: Vec<Message>,
         usage: crate::model::ModelUsage,
     ) -> Result<crate::CompactionOutcome, Error> {
@@ -217,13 +231,11 @@ impl SessionCore {
         // Count the history that was actually compacted. Automatic compaction
         // may include uncommitted in-flight messages that are not yet in the
         // persisted session history.
-        let previous_messages = previous_history.len();
         let current_messages = history.len();
-        let previous_tokens = crate::compaction::estimate_history_tokens(previous_history);
         let current_tokens = crate::compaction::estimate_history_tokens(&history);
         data.compaction.record(
-            previous_messages.saturating_sub(current_messages),
-            previous_tokens,
+            previous.message_count.saturating_sub(current_messages),
+            previous.estimated_tokens,
             current_tokens,
             usage.cost_usd_micros,
             revision,
@@ -231,9 +243,9 @@ impl SessionCore {
         data.history = history;
         data.revision = revision;
         Ok(crate::CompactionOutcome::new(
-            previous_messages,
+            previous.message_count,
             current_messages,
-            previous_tokens,
+            previous.estimated_tokens,
             current_tokens,
             usage.cost_usd_micros,
             revision,
@@ -477,11 +489,12 @@ impl Session {
         );
         runtime.lifecycle.register(run_id, cancellation.clone())?;
         let history = self.history();
+        let previous = HistoryMetrics::from_history(&history);
         let output = compactor
-            .compact(crate::CompactionRequest::new(history.clone(), cancellation))
+            .compact(crate::CompactionRequest::new(history, cancellation))
             .await?;
         let (replacement, usage) = output.into_parts();
-        let outcome = self.core.commit_compaction(&history, replacement, usage)?;
+        let outcome = self.core.commit_compaction(previous, replacement, usage)?;
         self.core.set_state(SessionState::Completed);
         Ok(outcome)
     }
