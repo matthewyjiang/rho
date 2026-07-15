@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.0...rho-coding-agent-v1.0.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **release:** separate application package ([#272](https://github.com/matthewyjiang/rho/issues/272)) ([55e8edf](https://github.com/matthewyjiang/rho/commit/55e8edfc950cddcd6ac94337d325a2408c8dac49))
+
 ## [1.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.1...rho-coding-agent-v1.0.0) (2026-07-15)
 
 
