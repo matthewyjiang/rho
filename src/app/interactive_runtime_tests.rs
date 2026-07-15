@@ -11,7 +11,8 @@ use rho_sdk::{
 
 use super::{
     active_run_disposition, begin_provider_switch, build_runtime, state_after_event,
-    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState, RunPhase,
+    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState,
+    InteractiveWorkspacePolicy, RunPhase, RuntimeBuildOptions,
 };
 use crate::{
     compaction::CompactionConfig, session::Session as StoredSession,
@@ -165,19 +166,20 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
     let shared_provider: Arc<dyn ModelProvider> = Arc::new(provider.clone());
     let tools = AppToolSet::disabled();
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
-    let runtime = build_runtime(
-        shared_provider,
-        &tools,
+    let runtime = build_runtime(RuntimeBuildOptions {
+        provider: shared_provider,
+        tools: tools.tools(),
         workspace,
-        SystemPrompt::None,
-        rho_sdk::ReasoningLevel::Off,
-        CompactionConfig {
+        workspace_policy: InteractiveWorkspacePolicy,
+        system_prompt: SystemPrompt::None,
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig {
             auto_compact: true,
             threshold_percent: 1,
             target_percent: 1,
         },
-        Some(1_000),
-    )
+        context_window: Some(1_000),
+    })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));
     let session = runtime

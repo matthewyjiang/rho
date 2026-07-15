@@ -1,27 +1,23 @@
-use std::{num::NonZeroU64, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelRequest, ModelResponse},
-    provider::ModelProvider,
-    CapabilityRequest, CompactionFuture, CompactionOutput, CompactionRequest, Compactor, Error,
-    HostInputId, HostInputResponse, PolicyDecision, Rho, Run, RunEvent, RunOutcome, Session,
-    SessionId, SessionOptions, SystemPrompt, UserInput, Workspace, WorkspacePolicy,
+    model::Message, provider::ModelProvider, CapabilityRequest, Error, HostInputId,
+    HostInputResponse, PolicyDecision, Rho, Run, RunEvent, RunOutcome, Session, SessionId,
+    SessionOptions, SystemPrompt, UserInput, Workspace, WorkspacePolicy,
 };
 
 use crate::{
-    compaction::{
-        build_summary_request_messages, partition_messages_for_compaction,
-        replacement_history_from_summary, CompactionConfig,
-    },
+    compaction::CompactionConfig,
     config::Config,
     credentials::OsCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    model::models_dev::cached_model_metadata,
     prompt,
     providers::{build_sdk_provider_with_source, UnavailableProvider},
     session::Session as StoredSession,
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
+
+use super::runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum InteractiveState {
@@ -157,19 +153,19 @@ impl InteractiveRuntime {
         };
         diagnostics.update_tools(&specs);
         let workspace = Workspace::new(&sdk_options.workspace.root)?;
-        let context_window = cached_model_metadata(&config.provider, &config.model)
-            .and_then(|metadata| metadata.display_context_window());
+        let context_window = configured_context_window(config);
         let compaction = sdk_options.runtime.compaction.clone();
         diagnostics.update_compaction_config(&compaction);
-        let runtime = build_runtime(
-            Arc::clone(&provider),
-            &tools,
-            workspace.clone(),
-            system_prompt.clone(),
-            sdk_options.runtime.reasoning,
-            compaction.clone(),
+        let runtime = build_runtime(RuntimeBuildOptions {
+            provider: Arc::clone(&provider),
+            tools: tools.tools(),
+            workspace: workspace.clone(),
+            workspace_policy: InteractiveWorkspacePolicy,
+            system_prompt: system_prompt.clone(),
+            reasoning: sdk_options.runtime.reasoning,
+            compaction: compaction.clone(),
             context_window,
-        )?;
+        })?;
         let cache_key = session_id.as_deref().map(prompt_cache_key);
         let resumed_snapshot = storage
             .as_ref()
@@ -524,15 +520,16 @@ impl InteractiveRuntime {
                 (options, None)
             }
         };
-        let replacement_runtime = build_runtime(
-            Arc::clone(&self.provider),
-            &self.tools,
-            self.workspace.clone(),
-            self.system_prompt.clone(),
-            self.reasoning,
-            self.compaction.clone(),
-            self.context_window,
-        )?;
+        let replacement_runtime = build_runtime(RuntimeBuildOptions {
+            provider: Arc::clone(&self.provider),
+            tools: self.tools.tools(),
+            workspace: self.workspace.clone(),
+            workspace_policy: InteractiveWorkspacePolicy,
+            system_prompt: self.system_prompt.clone(),
+            reasoning: self.reasoning,
+            compaction: self.compaction.clone(),
+            context_window: self.context_window,
+        })?;
         let replacement_session = replacement_runtime.session(options).await?;
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.session = replacement_session;
@@ -646,97 +643,11 @@ fn running_unless_cancelling(current: InteractiveState, phase: RunPhase) -> Inte
     }
 }
 
-fn build_runtime(
-    provider: Arc<dyn ModelProvider>,
-    tools: &AppToolSet,
-    workspace: Workspace,
-    system_prompt: SystemPrompt,
-    reasoning: rho_sdk::ReasoningLevel,
-    compaction: CompactionConfig,
-    context_window: Option<u64>,
-) -> Result<Rho, Error> {
-    let automatic_compaction_threshold = context_window
-        .and_then(|window| compaction.threshold_tokens(window))
-        .and_then(NonZeroU64::new);
-    let compactor = ModelCompactor {
-        provider: Arc::clone(&provider),
-        tool_specs: tools.specs(),
-        reasoning,
-        config: compaction,
-        context_window,
-    };
-    let mut builder = Rho::builder()
-        .provider_shared(provider)
-        .system_prompt(system_prompt)
-        .workspace(workspace)
-        .workspace_policy(InteractiveWorkspacePolicy)
-        .reasoning_level(reasoning)
-        .max_steps(super::sdk_config::run_step_limit())
-        .compactor(compactor);
-    if let Some(trigger_tokens) = automatic_compaction_threshold {
-        builder =
-            builder.compaction_policy(rho_sdk::CompactionPolicy::at_context_tokens(trigger_tokens));
-    }
-    for tool in tools.tools() {
-        builder = builder.tool_shared(tool.clone());
-    }
-    builder.build()
-}
-
 struct InteractiveWorkspacePolicy;
 
 impl WorkspacePolicy for InteractiveWorkspacePolicy {
     fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
         PolicyDecision::Allow
-    }
-}
-
-struct ModelCompactor {
-    provider: Arc<dyn ModelProvider>,
-    tool_specs: Vec<rho_sdk::model::ToolSpec>,
-    reasoning: rho_sdk::ReasoningLevel,
-    config: CompactionConfig,
-    context_window: Option<u64>,
-}
-
-impl Compactor for ModelCompactor {
-    fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
-        Box::pin(async move {
-            let messages = request.messages().to_vec();
-            let target_tokens = self
-                .context_window
-                .map(|window| self.config.target_tokens(window))
-                .unwrap_or(u64::MAX / 2);
-            let Some(partition) =
-                partition_messages_for_compaction(&messages, &self.tool_specs, target_tokens)
-            else {
-                return CompactionOutput::new(messages);
-            };
-            let summary_messages = build_summary_request_messages(&partition.compacted_messages);
-            let model_request = ModelRequest {
-                messages: &summary_messages,
-                tools: &[],
-                cancellation: request.cancellation().clone(),
-                reasoning_level: self.reasoning,
-                prompt_cache_key: None,
-            };
-            let response = self.provider.send_turn(model_request).await?;
-            let ModelResponse::Assistant(blocks) = response;
-            let summary = blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text(text) => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            if summary.trim().is_empty() {
-                return Err(Error::InvalidHostResponse {
-                    message: "compaction model returned no summary text".into(),
-                });
-            }
-            CompactionOutput::new(replacement_history_from_summary(partition, summary))
-        })
     }
 }
 

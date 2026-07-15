@@ -6,7 +6,7 @@ use std::{
 };
 
 use rho_sdk::{
-    CapabilityRequest, PolicyDecision, Rho, SessionOptions, SystemPrompt, UserInput, Workspace,
+    CapabilityRequest, PolicyDecision, SessionOptions, SystemPrompt, UserInput, Workspace,
     WorkspacePolicy,
 };
 
@@ -21,7 +21,10 @@ use crate::{
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
-use super::sdk_config::SdkBootstrapOptions;
+use super::{
+    runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions},
+    sdk_config::SdkBootstrapOptions,
+};
 
 /// Error returned after an automation run handles an interrupt and completes cleanup.
 #[derive(Debug)]
@@ -111,17 +114,19 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     startup.diagnostics.update_tools(&tool_specs);
 
     let workspace = Workspace::new(&sdk_options.workspace.root)?;
-    let mut builder = Rho::builder()
-        .provider_shared(provider)
-        .system_prompt(system_prompt)
-        .workspace(workspace)
-        .workspace_policy(AutomationWorkspacePolicy)
-        .max_steps(super::sdk_config::run_step_limit())
-        .reasoning_level(sdk_options.runtime.reasoning);
-    for tool in tool_set.tools() {
-        builder = builder.tool_shared(tool.clone());
-    }
-    let runtime = builder.build()?;
+    let context_window = configured_context_window(startup.config);
+    let compaction = sdk_options.runtime.compaction.clone();
+    startup.diagnostics.update_compaction_config(&compaction);
+    let runtime = build_runtime(RuntimeBuildOptions {
+        provider,
+        tools: tool_set.tools(),
+        workspace,
+        workspace_policy: AutomationWorkspacePolicy,
+        system_prompt,
+        reasoning: sdk_options.runtime.reasoning,
+        compaction,
+        context_window,
+    })?;
     let session = runtime.session(SessionOptions::default()).await?;
 
     startup

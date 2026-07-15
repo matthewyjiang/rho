@@ -6,6 +6,7 @@ mod interactive;
 pub(crate) mod interactive_presenter;
 pub(crate) mod interactive_runtime;
 mod login;
+mod runtime_builder;
 pub(crate) mod sdk_config;
 
 pub use automation::AutomationInterrupted;
