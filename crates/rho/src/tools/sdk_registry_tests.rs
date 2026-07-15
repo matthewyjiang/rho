@@ -197,6 +197,73 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
     );
 }
 
+#[tokio::test]
+async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace_root = root.path().join("project/workspace");
+    let skill_dir = root.path().join("project/.agents/skills/ancestor-skill");
+    std::fs::create_dir_all(root.path().join("project/.git")).unwrap();
+    std::fs::create_dir_all(&workspace_root).unwrap();
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: ancestor-skill\ndescription: ancestor skill\n---\nancestor body\n",
+    )
+    .unwrap();
+
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "skill-1".into(),
+                    name: "skill".into(),
+                    arguments: json!({"name": "ancestor-skill"}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
+    );
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let skill = tool_set
+        .tools()
+        .iter()
+        .find(|tool| tool.spec().name == "skill")
+        .unwrap()
+        .clone();
+    let mut builder = Rho::builder()
+        .provider(provider)
+        .workspace(Workspace::new(&workspace_root).unwrap())
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_skills());
+    builder = builder.tool_shared(skill);
+    let runtime = builder.build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("load it")).await.unwrap();
+    let mut output = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolFinished {
+            result: ToolCompletion::Success(completion),
+            ..
+        } = event
+        {
+            output = Some(completion.content().to_string());
+        }
+    }
+    run.outcome().await.unwrap();
+
+    assert_eq!(
+        output.as_deref(),
+        Some("---\nname: ancestor-skill\ndescription: ancestor skill\n---\nancestor body\n")
+    );
+}
+
 #[test]
 fn security_declarations_distinguish_network_builtins_from_host_tools() {
     assert_eq!(security_for("web_search").origin(), ToolOrigin::BuiltIn);

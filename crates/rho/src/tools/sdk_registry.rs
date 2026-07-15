@@ -161,11 +161,35 @@ impl SdkTool for SdkSkillTool {
                 )));
             }
             let workspace = workspace(&context)?;
-            let requested = std::path::Path::new(".agents")
-                .join("skills")
-                .join(name)
-                .join("SKILL.md");
-            let resolved = workspace
+            let skill = crate::skills::discover(workspace.root())
+                .into_iter()
+                .find(|skill| skill.name == name)
+                .ok_or_else(|| {
+                    SdkToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        format!("unknown skill: {name}"),
+                    )
+                })?;
+            let crate::skills::SkillSource::File(requested) = skill.source else {
+                return Err(SdkToolError::new(
+                    ToolErrorKind::Execution,
+                    format!("built-in skill '{name}' is not loadable"),
+                ));
+            };
+            let skill_directory = requested.parent().ok_or_else(|| {
+                SdkToolError::new(
+                    ToolErrorKind::Execution,
+                    format!(
+                        "skill path '{}' has no parent directory",
+                        requested.display()
+                    ),
+                )
+            })?;
+            let skill_workspace = workspace
+                .clone()
+                .with_granted_root(skill_directory)
+                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            let resolved = skill_workspace
                 .resolve_for_read(&requested)
                 .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
             authorize_request(
@@ -177,7 +201,7 @@ impl SdkTool for SdkSkillTool {
                 ),
             )
             .await?;
-            workspace.revalidate(&resolved).map_err(|error| {
+            skill_workspace.revalidate(&resolved).map_err(|error| {
                 SdkToolError::new(ToolErrorKind::PolicyDenied, error.to_string())
             })?;
             let contents = tokio::fs::read_to_string(resolved.path())
