@@ -16,7 +16,7 @@ use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
 use super::codex_request::CodexRequestMode;
-use crate::protocol::openai_responses::{handle_codex_sse_line, CodexSseResponse, CodexSseState};
+use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
 ///
@@ -353,14 +353,14 @@ async fn collect_codex_ws_response(
             message: format!("websocket receive failed: {err}"),
             events_emitted,
         })?;
-        let text = match message {
-            Message::Text(text) => text.to_string(),
-            Message::Binary(bytes) => std::str::from_utf8(&bytes)
-                .map_err(|err| CodexWsFailure::Transport {
+        let text = match &message {
+            Message::Text(text) => text.as_str(),
+            Message::Binary(bytes) => {
+                std::str::from_utf8(bytes).map_err(|err| CodexWsFailure::Transport {
                     message: format!("websocket binary frame contained invalid utf-8: {err}"),
                     events_emitted,
                 })?
-                .to_string(),
+            }
             Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => {
                 return Err(CodexWsFailure::Transport {
@@ -371,7 +371,7 @@ async fn collect_codex_ws_response(
             Message::Frame(_) => continue,
         };
         let payload =
-            serde_json::from_str::<Value>(&text).map_err(|err| CodexWsFailure::Transport {
+            serde_json::from_str::<Value>(text).map_err(|err| CodexWsFailure::Transport {
                 message: format!("websocket frame was not valid JSON: {err}"),
                 events_emitted,
             })?;
@@ -416,14 +416,14 @@ async fn collect_codex_ws_response_silent(
             message: format!("websocket receive failed: {err}"),
             events_emitted: false,
         })?;
-        let text = match message {
-            Message::Text(text) => text.to_string(),
-            Message::Binary(bytes) => std::str::from_utf8(&bytes)
-                .map_err(|err| CodexWsFailure::Transport {
+        let text = match &message {
+            Message::Text(text) => text.as_str(),
+            Message::Binary(bytes) => {
+                std::str::from_utf8(bytes).map_err(|err| CodexWsFailure::Transport {
                     message: format!("websocket binary frame contained invalid utf-8: {err}"),
                     events_emitted: false,
                 })?
-                .to_string(),
+            }
             Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => {
                 return Err(CodexWsFailure::Transport {
@@ -434,7 +434,7 @@ async fn collect_codex_ws_response_silent(
             Message::Frame(_) => continue,
         };
         let payload =
-            serde_json::from_str::<Value>(&text).map_err(|err| CodexWsFailure::Transport {
+            serde_json::from_str::<Value>(text).map_err(|err| CodexWsFailure::Transport {
                 message: format!("websocket frame was not valid JSON: {err}"),
                 events_emitted: false,
             })?;
@@ -470,8 +470,8 @@ fn handle_codex_ws_value(
         }
         Ok(())
     };
-    handle_codex_sse_line(
-        &format!("data: {value}"),
+    handle_codex_sse_value(
+        value,
         state,
         &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
     )
@@ -488,8 +488,7 @@ fn handle_codex_ws_value_silent(
     state: &mut CodexSseState,
 ) -> Result<(bool, bool), CodexWsFailure> {
     let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
-    handle_codex_sse_line(&format!("data: {value}"), state, &mut on_event)
-        .map_err(CodexWsFailure::Model)?;
+    handle_codex_sse_value(value, state, &mut on_event).map_err(CodexWsFailure::Model)?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),

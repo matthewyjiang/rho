@@ -357,11 +357,11 @@ impl OpenAiProvider {
         source: CodexAuthSource,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = build_codex_responses_body(&self.model, request)?;
+        let body = build_codex_responses_body(&self.model, request.clone())?;
         let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
-            .send_responses_turn(body.clone(), &tokens, mode, &mut on_event)
+            .send_responses_turn(body, &tokens, mode, &mut on_event)
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
@@ -371,6 +371,10 @@ impl OpenAiProvider {
                 // over SSE cannot duplicate caller-visible deltas.
             }
         }
+
+        // Rebuilt only on this rare fallback path so the common WebSocket
+        // turn does not clone the full-history request body.
+        let body = build_codex_responses_body(&self.model, request)?;
 
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_request = |token: &str| {
