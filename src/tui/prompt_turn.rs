@@ -1,0 +1,300 @@
+use super::*;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FailedTurn {
+    input: rho_sdk::UserInput,
+    display_user: Option<Message>,
+}
+
+enum PromptTurnRequest {
+    New {
+        prompt: TurnPrompt,
+        images: Vec<ImageContent>,
+    },
+    Retry(FailedTurn),
+}
+
+impl App {
+    pub(super) async fn run_prompt_turn(
+        &mut self,
+        prompt: TurnPrompt,
+        images: Vec<ImageContent>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<TurnOutcome> {
+        self.run_prompt_turn_request(PromptTurnRequest::New { prompt, images }, terminal, agent)
+            .await
+    }
+
+    pub(super) async fn retry_failed_prompt_turn(
+        &mut self,
+        failed_turn: FailedTurn,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<TurnOutcome> {
+        self.run_prompt_turn_request(PromptTurnRequest::Retry(failed_turn), terminal, agent)
+            .await
+    }
+
+    async fn run_prompt_turn_request(
+        &mut self,
+        request: PromptTurnRequest,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<TurnOutcome> {
+        let failed_turn = match request {
+            PromptTurnRequest::New { prompt, images } => {
+                if !prompt.history.is_empty() {
+                    self.push_input_history(&prompt.history);
+                }
+                self.reset_input_history_navigation();
+                self.ensure_session(agent)?;
+                self.info
+                    .herdr
+                    .report_session(self.info.session_id.as_deref())
+                    .await;
+                if !agent
+                    .history()
+                    .iter()
+                    .any(|message| matches!(message, Message::User(_)))
+                {
+                    self.start_session_title_generation(prompt.history.clone());
+                }
+                self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
+
+                let mut content = Vec::with_capacity(1 + images.len());
+                if !prompt.model.is_empty() {
+                    content.push(ContentBlock::Text(prompt.model));
+                }
+                content.extend(images.iter().cloned().map(ContentBlock::Image));
+                let input = rho_sdk::UserInput::content(content)?;
+                let display_user = prompt.persisted_display.map(|display| {
+                    let mut content = Vec::with_capacity(1 + images.len());
+                    content.push(ContentBlock::Text(display));
+                    content.extend(images.into_iter().map(ContentBlock::Image));
+                    Message::User(content)
+                });
+                FailedTurn {
+                    input,
+                    display_user,
+                }
+            }
+            PromptTurnRequest::Retry(failed_turn) => {
+                self.ensure_session(agent)?;
+                self.info
+                    .herdr
+                    .report_session(self.info.session_id.as_deref())
+                    .await;
+                self.insert_entry(&Entry::Notice(
+                    "retrying the previous goal turn without duplicating the prompt".into(),
+                ));
+                failed_turn
+            }
+        };
+        self.current_turn_start = Some(self.transcript.len());
+        self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
+        self.reset_streams();
+        self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
+        self.status = "running".into();
+        self.running = true;
+        self.info
+            .herdr
+            .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
+            .await;
+        self.loading_spinner.start();
+        self.clamp_history_scroll_for_terminal(terminal)?;
+        terminal.draw(|frame| self.draw(frame))?;
+
+        self.active_tool_call = false;
+        self.pending_tool_call = None;
+        agent
+            .start(failed_turn.input.clone(), failed_turn.display_user.clone())
+            .await?;
+        if let Some(context) = agent.take_context_usage() {
+            self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+        }
+
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
+        let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
+        let mut pending_questionnaire: Option<(
+            rho_sdk::HostInputId,
+            oneshot::Receiver<QuestionnaireReply>,
+        )> = None;
+        let mut terminal_event = false;
+        let mut sdk_failure = None;
+        let mut questionnaire_cancelled_by_user = false;
+        while !terminal_event {
+            tokio::select! {
+                event = agent.next_event() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    if let Some(context) = agent.take_context_usage() {
+                        self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+                    }
+                    match adapter.translate(event) {
+                        ViewEvent::Update(event) => {
+                            self.handle_queued_agent_event(event, terminal)?;
+                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
+                        }
+                        ViewEvent::Questionnaire(request) => {
+                            let request_id = request.id().clone();
+                            let (reply_tx, reply_rx) = oneshot::channel();
+                            self.open_questionnaire(
+                                QuestionAnswerRequest {
+                                    request: event_adapter::questionnaire_request(&request),
+                                    response: QuestionnaireResponseChannel::new(reply_tx),
+                                },
+                                terminal,
+                            )?;
+                            pending_questionnaire = Some((request_id, reply_rx));
+                        }
+                        ViewEvent::Notice(notice) => self.insert_entry(&Entry::Notice(notice)),
+                        ViewEvent::Completed => terminal_event = true,
+                        ViewEvent::Cancelled => terminal_event = true,
+                        ViewEvent::Failed(message) => {
+                            sdk_failure = Some(message);
+                            terminal_event = true;
+                        }
+                        ViewEvent::Ignored => {}
+                    }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
+                    let Some((request_id, reply)) = reply else {
+                        agent.cancel();
+                        continue;
+                    };
+                    match reply {
+                        QuestionnaireReply::Answer(response) => {
+                            if let Err(error) = agent
+                                .respond(request_id, event_adapter::host_response(response))
+                                .await
+                            {
+                                sdk_failure = Some(error.to_string());
+                                agent.cancel();
+                            }
+                        }
+                        QuestionnaireReply::Cancelled(
+                            QuestionnaireCancelReason::UserCancelled,
+                        ) => {
+                            questionnaire_cancelled_by_user = true;
+                            agent.cancel();
+                        }
+                        QuestionnaireReply::Cancelled(QuestionnaireCancelReason::UiUnavailable) => {
+                            agent.cancel();
+                        }
+                    }
+                }
+                _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
+                    self.drain_stream_preview(terminal)?;
+                    match self.handle_running_terminal_events(
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Turn,
+                    ) {
+                        Ok(StreamControl::Interrupt) => agent.cancel(),
+                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                        Err(error) => {
+                            sdk_failure = Some(error.to_string());
+                            agent.cancel();
+                        }
+                    }
+                    while let Some(prompt) = self.steering_prompts.pop_front() {
+                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
+                            self.steering_prompts.push_front(prompt);
+                            sdk_failure = Some(error.to_string());
+                            break;
+                        }
+                    }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+            }
+        }
+
+        self.active_tool_call = false;
+        self.pending_tool_call = None;
+        tool_call_active.store(false, Ordering::SeqCst);
+        let result = agent.finish_run().await;
+        let outcome = match result {
+            Ok(outcome) if sdk_failure.is_none() => {
+                self.running = false;
+                self.loading_spinner.stop();
+                self.finish_streams();
+                self.insert_final_answer_suffix(outcome.text());
+                self.reset_streams();
+                self.current_turn_start = None;
+                self.status = if self.queued_prompts.is_empty() {
+                    "ready".into()
+                } else {
+                    format!(
+                        "running next queued message ({})",
+                        self.queued_prompts.len()
+                    )
+                };
+                TurnOutcome::Completed
+            }
+            _ if questionnaire_cancelled_by_user => {
+                self.running = false;
+                self.loading_spinner.stop();
+                self.finish_streams();
+                let notice = if self.goal.is_some() {
+                    "questionnaire cancelled; goal left active"
+                } else {
+                    "questionnaire cancelled"
+                };
+                self.insert_entry(&Entry::Notice(notice.into()));
+                self.reset_streams();
+                self.current_turn_start = None;
+                self.status = "questionnaire cancelled".into();
+                TurnOutcome::Cancelled
+            }
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<rho_sdk::Error>(),
+                    Some(rho_sdk::Error::Cancelled | rho_sdk::Error::Interrupted { .. })
+                ) =>
+            {
+                self.restore_pending_work_to_input(&Arc::default());
+                self.running = false;
+                self.loading_spinner.stop();
+                self.finish_streams();
+                self.insert_entry(&Entry::Notice("model interrupted".into()));
+                self.reset_streams();
+                self.current_turn_start = None;
+                self.status = "interrupted".into();
+                TurnOutcome::Interrupted
+            }
+            result => {
+                let message = sdk_failure.unwrap_or_else(|| match result {
+                    Ok(_) => "model run failed".into(),
+                    Err(error) => error.to_string(),
+                });
+                self.finalize_failed_turn(message, failed_turn)
+            }
+        };
+        self.apply_pending_model_selection(agent)?;
+        self.report_resting_herdr_state().await;
+        terminal.draw(|frame| self.draw(frame))?;
+        Ok(outcome)
+    }
+
+    fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {
+        self.finish_streams();
+        self.reset_streams();
+        self.current_turn_start = None;
+        self.running = false;
+        self.loading_spinner.stop();
+        self.insert_entry(&Entry::Error(message));
+        self.status = "error".into();
+        TurnOutcome::Failed(failed_turn)
+    }
+}
+
+#[cfg(test)]
+#[path = "prompt_turn_tests.rs"]
+mod tests;

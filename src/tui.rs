@@ -15,7 +15,6 @@ use std::{
 use crate::questionnaire::QuestionnaireRequest;
 use futures_util::{task::noop_waker_ref, FutureExt};
 use history_cache::{CachedCodeBlock, HistoryLineCache};
-#[cfg(test)]
 use questionnaire::QuestionnaireCancelReason;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -62,6 +61,7 @@ mod mouse;
 mod mouse_capture;
 mod paste_burst;
 mod picker;
+mod prompt_turn;
 mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
@@ -92,6 +92,7 @@ use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use prompt_turn::FailedTurn;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
     QuestionAnswerRequest, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
@@ -421,11 +422,32 @@ struct CommandChoice {
     kind: CommandChoiceKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum TurnOutcome {
     Completed,
     Interrupted,
+    /// User cancelled interactive work such as a questionnaire.
+    Cancelled,
+    Failed(FailedTurn),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TurnOutcomeKind {
+    Completed,
+    Interrupted,
+    Cancelled,
     Failed,
+}
+
+impl TurnOutcome {
+    fn kind(&self) -> TurnOutcomeKind {
+        match self {
+            Self::Completed => TurnOutcomeKind::Completed,
+            Self::Interrupted => TurnOutcomeKind::Interrupted,
+            Self::Cancelled => TurnOutcomeKind::Cancelled,
+            Self::Failed(_) => TurnOutcomeKind::Failed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2048,9 +2070,27 @@ impl App {
                 agent,
             )
             .await?;
-        while matches!(outcome, TurnOutcome::Completed) && !self.should_quit {
+        let mut pending_goal_retries = VecDeque::new();
+        let final_outcome = loop {
+            let outcome_kind = outcome.kind();
+            let resume_goal = goal_command::should_resume_goal_after_turn(
+                outcome_kind,
+                self.goal.is_some(),
+                self.should_quit,
+            );
+            if let TurnOutcome::Failed(failed_turn) = outcome {
+                if resume_goal {
+                    pending_goal_retries.push_back(failed_turn);
+                }
+            }
+
+            let should_drain_queue =
+                goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
+            if self.should_quit || !should_drain_queue {
+                break outcome_kind;
+            }
             let Some(prompt) = self.queued_prompts.pop_front() else {
-                break;
+                break outcome_kind;
             };
             outcome = self
                 .run_prompt_turn(
@@ -2060,224 +2100,16 @@ impl App {
                     agent,
                 )
                 .await?;
-        }
-        if matches!(outcome, TurnOutcome::Completed) && self.goal.is_some() {
-            self.continue_goal(terminal, agent).await?;
+        };
+        if goal_command::should_resume_goal_after_turn(
+            final_outcome,
+            self.goal.is_some(),
+            self.should_quit,
+        ) {
+            self.continue_goal(terminal, agent, pending_goal_retries)
+                .await?;
         }
         Ok(())
-    }
-
-    async fn run_prompt_turn(
-        &mut self,
-        prompt: TurnPrompt,
-        images: Vec<ImageContent>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<TurnOutcome> {
-        if !prompt.history.is_empty() {
-            self.push_input_history(&prompt.history);
-        }
-        self.reset_input_history_navigation();
-        self.ensure_session(agent)?;
-        self.info
-            .herdr
-            .report_session(self.info.session_id.as_deref())
-            .await;
-        if !agent
-            .history()
-            .iter()
-            .any(|message| matches!(message, Message::User(_)))
-        {
-            self.start_session_title_generation(prompt.history.clone());
-        }
-        self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
-        self.current_turn_start = Some(self.transcript.len());
-        self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
-        self.reset_streams();
-        self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
-        self.status = "running".into();
-        self.running = true;
-        self.info
-            .herdr
-            .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
-            .await;
-        self.loading_spinner.start();
-        self.clamp_history_scroll_for_terminal(terminal)?;
-        terminal.draw(|frame| self.draw(frame))?;
-
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
-        let mut content = Vec::with_capacity(1 + images.len());
-        if !prompt.model.is_empty() {
-            content.push(ContentBlock::Text(prompt.model));
-        }
-        content.extend(images.iter().cloned().map(ContentBlock::Image));
-        let input = rho_sdk::UserInput::content(content)?;
-        let display_user = prompt.persisted_display.map(|display| {
-            let mut content = Vec::with_capacity(1 + images.len());
-            content.push(ContentBlock::Text(display));
-            content.extend(images.into_iter().map(ContentBlock::Image));
-            Message::User(content)
-        });
-        agent.start(input, display_user).await?;
-        if let Some(context) = agent.take_context_usage() {
-            self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
-        }
-
-        let interrupt_requested = AtomicBool::new(false);
-        let tool_call_active = AtomicBool::new(false);
-        let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
-        let mut pending_questionnaire: Option<(
-            rho_sdk::HostInputId,
-            oneshot::Receiver<QuestionnaireReply>,
-        )> = None;
-        let mut terminal_event = false;
-        let mut sdk_failure = None;
-        while !terminal_event {
-            tokio::select! {
-                event = agent.next_event() => {
-                    let Some(event) = event else {
-                        break;
-                    };
-                    if let Some(context) = agent.take_context_usage() {
-                        self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
-                    }
-                    match adapter.translate(event) {
-                        ViewEvent::Update(event) => {
-                            self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
-                        }
-                        ViewEvent::Questionnaire(request) => {
-                            let request_id = request.id().clone();
-                            let (reply_tx, reply_rx) = oneshot::channel();
-                            self.open_questionnaire(
-                                QuestionAnswerRequest {
-                                    request: event_adapter::questionnaire_request(&request),
-                                    response: QuestionnaireResponseChannel::new(reply_tx),
-                                },
-                                terminal,
-                            )?;
-                            pending_questionnaire = Some((request_id, reply_rx));
-                        }
-                        ViewEvent::Notice(notice) => self.insert_entry(&Entry::Notice(notice)),
-                        ViewEvent::Completed => terminal_event = true,
-                        ViewEvent::Cancelled => terminal_event = true,
-                        ViewEvent::Failed(message) => {
-                            sdk_failure = Some(message);
-                            terminal_event = true;
-                        }
-                        ViewEvent::Ignored => {}
-                    }
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
-                }
-                reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
-                    let Some((request_id, reply)) = reply else {
-                        agent.cancel();
-                        continue;
-                    };
-                    match reply {
-                        QuestionnaireReply::Answer(response) => {
-                            if let Err(error) = agent
-                                .respond(request_id, event_adapter::host_response(response))
-                                .await
-                            {
-                                sdk_failure = Some(error.to_string());
-                                agent.cancel();
-                            }
-                        }
-                        QuestionnaireReply::Cancelled(_) => agent.cancel(),
-                    }
-                }
-                _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
-                    self.drain_stream_preview(terminal)?;
-                    match self.handle_running_terminal_events(
-                        terminal,
-                        &interrupt_requested,
-                        &tool_call_active,
-                        RunningInputMode::Turn,
-                    ) {
-                        Ok(StreamControl::Interrupt) => agent.cancel(),
-                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
-                        Err(error) => {
-                            sdk_failure = Some(error.to_string());
-                            agent.cancel();
-                        }
-                    }
-                    while let Some(prompt) = self.steering_prompts.pop_front() {
-                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
-                            self.steering_prompts.push_front(prompt);
-                            sdk_failure = Some(error.to_string());
-                            break;
-                        }
-                    }
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
-                }
-            }
-        }
-
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
-        tool_call_active.store(false, Ordering::SeqCst);
-        let result = agent.finish_run().await;
-        let outcome = match result {
-            Ok(outcome) if sdk_failure.is_none() => {
-                self.running = false;
-                self.loading_spinner.stop();
-                self.finish_streams();
-                self.insert_final_answer_suffix(outcome.text());
-                self.reset_streams();
-                self.current_turn_start = None;
-                self.status = if self.queued_prompts.is_empty() {
-                    "ready".into()
-                } else {
-                    format!(
-                        "running next queued message ({})",
-                        self.queued_prompts.len()
-                    )
-                };
-                TurnOutcome::Completed
-            }
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<rho_sdk::Error>(),
-                    Some(rho_sdk::Error::Cancelled | rho_sdk::Error::Interrupted { .. })
-                ) =>
-            {
-                self.restore_pending_work_to_input(&Arc::default());
-                self.running = false;
-                self.loading_spinner.stop();
-                self.finish_streams();
-                self.insert_entry(&Entry::Notice("model interrupted".into()));
-                self.reset_streams();
-                self.current_turn_start = None;
-                self.status = "interrupted".into();
-                TurnOutcome::Interrupted
-            }
-            result => {
-                let message = sdk_failure.unwrap_or_else(|| match result {
-                    Ok(_) => "model run failed".into(),
-                    Err(error) => error.to_string(),
-                });
-                self.finalize_failed_turn(message)
-            }
-        };
-        self.apply_pending_model_selection(agent)?;
-        self.report_resting_herdr_state().await;
-        terminal.draw(|frame| self.draw(frame))?;
-        Ok(outcome)
-    }
-
-    fn finalize_failed_turn(&mut self, message: String) -> TurnOutcome {
-        self.finish_streams();
-        self.reset_streams();
-        self.current_turn_start = None;
-        self.running = false;
-        self.loading_spinner.stop();
-        self.insert_entry(&Entry::Error(message));
-        self.status = "error".into();
-        TurnOutcome::Failed
     }
 
     async fn report_resting_herdr_state(&self) {
@@ -6613,30 +6445,6 @@ mod tests {
             app.transcript.as_slice(),
             [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
         ));
-    }
-
-    #[test]
-    fn failed_turn_keeps_live_partial_assistant_text_before_error() {
-        let mut app = test_app();
-        app.running = true;
-        app.current_turn_start = Some(0);
-        app.assistant_stream
-            .push_delta("partial assistant before stream failure");
-
-        assert_eq!(
-            app.finalize_failed_turn("provider stream failed".into()),
-            TurnOutcome::Failed
-        );
-
-        assert!(matches!(
-            app.transcript.as_slice(),
-            [Entry::Assistant(text), Entry::Error(error)]
-                if text == "partial assistant before stream failure"
-                    && error == "provider stream failed"
-        ));
-        assert!(!app.running);
-        assert!(app.assistant_stream.is_empty());
-        assert_eq!(app.status, "error");
     }
 
     #[test]

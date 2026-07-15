@@ -97,6 +97,7 @@ impl ProviderBuildOptions {
         &self.provider
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn model(&self) -> &str {
         &self.model
     }

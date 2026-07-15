@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use rho_sdk::{
     model::{
@@ -13,6 +19,8 @@ const MATRIX_MODE: &str = "matrix";
 const TOOL_CALL_ID: &str = "tui-fixture-tool";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
+const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
+static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) fn from_env(
     provider: &str,
@@ -59,6 +67,16 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if is_goal_retry_prompt(&prompt) {
+        if GOAL_RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                "deterministic transient goal turn failure",
+                Retryability::Retryable,
+            ));
+        }
+        return completed("fixture goal retry completed after reusing the original prompt");
+    }
     match prompt.as_str() {
         "fixture stream" => {
             events
@@ -188,6 +206,11 @@ async fn fixture_stream(
             Ok(response)
         }
     }
+}
+
+fn is_goal_retry_prompt(prompt: &str) -> bool {
+    prompt.contains("The user invoked Rho's `/goal` command")
+        && prompt.contains(&format!("Goal:\n{GOAL_RETRY_CONDITION}"))
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
