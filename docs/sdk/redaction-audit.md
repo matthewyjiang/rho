@@ -4,9 +4,26 @@
 
 Use this procedure to audit logs, errors, `Debug`, diagnostics, snapshots, events, provider adapters, tools, and application bridges for secret exposure before a release candidate.
 
-::: danger Procedure, not completed audit
-This document does not assert that the audit has been performed. A completed audit requires dated evidence, named reviewers, commands and test results, findings, fixes, and an explicit residual-risk decision. Do not check a release gate based on this page alone.
+::: danger Current audit is complete but release-blocked
+The current repository audit is recorded in
+[`audits/sdk-redaction-current.json`](../../audits/sdk-redaction-current.json)
+and summarized alongside it. The synthetic canary test passed for SDK Debug,
+errors, events, diagnostics, snapshots, and provider context. Static review
+found three credential containers with derived `Debug` implementations, so the
+release decision remains blocked until the capability/security owner replaces
+those implementations and this audit is rerun. This is a repository-maintainer
+audit, not an independent audit.
 :::
+
+Run the same release gate with:
+
+```bash
+./scripts/run_sdk_redaction_audit.sh
+```
+
+The command exits nonzero while critical or high findings remain. Maintainers
+recording known findings without treating the release gate as passed may set
+`RHO_AUDIT_ALLOW_FINDINGS=1`.
 
 ## Redaction boundary
 

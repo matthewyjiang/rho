@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["agent", "ai", "sdk"]
 categories = ["asynchronous", "development-tools"]
 
+[[bench]]
+name = "release_benchmarks"
+harness = false
+
 [features]
 # Keep embedding side effects and sensitive capabilities opt-in. The SDK does
 # not currently ship capability adapters, so there are no opt-in features yet.
@@ -27,4 +31,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 pretty_assertions = "1"
 proptest = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

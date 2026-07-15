@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "audit": "rho-sdk-secret-canary",
+  "date_utc": "2026-07-15T03:51:19.322640+00:00",
+  "source_revision": "ab72cc4591c146263c25699fb1dfd8188218c68a",
+  "working_tree_changes_included": true,
+  "reviewer": "repository-maintainer automated and manual review",
+  "independent_audit": false,
+  "scope": [
+    "Debug and Display",
+    "typed errors and source chains",
+    "RunEvent values",
+    "DiagnosticsSnapshot",
+    "SessionSnapshot JSON and Debug",
+    "provider context",
+    "stdout/stderr and Rust log sink call sites"
+  ],
+  "providers_adapters": [
+    "rho-sdk synthetic compliant provider",
+    "application credential containers (static review)"
+  ],
+  "canaries": {
+    "real_secrets_used": false,
+    "secret_classes": [
+      "api_key",
+      "oauth_access",
+      "refresh_token",
+      "cookie",
+      "signed_query"
+    ],
+    "sensitive_content_classes": [
+      "prompt",
+      "provider_context"
+    ],
+    "values_recorded_in_evidence": false
+  },
+  "static_review": {
+    "commands": [
+      "rg -n 'derive\\([^)]*Debug|impl .*Debug|impl .*Display|tracing::|log::|println!|eprintln!' crates/rho-sdk src",
+      "rg -n 'authorization|bearer|token|secret|api[_-]?key|cookie|credential|password|signed' crates/rho-sdk src",
+      "rg -n 'RunEvent::|DiagnosticsSnapshot|ProviderError::new|ToolError::|to_json|Serialize|snapshot' crates/rho-sdk src"
+    ],
+    "counts": {
+      "rust_files": 249,
+      "debug_display_error_log_candidates": 416,
+      "secret_source_candidates": 2873,
+      "event_diagnostic_snapshot_candidates": 690
+    },
+    "human_data_flow_reviewed": true
+  },
+  "dynamic_review": {
+    "command": "cargo test -p rho-sdk --test redaction_canary",
+    "result": "passed",
+    "captured_sinks": [
+      "provider Debug",
+      "runtime event Debug",
+      "failed event Debug",
+      "error Debug and Display",
+      "diagnostics Debug",
+      "snapshot JSON and Debug"
+    ],
+    "allowed_sensitive_content_verified": [
+      "prompt content persists in protected snapshot but not diagnostics",
+      "provider context persists in exact-identity snapshot but not diagnostics"
+    ]
+  },
+  "findings": [
+    {
+      "id": "DEBUG-CodexTokens",
+      "severity": "critical",
+      "sink": "Debug",
+      "source": "credential container",
+      "location": "src/credentials.rs:31",
+      "summary": "CodexTokens derives Debug while containing credential values",
+      "release_action": "replace derived Debug with a fixed redacted representation before release",
+      "owner": "capability/security agent"
+    },
+    {
+      "id": "DEBUG-GitHubCopilotTokens",
+      "severity": "critical",
+      "sink": "Debug",
+      "source": "credential container",
+      "location": "src/credentials.rs:39",
+      "summary": "GitHubCopilotTokens derives Debug while containing credential values",
+      "release_action": "replace derived Debug with a fixed redacted representation before release",
+      "owner": "capability/security agent"
+    },
+    {
+      "id": "DEBUG-XaiTokens",
+      "severity": "critical",
+      "sink": "Debug",
+      "source": "credential container",
+      "location": "src/credentials.rs:52",
+      "summary": "XaiTokens derives Debug while containing credential values",
+      "release_action": "replace derived Debug with a fixed redacted representation before release",
+      "owner": "capability/security agent"
+    }
+  ],
+  "remaining_risks": [
+    "provider adapters remain responsible for sanitizing transport error text before constructing ProviderError",
+    "conversation and tool content intentionally remain visible in events and snapshots",
+    "live credentialed provider and external telemetry sinks were not exercised"
+  ],
+  "release_decision": "blocked",
+  "passed": false
+}
