@@ -34,7 +34,19 @@ pub struct Session {
     session_root: PathBuf,
     cwd: PathBuf,
     workspace_key: String,
-    write_lock: Arc<Mutex<()>>,
+    write_lock: Arc<Mutex<AppendCursor>>,
+}
+
+/// Cached append position shared by all clones of one `Session`.
+///
+/// After a successful append the file is known to end with a complete,
+/// newline-terminated record at `valid_len`, so the next append can skip
+/// re-reading the file to find a recoverable end. Any mismatch with the
+/// file's actual length (external writer, reopened session) or a failed
+/// write clears the cache and falls back to full validation.
+#[derive(Debug, Default)]
+struct AppendCursor {
+    valid_len: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -314,7 +326,7 @@ impl Session {
                 self.id
             );
         }
-        let _guard = self
+        let mut cursor = self
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -326,11 +338,14 @@ impl Session {
                 message,
             })
             .collect();
-        self.append_entry_unlocked(&SessionEntry::Snapshot {
-            timestamp: timestamp(),
-            snapshot: Box::new(snapshot.clone()),
-            display_messages,
-        })?;
+        self.append_entry_unlocked(
+            &mut cursor,
+            &SessionEntry::Snapshot {
+                timestamp: timestamp(),
+                snapshot: Box::new(snapshot.clone()),
+                display_messages,
+            },
+        )?;
         let _ = index::record_snapshot(self);
         Ok(())
     }
@@ -388,7 +403,7 @@ impl Session {
             session_root: session_root.to_path_buf(),
             cwd: cwd.to_path_buf(),
             workspace_key: workspace_key(cwd),
-            write_lock: Arc::new(Mutex::new(())),
+            write_lock: Arc::new(Mutex::new(AppendCursor::default())),
         }
     }
 
@@ -402,14 +417,18 @@ impl Session {
     }
 
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
-        let _guard = self
+        let mut cursor = self
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.append_entry_unlocked(entry)
+        self.append_entry_unlocked(&mut cursor, entry)
     }
 
-    fn append_entry_unlocked(&self, entry: &SessionEntry) -> anyhow::Result<()> {
+    fn append_entry_unlocked(
+        &self,
+        cursor: &mut AppendCursor,
+        entry: &SessionEntry,
+    ) -> anyhow::Result<()> {
         let mut serialized = serde_json::to_vec(entry)?;
         serialized.push(b'\n');
         let mut options = OpenOptions::new();
@@ -420,10 +439,20 @@ impl Session {
         let original_len = fs::metadata(&self.path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
-        let (previous_len, needs_separator) = recoverable_jsonl_end(&self.path)?;
-        if previous_len != original_len {
-            restore_file_len(&self.path, previous_len)?;
-        }
+        // A cached cursor that matches the file's actual length proves our
+        // last append completed with a trailing newline, so the whole-file
+        // recoverable-end scan can be skipped on this hot per-turn path.
+        let (previous_len, needs_separator) = match cursor.valid_len {
+            Some(valid_len) if valid_len == original_len => (valid_len, false),
+            _ => {
+                let (previous_len, needs_separator) = recoverable_jsonl_end(&self.path)?;
+                if previous_len != original_len {
+                    restore_file_len(&self.path, previous_len)?;
+                }
+                (previous_len, needs_separator)
+            }
+        };
+        cursor.valid_len = None;
         let mut file = options.open(&self.path)?;
         set_private_file_permissions(&file)?;
         if needs_separator {
@@ -434,6 +463,7 @@ impl Session {
             let _ = restore_file_len(&self.path, previous_len);
             return Err(error.into());
         }
+        cursor.valid_len = Some(previous_len + serialized.len() as u64);
         Ok(())
     }
 }

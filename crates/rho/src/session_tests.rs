@@ -352,6 +352,38 @@ fn tolerates_only_truncated_final_json() {
 }
 
 #[test]
+fn append_repairs_external_writes_despite_cached_cursor() {
+    for (tail, expected_messages) in [
+        // Torn record: truncated before the next append.
+        (b"{\"type\":\"message\"".as_slice(), 3),
+        // Complete record missing its newline: separator inserted, kept.
+        (
+            b"{\"type\":\"message\",\"timestamp\":\"1\",\"message\":{\"User\":[{\"Text\":\"external\"}]}}"
+                .as_slice(),
+            4,
+        ),
+    ] {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session.append_message(&Message::user_text("first")).unwrap();
+        session.append_message(&Message::user_text("second")).unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(session.path())
+            .unwrap()
+            .write_all(tail)
+            .unwrap();
+
+        session.append_message(&Message::user_text("third")).unwrap();
+
+        let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+        assert_eq!(messages.len(), expected_messages);
+        assert_eq!(messages.last(), Some(&Message::user_text("third")));
+    }
+}
+
+#[test]
 fn keeps_complete_tool_call_turn_on_load() {
     let root = temp_session_root();
     let cwd = temp_cwd();
