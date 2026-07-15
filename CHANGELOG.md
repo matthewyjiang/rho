@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.1...rho-coding-agent-v0.29.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* **tui:** retry goal loop after incomplete runs ([#263](https://github.com/matthewyjiang/rho/issues/263)) ([35a6008](https://github.com/matthewyjiang/rho/commit/35a600899491129e290726e10067d08db1ce2498))
+
 ## [0.29.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.0...rho-coding-agent-v0.29.1) (2026-07-15)
 
 
