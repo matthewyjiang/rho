@@ -105,13 +105,15 @@ pub(crate) struct SessionCore {
 }
 
 impl SessionCore {
-    pub(crate) fn new(id: SessionId, history: Vec<Message>, runtime: Rho) -> Arc<Self> {
+    pub(crate) fn new(
+        id: SessionId,
+        history: Vec<Message>,
+        revision: Revision,
+        runtime: Rho,
+    ) -> Arc<Self> {
         Arc::new(Self {
             id,
-            data: Mutex::new(SessionData {
-                history,
-                revision: Revision::INITIAL,
-            }),
+            data: Mutex::new(SessionData { history, revision }),
             runtime: RwLock::new(runtime),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
@@ -210,6 +212,16 @@ impl Session {
 
     pub fn history(&self) -> Vec<Message> {
         self.core.snapshot().0
+    }
+
+    pub fn snapshot(&self) -> crate::SessionSnapshot {
+        let (history, revision) = self.core.snapshot();
+        crate::SessionSnapshot::new(
+            self.id().clone(),
+            revision,
+            history,
+            self.core.runtime().provider.identity(),
+        )
     }
 
     pub fn state(&self) -> SessionState {

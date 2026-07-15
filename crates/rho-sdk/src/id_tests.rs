@@ -25,6 +25,7 @@ fn opaque_ids_reject_empty_values() {
         SessionId::from_str("").unwrap_err().to_string(),
         "identifier must not be empty"
     );
+    assert!(serde_json::from_str::<SessionId>(r#""""#).is_err());
 }
 
 #[test]

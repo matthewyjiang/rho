@@ -2,6 +2,7 @@ use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 
 use crate::{
     model::Message,
+    persistence::SessionSnapshot,
     provider::ModelProvider,
     session::{Session, SessionCore},
     tool::{Tool, ToolRegistry},
@@ -21,10 +22,23 @@ pub enum SystemPrompt {
 }
 
 /// Options used to create an in-memory SDK session.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SessionOptions {
     id: SessionId,
     history: Vec<Message>,
+    revision: crate::Revision,
+    apply_system_prompt: bool,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            id: SessionId::default(),
+            history: Vec::new(),
+            revision: crate::Revision::INITIAL,
+            apply_system_prompt: true,
+        }
+    }
 }
 
 impl SessionOptions {
@@ -40,6 +54,15 @@ impl SessionOptions {
     pub fn history(mut self, history: Vec<Message>) -> Self {
         self.history = history;
         self
+    }
+
+    pub fn from_snapshot(snapshot: SessionSnapshot) -> Self {
+        Self {
+            id: snapshot.session_id().clone(),
+            history: snapshot.history().to_vec(),
+            revision: snapshot.revision(),
+            apply_system_prompt: false,
+        }
     }
 }
 
@@ -142,12 +165,15 @@ impl Rho {
 
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
         let mut history = options.history;
-        if let SystemPrompt::Custom(prompt) = &self.system_prompt {
-            history.insert(0, Message::System(prompt.clone()));
+        if options.apply_system_prompt {
+            if let SystemPrompt::Custom(prompt) = &self.system_prompt {
+                history.insert(0, Message::System(prompt.clone()));
+            }
         }
         Ok(Session::from_core(SessionCore::new(
             options.id,
             history,
+            options.revision,
             self.clone(),
         )))
     }

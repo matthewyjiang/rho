@@ -249,6 +249,41 @@ async fn reset_preserves_prompt_policy_and_provider_replacement_reports_handoff(
     assert_eq!(session.history(), [Message::System("system".into())]);
 }
 
+#[tokio::test]
+async fn session_snapshot_restores_identity_history_and_revision_without_sqlite() {
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::Text("first".into()),
+            ]))],
+        ))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    session.complete("one").await.unwrap();
+    let snapshot = session.snapshot();
+    let restored_runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::Text("second".into()),
+            ]))],
+        ))
+        .build()
+        .unwrap();
+
+    let restored = restored_runtime
+        .session(SessionOptions::from_snapshot(snapshot.clone()))
+        .await
+        .unwrap();
+    let outcome = restored.complete("two").await.unwrap();
+
+    assert_eq!(restored.id(), snapshot.session_id());
+    assert_eq!(outcome.revision(), crate::Revision::from_u64(2));
+    assert_eq!(restored.history().len(), 4);
+}
+
 #[derive(Debug)]
 struct PartialProvider;
 

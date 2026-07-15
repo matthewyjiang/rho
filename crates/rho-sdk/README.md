@@ -38,6 +38,20 @@ and aborts provider or tool work.
 The SDK currently requires a Tokio runtime. Provider and tool extension points
 return explicit `Send` futures and may be used as trait objects.
 
+## Session snapshots
+
+`Session::snapshot` returns a versioned, JSON-serializable boundary that can be
+restored through `SessionOptions::from_snapshot` without SQLite. Snapshots keep
+history, revision, provider identity, metadata, and exact-identity provider
+replay blocks. Raw reasoning is cleared before snapshot construction and import.
+Credentials and other non-replayable secrets are never snapshot fields.
+
+The 1.0 persistence boundary is the snapshot rather than a public transactional
+store trait. `InMemorySessionStore` is a concrete atomic adapter for tests and
+simple hosts. Session history is replaced under one lock only after a successful
+run or explicit cancellation, so provider, tool, or persistence failure leaves
+the prior revision intact.
+
 ## Security defaults
 
 The default feature set is empty. Creating an SDK runtime will not implicitly
