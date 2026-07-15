@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.29.0...rho-coding-agent-v0.29.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **anthropic:** use adaptive thinking effort ([#259](https://github.com/matthewyjiang/rho/issues/259)) ([39f875c](https://github.com/matthewyjiang/rho/commit/39f875c92e1196ba3255342656118fe1601371a0))
+* **rtk:** record shell analytics ([#258](https://github.com/matthewyjiang/rho/issues/258)) ([66efc7b](https://github.com/matthewyjiang/rho/commit/66efc7b62c39eeb00803573bd5188fafdc3ec9f0))
+
 ## [0.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v0.28.1...rho-coding-agent-v0.29.0) (2026-07-14)
 
 
