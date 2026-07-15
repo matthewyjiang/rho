@@ -91,8 +91,10 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
 /// that already exposes inherent `model_identity`, `complete_turn`, and
 /// `stream_turn` methods.
 ///
-/// Streaming uses a bounded callback bridge. A callback burst that fills the
-/// bridge is interrupted rather than buffered without bound.
+/// Streaming uses an internal callback queue before forwarding events through
+/// the SDK's bounded channel. The callback API is synchronous and cannot apply
+/// async backpressure, so the queue prevents a normal same-poll event burst from
+/// being misreported as an interrupted provider stream.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
@@ -118,11 +120,10 @@ macro_rules! impl_sdk_model_provider {
                 events: ::rho_sdk::provider::ProviderEventSender,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
                 ::std::boxed::Box::pin(async move {
-                    let (event_tx, mut event_rx) =
-                        ::tokio::sync::mpsc::channel(events.capacity());
+                    let (event_tx, mut event_rx) = ::tokio::sync::mpsc::unbounded_channel();
                     let mut on_event = move |event| {
                         event_tx
-                            .try_send(event)
+                            .send(event)
                             .map_err(|_| $crate::model::ModelError::Interrupted)
                     };
                     let mut provider = ::std::pin::pin!(self.stream_turn(request, &mut on_event));

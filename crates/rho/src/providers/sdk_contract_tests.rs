@@ -307,6 +307,52 @@ async fn callback_stream_bridge_forwards_events_in_order() {
 }
 
 #[tokio::test]
+async fn callback_stream_bridge_handles_bursts_larger_than_host_capacity() {
+    let provider = FakeProvider::new(ModelResponse::Assistant(vec![
+        ContentBlock::Text("one".into()),
+        ContentBlock::Text("two".into()),
+        ContentBlock::Text("three".into()),
+    ]));
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let messages = [Message::user_text("hi")];
+
+    let (result, received) = tokio::join!(
+        provider.send_turn_stream(
+            request(
+                &messages,
+                CancellationToken::new(),
+                ReasoningLevel::default()
+            ),
+            events
+        ),
+        async {
+            let mut received = Vec::new();
+            while let Some(event) = receiver.recv().await {
+                received.push(event);
+            }
+            received
+        }
+    );
+
+    assert_eq!(
+        result.unwrap(),
+        ModelResponse::Assistant(vec![
+            ContentBlock::Text("one".into()),
+            ContentBlock::Text("two".into()),
+            ContentBlock::Text("three".into()),
+        ])
+    );
+    assert_eq!(
+        received,
+        [
+            ModelEvent::OutputDelta("one".into()),
+            ModelEvent::OutputDelta("two".into()),
+            ModelEvent::OutputDelta("three".into()),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn cancellation_before_turn_is_reported_as_interrupted() {
     let provider = FakeProvider::new(ModelResponse::Assistant(vec![]));
     let cancellation = CancellationToken::new();
