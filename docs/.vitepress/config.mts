@@ -10,6 +10,7 @@ export default defineConfig({
       { text: 'Getting started', link: '/getting-started' },
       { text: 'Interactive TUI', link: '/interactive-tui' },
       { text: 'Automation', link: '/automation-cli' },
+      { text: 'Rust SDK', link: '/sdk/' },
       { text: 'Changelog', link: '/changelog' }
     ],
     sidebar: [
@@ -38,6 +39,24 @@ export default defineConfig({
           { text: 'Sessions', link: '/sessions' },
           { text: 'Development', link: '/development' },
           { text: 'Changelog', link: '/changelog' }
+        ]
+      },
+      {
+        text: 'Rust SDK',
+        items: [
+          { text: 'Overview', link: '/sdk/' },
+          { text: 'Installation and support', link: '/sdk/installation' },
+          { text: 'Concepts and ownership', link: '/sdk/concepts' },
+          { text: 'Providers', link: '/sdk/providers' },
+          { text: 'Tools and capabilities', link: '/sdk/tools' },
+          { text: 'Sessions and persistence', link: '/sdk/sessions-and-persistence' },
+          { text: 'Events and cancellation', link: '/sdk/events-and-cancellation' },
+          { text: 'Compatibility contracts', link: '/sdk/compatibility' },
+          { text: 'Security model', link: '/sdk/security' },
+          { text: 'Threat model', link: '/sdk/threat-model' },
+          { text: 'Redaction audit', link: '/sdk/redaction-audit' },
+          { text: 'Upgrade to 1.0', link: '/sdk/upgrade-to-1.0' },
+          { text: 'Release candidates', link: '/sdk/release-candidates' }
         ]
       }
     ],
