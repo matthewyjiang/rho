@@ -27,7 +27,7 @@ def run(*arguments: str, cwd: Path = ROOT) -> None:
 
 def check_metadata() -> None:
     sdk = load_toml(SDK_MANIFEST)
-    application = load_toml(ROOT / "Cargo.toml")
+    application = load_toml(ROOT / "crates" / "rho" / "Cargo.toml")
 
     if sdk["features"].get("default") != []:
         raise RuntimeError("rho-sdk default features must remain empty")

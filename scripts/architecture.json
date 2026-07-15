@@ -1,12 +1,12 @@
 {
   "default_production_line_budget": 1000,
   "legacy_file_budgets": {
-    "src/providers/openai/codex_ws.rs": 1036,
-    "src/tui.rs": 7753
+    "crates/rho/src/providers/openai/codex_ws.rs": 1036,
+    "crates/rho/src/tui.rs": 7753
   },
   "generated_files": {},
   "thin_binary_budgets": {
-    "src/main.rs": 50
+    "crates/rho/src/main.rs": 50
   },
   "forbidden_dependencies": [
     {
@@ -15,7 +15,7 @@
       "reason": "keep the headless SDK independent from application and terminal policy"
     },
     {
-      "path": "src/credentials.rs",
+      "path": "crates/rho/src/credentials.rs",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
     }

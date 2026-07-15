@@ -16,10 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
-      release_created: ${{ steps.release.outputs.release_created }}
+      release_created: ${{ steps.release.outputs['crates/rho--release_created'] }}
       sdk_release_created: ${{ steps.release.outputs['crates/rho-sdk--release_created'] }}
-      candidate_sha: ${{ steps.release.outputs.sha || steps.release.outputs['crates/rho-sdk--sha'] }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      candidate_sha: ${{ steps.release.outputs['crates/rho--sha'] || steps.release.outputs['crates/rho-sdk--sha'] }}
+      tag_name: ${{ steps.release.outputs['crates/rho--tag_name'] }}
       sdk_tag_name: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] }}
     steps:
       - id: release
@@ -27,53 +27,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
-      # Draft GitHub releases do not create Git refs until publication. Create
-      # the refs now so a failed publication gate cannot make release-please
-      # scan the same commits again and propose a duplicate version bump.
-      - name: Create release baseline tags
-        if: ${{ steps.release.outputs.releases_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          APP_RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
-          APP_TAG: ${{ steps.release.outputs.tag_name }}
-          APP_SHA: ${{ steps.release.outputs.sha }}
-          SDK_RELEASE_CREATED: ${{ steps.release.outputs['crates/rho-sdk--release_created'] }}
-          SDK_TAG: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] }}
-          SDK_SHA: ${{ steps.release.outputs['crates/rho-sdk--sha'] }}
-        run: |
-          set -euo pipefail
-
-          create_tag() {
-            local release_created="$1"
-            local tag="$2"
-            local sha="$3"
-
-            if [[ "$release_created" != "true" ]]; then
-              return
-            fi
-            if [[ -z "$tag" || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "Release tag and full candidate SHA are required" >&2
-              exit 1
-            fi
-
-            local existing_sha
-            if existing_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
-              if [[ "$existing_sha" != "$sha" ]]; then
-                echo "Tag $tag points to $existing_sha instead of $sha" >&2
-                exit 1
-              fi
-              echo "Tag $tag already points to $sha"
-              return
-            fi
-
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/tags/$tag" \
-              -f sha="$sha" >/dev/null
-            echo "Created tag $tag at $sha"
-          }
-
-          create_tag "$SDK_RELEASE_CREATED" "$SDK_TAG" "$SDK_SHA"
-          create_tag "$APP_RELEASE_CREATED" "$APP_TAG" "$APP_SHA"
 
   sdk-release-evidence:
     needs: release
