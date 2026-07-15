@@ -56,7 +56,9 @@ export default defineConfig({
           { text: 'Security model', link: '/sdk/security' },
           { text: 'Threat model', link: '/sdk/threat-model' },
           { text: 'Redaction audit', link: '/sdk/redaction-audit' },
+          { text: 'Performance acceptance', link: '/sdk/performance' },
           { text: 'Upgrade to 1.0', link: '/sdk/upgrade-to-1.0' },
+          { text: '1.0 release notes', link: '/sdk/release-notes-1.0' },
           { text: 'Release candidates', link: '/sdk/release-candidates' }
         ]
       }
