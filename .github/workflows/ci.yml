@@ -44,6 +44,29 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  sdk-benchmarks:
+    name: SDK release benchmarks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: sdk-release-benchmarks
+      - name: Run release benchmarks
+        run: RHO_BENCH_OUTPUT="$RUNNER_TEMP/sdk-release-benchmarks.json" ./scripts/run_sdk_release_benchmarks.sh
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-release-benchmarks-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/sdk-release-benchmarks.json
+          if-no-files-found: error
+          retention-days: 30
+
   sdk-features:
     name: SDK feature and downstream contracts
     runs-on: ubuntu-latest
