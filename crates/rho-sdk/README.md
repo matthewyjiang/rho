@@ -18,6 +18,7 @@ Runnable examples live in [`examples/`](./examples):
 | `custom_provider` | Implementing `ModelProvider` |
 | `custom_tool` | Implementing `Tool` and multi-step tool loops |
 | `session_snapshot` | Snapshot, `InMemorySessionStore`, and restore |
+| `image_history` | Image input and explicit in-memory history |
 | `cancellation` | Cooperative run cancellation |
 | `questionnaire_approval` | Host questionnaires and capability approvals |
 
@@ -27,6 +28,7 @@ cargo run -p rho-sdk --example streaming
 cargo run -p rho-sdk --example custom_provider
 cargo run -p rho-sdk --example custom_tool
 cargo run -p rho-sdk --example session_snapshot
+cargo run -p rho-sdk --example image_history
 cargo run -p rho-sdk --example cancellation
 cargo run -p rho-sdk --example questionnaire_approval
 ```

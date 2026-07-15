@@ -107,8 +107,8 @@
 //! - Gate sensitive work with [`WorkspacePolicy`] and [`ApprovalHandler`].
 //!
 //! The compiling examples under `examples/` cover simple completion, streaming,
-//! custom providers, custom tools, snapshot restore, cancellation, and
-//! questionnaire/approval flows.
+//! custom providers, custom tools, snapshot restore, image/history input,
+//! cancellation, and questionnaire/approval flows.
 //!
 //! # Security defaults
 //!
