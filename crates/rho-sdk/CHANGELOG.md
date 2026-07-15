@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.0...rho-sdk-v1.0.1) (2026-07-15)
+
+
+### Performance Improvements
+
+* **sdk:** avoid duplicate history clone during compaction ([#276](https://github.com/matthewyjiang/rho/issues/276)) ([79e3926](https://github.com/matthewyjiang/rho/commit/79e3926f2de855860c3418baa67a3dc78aa20870))
+
 ## [1.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v0.1.0...rho-sdk-v1.0.0) (2026-07-15)
 
 

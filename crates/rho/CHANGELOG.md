@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.1...rho-coding-agent-v1.0.2) (2026-07-15)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.0.0 to 1.0.1
+
 ## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.0...rho-coding-agent-v1.0.1) (2026-07-15)
 
 
