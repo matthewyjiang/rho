@@ -235,8 +235,8 @@ async fn maybe_compact(
         result = compactor.compact(request) => result?,
         () = cancellation.cancelled() => return Err(Error::Cancelled),
     };
-    let replacement = output.into_messages();
-    let outcome = core.commit_compaction(replacement.clone())?;
+    let (replacement, usage) = output.into_parts();
+    let outcome = core.commit_compaction(replacement.clone(), usage)?;
     *history = replacement;
     emit(
         events,

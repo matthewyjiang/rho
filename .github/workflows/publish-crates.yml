@@ -1,9 +1,9 @@
 name: publish crates.io
 
+# Coordinated publication is owned by release-please after draft releases and
+# exact-SHA evidence succeed. This workflow remains for manual recovery only so
+# a published GitHub release cannot start a second independent crates.io path.
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       package:
@@ -13,6 +13,10 @@ on:
         options:
           - rho-sdk
           - rho-coding-agent
+      candidate-sha:
+        description: Exact full commit SHA to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,31 +30,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
-      - name: Select crate from release tag
+          ref: ${{ inputs.candidate-sha }}
+      - name: Select crate
         id: crate
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_PACKAGE: ${{ inputs.package }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            package="$DISPATCH_PACKAGE"
-          elif [[ "$RELEASE_TAG" == rho-sdk-v* ]]; then
-            package="rho-sdk"
-          elif [[ "$RELEASE_TAG" == rho-coding-agent-v* ]]; then
-            package="rho-coding-agent"
-          else
-            echo "Unsupported release tag: $RELEASE_TAG" >&2
-            exit 1
-          fi
-          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "package=$DISPATCH_PACKAGE" >> "$GITHUB_OUTPUT"
       - name: Record exact candidate commit
         id: candidate
+        env:
+          REQUESTED_SHA: ${{ inputs.candidate-sha }}
         shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate SHA must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          candidate_sha="$(git rev-parse HEAD)"
+          if [[ "$candidate_sha" != "$REQUESTED_SHA" ]]; then
+            echo "Checked out $candidate_sha instead of requested $REQUESTED_SHA" >&2
+            exit 1
+          fi
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
 
   sdk-release-evidence:
     needs: candidate
@@ -69,9 +74,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
-      - name: Validate publish package
-        run: cargo publish --dry-run --locked -p "${{ needs.candidate.outputs.package }}"
-      - name: Publish selected crate
-        run: cargo publish --locked -p "${{ needs.candidate.outputs.package }}" --token "$CARGO_REGISTRY_TOKEN"
+      - name: Publish selected crate for exact candidate SHA
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CANDIDATE_SHA: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
+          PACKAGE: ${{ needs.candidate.outputs.package }}
+        run: |
+          set -euo pipefail
+          args=(--sha "$CANDIDATE_SHA")
+          if [[ "$PACKAGE" == "rho-sdk" ]]; then
+            args+=(--sdk)
+          else
+            args+=(--app)
+          fi
+          ./scripts/publish_workspace_crates.sh "${args[@]}"

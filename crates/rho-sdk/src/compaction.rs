@@ -8,13 +8,29 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{model::Message, CancellationToken, Error, Revision};
+use crate::{
+    model::{context::estimate_messages_tokens, Message, ModelUsage},
+    CancellationToken, Error, Revision,
+};
 
 /// Persisted continuation state for prior compactions.
+///
+/// Counters accumulate across successful automatic and manual compactions so
+/// hosts can report how much history, estimated context, and optional cost the
+/// session has discarded. Token and cost fields are additive snapshot fields
+/// with defaults so older schema-compatible snapshots remain readable.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionState {
     completed_compactions: u64,
     removed_messages: u64,
+    #[serde(default)]
+    removed_tokens: u64,
+    #[serde(default)]
+    removed_cost_usd_micros: u64,
+    #[serde(default)]
+    last_previous_tokens: Option<u64>,
+    #[serde(default)]
+    last_current_tokens: Option<u64>,
     last_revision: Option<Revision>,
 }
 
@@ -28,6 +44,31 @@ impl CompactionState {
         Self {
             completed_compactions,
             removed_messages,
+            removed_tokens: 0,
+            removed_cost_usd_micros: 0,
+            last_previous_tokens: None,
+            last_current_tokens: None,
+            last_revision,
+        }
+    }
+
+    /// Reconstructs full compaction accounting, including token and cost totals.
+    pub const fn from_accounting(
+        completed_compactions: u64,
+        removed_messages: u64,
+        removed_tokens: u64,
+        removed_cost_usd_micros: u64,
+        last_previous_tokens: Option<u64>,
+        last_current_tokens: Option<u64>,
+        last_revision: Option<Revision>,
+    ) -> Self {
+        Self {
+            completed_compactions,
+            removed_messages,
+            removed_tokens,
+            removed_cost_usd_micros,
+            last_previous_tokens,
+            last_current_tokens,
             last_revision,
         }
     }
@@ -40,15 +81,51 @@ impl CompactionState {
         self.removed_messages
     }
 
+    /// Cumulative estimated context tokens removed by successful compactions.
+    pub fn removed_tokens(&self) -> u64 {
+        self.removed_tokens
+    }
+
+    /// Cumulative cost charged by host-supplied compactors, when reported.
+    pub fn removed_cost_usd_micros(&self) -> u64 {
+        self.removed_cost_usd_micros
+    }
+
+    /// Estimated context tokens present immediately before the latest compaction.
+    pub fn last_previous_tokens(&self) -> Option<u64> {
+        self.last_previous_tokens
+    }
+
+    /// Estimated context tokens present immediately after the latest compaction.
+    pub fn last_current_tokens(&self) -> Option<u64> {
+        self.last_current_tokens
+    }
+
     pub fn last_revision(&self) -> Option<Revision> {
         self.last_revision
     }
 
-    pub(crate) fn record(&mut self, removed_messages: usize, revision: Revision) {
+    pub(crate) fn record(
+        &mut self,
+        removed_messages: usize,
+        previous_tokens: u64,
+        current_tokens: u64,
+        cost_usd_micros: Option<u64>,
+        revision: Revision,
+    ) {
         self.completed_compactions = self.completed_compactions.saturating_add(1);
         self.removed_messages = self
             .removed_messages
             .saturating_add(removed_messages as u64);
+        self.removed_tokens = self
+            .removed_tokens
+            .saturating_add(previous_tokens.saturating_sub(current_tokens));
+        if let Some(cost_usd_micros) = cost_usd_micros {
+            self.removed_cost_usd_micros =
+                self.removed_cost_usd_micros.saturating_add(cost_usd_micros);
+        }
+        self.last_previous_tokens = Some(previous_tokens);
+        self.last_current_tokens = Some(current_tokens);
         self.last_revision = Some(revision);
     }
 }
@@ -122,24 +199,38 @@ impl CompactionRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CompactionOutput {
     messages: Vec<Message>,
+    usage: ModelUsage,
 }
 
 impl CompactionOutput {
     pub fn new(messages: Vec<Message>) -> Result<Self, Error> {
+        Self::with_usage(messages, ModelUsage::default())
+    }
+
+    /// Creates replacement history and optional usage charged to the compactor.
+    pub fn with_usage(messages: Vec<Message>, usage: ModelUsage) -> Result<Self, Error> {
         if messages.is_empty() {
             return Err(Error::InvalidHostResponse {
                 message: "compaction replacement history must not be empty".into(),
             });
         }
-        Ok(Self { messages })
+        Ok(Self { messages, usage })
     }
 
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
+    pub fn usage(&self) -> &ModelUsage {
+        &self.usage
+    }
+
     pub fn into_messages(self) -> Vec<Message> {
         self.messages
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<Message>, ModelUsage) {
+        (self.messages, self.usage)
     }
 }
 
@@ -169,6 +260,9 @@ pub enum CompactionTrigger {
 pub struct CompactionOutcome {
     previous_messages: usize,
     current_messages: usize,
+    previous_tokens: u64,
+    current_tokens: u64,
+    cost_usd_micros: Option<u64>,
     revision: Revision,
 }
 
@@ -176,11 +270,17 @@ impl CompactionOutcome {
     pub(crate) fn new(
         previous_messages: usize,
         current_messages: usize,
+        previous_tokens: u64,
+        current_tokens: u64,
+        cost_usd_micros: Option<u64>,
         revision: Revision,
     ) -> Self {
         Self {
             previous_messages,
             current_messages,
+            previous_tokens,
+            current_tokens,
+            cost_usd_micros,
             revision,
         }
     }
@@ -191,6 +291,26 @@ impl CompactionOutcome {
 
     pub fn current_messages(&self) -> usize {
         self.current_messages
+    }
+
+    /// Estimated context tokens present before this compaction installed.
+    pub fn previous_tokens(&self) -> u64 {
+        self.previous_tokens
+    }
+
+    /// Estimated context tokens present after this compaction installed.
+    pub fn current_tokens(&self) -> u64 {
+        self.current_tokens
+    }
+
+    /// Estimated tokens removed by this compaction.
+    pub fn removed_tokens(&self) -> u64 {
+        self.previous_tokens.saturating_sub(self.current_tokens)
+    }
+
+    /// Optional cost charged by the host-supplied compactor for this operation.
+    pub fn cost_usd_micros(&self) -> Option<u64> {
+        self.cost_usd_micros
     }
 
     pub fn revision(&self) -> Revision {
@@ -252,6 +372,10 @@ impl fmt::Debug for ScriptedCompactor {
             .debug_struct("ScriptedCompactor")
             .finish_non_exhaustive()
     }
+}
+
+pub(crate) fn estimate_history_tokens(messages: &[Message]) -> u64 {
+    estimate_messages_tokens(messages)
 }
 
 #[cfg(test)]

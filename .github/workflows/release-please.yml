@@ -20,6 +20,7 @@ jobs:
       sdk_release_created: ${{ steps.release.outputs['crates/rho-sdk--release_created'] }}
       candidate_sha: ${{ steps.release.outputs.sha || steps.release.outputs['crates/rho-sdk--sha'] }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      sdk_tag_name: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] }}
     steps:
       - id: release
         uses: googleapis/release-please-action@v4
@@ -34,6 +35,9 @@ jobs:
     with:
       candidate-sha: ${{ needs.release.outputs.candidate_sha }}
 
+  # crates.io versions cannot be overwritten. Keep GitHub releases as drafts
+  # until the exact validated SHA has published every selected crate. Public
+  # release publication happens only after crates succeed.
   publish-crates:
     needs: [release, sdk-release-evidence]
     if: ${{ needs.release.outputs.releases_created == 'true' && needs.sdk-release-evidence.result == 'success' }}
@@ -46,24 +50,37 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
-      # rho-coding-agent depends on rho-sdk by version, so the SDK must reach
-      # crates.io before the application crate can pass its publish checks.
-      - name: Validate SDK package
-        if: ${{ needs.release.outputs.sdk_release_created == 'true' }}
-        run: cargo publish --dry-run --locked -p rho-sdk
-      - name: Publish SDK crate
-        if: ${{ needs.release.outputs.sdk_release_created == 'true' }}
-        run: cargo publish --locked -p rho-sdk --token "$CARGO_REGISTRY_TOKEN"
+      - name: Publish workspace crates for exact candidate SHA
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - name: Validate application package
-        if: ${{ needs.release.outputs.release_created == 'true' }}
-        run: cargo publish --dry-run --locked -p rho-coding-agent
-      - name: Publish application crate
-        if: ${{ needs.release.outputs.release_created == 'true' }}
-        run: cargo publish --locked -p rho-coding-agent --token "$CARGO_REGISTRY_TOKEN"
+          CANDIDATE_SHA: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
+          PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
+          PUBLISH_APP: ${{ needs.release.outputs.release_created }}
+        run: |
+          set -euo pipefail
+          args=(--sha "$CANDIDATE_SHA")
+          if [[ "$PUBLISH_SDK" == "true" ]]; then
+            args+=(--sdk)
+          fi
+          if [[ "$PUBLISH_APP" == "true" ]]; then
+            args+=(--app)
+          fi
+          ./scripts/publish_workspace_crates.sh "${args[@]}"
+      - name: Publish draft GitHub releases after crates.io success
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          APP_TAG: ${{ needs.release.outputs.tag_name }}
+          SDK_TAG: ${{ needs.release.outputs.sdk_tag_name }}
+          PUBLISH_APP: ${{ needs.release.outputs.release_created }}
+          PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
+        run: |
+          set -euo pipefail
+          if [[ "$PUBLISH_SDK" == "true" && -n "$SDK_TAG" ]]; then
+            gh release edit "$SDK_TAG" --draft=false
+          fi
+          if [[ "$PUBLISH_APP" == "true" && -n "$APP_TAG" ]]; then
+            gh release edit "$APP_TAG" --draft=false
+          fi
       - name: Dispatch Arch package workflow
         if: ${{ needs.release.outputs.release_created == 'true' }}
         env:
@@ -72,8 +89,8 @@ jobs:
         run: gh workflow run publish-arch-package.yml --ref "$TAG"
 
   release-binaries:
-    needs: release
-    if: ${{ needs.release.outputs.release_created == 'true' }}
+    needs: [release, publish-crates]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' }}
     name: release binary ${{ matrix.target }}
     permissions:
       contents: write

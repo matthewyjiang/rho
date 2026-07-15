@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
-    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     reasoning::ReasoningLevel,
 };
 
@@ -136,16 +136,7 @@ impl XaiProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for XaiProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(self.model_identity())
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.complete_turn(request).await
-    }
-}
+crate::impl_sdk_model_provider!(XaiProvider);
 
 fn build_xai_responses_body(model: &str, request: ModelRequest<'_>) -> Result<Value, ModelError> {
     let reasoning_effort = xai_reasoning_effort(model, request.reasoning_level)?;

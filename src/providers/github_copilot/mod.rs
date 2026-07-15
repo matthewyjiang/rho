@@ -7,7 +7,7 @@ use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -74,9 +74,7 @@ impl GitHubCopilotProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<ChatRequest, ModelError> {
-        let target = self
-            .identity()
-            .expect("GitHub Copilot provider has an identity");
+        let target = self.model_identity();
         let messages = request
             .messages
             .iter()
@@ -186,16 +184,7 @@ impl GitHubCopilotProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for GitHubCopilotProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(self.model_identity())
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.complete_turn(request).await
-    }
-}
+crate::impl_sdk_model_provider!(GitHubCopilotProvider);
 
 impl GitHubCopilotProvider {
     async fn send_turn_stream_inner(
@@ -371,7 +360,7 @@ mod tests {
         );
 
         let response = provider
-            .send_turn(ModelRequest {
+            .complete_turn(ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),

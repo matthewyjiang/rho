@@ -8,13 +8,12 @@ use crate::{
     credentials::CredentialStore,
     model::{
         registry::{provider_runtime, AuthMode, ProviderRuntime},
-        DynModelProvider, ModelError,
+        ModelError,
     },
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
         openai::{auth::Auth, OpenAiProvider},
-        sdk_adapter::SdkProviderAdapter,
         xai::XaiProvider,
     },
     reasoning::ReasoningLevel,
@@ -149,61 +148,6 @@ impl ProviderBuilder {
         }
     }
 
-    pub(crate) fn build_application(self) -> Result<DynModelProvider, ModelError> {
-        let runtime = provider_runtime(&self.options.provider)
-            .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
-        let client = provider_http_client(self.options.request_timeout)?;
-        let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
-
-        match (runtime, self.credential) {
-            (
-                ProviderRuntime::OpenAi { auth_mode },
-                ProviderCredential::OpenAi {
-                    auth,
-                    refresh_store,
-                },
-            ) if auth_matches_mode(&auth, auth_mode) => {
-                Ok(Box::new(OpenAiProvider::new_with_transport(
-                    self.options.model,
-                    auth,
-                    refresh_store,
-                    client,
-                    endpoint,
-                )))
-            }
-            (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
-                let provider = AnthropicProvider::new_with_transport(
-                    self.options.model,
-                    api_key.into_secret(),
-                    anthropic_max_tokens,
-                    client,
-                    endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
-                );
-                Ok(Box::new(provider))
-            }
-            (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => {
-                Ok(Box::new(GitHubCopilotProvider::new_with_transport(
-                    self.options.model,
-                    auth,
-                    client,
-                    endpoint,
-                )?))
-            }
-            (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
-                Ok(Box::new(XaiProvider::new_with_transport(
-                    self.options.model,
-                    auth,
-                    client,
-                    endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
-                )))
-            }
-            _ => Err(ModelError::InvalidResponse(format!(
-                "credential kind does not match provider '{}'",
-                self.options.provider
-            ))),
-        }
-    }
-
     pub(crate) fn build(self) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
         let runtime = provider_runtime(&self.options.provider)
             .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
@@ -227,15 +171,13 @@ impl ProviderBuilder {
                         .to_string(),
                     )
                 });
-                Ok(SdkProviderAdapter::shared(
-                    OpenAiProvider::new_with_transport(
-                        self.options.model,
-                        auth,
-                        refresh_store,
-                        client,
-                        endpoint,
-                    ),
-                ))
+                Ok(Arc::new(OpenAiProvider::new_with_transport(
+                    self.options.model,
+                    auth,
+                    refresh_store,
+                    client,
+                    endpoint,
+                )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
                 let provider = AnthropicProvider::new_with_transport(
@@ -245,18 +187,18 @@ impl ProviderBuilder {
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
-                Ok(SdkProviderAdapter::shared(provider))
+                Ok(Arc::new(provider))
             }
-            (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => Ok(
-                SdkProviderAdapter::shared(GitHubCopilotProvider::new_with_transport(
+            (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => {
+                Ok(Arc::new(GitHubCopilotProvider::new_with_transport(
                     self.options.model,
                     auth,
                     client,
                     endpoint,
-                )?),
-            ),
+                )?))
+            }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
-                Ok(SdkProviderAdapter::shared(XaiProvider::new_with_transport(
+                Ok(Arc::new(XaiProvider::new_with_transport(
                     self.options.model,
                     auth,
                     client,

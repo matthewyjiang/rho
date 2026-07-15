@@ -201,6 +201,7 @@ impl SessionCore {
     pub(crate) fn commit_compaction(
         &self,
         history: Vec<Message>,
+        usage: crate::model::ModelUsage,
     ) -> Result<crate::CompactionOutcome, Error> {
         let mut data = self
             .data
@@ -214,13 +215,23 @@ impl SessionCore {
             })?;
         let previous_messages = data.history.len();
         let current_messages = history.len();
-        data.compaction
-            .record(previous_messages.saturating_sub(current_messages), revision);
+        let previous_tokens = crate::compaction::estimate_history_tokens(&data.history);
+        let current_tokens = crate::compaction::estimate_history_tokens(&history);
+        data.compaction.record(
+            previous_messages.saturating_sub(current_messages),
+            previous_tokens,
+            current_tokens,
+            usage.cost_usd_micros,
+            revision,
+        );
         data.history = history;
         data.revision = revision;
         Ok(crate::CompactionOutcome::new(
             previous_messages,
             current_messages,
+            previous_tokens,
+            current_tokens,
+            usage.cost_usd_micros,
             revision,
         ))
     }
@@ -443,7 +454,8 @@ impl Session {
         let output = compactor
             .compact(crate::CompactionRequest::new(history, cancellation))
             .await?;
-        let outcome = self.core.commit_compaction(output.into_messages())?;
+        let (replacement, usage) = output.into_parts();
+        let outcome = self.core.commit_compaction(replacement, usage)?;
         self.core.set_state(SessionState::Completed);
         Ok(outcome)
     }

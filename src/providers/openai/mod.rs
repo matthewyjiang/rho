@@ -25,7 +25,7 @@ use reasoning::openai_reasoning_config;
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
 
@@ -132,16 +132,7 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for OpenAiProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(self.model_identity())
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.complete_turn(request).await
-    }
-}
+crate::impl_sdk_model_provider!(OpenAiProvider);
 
 impl OpenAiProvider {
     fn chat_completions_request(
@@ -149,7 +140,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<ChatRequest, ModelError> {
-        let target = self.identity().expect("OpenAI provider has an identity");
+        let target = self.model_identity();
         let messages = request
             .messages
             .iter()

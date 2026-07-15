@@ -154,7 +154,7 @@ async fn provider_posts_to_responses_and_collects_stream() {
     let provider = XaiProvider::new_with_api_base("grok-4.5".into(), store, api_base).unwrap();
 
     let response = provider
-        .send_turn(ModelRequest {
+        .complete_turn(ModelRequest {
             messages: &[Message::user_text("hello")],
             tools: &[],
             cancellation: Default::default(),

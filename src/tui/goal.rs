@@ -4,7 +4,8 @@ use anyhow::Context;
 use serde::Deserialize;
 
 use crate::{
-    model::{build_provider, ContentBlock, Message, ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, ModelRequest, ModelResponse},
+    providers::build_sdk_provider,
     reasoning::ReasoningLevel,
 };
 
@@ -47,7 +48,7 @@ pub(super) async fn evaluate(
     condition: &str,
     messages: &[Message],
 ) -> anyhow::Result<GoalEvaluation> {
-    let provider = build_provider(provider_name, model, ReasoningLevel::Low)?;
+    let provider = build_sdk_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
     let request_messages = vec![
                 Message::System(
@@ -63,10 +64,11 @@ pub(super) async fn evaluate(
             messages: &request_messages,
             tools: &[],
             cancellation: Default::default(),
-            reasoning_level: Default::default(),
+            reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         })
-        .await?;
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
     let ModelResponse::Assistant(blocks) = response;
     let text = blocks
         .into_iter()

@@ -108,7 +108,7 @@ enum SessionEntry {
     },
     Snapshot {
         timestamp: String,
-        snapshot: SessionSnapshot,
+        snapshot: Box<SessionSnapshot>,
         display_messages: Vec<StoredDisplayMessage>,
     },
 }
@@ -328,7 +328,7 @@ impl Session {
             .collect();
         self.append_entry_unlocked(&SessionEntry::Snapshot {
             timestamp: timestamp(),
-            snapshot: snapshot.clone(),
+            snapshot: Box::new(snapshot.clone()),
             display_messages,
         })?;
         let _ = index::record_snapshot(self);
@@ -541,14 +541,24 @@ fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
             }
             SessionEntry::ReplaceHistory { messages, .. } => {
                 let previous_messages = state.model.len();
+                let previous_tokens =
+                    rho_sdk::model::context::estimate_messages_tokens(&state.model);
+                let current_tokens = rho_sdk::model::context::estimate_messages_tokens(&messages);
                 state.model = messages;
                 state.revision = next_revision(state.revision)?;
-                state.compaction = CompactionState::from_parts(
+                state.compaction = CompactionState::from_accounting(
                     state.compaction.completed_compactions().saturating_add(1),
                     state
                         .compaction
                         .removed_messages()
                         .saturating_add(previous_messages.saturating_sub(state.model.len()) as u64),
+                    state
+                        .compaction
+                        .removed_tokens()
+                        .saturating_add(previous_tokens.saturating_sub(current_tokens)),
+                    state.compaction.removed_cost_usd_micros(),
+                    Some(previous_tokens),
+                    Some(current_tokens),
                     Some(state.revision),
                 );
             }
@@ -561,7 +571,7 @@ fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
                 state.display.extend(display_messages);
                 state.revision = snapshot.revision();
                 state.compaction = snapshot.compaction().clone();
-                state.snapshot = Some(snapshot);
+                state.snapshot = Some(*snapshot);
             }
         }
         Ok(())

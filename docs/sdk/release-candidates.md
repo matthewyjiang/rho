@@ -178,13 +178,25 @@ After launch, version each crate independently. Release only a package whose art
 
 ## Failure and rollback
 
-Crates.io versions cannot be overwritten. If an RC is defective:
+Crates.io versions cannot be overwritten, so publication is coordinated rather
+than transactionally atomic across registries:
+
+1. release-please creates **draft** GitHub releases and tags for the exact SHA
+2. release evidence jobs validate that same SHA
+3. `scripts/publish_workspace_crates.sh` publishes crates in dependency order
+   and waits for crates.io indexing before continuing
+4. only after crates succeed are draft GitHub releases published
+5. binary assets and Arch packaging run after the public release flip
+
+If an RC or final candidate is defective:
 
 - stop dependent publication if it has not started
-- yank only when appropriate and document why
+- leave draft GitHub releases unpublished when crates fail
+- yank crates.io versions only when appropriate and document why
 - fix forward with the next RC identifier
 - revoke exposed credentials and follow security response if secrets leaked
 - repeat every affected gate
 - preserve evidence and clearly supersede defective release notes
 
 Do not promote a known-defective RC because the final release is expected to fix it.
+Do not undraft a GitHub release for a SHA whose crates.io publication failed.

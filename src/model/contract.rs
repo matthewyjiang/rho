@@ -55,16 +55,3 @@ impl ModelError {
         Self::Credentials(error.to_string())
     }
 }
-
-/// Application-private provider contract retained while providers migrate to
-/// the public SDK trait.
-#[async_trait::async_trait(?Send)]
-pub trait ModelProvider: Send + Sync {
-    fn identity(&self) -> Option<ModelIdentity> {
-        None
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError>;
-}
-
-pub type DynModelProvider = Box<dyn ModelProvider>;

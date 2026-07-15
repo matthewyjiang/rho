@@ -14,13 +14,11 @@ use rho_sdk::{
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
 
-use super::{
-    provider_error_from_model_error, AdaptableProvider, AppProviderFuture, SdkProviderAdapter,
-};
+use super::provider_error_from_model_error;
 use crate::model::ModelError;
 
 #[derive(Clone)]
-struct FakeAdaptableProvider {
+struct FakeProvider {
     identity: ModelIdentity,
     calls: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
@@ -34,7 +32,7 @@ struct RecordedRequest {
     prompt_cache_key: Option<String>,
 }
 
-impl FakeAdaptableProvider {
+impl FakeProvider {
     fn new(response: ModelResponse) -> Self {
         Self {
             identity: ModelIdentity::new("fake", "test", "model"),
@@ -43,31 +41,44 @@ impl FakeAdaptableProvider {
             response,
         }
     }
-}
 
-impl AdaptableProvider for FakeAdaptableProvider {
     fn model_identity(&self) -> ModelIdentity {
         self.identity.clone()
     }
 
-    fn complete_turn<'a>(&'a self, request: ModelRequest<'a>) -> AppProviderFuture<'a> {
-        Box::pin(async move {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.requests
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .push(RecordedRequest {
-                    messages: request.messages.to_vec(),
-                    reasoning_level: request.reasoning_level,
-                    prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
-                });
-            if request.cancellation.is_cancelled() {
-                return Err(ModelError::Interrupted);
+    async fn complete_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(RecordedRequest {
+                messages: request.messages.to_vec(),
+                reasoning_level: request.reasoning_level,
+                prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
+            });
+        if request.cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        Ok(self.response.clone())
+    }
+
+    async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.complete_turn(request).await?;
+        let ModelResponse::Assistant(blocks) = &response;
+        for block in blocks {
+            if let ContentBlock::Text(text) = block {
+                on_event(ModelEvent::OutputDelta(text.clone()))?;
             }
-            Ok(self.response.clone())
-        })
+        }
+        Ok(response)
     }
 }
+
+crate::impl_sdk_model_provider!(FakeProvider);
 
 fn request<'a>(
     messages: &'a [Message],
@@ -216,12 +227,11 @@ fn http_error_messages_include_status_without_bodies() {
 }
 
 #[tokio::test]
-async fn adapter_exposes_identity_and_completes_provider_neutral_turns() {
-    let provider = FakeAdaptableProvider::new(ModelResponse::Assistant(vec![ContentBlock::Text(
+async fn providers_implement_sdk_contract_directly() {
+    let provider = FakeProvider::new(ModelResponse::Assistant(vec![ContentBlock::Text(
         "hello".into(),
     )]));
-    let adapter = SdkProviderAdapter::new(provider.clone());
-    let sdk: Arc<dyn SdkModelProvider> = Arc::new(adapter);
+    let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider.clone());
     let messages = [Message::user_text("hi")];
 
     let response = sdk
@@ -254,17 +264,16 @@ async fn adapter_exposes_identity_and_completes_provider_neutral_turns() {
 }
 
 #[tokio::test]
-async fn default_streaming_synthesizes_text_deltas_from_completed_turn() {
-    let provider = FakeAdaptableProvider::new(ModelResponse::Assistant(vec![
+async fn callback_stream_bridge_forwards_events_in_order() {
+    let provider = FakeProvider::new(ModelResponse::Assistant(vec![
         ContentBlock::Text("hello".into()),
         ContentBlock::Text(" world".into()),
     ]));
-    let adapter = SdkProviderAdapter::shared(provider);
     let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(4).unwrap());
     let messages = [Message::user_text("hi")];
 
     let (result, received) = tokio::join!(
-        adapter.send_turn_stream(
+        provider.send_turn_stream(
             request(
                 &messages,
                 CancellationToken::new(),
@@ -299,29 +308,16 @@ async fn default_streaming_synthesizes_text_deltas_from_completed_turn() {
 
 #[tokio::test]
 async fn cancellation_before_turn_is_reported_as_interrupted() {
-    let provider = FakeAdaptableProvider::new(ModelResponse::Assistant(vec![]));
-    let adapter = SdkProviderAdapter::new(provider);
+    let provider = FakeProvider::new(ModelResponse::Assistant(vec![]));
     let cancellation = CancellationToken::new();
     cancellation.cancel();
 
-    let error = adapter
+    let error = provider
         .send_turn(request(&[], cancellation, ReasoningLevel::default()))
         .await
         .unwrap_err();
 
     assert_eq!(error.kind(), ProviderErrorKind::Interrupted);
-}
-
-#[test]
-fn debug_redacts_provider_internals() {
-    let provider = FakeAdaptableProvider::new(ModelResponse::Assistant(vec![]));
-    let adapter = SdkProviderAdapter::new(provider);
-    let debug = format!("{adapter:?}");
-
-    assert!(debug.contains("SdkProviderAdapter"));
-    assert!(debug.contains("fake"));
-    assert!(debug.contains("model"));
-    assert!(!debug.contains("response"));
 }
 
 #[test]
@@ -336,17 +332,8 @@ fn retryability_matches_provider_error_contract() {
     assert!(!permanent.is_retryable());
 }
 
-#[test]
-fn factory_builds_sdk_provider_entrypoints_for_all_runtimes() {
-    use crate::providers::factory::build_sdk_provider;
-
-    // Linking the factory keeps the adapter surface reachable from application
-    // construction without requiring live credentials in this unit test.
-    let _ = build_sdk_provider;
-}
-
 #[tokio::test]
-async fn concrete_openai_provider_adapts_to_sdk_model_provider() {
+async fn concrete_openai_provider_implements_sdk_model_provider() {
     use crate::credentials::MemoryCredentialStore;
     use crate::providers::openai::auth::Auth;
     use crate::providers::openai::OpenAiProvider;
@@ -357,8 +344,7 @@ async fn concrete_openai_provider_adapts_to_sdk_model_provider() {
         Auth::ApiKey("test-key".into()),
         Arc::new(MemoryCredentialStore::default()),
     );
-    let adapter = SdkProviderAdapter::new(provider);
-    let sdk: Arc<dyn SdkModelProvider> = Arc::new(adapter);
+    let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider);
 
     assert_eq!(
         sdk.identity(),

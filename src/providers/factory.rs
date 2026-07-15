@@ -3,26 +3,10 @@ use std::{fmt, sync::Arc};
 use crate::{
     auth::provider_credentials::{ApplicationCredentialSource, ProviderCredentialSource},
     credentials::OsCredentialStore,
-    model::{DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse},
+    model::ModelError,
     providers::builder::{ProviderBuildOptions, ProviderBuilder, ProviderCredential},
     reasoning::ReasoningLevel,
 };
-
-/// Temporary compatibility shim for the private application provider trait.
-///
-/// Tracked by issue #256 and removable with the remaining TUI goal-provider
-/// call site. Credential lookup remains isolated in the explicit application
-/// adapter rather than provider construction.
-pub(crate) fn build_provider(
-    provider: &str,
-    model: &str,
-    reasoning: ReasoningLevel,
-) -> Result<DynModelProvider, ModelError> {
-    let options = ProviderBuildOptions::new(provider, model, reasoning)?;
-    let credentials = ApplicationCredentialSource::new(Arc::new(OsCredentialStore));
-    let credential = credentials.acquire(options.provider())?;
-    ProviderBuilder::new(options, credential).build_application()
-}
 
 /// Builds a provider from side-effect-free options and explicit credentials.
 pub(crate) fn build_sdk_provider_explicit(
@@ -63,13 +47,12 @@ pub(crate) fn build_automation_provider(
     build_sdk_provider_with_source(options, credentials)
 }
 
-/// Temporary application compatibility shim for TUI provider replacement.
+/// Application bootstrap helper for TUI provider construction.
 ///
 /// This function performs opt-in environment/keychain acquisition through
 /// [`ApplicationCredentialSource`] and then delegates to the explicit builder.
-/// It remains only for TUI call sites excluded from the issue #256 provider API
-/// work and must be removed when those call sites adopt application bootstrap
-/// conversion. New code must use [`build_sdk_provider_with_source`].
+/// Prefer [`build_sdk_provider_with_source`] when a credential source is already
+/// available.
 pub(crate) fn build_sdk_provider(
     provider: &str,
     model: &str,
@@ -88,13 +71,6 @@ pub struct UnavailableProvider {
 impl UnavailableProvider {
     pub fn new(error: ModelError) -> Self {
         Self { error }
-    }
-}
-
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for UnavailableProvider {
-    async fn send_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        Err(clone_model_error(&self.error))
     }
 }
 
@@ -145,7 +121,7 @@ impl rho_sdk::provider::ModelProvider for UnavailableProvider {
         _request: rho_sdk::model::ModelRequest<'a>,
     ) -> rho_sdk::provider::ProviderFuture<'a> {
         Box::pin(async move {
-            Err(super::sdk_adapter::provider_error_from_model_error(
+            Err(super::sdk_contract::provider_error_from_model_error(
                 clone_model_error(&self.error),
             ))
         })

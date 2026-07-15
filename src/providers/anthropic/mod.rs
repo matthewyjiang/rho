@@ -6,7 +6,7 @@ use crate::{
         AnthropicOutputConfig, AnthropicRequest, AnthropicResponse, AnthropicRole,
         AnthropicSystemBlock, AnthropicThinkingConfig, ProviderContextReplay,
     },
-    provider_backend::{ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse},
+    provider_backend::{ModelError, ModelEvent, ModelRequest, ModelResponse},
     reasoning::ReasoningLevel,
 };
 
@@ -60,7 +60,7 @@ impl AnthropicProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let target = self.identity().expect("Anthropic provider has an identity");
+        let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
         let (thinking, output_config) =
             thinking_config(&self.model, request.reasoning_level, max_tokens)?;
@@ -321,16 +321,7 @@ async fn error_for_status_with_body(
     Err(ModelError::HttpStatus { status, body })
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for AnthropicProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(self.model_identity())
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.complete_turn(request).await
-    }
-}
+crate::impl_sdk_model_provider!(AnthropicProvider);
 
 #[cfg(test)]
 #[path = "provider_tests.rs"]
