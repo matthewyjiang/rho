@@ -4,13 +4,18 @@
 
 Use this procedure to audit logs, errors, `Debug`, diagnostics, snapshots, events, provider adapters, tools, and application bridges for secret exposure before a release candidate.
 
-::: warning Audit evidence is generated, not committed
-Run the release-evidence workflow for the candidate commit and download its
-`sdk-redaction-<commit>` artifact from
+::: warning Machine-generated evidence is not human review
+The crate publication workflow requires the release-evidence workflow to pass
+for the exact candidate commit before it publishes either crate. The workflow
+can also be run manually for an exact commit, producing an
+`sdk-redaction-<commit>` artifact in
 [GitHub Actions](https://github.com/matthewyjiang/rho/actions/workflows/sdk-release-evidence.yml).
-The synthetic canary and static audit are repository-maintainer checks, not an
-independent audit. A passing artifact applies only to the commit recorded in its
-JSON payload.
+
+The JSON artifact records automated canary and static-inventory results only. It
+does not claim that a maintainer performed the required human data-flow review
+or that an independent audit occurred. Record human reviewers, findings, and
+approval separately in the release-candidate record. A passing automated
+artifact applies only to its recorded source commit.
 :::
 
 Run the same release gate with:

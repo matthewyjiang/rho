@@ -1,17 +1,62 @@
 name: SDK release evidence
 
 on:
+  workflow_call:
+    inputs:
+      candidate-sha:
+        description: Exact release candidate commit to validate
+        required: true
+        type: string
+    outputs:
+      candidate-sha:
+        description: Resolved commit validated by every evidence job
+        value: ${{ jobs.candidate.outputs.sha }}
   workflow_dispatch:
+    inputs:
+      candidate-sha:
+        description: Exact commit to validate
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  candidate:
+    name: resolve candidate
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate-sha }}
+      - name: Record exact candidate commit
+        id: candidate
+        env:
+          REQUESTED_SHA: ${{ inputs.candidate-sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate SHA must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          candidate_sha="$(git rev-parse HEAD)"
+          if [[ "$candidate_sha" != "$REQUESTED_SHA" ]]; then
+            echo "Checked out $candidate_sha instead of requested $REQUESTED_SHA" >&2
+            exit 1
+          fi
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
   redaction:
+    needs: candidate
     name: redaction audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -24,16 +69,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-redaction-${{ github.sha }}
+          name: sdk-redaction-${{ needs.candidate.outputs.sha }}
           path: ${{ runner.temp }}/sdk-redaction.json
           if-no-files-found: error
           retention-days: 30
 
   benchmarks:
+    needs: candidate
     name: release benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -46,7 +94,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-release-benchmarks-${{ github.sha }}
+          name: sdk-release-benchmarks-${{ needs.candidate.outputs.sha }}
           path: ${{ runner.temp }}/sdk-release-benchmarks.json
           if-no-files-found: error
           retention-days: 30

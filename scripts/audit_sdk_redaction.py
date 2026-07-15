@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create machine-readable evidence for the SDK secret redaction release audit."""
+"""Create machine-only evidence for the SDK secret redaction release gate."""
 
 from __future__ import annotations
 
@@ -94,12 +94,13 @@ def main() -> int:
         finding["severity"] in ("critical", "high") for finding in findings
     )
     evidence = {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit": "rho-sdk-secret-canary",
         "date_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source_revision": git("rev-parse", "HEAD"),
         "working_tree_changes_included": bool(git("status", "--short")),
-        "reviewer": "repository-maintainer automated and manual review",
+        "evidence_kind": "automated",
+        "human_review_attested": False,
         "independent_audit": False,
         "scope": [
             "Debug and Display",
@@ -133,7 +134,8 @@ def main() -> int:
                 "rg -n 'RunEvent::|DiagnosticsSnapshot|ProviderError::new|ToolError::|to_json|Serialize|snapshot' crates/rho-sdk src",
             ],
             "counts": scan_counts,
-            "human_data_flow_reviewed": True,
+            "automated_inventory_only": True,
+            "human_data_flow_review_required": True,
         },
         "dynamic_review": {
             "command": "cargo test -p rho-sdk --test redaction_canary",
@@ -157,7 +159,7 @@ def main() -> int:
             "conversation and tool content intentionally remain visible in events and snapshots",
             "live credentialed provider and external telemetry sinks were not exercised",
         ],
-        "release_decision": "blocked" if blocked else "passed",
+        "automated_gate_decision": "blocked" if blocked else "passed",
         "passed": not blocked,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -165,7 +167,7 @@ def main() -> int:
     print(f"redaction audit evidence: {args.output}")
     print(f"dynamic canary: {args.dynamic_result}")
     print(f"critical/high findings: {sum(f['severity'] in ('critical', 'high') for f in findings)}")
-    print(f"release decision: {evidence['release_decision']}")
+    print(f"automated gate decision: {evidence['automated_gate_decision']}")
     return 0 if not blocked else 2
 
 

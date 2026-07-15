@@ -18,8 +18,11 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  candidate:
     runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.crate.outputs.package }}
+      sha: ${{ steps.candidate.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,13 +47,31 @@ jobs:
             exit 1
           fi
           echo "package=$package" >> "$GITHUB_OUTPUT"
+      - name: Record exact candidate commit
+        id: candidate
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  sdk-release-evidence:
+    needs: candidate
+    uses: ./.github/workflows/sdk-release-evidence.yml
+    with:
+      candidate-sha: ${{ needs.candidate.outputs.sha }}
+
+  publish:
+    needs: [candidate, sdk-release-evidence]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
       - name: Validate publish package
-        run: cargo publish --dry-run --locked -p "${{ steps.crate.outputs.package }}"
+        run: cargo publish --dry-run --locked -p "${{ needs.candidate.outputs.package }}"
       - name: Publish selected crate
-        run: cargo publish --locked -p "${{ steps.crate.outputs.package }}" --token "$CARGO_REGISTRY_TOKEN"
+        run: cargo publish --locked -p "${{ needs.candidate.outputs.package }}" --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

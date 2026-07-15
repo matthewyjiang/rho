@@ -49,11 +49,13 @@ in-target `pre-sdk-retained-fixture-v1` baseline, and writes to
 `target/sdk-release-evidence/sdk-release-benchmarks.json`. Override
 `RHO_BENCH_SAMPLES` or `RHO_BENCH_OUTPUT` without changing benchmark boundaries.
 
-For release evidence, run the
+For release evidence, the crate publication workflow automatically requires the
 [SDK release evidence workflow](https://github.com/matthewyjiang/rho/actions/workflows/sdk-release-evidence.yml)
-on the candidate commit and download its `sdk-release-benchmarks-<commit>`
-artifact. Artifacts are point-in-time measurements tied to the source commit;
-they are not maintained as a `current` repository snapshot.
+to pass on the exact candidate commit before either crate is published. Run the
+same workflow manually when evidence is needed before release publication, then
+download its `sdk-release-benchmarks-<commit>` artifact. Artifacts are
+point-in-time measurements tied to the resolved source commit; they are not
+maintained as a `current` repository snapshot.
 
 The release candidate must attach:
 
