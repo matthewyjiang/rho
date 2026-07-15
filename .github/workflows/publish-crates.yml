@@ -5,6 +5,14 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      package:
+        description: Crate to validate and publish
+        required: true
+        type: choice
+        options:
+          - rho-sdk
+          - rho-coding-agent
 
 permissions:
   contents: read
@@ -14,11 +22,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: Select crate from release tag
+        id: crate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_PACKAGE: ${{ inputs.package }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            package="$DISPATCH_PACKAGE"
+          elif [[ "$RELEASE_TAG" == rho-sdk-v* ]]; then
+            package="rho-sdk"
+          elif [[ "$RELEASE_TAG" == rho-coding-agent-v* ]]; then
+            package="rho-coding-agent"
+          else
+            echo "Unsupported release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          echo "package=$package" >> "$GITHUB_OUTPUT"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
-      - name: Publish crate
-        run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+      - name: Validate publish package
+        run: cargo publish --dry-run --locked -p "${{ steps.crate.outputs.package }}"
+      - name: Publish selected crate
+        run: cargo publish --locked -p "${{ steps.crate.outputs.package }}" --token "$CARGO_REGISTRY_TOKEN"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -37,6 +37,7 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Sessions', link: '/sessions' },
+          { text: 'SDK compatibility', link: '/sdk-compatibility' },
           { text: 'Development', link: '/development' },
           { text: 'Changelog', link: '/changelog' }
         ]

@@ -281,6 +281,21 @@ explicit cancellation, so provider, tool, or persistence failure leaves the prio
 revision intact. The 1.0 persistence boundary is the snapshot rather than a
 public transactional store trait.
 
+## Features and compatibility
+
+`rho-sdk` has no default features and currently declares no optional features.
+Default, `--no-default-features`, and `--all-features` therefore expose the same
+minimal headless API. Built-in providers, SQLite, keychain access, web access,
+and coding tools remain application-owned adapters. If moved into the SDK, they
+will be named opt-in features and will not be added to `default`.
+
+The SDK MSRV is Rust 1.86. CI tests the crate on Linux, macOS, and Windows
+and separately compiles downstream-only fixture crates. See the
+[SDK compatibility policy][compatibility-policy] for supported platforms,
+SemVer, deprecation, MSRV, feature, and package guarantees.
+
+[compatibility-policy]: https://github.com/matthewyjiang/rho/blob/main/docs/sdk-compatibility.md
+
 ## Security defaults
 
 The default feature set is empty. Creating an SDK runtime will not implicitly
@@ -289,8 +304,8 @@ to `~/.rho`, initialize a terminal or logger, check for updates, or grant tools
 filesystem, process, or network access.
 
 Capabilities such as built-in providers, SQLite persistence, keychain access,
-web access, and coding tools will be introduced behind explicit adapters and
-opt-in Cargo features as their public contracts are stabilized.
+web access, and coding tools remain application-owned adapters. If introduced
+as SDK functionality, they must use explicit adapters and opt-in Cargo features.
 
 See [the Rho repository](https://github.com/matthewyjiang/rho) and
 [the SDK tracking issue](https://github.com/matthewyjiang/rho/issues/256) for
