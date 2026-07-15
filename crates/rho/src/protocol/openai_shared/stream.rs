@@ -362,6 +362,17 @@ pub(crate) fn handle_codex_sse_line(
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
         return Ok(false);
     };
+    handle_codex_sse_value(&value, state, on_event)
+}
+
+/// Core of [`handle_codex_sse_line`] for callers that already hold a parsed
+/// event payload (the Codex websocket transport), avoiding a serialize and
+/// re-parse round-trip per streamed event.
+pub(crate) fn handle_codex_sse_value(
+    value: &serde_json::Value,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<bool, ModelError> {
     let event_type = value
         .get("type")
         .and_then(|v| v.as_str())
@@ -374,7 +385,7 @@ pub(crate) fn handle_codex_sse_line(
             }
         }
     } else if event_type.contains("reasoning") && event_type.ends_with(".delta") {
-        if let Some(delta) = extract_reasoning_delta(&value) {
+        if let Some(delta) = extract_reasoning_delta(value) {
             if let Some(on_event) = on_event.as_mut() {
                 if is_reasoning_summary_event(event_type) {
                     on_event(ModelEvent::ReasoningSummaryDelta(delta))?;
@@ -384,7 +395,7 @@ pub(crate) fn handle_codex_sse_line(
             }
         }
     } else if event_type == "response.output_item.added" {
-        let item = value.get("item").unwrap_or(&value);
+        let item = value.get("item").unwrap_or(value);
         if item.get("type").and_then(|kind| kind.as_str()) == Some("function_call") {
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ToolCallDelta {
@@ -428,7 +439,7 @@ pub(crate) fn handle_codex_sse_line(
             })?;
         }
     } else if event_type == "response.output_item.done" {
-        let item = value.get("item").unwrap_or(&value);
+        let item = value.get("item").unwrap_or(value);
         state.output_items.push(item.clone());
         if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
             if let Some(on_event) = on_event.as_mut() {
@@ -462,7 +473,7 @@ pub(crate) fn handle_codex_sse_line(
         if let Some(usage) = value
             .get("response")
             .and_then(extract_usage)
-            .or_else(|| extract_usage(&value))
+            .or_else(|| extract_usage(value))
         {
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::Usage(usage))?;

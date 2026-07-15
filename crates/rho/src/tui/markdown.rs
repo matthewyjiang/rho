@@ -68,6 +68,49 @@ pub(super) fn render_markdown(
     render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Visible)
 }
 
+/// Returns the start of the trailing block that can still change as markdown is appended.
+///
+/// Markdown is line-oriented except for fenced code blocks and tables. Keeping
+/// the final block mutable lets the history cache promote completed blocks and
+/// re-render only this suffix as streaming text arrives.
+pub(super) fn incremental_markdown_tail_start(text: &str) -> usize {
+    let mut lines = Vec::new();
+    let mut offset = 0;
+    for source_line in text.split_inclusive('\n') {
+        let raw_line = source_line.strip_suffix('\n').unwrap_or(source_line);
+        let raw_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        lines.push((offset, raw_line));
+        offset += source_line.len();
+    }
+    if lines.is_empty() {
+        return 0;
+    }
+
+    let raw_lines = lines.iter().map(|(_, line)| *line).collect::<Vec<_>>();
+    let mut line_index = 0;
+    let mut trailing_block_start = 0;
+    while line_index < raw_lines.len() {
+        trailing_block_start = lines[line_index].0;
+        if raw_lines[line_index].trim_start().starts_with("```") {
+            line_index += 1;
+            while line_index < raw_lines.len() {
+                let closes_block = raw_lines[line_index].trim_start().starts_with("```");
+                line_index += 1;
+                if closes_block {
+                    break;
+                }
+            }
+            continue;
+        }
+        if let Some(consumed_lines) = table::markdown_table_line_count(&raw_lines[line_index..]) {
+            line_index += consumed_lines;
+            continue;
+        }
+        line_index += 1;
+    }
+    trailing_block_start
+}
+
 fn render_markdown_with_copy_button(
     text: &str,
     width: usize,

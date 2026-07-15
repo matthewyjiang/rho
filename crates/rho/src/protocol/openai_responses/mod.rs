@@ -8,5 +8,8 @@ pub(crate) use super::openai_shared::{
         codex_input_items, codex_input_items_for_target, codex_reasoning_param,
         to_responses_lite_tool, to_responses_tool,
     },
-    stream::{collect_codex_sse_response, handle_codex_sse_line, CodexSseResponse, CodexSseState},
+    stream::{
+        collect_codex_sse_response, handle_codex_sse_line, handle_codex_sse_value,
+        CodexSseResponse, CodexSseState,
+    },
 };

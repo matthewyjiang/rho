@@ -4,6 +4,7 @@ use serde_json::json;
 
 const SESSION_V1: &str = include_str!("session/fixtures/session-v1.jsonl");
 const SESSION_V2: &str = include_str!("session/fixtures/session-v2.jsonl");
+const SESSION_V3: &str = include_str!("session/fixtures/session-v3.jsonl");
 
 #[test]
 fn every_supported_application_session_fixture_restores_as_a_snapshot() {
@@ -16,6 +17,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             1,
             "rho:migrated-v1",
+            3,
         ),
         (
             2,
@@ -25,10 +27,21 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             3,
             "rho:fixture-session",
+            2,
+        ),
+        (
+            3,
+            "33333333-3333-4333-8333-333333333333",
+            SESSION_V3,
+            2,
+            0,
+            0,
+            "rho:delta-fixture",
+            2,
         ),
     ];
 
-    for (version, id, fixture, revision, compactions, removed, cache_key) in cases {
+    for (version, id, fixture, revision, compactions, removed, cache_key, display_len) in cases {
         let (root, cwd, session) = session_from_fixture(id, fixture);
         let first: serde_json::Value =
             serde_json::from_str(fixture.lines().next().unwrap()).unwrap();
@@ -53,7 +66,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
         assert_eq!(snapshot.prompt_cache_key(), Some(cache_key));
         assert_eq!(snapshot.history(), histories.model);
         assert_eq!(histories.model.len(), 2);
-        assert_eq!(histories.display.len(), if version == 1 { 3 } else { 2 });
+        assert_eq!(histories.display.len(), display_len);
 
         drop((root, cwd));
     }
@@ -111,6 +124,118 @@ fn rejects_sessions_from_unsupported_or_malformed_versions() {
         let error = summarize_session_file(&path, directory.path()).unwrap_err();
         assert!(error.to_string().contains(expected), "{error:#}");
     }
+}
+
+#[test]
+fn rejects_snapshot_delta_without_matching_base_revision() {
+    let corrupted = SESSION_V3.replacen("\"base_revision\":1", "\"base_revision\":0", 1);
+    let (_root, _cwd, session) =
+        session_from_fixture("33333333-3333-4333-8333-333333333333", &corrupted);
+
+    let error = session
+        .snapshot_for_resume(
+            ModelIdentity::new("target", "api", "model"),
+            "rho:fallback".into(),
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("base revision"), "{error:#}");
+}
+
+#[test]
+fn consecutive_snapshot_saves_append_only_new_history() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    let identity = ModelIdentity::new("provider", "api", "model");
+    let id = SessionId::from_string(session.id().to_owned()).unwrap();
+    let first = SessionSnapshot::new(
+        id.clone(),
+        Revision::from_u64(1),
+        vec![Message::user_text("history only in base")],
+        identity.clone(),
+        CompactionState::default(),
+    )
+    .with_prompt_cache_key("rho:fallback");
+    let second = SessionSnapshot::new(
+        id,
+        Revision::from_u64(2),
+        vec![
+            Message::user_text("history only in base"),
+            Message::assistant_text("new delta message"),
+        ],
+        identity.clone(),
+        CompactionState::default(),
+    )
+    .with_prompt_cache_key("rho:fallback");
+
+    session.save_snapshot(&first, first.history()).unwrap();
+    session
+        .save_snapshot(&second, &second.history()[1..])
+        .unwrap();
+
+    let entries = read_entries(session.path()).unwrap();
+    assert!(matches!(entries[1], SessionEntry::Snapshot { .. }));
+    assert!(matches!(entries[2], SessionEntry::SnapshotDelta { .. }));
+    let last_record = fs::read_to_string(session.path())
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap()
+        .to_string();
+    assert!(!last_record.contains("history only in base"));
+    assert!(last_record.contains("new delta message"));
+
+    let restored = session
+        .snapshot_for_resume(identity, "rho:fallback".into())
+        .unwrap();
+    assert_eq!(restored, second);
+    assert_eq!(
+        read_histories(session.path()).unwrap().display,
+        second.history()
+    );
+}
+
+#[test]
+fn history_replacement_writes_a_new_complete_snapshot_base() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    let identity = ModelIdentity::new("provider", "api", "model");
+    let id = SessionId::from_string(session.id().to_owned()).unwrap();
+    let first = SessionSnapshot::new(
+        id.clone(),
+        Revision::from_u64(2),
+        vec![
+            Message::user_text("old"),
+            Message::assistant_text("history"),
+        ],
+        identity.clone(),
+        CompactionState::default(),
+    )
+    .with_prompt_cache_key("rho:fallback");
+    let compacted = SessionSnapshot::new(
+        id,
+        Revision::from_u64(3),
+        vec![Message::user_text("compact summary")],
+        identity.clone(),
+        CompactionState::default(),
+    )
+    .with_prompt_cache_key("rho:fallback");
+
+    session.save_snapshot(&first, &[]).unwrap();
+    session.save_snapshot(&compacted, &[]).unwrap();
+
+    assert!(matches!(
+        read_entries(session.path()).unwrap().last(),
+        Some(SessionEntry::Snapshot { .. })
+    ));
+    assert_eq!(
+        session
+            .snapshot_for_resume(identity, "rho:fallback".into())
+            .unwrap(),
+        compacted
+    );
 }
 
 #[test]

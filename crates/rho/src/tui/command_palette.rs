@@ -1,5 +1,10 @@
-use super::{App, CommandChoice, CommandChoiceKind};
+use std::sync::Arc;
+
+use super::{App, CommandChoice, CommandChoiceKind, SkillMatchCache};
 use crate::commands;
+
+/// How long one skill-discovery pass stays valid for command palette queries.
+const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
@@ -45,8 +50,8 @@ impl App {
         }
         matches.extend(template_matches);
         matches.extend(
-            crate::skills::discover(&self.info.cwd)
-                .into_iter()
+            self.discovered_skills()
+                .iter()
                 .filter(|skill| {
                     skill.name.starts_with(&prefix)
                         || format!("skill:{}", skill.name).starts_with(&prefix)
@@ -56,12 +61,37 @@ impl App {
                     CommandChoice {
                         usage: format!("/{command_name}"),
                         name: command_name,
-                        description: skill.description,
+                        description: skill.description.clone(),
                         kind: CommandChoiceKind::Skill,
                     }
                 }),
         );
         matches
+    }
+
+    /// Skills for palette matching, served from the timed cache when fresh so
+    /// repeated per-keystroke queries skip the filesystem walk.
+    fn discovered_skills(&self) -> Arc<Vec<crate::skills::Skill>> {
+        if let Some(cache) = &self.skill_match_cache {
+            if cache.refreshed_at.elapsed() < SKILL_CACHE_TTL {
+                return Arc::clone(&cache.skills);
+            }
+        }
+        Arc::new(crate::skills::discover(&self.info.cwd))
+    }
+
+    pub(super) fn refresh_skill_match_cache(&mut self) {
+        if self
+            .skill_match_cache
+            .as_ref()
+            .is_some_and(|cache| cache.refreshed_at.elapsed() < SKILL_CACHE_TTL)
+        {
+            return;
+        }
+        self.skill_match_cache = Some(SkillMatchCache {
+            skills: Arc::new(crate::skills::discover(&self.info.cwd)),
+            refreshed_at: std::time::Instant::now(),
+        });
     }
 
     pub(super) fn selected_command(&self) -> Option<CommandChoice> {
