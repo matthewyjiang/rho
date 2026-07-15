@@ -31,6 +31,6 @@ mod update;
 mod usage_limits;
 mod workspace;
 
-pub use app::run;
+pub use app::{run, AutomationInterrupted};
 pub use cli::Cli;
 pub use rho_sdk as sdk;

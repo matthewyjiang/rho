@@ -44,7 +44,26 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         let _ =
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
-    let pending_update_notice = (cli.command.is_none() && config.check_for_updates)
+    let cwd = std::env::current_dir()?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    let herdr = HerdrReporter::from_env();
+    if let Some(prompt) = automation_prompt {
+        return automation::run(
+            prompt,
+            automation::Startup {
+                config: &config,
+                cwd,
+                no_system_prompt: cli.no_system_prompt,
+                no_tools: cli.no_tools,
+                diagnostics,
+                herdr,
+            },
+        )
+        .await;
+    }
+
+    let pending_update_notice = config
+        .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
     let provider_result = build_provider(&config.provider, &config.model, config.reasoning);
@@ -55,15 +74,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         .map(ToString::to_string);
     let provider = match provider_result {
         Ok(provider) => provider,
-        Err(error)
-            if automation_prompt.is_none() && is_interactive_startup_unavailable_error(&error) =>
-        {
+        Err(error) if is_interactive_startup_unavailable_error(&error) => {
             Box::new(UnavailableProvider::new(error))
         }
         Err(error) => return Err(error.into()),
     };
-    let cwd = std::env::current_dir()?;
-    let diagnostics = RuntimeDiagnostics::new(&config);
     let registry = if cli.no_tools {
         ToolRegistry::new()
     } else {
@@ -73,7 +88,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         cwd: cwd.clone(),
         max_output_bytes: config.max_output_bytes,
     };
-    let herdr = HerdrReporter::from_env();
     let mut agent = Agent::new(provider, registry, context).with_history(Vec::new());
     if cli.no_system_prompt {
         agent = agent.without_system_prompt();
@@ -85,25 +99,20 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             .and_then(|metadata| metadata.display_context_window()),
     );
 
-    let result = match automation_prompt {
-        Some(prompt) => automation::run(&mut agent, prompt, &herdr).await,
-        None => {
-            interactive::run(
-                &mut agent,
-                interactive::Startup {
-                    cli: &cli,
-                    config,
-                    config_repository,
-                    cwd,
-                    missing_auth_error,
-                    pending_update_notice,
-                    diagnostics,
-                    herdr,
-                },
-            )
-            .await
-        }
-    };
+    let result = interactive::run(
+        &mut agent,
+        interactive::Startup {
+            cli: &cli,
+            config,
+            config_repository,
+            cwd,
+            missing_auth_error,
+            pending_update_notice,
+            diagnostics,
+            herdr,
+        },
+    )
+    .await;
     agent.shutdown().await;
     result
 }

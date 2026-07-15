@@ -9,6 +9,7 @@ use crate::{
         DynModelProvider, ModelError, ModelProvider, ModelRequest, ModelResponse,
     },
     provider::{self, ProviderAuthKind},
+    providers::sdk_adapter::SdkProviderAdapter,
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -17,7 +18,6 @@ use crate::{
             OpenAiProvider,
         },
         xai::XaiProvider,
-        SdkProviderAdapter,
     },
     reasoning::ReasoningLevel,
 };
@@ -37,11 +37,22 @@ pub fn build_provider(
     )
 }
 
-/// Builds a 1.0 provider adapted to the public SDK [`rho_sdk::provider::ModelProvider`] contract.
-///
-/// This is the application-side entrypoint for embedding built-in providers in the
-/// headless SDK runtime. It is intentionally available before `rho run` migrates.
-#[allow(dead_code)]
+pub fn build_automation_provider(
+    provider: &str,
+    model: &str,
+    reasoning: ReasoningLevel,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    #[cfg(debug_assertions)]
+    if let Some(provider) =
+        super::automation_fixture::from_env(provider, model).map_err(ModelError::InvalidResponse)?
+    {
+        return Ok(provider);
+    }
+
+    build_sdk_provider(provider, model, reasoning)
+}
+
+/// Builds a provider adapted to the public SDK [`rho_sdk::provider::ModelProvider`] contract.
 pub fn build_sdk_provider(
     provider: &str,
     model: &str,

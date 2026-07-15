@@ -44,7 +44,6 @@ use rho_sdk::{
 use crate::model::ModelError;
 
 /// Explicit `Send` future used by application transports that can be adapted.
-#[allow(dead_code)]
 pub type AppProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ModelResponse, ModelError>> + Send + 'a>>;
 
@@ -53,7 +52,6 @@ pub type AppProviderFuture<'a> =
 /// Implementors must return `Send` futures by calling inherent transport methods
 /// rather than the private `async_trait(?Send)` application trait. Streaming is
 /// intentionally omitted here; see the module docs.
-#[allow(dead_code)]
 pub trait AdaptableProvider: Send + Sync {
     /// Exact identity required by the public SDK contract.
     fn model_identity(&self) -> ModelIdentity;
@@ -63,37 +61,22 @@ pub trait AdaptableProvider: Send + Sync {
 }
 
 /// Wraps an [`AdaptableProvider`] as a public [`rho_sdk::provider::ModelProvider`].
-#[allow(dead_code)]
 pub struct SdkProviderAdapter<P> {
     inner: P,
 }
 
 impl<P> SdkProviderAdapter<P> {
     /// Wraps an adaptable application provider.
-    #[allow(dead_code)]
     pub fn new(inner: P) -> Self {
         Self { inner }
     }
 
     /// Wraps an adaptable application provider in an `Arc` trait object.
-    #[allow(dead_code)]
     pub fn shared(inner: P) -> Arc<Self>
     where
         P: AdaptableProvider + 'static,
     {
         Arc::new(Self::new(inner))
-    }
-
-    /// Returns a reference to the wrapped provider.
-    #[allow(dead_code)]
-    pub fn inner(&self) -> &P {
-        &self.inner
-    }
-
-    /// Unwraps the application provider.
-    #[allow(dead_code)]
-    pub fn into_inner(self) -> P {
-        self.inner
     }
 }
 
@@ -171,7 +154,6 @@ impl AdaptableProvider for crate::providers::xai::XaiProvider {
 ///
 /// HTTP response bodies and other transport payloads are omitted so credentials
 /// and provider-private content do not enter the SDK error contract.
-#[allow(dead_code)]
 pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     match error {
         ModelError::MissingApiKey

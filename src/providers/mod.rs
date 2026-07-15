@@ -8,6 +8,8 @@
 //! transport logic.
 
 pub(crate) mod anthropic;
+#[cfg(debug_assertions)]
+mod automation_fixture;
 mod factory;
 pub(crate) mod github_copilot;
 pub(crate) mod openai;
@@ -15,11 +17,4 @@ pub(crate) mod sdk_adapter;
 mod send_stream;
 pub(crate) mod xai;
 
-pub(crate) use factory::{build_provider, UnavailableProvider};
-// SDK migration surface: reachable for embedders and covered by adapter tests.
-#[allow(unused_imports)]
-pub(crate) use factory::build_sdk_provider;
-#[allow(unused_imports)]
-pub(crate) use sdk_adapter::{
-    provider_error_from_model_error, AdaptableProvider, SdkProviderAdapter,
-};
+pub(crate) use factory::{build_automation_provider, build_provider, UnavailableProvider};

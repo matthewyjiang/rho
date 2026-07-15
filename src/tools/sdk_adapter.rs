@@ -8,10 +8,8 @@
 //! [`ApprovalHandler`](rho_sdk::ApprovalHandler). Default SDK construction still
 //! grants no capabilities.
 //!
-//! The adapter is intentionally not wired into the application agent registry
-//! yet, so its public constructors look unused to crate-private dead-code
-//! analysis until the `rho run` migration consumes them.
-#![allow(dead_code)]
+//! Automation registers these adapters on the public SDK runtime while the TUI
+//! continues to use the application tool registry during its later migration.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -20,11 +18,14 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        DuplicateToolName, OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolRegistry,
+        OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolProgress,
     },
     CapabilityRequest, Error as SdkError,
 };
+
+#[cfg(test)]
+use rho_sdk::tool::{DuplicateToolName, ToolRegistry};
 
 use crate::tool::{compact_display_path, truncate, Tool as AppTool, ToolError as AppToolError};
 
@@ -63,6 +64,7 @@ impl CodingToolOptions {
         self
     }
 
+    #[cfg(test)]
     pub fn output_budget(&self) -> usize {
         self.max_output_bytes
     }
@@ -73,6 +75,7 @@ impl CodingToolOptions {
 /// The tools do not grant capabilities by themselves. Hosts must attach a
 /// workspace and a non-default policy on the runtime before reads or writes
 /// succeed.
+#[cfg(test)]
 pub fn register_coding_tools(
     registry: &mut ToolRegistry,
     options: CodingToolOptions,

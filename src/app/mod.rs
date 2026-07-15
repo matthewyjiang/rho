@@ -5,4 +5,5 @@ pub(crate) mod config_repository;
 mod interactive;
 mod login;
 
+pub use automation::AutomationInterrupted;
 pub use bootstrap::run;

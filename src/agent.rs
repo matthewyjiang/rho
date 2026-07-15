@@ -260,6 +260,7 @@ impl Agent {
         .await
     }
 
+    #[cfg(test)]
     pub async fn run(&mut self, user_prompt: String) -> Result<String, AgentError> {
         self.run_with_events(user_prompt, |_| Ok(())).await
     }
@@ -305,6 +306,7 @@ impl Agent {
         self.push_message_with_display(message, None)
     }
 
+    #[cfg(test)]
     pub async fn run_with_events(
         &mut self,
         user_prompt: String,
@@ -314,6 +316,7 @@ impl Agent {
             .await
     }
 
+    #[cfg(test)]
     pub async fn run_with_events_and_steering(
         &mut self,
         user_prompt: String,
@@ -328,6 +331,7 @@ impl Agent {
         .await
     }
 
+    #[cfg(test)]
     pub async fn run_with_content_and_events_and_steering(
         &mut self,
         user_content: Vec<ContentBlock>,
@@ -345,6 +349,7 @@ impl Agent {
         .await
     }
 
+    #[cfg(test)]
     pub async fn run_with_content_and_events_questionnaire_and_steering(
         &mut self,
         user_content: Vec<ContentBlock>,

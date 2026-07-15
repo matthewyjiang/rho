@@ -78,17 +78,17 @@ async fn tool_calls_execute_in_order_and_feed_results_into_the_next_turn() {
             )])),
         ],
     );
-    let tool = ScriptedTool::new(
+    let tool = Arc::new(ScriptedTool::new(
         ToolSpec {
             name: "lookup".into(),
             description: "lookup".into(),
             input_schema: json!({"type": "object"}),
         },
         ScriptedToolOutcome::Success(ToolOutput::text("tool output")),
-    );
+    ));
     let runtime = Rho::builder()
         .provider(provider.clone())
-        .tool(tool)
+        .tool_shared(tool)
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();

@@ -1,10 +1,75 @@
-use std::io::{self, Read};
+use std::{
+    fmt,
+    io::{self, Read, Write},
+    path::PathBuf,
+};
+
+use rho_sdk::{
+    CapabilityRequest, PolicyDecision, Rho, SessionOptions, SystemPrompt, UserInput, Workspace,
+    WorkspacePolicy,
+};
 
 use crate::{
-    agent::Agent,
     cli::Command,
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
     herdr::{HerdrReporter, HerdrState},
+    prompt,
+    providers::build_automation_provider,
+    tools::sdk_registry::AutomationToolSet,
 };
+
+/// Error returned after an automation run handles an interrupt and completes cleanup.
+#[derive(Debug)]
+pub struct AutomationInterrupted {
+    signal: ShutdownSignal,
+}
+
+impl AutomationInterrupted {
+    fn new(signal: ShutdownSignal) -> Self {
+        Self { signal }
+    }
+
+    /// Returns the conventional process exit code for the received signal.
+    pub fn exit_code(&self) -> u8 {
+        match self.signal {
+            ShutdownSignal::Interrupt => 130,
+            ShutdownSignal::Terminate => 143,
+        }
+    }
+}
+
+impl fmt::Display for AutomationInterrupted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "rho run interrupted by {}", self.signal)
+    }
+}
+
+impl std::error::Error for AutomationInterrupted {}
+
+#[derive(Clone, Copy, Debug)]
+enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
+impl fmt::Display for ShutdownSignal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interrupt => formatter.write_str("SIGINT"),
+            Self::Terminate => formatter.write_str("SIGTERM"),
+        }
+    }
+}
+
+pub(super) struct Startup<'a> {
+    pub config: &'a Config,
+    pub cwd: PathBuf,
+    pub no_system_prompt: bool,
+    pub no_tools: bool,
+    pub diagnostics: RuntimeDiagnostics,
+    pub herdr: HerdrReporter,
+}
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
     match command {
@@ -13,18 +78,106 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
     }
 }
 
-pub(super) async fn run(
-    agent: &mut Agent,
-    prompt: String,
-    herdr: &HerdrReporter,
-) -> anyhow::Result<()> {
-    herdr.report_state(HerdrState::Working, None, None).await;
-    let result = agent.run(prompt).await;
-    herdr.report_state(HerdrState::Idle, None, None).await;
-    herdr.release().await;
+pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
+    let provider = build_automation_provider(
+        &startup.config.provider,
+        &startup.config.model,
+        startup.config.reasoning,
+    )?;
+    let tool_set = if startup.no_tools {
+        AutomationToolSet::disabled()
+    } else {
+        AutomationToolSet::enabled(startup.config, startup.diagnostics.clone())
+    };
+    let tool_specs = tool_set.specs();
+    let system_prompt = if startup.no_system_prompt {
+        startup.diagnostics.update_prompt_sources(Vec::new());
+        SystemPrompt::None
+    } else {
+        let system_prompt = prompt::system_prompt(&tool_specs, &startup.cwd);
+        startup
+            .diagnostics
+            .update_prompt_sources(system_prompt.sources);
+        SystemPrompt::Custom(system_prompt.text)
+    };
+    startup.diagnostics.update_tools(&tool_specs);
+
+    let workspace = Workspace::new(&startup.cwd)?;
+    let mut builder = Rho::builder()
+        .provider_shared(provider)
+        .system_prompt(system_prompt)
+        .workspace(workspace)
+        .workspace_policy(AutomationWorkspacePolicy)
+        .reasoning_level(startup.config.reasoning);
+    for tool in tool_set.tools() {
+        builder = builder.tool_shared(tool.clone());
+    }
+    let runtime = builder.build()?;
+    let session = runtime.session(SessionOptions::default()).await?;
+
+    startup
+        .herdr
+        .report_state(HerdrState::Working, None, None)
+        .await;
+    let result = complete_run(&session, prompt_text).await;
+
+    runtime.shutdown();
+    tool_set.shutdown().await;
+    startup
+        .herdr
+        .report_state(HerdrState::Idle, None, None)
+        .await;
+    startup.herdr.release().await;
+
     let answer = result?;
-    println!("{answer}");
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{}", answer.text())?;
+    stdout.flush()?;
     Ok(())
+}
+
+async fn complete_run(
+    session: &rho_sdk::Session,
+    prompt_text: String,
+) -> anyhow::Result<rho_sdk::RunOutcome> {
+    let mut run = session.start(UserInput::text(prompt_text)).await?;
+    let cancellation = run.cancellation_handle();
+    tokio::select! {
+        outcome = run.outcome() => Ok(outcome?),
+        signal = shutdown_signal() => {
+            let signal = signal?;
+            cancellation.cancel();
+            let _ = run.outcome().await;
+            Err(AutomationInterrupted::new(signal).into())
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<ShutdownSignal> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        _ = interrupt.recv() => Ok(ShutdownSignal::Interrupt),
+        _ = terminate.recv() => Ok(ShutdownSignal::Terminate),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<ShutdownSignal> {
+    tokio::signal::ctrl_c().await?;
+    Ok(ShutdownSignal::Interrupt)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AutomationWorkspacePolicy;
+
+impl WorkspacePolicy for AutomationWorkspacePolicy {
+    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
+        PolicyDecision::Allow
+    }
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {

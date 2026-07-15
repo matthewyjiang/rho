@@ -183,6 +183,12 @@ impl RhoBuilder {
         self
     }
 
+    /// Registers an already shared tool implementation on the runtime.
+    pub fn tool_shared(mut self, tool: Arc<dyn Tool>) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
     pub fn system_prompt(mut self, system_prompt: SystemPrompt) -> Self {
         self.system_prompt = system_prompt;
         self

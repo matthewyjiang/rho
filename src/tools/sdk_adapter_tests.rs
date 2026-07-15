@@ -5,9 +5,9 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use rho_sdk::{
-    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
+    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
     provider::{ScriptedProvider, ScriptedTurn},
-    tool::{OperationKind, Tool, ToolErrorKind, ToolInvocation},
+    tool::{OperationKind, ToolErrorKind, ToolInvocation},
     Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId, ToolCompletion, UserInput,
     Workspace,
 };
@@ -247,18 +247,6 @@ async fn default_runtime_policy_keeps_coding_tools_inert() {
     );
 }
 
-struct SdkArcTool(Arc<dyn Tool>);
-
-impl Tool for SdkArcTool {
-    fn spec(&self) -> ToolSpec {
-        self.0.spec()
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        self.0.call(invocation, context)
-    }
-}
-
 fn build_runtime_with_coding_tools(
     provider: ScriptedProvider,
     workspace: Workspace,
@@ -270,7 +258,7 @@ fn build_runtime_with_coding_tools(
         .workspace(workspace)
         .workspace_policy(policy);
     for tool in coding_tools(options) {
-        builder = builder.tool(SdkArcTool(tool));
+        builder = builder.tool_shared(tool);
     }
     builder.build().unwrap()
 }

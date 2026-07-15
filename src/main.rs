@@ -1,7 +1,18 @@
+use std::process::ExitCode;
+
 use clap::Parser;
-use rho_coding_agent::{run, Cli};
+use rho_coding_agent::{run, AutomationInterrupted, Cli};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    run(Cli::parse()).await
+async fn main() -> ExitCode {
+    match run(Cli::parse()).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let exit_code = error
+                .downcast_ref::<AutomationInterrupted>()
+                .map_or(1, AutomationInterrupted::exit_code);
+            eprintln!("Error: {error:?}");
+            ExitCode::from(exit_code)
+        }
+    }
 }

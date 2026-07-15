@@ -8,8 +8,6 @@ pub mod models_dev;
 pub mod provider_models;
 pub mod registry;
 
-#[allow(unused_imports)]
-pub(crate) use crate::providers::build_sdk_provider;
 pub(crate) use crate::providers::{build_provider, UnavailableProvider};
 pub use context::{ContextUsage, ContextUsageSource};
 pub use contract::{
