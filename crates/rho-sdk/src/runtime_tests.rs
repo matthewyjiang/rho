@@ -18,8 +18,12 @@ use crate::{
     provider::{
         ModelProvider, ProviderEventSender, ProviderFuture, ScriptedProvider, ScriptedTurn,
     },
-    tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
-    Error, Rho, RunEvent, SessionOptions, SystemPrompt, UserInput,
+    tool::{
+        ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
+        ToolInvocation, ToolOutput,
+    },
+    Error, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, Rho, RunEvent,
+    SelectionMode, SessionOptions, SystemPrompt, UserInput,
 };
 
 fn identity() -> ModelIdentity {
@@ -371,6 +375,98 @@ async fn manual_and_automatic_compaction_use_separate_policy_transport_and_mutat
         automatic_session.snapshot().compaction().last_revision(),
         Some(crate::Revision::from_u64(1))
     );
+}
+
+#[derive(Debug)]
+struct QuestionnaireTool;
+
+impl Tool for QuestionnaireTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "questionnaire".into(),
+            description: "asks the host".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let question = HostQuestion::new(
+                "mode",
+                "Which mode?",
+                vec![
+                    HostChoice::new("fast", "Fast"),
+                    HostChoice::new("safe", "Safe"),
+                ],
+                SelectionMode::One,
+            )
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            let request = HostInputRequest::questionnaire("choose mode", vec![question])
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            let response = context
+                .request_host_input(request)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            Ok(ToolOutput::text(response.answers()["mode"][0].clone()))
+        })
+    }
+}
+
+#[tokio::test]
+async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "question-1".into(),
+                    name: "questionnaire".into(),
+                    arguments: json!({}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "configured".into(),
+            )])),
+        ],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .tool(QuestionnaireTool)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("configure")).await.unwrap();
+    let request = loop {
+        if let RunEvent::HostInputRequested { request } = run.next_event().await.unwrap() {
+            break request;
+        }
+    };
+
+    assert_eq!(session.state(), crate::SessionState::WaitingForHostInput);
+    let invalid = HostInputResponse::new().answer("mode", ["unknown"]);
+    assert!(run.respond(request.id().clone(), invalid).await.is_err());
+    assert_eq!(session.state(), crate::SessionState::WaitingForHostInput);
+    run.respond(
+        request.id().clone(),
+        HostInputResponse::new().answer("mode", ["safe"]),
+    )
+    .await
+    .unwrap();
+    assert!(run
+        .respond(
+            request.id().clone(),
+            HostInputResponse::new().answer("mode", ["fast"]),
+        )
+        .await
+        .is_err());
+    while run.next_event().await.is_some() {}
+    let outcome = run.outcome().await.unwrap();
+
+    assert_eq!(outcome.text(), "configured");
+    assert!(matches!(
+        &provider.recorded_requests()[1].messages[2],
+        Message::ToolResult(result) if result.ok && result.content == "safe"
+    ));
 }
 
 #[derive(Debug)]

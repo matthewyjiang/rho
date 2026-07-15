@@ -110,8 +110,8 @@ pub(crate) async fn execute_run(
             provider_context: capture.provider_context,
         };
         history.push(Message::assistant(assistant));
-        drain_steering(&mut commands, &mut steering);
-        let was_steered = !steering.is_empty();
+        drain_steering(control.commands, control.steering);
+        let was_steered = !control.steering.is_empty();
 
         if tool_calls.is_empty() && !was_steered {
             let revision = core.commit(history)?;
@@ -135,7 +135,7 @@ pub(crate) async fn execute_run(
                 RunEvent::ToolProposed { call: call.clone() },
             )
             .await?;
-            let result = match execute_tool(&runtime, &call, &cancellation, &events).await {
+            let result = match execute_tool(&core, &runtime, &call, &mut control).await {
                 Ok(result) => result,
                 Err(Error::Cancelled) => {
                     return commit_cancelled_history(core, history, &events).await;
@@ -148,7 +148,7 @@ pub(crate) async fn execute_run(
             };
             history.push(Message::ToolResult(result));
         }
-        history.append(&mut steering);
+        history.append(control.steering);
     }
 
     let error = Error::Provider(ProviderError::new(
@@ -334,9 +334,15 @@ async fn provider_turn(
 }
 
 fn accept_steering(command: RunCommand, steering: &mut Vec<Message>) {
-    let RunCommand::Steer { input, accepted } = command;
-    steering.push(Message::User(input.into_blocks()));
-    let _ = accepted.send(());
+    match command {
+        RunCommand::Steer { input, accepted } => {
+            steering.push(Message::User(input.into_blocks()));
+            let _ = accepted.send(());
+        }
+        RunCommand::Respond { accepted, .. } => {
+            let _ = accepted.send(Err("no host input request is awaiting a response".into()));
+        }
+    }
 }
 
 fn drain_steering(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut Vec<Message>) {
@@ -425,11 +431,13 @@ async fn handle_provider_event(
 }
 
 async fn execute_tool(
+    core: &Arc<SessionCore>,
     runtime: &Rho,
     call: &ToolCall,
-    cancellation: &CancellationToken,
-    events: &mpsc::Sender<RunEvent>,
+    control: &mut RunControl<'_>,
 ) -> Result<ToolResult, Error> {
+    let cancellation = control.cancellation;
+    let events = control.events;
     let call_id = ToolCallId::from_string(call.id.clone()).map_err(|error| {
         Error::Provider(ProviderError::new(
             ProviderErrorKind::InvalidResponse,
@@ -467,14 +475,18 @@ async fn execute_tool(
     let (progress, mut progress_receiver) =
         tool_progress_channel(NonZeroUsize::new(TOOL_PROGRESS_CAPACITY).unwrap());
     let invocation = ToolInvocation::new(call_id.clone(), call.arguments.clone());
+    let (host_input, mut host_input_receiver) =
+        crate::host_input::channel(TOOL_PROGRESS_CAPACITY, cancellation.clone());
     let context = ToolContext::with_security(
         runtime.workspace.clone(),
         Arc::clone(&runtime.workspace_policy),
         Arc::clone(&runtime.approval_handler),
         cancellation.clone(),
         progress,
-    );
+    )
+    .with_host_input(host_input);
     let mut future = tool.call(invocation, context);
+    let mut pending_input = std::collections::BTreeMap::new();
     let result = loop {
         tokio::select! {
             result = &mut future => break result,
@@ -490,9 +502,37 @@ async fn execute_tool(
                     ).await?;
                 }
             }
+            request = host_input_receiver.recv() => {
+                if let Some(request) = request {
+                    let request_id = request.request.id().clone();
+                    match pending_input.entry(request_id) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            core.set_state(SessionState::WaitingForHostInput);
+                            let event_request = request.request.clone();
+                            entry.insert(request);
+                            emit(
+                                events,
+                                cancellation,
+                                RunEvent::HostInputRequested { request: event_request },
+                            ).await?;
+                        }
+                        std::collections::btree_map::Entry::Occupied(_) => {
+                            let _ = request.response.send(Err(Error::InvalidHostResponse {
+                                message: "duplicate host input request ID".into(),
+                            }));
+                        }
+                    }
+                }
+            }
+            command = control.commands.recv() => {
+                if let Some(command) = command {
+                    handle_tool_command(core, command, &mut pending_input, control.steering);
+                }
+            }
             () = cancellation.cancelled() => return Err(Error::Cancelled),
         }
     };
+    core.set_state(SessionState::Running);
     while let Some(progress) = progress_receiver.try_recv() {
         emit(
             events,
@@ -540,6 +580,49 @@ async fn execute_tool(
                 ok: false,
                 content: error.message().to_owned(),
             })
+        }
+    }
+}
+
+fn handle_tool_command(
+    core: &Arc<SessionCore>,
+    command: RunCommand,
+    pending: &mut std::collections::BTreeMap<
+        crate::HostInputId,
+        crate::host_input::HostInputEnvelope,
+    >,
+    steering: &mut Vec<Message>,
+) {
+    match command {
+        RunCommand::Steer { input, accepted } => {
+            steering.push(Message::User(input.into_blocks()));
+            let _ = accepted.send(());
+        }
+        RunCommand::Respond {
+            request_id,
+            response,
+            accepted,
+        } => {
+            let Some(request) = pending.get(&request_id) else {
+                let _ = accepted.send(Err("host input request is not pending".into()));
+                return;
+            };
+            if let Err(error) = request.request.validate(&response) {
+                let _ = accepted.send(Err(error.to_string()));
+                return;
+            }
+            let request = pending
+                .remove(&request_id)
+                .expect("pending request was checked above");
+            let delivered = request.response.send(Ok(response)).is_ok();
+            let _ = if delivered {
+                accepted.send(Ok(()))
+            } else {
+                accepted.send(Err("host input requester was dropped".into()))
+            };
+            if pending.is_empty() {
+                core.set_state(SessionState::Running);
+            }
         }
     }
 }

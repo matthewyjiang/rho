@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     model::ToolSpec, ApprovalHandler, CancellationToken, CapabilityRequest, DenyAllPolicy,
-    DenyApprovals, ToolCallId, Workspace, WorkspacePolicy,
+    DenyApprovals, HostInputRequest, HostInputResponse, ToolCallId, Workspace, WorkspacePolicy,
 };
 
 /// Future returned by [`Tool`] implementations.
@@ -206,6 +206,7 @@ pub struct ToolContext {
     workspace: Option<Workspace>,
     policy: Arc<dyn WorkspacePolicy>,
     approvals: Arc<dyn ApprovalHandler>,
+    host_input: Option<crate::host_input::HostInputRequester>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 }
@@ -220,6 +221,7 @@ impl ToolContext {
             workspace,
             policy: Arc::new(DenyAllPolicy),
             approvals: Arc::new(DenyApprovals),
+            host_input: None,
             cancellation,
             progress,
         }
@@ -236,9 +238,31 @@ impl ToolContext {
             workspace,
             policy,
             approvals,
+            host_input: None,
             cancellation,
             progress,
         }
+    }
+
+    pub(crate) fn with_host_input(
+        mut self,
+        host_input: crate::host_input::HostInputRequester,
+    ) -> Self {
+        self.host_input = Some(host_input);
+        self
+    }
+
+    pub async fn request_host_input(
+        &self,
+        request: HostInputRequest,
+    ) -> Result<HostInputResponse, crate::Error> {
+        let requester =
+            self.host_input
+                .as_ref()
+                .ok_or_else(|| crate::Error::InvalidConfiguration {
+                    message: "tool context is not attached to an active run".into(),
+                })?;
+        requester.request(request).await
     }
 
     pub fn workspace(&self) -> Option<&Workspace> {

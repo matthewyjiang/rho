@@ -47,6 +47,7 @@ mod compaction;
 mod diagnostics;
 mod error;
 mod event;
+mod host_input;
 mod id;
 pub mod model;
 mod orchestration;
@@ -67,7 +68,10 @@ pub use compaction::{
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind};
 pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure};
-pub use id::{InvalidId, Revision, RunId, SessionId, ToolCallId};
+pub use host_input::{
+    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
+};
+pub use id::{HostInputId, InvalidId, Revision, RunId, SessionId, ToolCallId};
 pub use persistence::{InMemorySessionStore, SessionSnapshot, SESSION_SNAPSHOT_SCHEMA_VERSION};
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
 pub use run::Run;

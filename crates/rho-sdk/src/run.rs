@@ -7,6 +7,11 @@ pub(crate) enum RunCommand {
         input: crate::UserInput,
         accepted: tokio::sync::oneshot::Sender<()>,
     },
+    Respond {
+        request_id: crate::HostInputId,
+        response: crate::HostInputResponse,
+        accepted: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// Handle for one active SDK run and its ordered event stream.
@@ -45,6 +50,10 @@ impl Run {
         self.cancellation.clone()
     }
 
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
     pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
         let (accepted, receipt) = tokio::sync::oneshot::channel();
         self.commands
@@ -56,6 +65,30 @@ impl Run {
         receipt.await.map_err(|_| Error::InvalidHostResponse {
             message: "run completed before accepting steering input".into(),
         })
+    }
+
+    pub async fn respond(
+        &self,
+        request_id: crate::HostInputId,
+        response: crate::HostInputResponse,
+    ) -> Result<(), Error> {
+        let (accepted, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(RunCommand::Respond {
+                request_id,
+                response,
+                accepted,
+            })
+            .await
+            .map_err(|_| Error::InvalidHostResponse {
+                message: "run no longer accepts host input".into(),
+            })?;
+        receipt
+            .await
+            .map_err(|_| Error::InvalidHostResponse {
+                message: "run completed before accepting host input".into(),
+            })?
+            .map_err(|message| Error::InvalidHostResponse { message })
     }
 
     pub async fn next_event(&mut self) -> Option<RunEvent> {

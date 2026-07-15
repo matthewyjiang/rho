@@ -1,0 +1,85 @@
+use pretty_assertions::assert_eq;
+
+use super::{HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode};
+
+fn request() -> HostInputRequest {
+    HostInputRequest::questionnaire(
+        "configure",
+        vec![
+            HostQuestion::new(
+                "mode",
+                "mode?",
+                vec![
+                    HostChoice::new("fast", "Fast"),
+                    HostChoice::new("safe", "Safe"),
+                ],
+                SelectionMode::One,
+            )
+            .unwrap(),
+            HostQuestion::new(
+                "features",
+                "features?",
+                vec![HostChoice::new("a", "A"), HostChoice::new("b", "B")],
+                SelectionMode::Many,
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn questionnaire_validates_complete_typed_answers() {
+    let request = request();
+    let response = HostInputResponse::new()
+        .answer("mode", ["safe"])
+        .answer("features", ["a", "b"]);
+
+    request.validate(&response).unwrap();
+    assert_eq!(response.answers()["mode"], ["safe"]);
+}
+
+#[test]
+fn questionnaire_rejects_missing_unknown_duplicate_and_excess_answers() {
+    let request = request();
+
+    assert!(request
+        .validate(&HostInputResponse::new().answer("mode", ["fast"]))
+        .is_err());
+    assert!(request
+        .validate(
+            &HostInputResponse::new()
+                .answer("mode", ["unknown"])
+                .answer("features", ["a"]),
+        )
+        .is_err());
+    assert!(request
+        .validate(
+            &HostInputResponse::new()
+                .answer("mode", ["fast", "safe"])
+                .answer("features", ["a"]),
+        )
+        .is_err());
+    assert!(request
+        .validate(
+            &HostInputResponse::new()
+                .answer("mode", ["fast"])
+                .answer("features", ["a", "a"]),
+        )
+        .is_err());
+}
+
+#[test]
+fn questionnaire_requires_unique_question_ids() {
+    let question = HostQuestion::new(
+        "same",
+        "question",
+        vec![HostChoice::new("yes", "Yes")],
+        SelectionMode::One,
+    )
+    .unwrap();
+
+    assert!(
+        HostInputRequest::questionnaire("duplicate", vec![question.clone(), question]).is_err()
+    );
+}

@@ -148,6 +148,9 @@ pub enum RunEvent {
     ProviderContextUpdated {
         kind: String,
     },
+    HostInputRequested {
+        request: crate::HostInputRequest,
+    },
     CompactionStarted {
         trigger: crate::CompactionTrigger,
         message_count: usize,
