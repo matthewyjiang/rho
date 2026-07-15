@@ -80,6 +80,61 @@ impl FakeProvider {
 
 crate::impl_sdk_model_provider!(FakeProvider);
 
+/// Emits one event per await so bridge backpressure can stall further progress.
+#[derive(Clone)]
+struct YieldingProvider {
+    identity: ModelIdentity,
+    deltas: Vec<String>,
+    emitted: Arc<AtomicUsize>,
+}
+
+impl YieldingProvider {
+    fn new(deltas: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            identity: ModelIdentity::new("fake", "test", "yielding"),
+            deltas: deltas.into_iter().map(Into::into).collect(),
+            emitted: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn model_identity(&self) -> ModelIdentity {
+        self.identity.clone()
+    }
+
+    async fn complete_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        if request.cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        Ok(ModelResponse::Assistant(
+            self.deltas
+                .iter()
+                .map(|delta| ContentBlock::Text(delta.clone()))
+                .collect(),
+        ))
+    }
+
+    async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        if request.cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        for delta in &self.deltas {
+            if request.cancellation.is_cancelled() {
+                return Err(ModelError::Interrupted);
+            }
+            on_event(ModelEvent::OutputDelta(delta.clone()))?;
+            self.emitted.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+        }
+        self.complete_turn(request).await
+    }
+}
+
+crate::impl_sdk_model_provider!(YieldingProvider);
+
 fn request<'a>(
     messages: &'a [Message],
     cancellation: CancellationToken,
@@ -304,6 +359,133 @@ async fn callback_stream_bridge_forwards_events_in_order() {
             ModelEvent::OutputDelta(" world".into()),
         ]
     );
+}
+
+#[tokio::test]
+async fn callback_stream_bridge_handles_bursts_larger_than_host_capacity() {
+    let provider = FakeProvider::new(ModelResponse::Assistant(vec![
+        ContentBlock::Text("one".into()),
+        ContentBlock::Text("two".into()),
+        ContentBlock::Text("three".into()),
+    ]));
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let messages = [Message::user_text("hi")];
+
+    let (result, received) = tokio::join!(
+        provider.send_turn_stream(
+            request(
+                &messages,
+                CancellationToken::new(),
+                ReasoningLevel::default()
+            ),
+            events
+        ),
+        async {
+            let mut received = Vec::new();
+            while let Some(event) = receiver.recv().await {
+                received.push(event);
+            }
+            received
+        }
+    );
+
+    assert_eq!(
+        result.unwrap(),
+        ModelResponse::Assistant(vec![
+            ContentBlock::Text("one".into()),
+            ContentBlock::Text("two".into()),
+            ContentBlock::Text("three".into()),
+        ])
+    );
+    assert_eq!(
+        received,
+        [
+            ModelEvent::OutputDelta("one".into()),
+            ModelEvent::OutputDelta("two".into()),
+            ModelEvent::OutputDelta("three".into()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn callback_stream_bridge_applies_host_backpressure_across_awaits() {
+    let provider = YieldingProvider::new(["a", "b", "c", "d", "e"]);
+    let emitted = Arc::clone(&provider.emitted);
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let turn = tokio::spawn({
+        let provider = provider.clone();
+        async move {
+            let messages = [Message::user_text("hi")];
+            provider
+                .send_turn_stream(
+                    request(
+                        &messages,
+                        CancellationToken::new(),
+                        ReasoningLevel::default(),
+                    ),
+                    events,
+                )
+                .await
+        }
+    });
+
+    // Drive the stream until the host channel is full and the bridge is waiting
+    // on bounded send. Further provider progress must stall until the host reads.
+    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        loop {
+            tokio::task::yield_now().await;
+            if emitted.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("provider should emit until host backpressure engages");
+
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(emitted.load(Ordering::SeqCst), 2);
+
+    let first = receiver.recv().await.expect("first buffered host event");
+    assert_eq!(first, ModelEvent::OutputDelta("a".into()));
+
+    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        loop {
+            tokio::task::yield_now().await;
+            if emitted.load(Ordering::SeqCst) >= 3 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("provider should resume after the host drains capacity");
+
+    drop(receiver);
+    let _ = turn.await;
+}
+
+#[tokio::test]
+async fn callback_stream_bridge_observes_cancellation_between_events() {
+    let provider = YieldingProvider::new(["one", "two", "three"]);
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(4).unwrap());
+    let messages = [Message::user_text("hi")];
+    let cancellation = CancellationToken::new();
+
+    let turn = provider.send_turn_stream(
+        request(&messages, cancellation.clone(), ReasoningLevel::default()),
+        events,
+    );
+    let consumer = async {
+        let first = receiver.recv().await;
+        cancellation.cancel();
+        while receiver.recv().await.is_some() {}
+        first
+    };
+
+    let (result, first) = tokio::join!(turn, consumer);
+    assert_eq!(first, Some(ModelEvent::OutputDelta("one".into())));
+    assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
 }
 
 #[tokio::test]

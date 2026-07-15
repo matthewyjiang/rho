@@ -5,7 +5,18 @@
 //! Callback-based stream transports remain an internal detail and are bridged
 //! here into the SDK's bounded async event sender.
 
-use rho_sdk::{ProviderError, ProviderErrorKind, Retryability};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    sync::{Arc, Mutex},
+};
+
+use rho_sdk::{
+    model::{ModelEvent, ModelResponse},
+    provider::ProviderEventSender,
+    CancellationToken, ProviderError, ProviderErrorKind, Retryability,
+};
+use tokio::sync::Notify;
 
 use crate::model::ModelError;
 
@@ -87,12 +98,94 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     }
 }
 
+/// Shared queue used by [`callback_event_sink`] and [`drive_callback_stream`].
+pub type CallbackEventQueue = Arc<Mutex<VecDeque<ModelEvent>>>;
+
+/// Builds the synchronous callback used by application stream transports.
+///
+/// Events are buffered temporarily because the callback cannot await. The
+/// companion [`drive_callback_stream`] loop drains that buffer through the
+/// SDK's bounded event sender before polling the provider again.
+pub fn callback_event_sink(
+    cancellation: CancellationToken,
+    pending: CallbackEventQueue,
+    notify: Arc<Notify>,
+) -> impl FnMut(ModelEvent) -> Result<(), ModelError> + Send {
+    move |event| {
+        if cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_back(event);
+        notify.notify_one();
+        Ok(())
+    }
+}
+
+/// Drains buffered callback events through the bounded SDK event channel and
+/// drives the provider future with host backpressure across awaits.
+pub async fn drive_callback_stream<Fut>(
+    cancellation: CancellationToken,
+    events: ProviderEventSender,
+    pending: CallbackEventQueue,
+    notify: Arc<Notify>,
+    provider: Fut,
+) -> Result<ModelResponse, ProviderError>
+where
+    Fut: Future<Output = Result<ModelResponse, ModelError>>,
+{
+    let mut provider = std::pin::pin!(provider);
+    let mut provider_result: Option<Result<ModelResponse, ModelError>> = None;
+
+    loop {
+        loop {
+            let next = pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front();
+            let Some(event) = next else {
+                break;
+            };
+            if cancellation.is_cancelled() {
+                return Err(ProviderError::interrupted("provider stream interrupted"));
+            }
+            events.send(event).await?;
+        }
+
+        if let Some(result) = provider_result.take() {
+            return result.map_err(provider_error_from_model_error);
+        }
+
+        let notified = notify.notified();
+        let has_pending = !pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty();
+        if has_pending {
+            continue;
+        }
+
+        tokio::select! {
+            biased;
+            () = notified => {}
+            () = cancellation.cancelled() => {
+                return Err(ProviderError::interrupted("provider stream interrupted"));
+            }
+            result = &mut provider => {
+                provider_result = Some(result);
+            }
+        }
+    }
+}
+
 /// Implements [`rho_sdk::provider::ModelProvider`] for an application transport
 /// that already exposes inherent `model_identity`, `complete_turn`, and
 /// `stream_turn` methods.
 ///
-/// Streaming uses a bounded callback bridge. A callback burst that fills the
-/// bridge is interrupted rather than buffered without bound.
+/// Streaming buffers same-poll callback bursts, then applies the SDK event
+/// channel's async backpressure before polling the provider again.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
@@ -118,32 +211,25 @@ macro_rules! impl_sdk_model_provider {
                 events: ::rho_sdk::provider::ProviderEventSender,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
                 ::std::boxed::Box::pin(async move {
-                    let (event_tx, mut event_rx) =
-                        ::tokio::sync::mpsc::channel(events.capacity());
-                    let mut on_event = move |event| {
-                        event_tx
-                            .try_send(event)
-                            .map_err(|_| $crate::model::ModelError::Interrupted)
-                    };
-                    let mut provider = ::std::pin::pin!(self.stream_turn(request, &mut on_event));
-                    loop {
-                        ::tokio::select! {
-                            biased;
-                            event = event_rx.recv() => {
-                                if let Some(event) = event {
-                                    events.send(event).await?;
-                                }
-                            }
-                            result = &mut provider => {
-                                while let Ok(event) = event_rx.try_recv() {
-                                    events.send(event).await?;
-                                }
-                                return result.map_err(
-                                    $crate::providers::sdk_contract::provider_error_from_model_error,
-                                );
-                            }
-                        }
-                    }
+                    let cancellation = request.cancellation.clone();
+                    let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
+                        ::std::collections::VecDeque::new(),
+                    ));
+                    let notify = ::std::sync::Arc::new(::tokio::sync::Notify::new());
+                    let mut on_event = $crate::providers::sdk_contract::callback_event_sink(
+                        cancellation.clone(),
+                        ::std::sync::Arc::clone(&pending),
+                        ::std::sync::Arc::clone(&notify),
+                    );
+                    let provider = self.stream_turn(request, &mut on_event);
+                    $crate::providers::sdk_contract::drive_callback_stream(
+                        cancellation,
+                        events,
+                        pending,
+                        notify,
+                        provider,
+                    )
+                    .await
                 })
             }
         }
