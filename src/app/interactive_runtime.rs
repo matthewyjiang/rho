@@ -78,6 +78,17 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) unavailable_error: Option<crate::model::ModelError>,
 }
 
+enum ReplacementSessionSource<'a> {
+    History {
+        history: Vec<Message>,
+        id: Option<String>,
+    },
+    Snapshot {
+        storage: &'a StoredSession,
+        id: String,
+    },
+}
+
 pub(crate) struct InteractiveRuntime {
     runtime: Rho,
     session: Session,
@@ -244,8 +255,19 @@ impl InteractiveRuntime {
         if self.state != InteractiveState::Idle {
             return Err(Error::SessionBusy);
         }
-        if let Some(id) = self.pending_session_id.take() {
-            self.rebuild_session(Vec::new(), Some(id.to_string()))
+        if let Some(id) = self.pending_session_id.clone() {
+            let storage = self.storage.clone();
+            let source = storage.as_ref().map_or_else(
+                || ReplacementSessionSource::History {
+                    history: Vec::new(),
+                    id: Some(id.to_string()),
+                },
+                |storage| ReplacementSessionSource::Snapshot {
+                    storage,
+                    id: id.to_string(),
+                },
+            );
+            self.rebuild_session(source)
                 .await
                 .map_err(|error| Error::Persistence {
                     message: error.to_string(),
@@ -321,21 +343,19 @@ impl InteractiveRuntime {
             .take()
             .ok_or_else(|| anyhow::anyhow!("no active run"))?;
         let outcome = run.outcome().await;
-        self.sync_storage()?;
+        let storage_result = self.sync_storage();
         self.pending_model_user = None;
         self.pending_display_user = None;
         self.state = InteractiveState::Idle;
+        storage_result?;
         Ok(outcome?)
     }
 
     pub(crate) async fn compact(&mut self) -> anyhow::Result<bool> {
-        if self.state != InteractiveState::Idle {
+        if self.active_run.is_some() {
             anyhow::bail!("session is busy");
         }
-        self.state = InteractiveState::Compacting;
-        let result = self.session.compact().await;
-        self.state = InteractiveState::Idle;
-        let outcome = result?;
+        let outcome = self.session.compact().await?;
         self.sync_storage_replace()?;
         if outcome.current_messages() < outcome.previous_messages() {
             self.pending_context_usage = Some(
@@ -369,8 +389,13 @@ impl InteractiveRuntime {
             anyhow::bail!("cannot switch sessions while a run is active");
         }
         let id = storage.id().to_string();
+        self.rebuild_session(ReplacementSessionSource::Snapshot {
+            storage: &storage,
+            id,
+        })
+        .await?;
         self.storage = Some(storage);
-        self.rebuild_session(Vec::new(), Some(id)).await
+        Ok(())
     }
 
     pub(crate) fn replace_provider(
@@ -476,11 +501,26 @@ impl InteractiveRuntime {
 
     async fn rebuild_session(
         &mut self,
-        history: Vec<Message>,
-        id: Option<String>,
+        source: ReplacementSessionSource<'_>,
     ) -> anyhow::Result<()> {
-        self.runtime.shutdown();
-        self.runtime = build_runtime(
+        let (options, resume_notice) = match source {
+            ReplacementSessionSource::Snapshot { storage, id } => {
+                let snapshot =
+                    storage.snapshot_for_resume(self.provider.identity(), prompt_cache_key(&id))?;
+                let notice = resume_omissions_notice(&snapshot, &self.provider.identity());
+                (SessionOptions::from_snapshot(snapshot), notice)
+            }
+            ReplacementSessionSource::History { history, id } => {
+                let mut options = SessionOptions::new().history(history);
+                if let Some(id) = id {
+                    options = options
+                        .id(SessionId::from_string(&id)?)
+                        .prompt_cache_key(prompt_cache_key(&id));
+                }
+                (options, None)
+            }
+        };
+        let replacement_runtime = build_runtime(
             Arc::clone(&self.provider),
             &self.tools,
             self.workspace.clone(),
@@ -489,31 +529,15 @@ impl InteractiveRuntime {
             self.compaction.clone(),
             self.context_window,
         )?;
-        let options = if let Some(storage) = &self.storage {
-            let snapshot = storage.snapshot_for_resume(
-                self.provider.identity(),
-                id.as_deref()
-                    .map(prompt_cache_key)
-                    .unwrap_or_else(|| prompt_cache_key(storage.id())),
-            )?;
-            // The TUI owns the terminal here; queue the warning for the
-            // transcript instead of writing to stderr.
-            if let Some(notice) = resume_omissions_notice(&snapshot, &self.provider.identity()) {
-                self.pending_notices.push(notice);
-            }
-            SessionOptions::from_snapshot(snapshot)
-        } else {
-            let mut options = SessionOptions::new().history(history);
-            if let Some(id) = id.as_deref() {
-                options = options
-                    .id(SessionId::from_string(id)?)
-                    .prompt_cache_key(prompt_cache_key(id));
-            }
-            options
-        };
-        self.session = self.runtime.session(options).await?;
+        let replacement_session = replacement_runtime.session(options).await?;
+        let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
+        self.session = replacement_session;
+        if let Some(notice) = resume_notice {
+            self.pending_notices.push(notice);
+        }
         self.pending_session_id = None;
         self.state = InteractiveState::Idle;
+        previous_runtime.shutdown();
         Ok(())
     }
 

@@ -4,15 +4,19 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode,
-    SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
+    CompactionFuture, CompactionOutput, CompactionRequest, Compactor, HostChoice, HostInputRequest,
+    HostQuestion, Retryability, RunEvent, SelectionMode, SessionOptions, SystemPrompt, ToolCallId,
+    UserInput, Workspace,
 };
 
 use super::{
     active_run_disposition, begin_provider_switch, build_runtime, state_after_event,
-    ActiveRunCommand, ActiveRunDisposition, InteractiveState, RunPhase,
+    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState, RunPhase,
 };
-use crate::{compaction::CompactionConfig, tools::sdk_registry::AppToolSet};
+use crate::{
+    compaction::CompactionConfig, session::Session as StoredSession,
+    tools::sdk_registry::AppToolSet,
+};
 
 fn questionnaire_event() -> RunEvent {
     let question = HostQuestion::new(
@@ -207,6 +211,101 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         }
     )));
     assert_eq!(provider.recorded_requests().len(), 2);
+}
+
+struct PendingCompactor;
+
+impl Compactor for PendingCompactor {
+    fn compact<'a>(&'a self, _request: CompactionRequest) -> CompactionFuture<'a> {
+        Box::pin(std::future::pending::<
+            Result<CompactionOutput, rho_sdk::Error>,
+        >())
+    }
+}
+
+async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
+    let provider = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text(response.into()),
+        ]))],
+    ));
+    let shared_provider: Arc<dyn ModelProvider> = provider;
+    let tools = AppToolSet::disabled();
+    let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
+    let runtime = rho_sdk::Rho::builder()
+        .provider_shared(Arc::clone(&shared_provider))
+        .compactor(PendingCompactor)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    InteractiveRuntime {
+        runtime,
+        session,
+        active_run: None,
+        state: InteractiveState::Idle,
+        provider: shared_provider,
+        tools,
+        workspace,
+        system_prompt: SystemPrompt::None,
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig::default(),
+        context_window: None,
+        storage: None,
+        pending_model_user: None,
+        pending_display_user: None,
+        pending_session_id: None,
+        pending_context_usage: None,
+        pending_notices: Vec::new(),
+        cumulative_input_tokens: 0,
+        step_input_token_baseline: 0,
+    }
+}
+
+#[tokio::test]
+async fn dropping_manual_compaction_does_not_leave_the_runtime_busy() {
+    let mut interactive = pending_compaction_runtime("done").await;
+
+    let mut compact = Box::pin(interactive.compact());
+    tokio::select! {
+        result = &mut compact => panic!("compaction unexpectedly completed: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    drop(compact);
+
+    interactive
+        .start(UserInput::text("continue"), None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn failed_resume_preserves_the_current_runtime() {
+    let mut interactive = pending_compaction_runtime("still available").await;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let target = StoredSession::create_in_root(root.path(), &cwd).unwrap();
+    std::fs::write(
+        target.path(),
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "session",
+                "version": 999,
+                "id": target.id(),
+                "timestamp": "1",
+                "cwd": cwd,
+            })
+        ),
+    )
+    .unwrap();
+
+    assert!(interactive.resume(target, Vec::new()).await.is_err());
+    interactive
+        .start(UserInput::text("continue"), None)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
