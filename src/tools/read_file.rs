@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -60,12 +62,7 @@ impl Tool for ReadFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
-        let content = if args.offset.is_none() && args.limit.is_none() {
-            tokio::fs::read_to_string(path).await?
-        } else {
-            let file = tokio::fs::File::open(path).await?;
-            read_line_range(BufReader::new(file), args.offset, args.limit).await?
-        };
+        let content = read_file_content(&path, args.offset, args.limit).await?;
         Ok(ToolResult {
             id,
             ok: true,
@@ -74,7 +71,7 @@ impl Tool for ReadFile {
     }
 }
 
-fn read_file_display_content(
+pub(super) fn read_file_display_content(
     cwd: &std::path::Path,
     path: &str,
     args: &serde_json::Value,
@@ -98,6 +95,18 @@ fn read_file_display_content(
         .map(|limit| start.saturating_add(limit).saturating_sub(1).to_string())
         .unwrap_or_else(|| "end".into());
     format!("{path}:{start}-{end}")
+}
+
+pub(super) async fn read_file_content(
+    path: &Path,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<String, ToolError> {
+    if offset.is_none() && limit.is_none() {
+        return Ok(tokio::fs::read_to_string(path).await?);
+    }
+    let file = tokio::fs::File::open(path).await?;
+    read_line_range(BufReader::new(file), offset, limit).await
 }
 
 async fn read_line_range(

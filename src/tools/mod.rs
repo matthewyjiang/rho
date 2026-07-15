@@ -10,6 +10,7 @@ mod process;
 pub mod read_file;
 pub mod rho;
 pub mod rtk;
+pub mod sdk_adapter;
 pub mod skill;
 pub mod web;
 pub mod write_file;

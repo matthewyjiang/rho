@@ -2,7 +2,7 @@ use crate::{
     tool::*,
     tools::{
         diff::unified_diff,
-        edit_file_args::{edit_error, input_schema, Args},
+        edit_file_args::{edit_error, input_schema, Args, Edit},
     },
 };
 use same_file::Handle;
@@ -10,18 +10,29 @@ use std::{
     fs::OpenOptions,
     io::{Seek, SeekFrom, Write},
     ops::Range,
+    path::PathBuf,
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 pub struct EditFile;
 
 struct FileChanges {
-    path: std::path::PathBuf,
+    path: PathBuf,
     file: tokio::fs::File,
     identity: Handle,
     display_path: String,
     original: String,
     updated: String,
+}
+
+pub(super) struct EditFileOutcome {
+    pub content: String,
+    #[allow(dead_code)]
+    pub display_paths: Vec<String>,
+    #[allow(dead_code)]
+    pub diffs: String,
+    #[allow(dead_code)]
+    pub file_count: usize,
 }
 
 #[async_trait::async_trait]
@@ -87,96 +98,119 @@ impl Tool for EditFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let edits = args.into_edits()?;
-        let mut files = Vec::<FileChanges>::new();
-        let mut replacement_count = 0;
-
-        for (index, edit) in edits.iter().enumerate() {
-            edit.validate(index)?;
-            let requested_path = resolve_path(&ctx.cwd, &edit.path);
-            let path = tokio::fs::canonicalize(&requested_path)
-                .await
-                .map_err(|error| {
-                    edit_error(
-                        index,
-                        &edit.path,
-                        format!("could not resolve file: {error}"),
-                    )
-                })?;
-            let mut file = tokio::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&path)
-                .await
-                .map_err(|error| {
-                    edit_error(index, &edit.path, format!("could not open file: {error}"))
-                })?;
-            let identity =
-                Handle::from_file(file.try_clone().await?.into_std().await).map_err(|error| {
-                    edit_error(
-                        index,
-                        &edit.path,
-                        format!("could not identify file: {error}"),
-                    )
-                })?;
-            let file_index = match files.iter().position(|file| file.identity == identity) {
-                Some(file_index) => file_index,
-                None => {
-                    let mut content = String::new();
-                    file.read_to_string(&mut content).await.map_err(|error| {
-                        edit_error(index, &edit.path, format!("could not read file: {error}"))
-                    })?;
-                    files.push(FileChanges {
-                        path,
-                        file,
-                        identity,
-                        display_path: compact_display_path(&ctx.cwd, &edit.path),
-                        original: content.clone(),
-                        updated: content,
-                    });
-                    files.len() - 1
-                }
-            };
-
-            let file = &mut files[file_index];
-            let spans = replacement_spans(&file.updated, &edit.old_string);
-            edit.validate_match_count(index, spans.len())?;
-            let new_string = match_file_eol(&file.updated, &edit.new_string);
-            file.updated = replace_spans(&file.updated, &spans, &new_string);
-            replacement_count += spans.len();
-        }
-
-        for file in &mut files {
-            file.file.rewind().await?;
-            let mut current = String::new();
-            file.file.read_to_string(&mut current).await?;
-            if current != file.original {
-                return Err(ToolError::Message(format!(
-                    "{} changed while edits were being validated; no files were modified",
-                    file.display_path
-                )));
-            }
-        }
-
-        let diffs = files
-            .iter()
-            .map(|file| unified_diff(&file.original, &file.updated, &file.display_path, false))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        write_all_or_rollback(&mut files).await?;
-
+        let cwd = ctx.cwd.clone();
+        let outcome = apply_edits(
+            edits,
+            |path| resolve_path(&cwd, path),
+            |path| compact_display_path(&cwd, path),
+            ctx.max_output_bytes,
+        )
+        .await?;
         Ok(ToolResult {
             id,
             ok: true,
-            content: truncate(
-                format!(
-                    "edited {} file(s); applied {} edit(s), replaced {replacement_count} occurrence(s)\n\n{diffs}",
-                    files.len(),
-                    edits.len()
-                ),
-                ctx.max_output_bytes,
-            ),
+            content: outcome.content,
         })
     }
+}
+
+pub(super) async fn apply_edits(
+    edits: Vec<Edit>,
+    resolve_requested: impl Fn(&str) -> PathBuf,
+    display_path: impl Fn(&str) -> String,
+    max_output_bytes: usize,
+) -> Result<EditFileOutcome, ToolError> {
+    let mut files = Vec::<FileChanges>::new();
+    let mut replacement_count = 0;
+    let edit_count = edits.len();
+
+    for (index, edit) in edits.iter().enumerate() {
+        edit.validate(index)?;
+        let requested_path = resolve_requested(&edit.path);
+        let path = tokio::fs::canonicalize(&requested_path)
+            .await
+            .map_err(|error| {
+                edit_error(
+                    index,
+                    &edit.path,
+                    format!("could not resolve file: {error}"),
+                )
+            })?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .await
+            .map_err(|error| {
+                edit_error(index, &edit.path, format!("could not open file: {error}"))
+            })?;
+        let identity =
+            Handle::from_file(file.try_clone().await?.into_std().await).map_err(|error| {
+                edit_error(
+                    index,
+                    &edit.path,
+                    format!("could not identify file: {error}"),
+                )
+            })?;
+        let file_index = match files.iter().position(|file| file.identity == identity) {
+            Some(file_index) => file_index,
+            None => {
+                let mut content = String::new();
+                file.read_to_string(&mut content).await.map_err(|error| {
+                    edit_error(index, &edit.path, format!("could not read file: {error}"))
+                })?;
+                files.push(FileChanges {
+                    path,
+                    file,
+                    identity,
+                    display_path: display_path(&edit.path),
+                    original: content.clone(),
+                    updated: content,
+                });
+                files.len() - 1
+            }
+        };
+
+        let file = &mut files[file_index];
+        let spans = replacement_spans(&file.updated, &edit.old_string);
+        edit.validate_match_count(index, spans.len())?;
+        let new_string = match_file_eol(&file.updated, &edit.new_string);
+        file.updated = replace_spans(&file.updated, &spans, &new_string);
+        replacement_count += spans.len();
+    }
+
+    for file in &mut files {
+        file.file.rewind().await?;
+        let mut current = String::new();
+        file.file.read_to_string(&mut current).await?;
+        if current != file.original {
+            return Err(ToolError::Message(format!(
+                "{} changed while edits were being validated; no files were modified",
+                file.display_path
+            )));
+        }
+    }
+
+    let diffs = files
+        .iter()
+        .map(|file| unified_diff(&file.original, &file.updated, &file.display_path, false))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let display_paths = files.iter().map(|file| file.display_path.clone()).collect();
+    let file_count = files.len();
+    write_all_or_rollback(&mut files).await?;
+
+    Ok(EditFileOutcome {
+        content: truncate(
+            format!(
+                "edited {file_count} file(s); applied {edit_count} edit(s), replaced {replacement_count} occurrence(s)\n\n{diffs}"
+            ),
+            max_output_bytes,
+        ),
+        display_paths,
+        diffs,
+        file_count,
+    })
 }
 
 async fn write_all_or_rollback(files: &mut [FileChanges]) -> Result<(), ToolError> {
