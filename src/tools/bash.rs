@@ -331,20 +331,30 @@ mod tests {
 
     #[tokio::test]
     async fn command_receives_eof_on_stdin() {
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            Bash::new(false).call(
-                json!({"command": "if read -r value; then printf 'input:%s' \"$value\"; else printf 'eof'; fi"}),
+        // Bound the tool itself so a hung stdin fails with a timeout error instead of
+        // an outer race against CI load. Null stdin should make `read` return immediately.
+        let result = Bash::new(false)
+            .call(
+                json!({
+                    "command": "if read -r value; then printf 'input:%s' \"$value\"; else printf 'eof'; fi",
+                    "timeout_seconds": 5
+                }),
                 test_context(),
                 "call_1".into(),
-            ),
-        )
-        .await
-        .expect("command should not wait for terminal input")
-        .unwrap();
+            )
+            .await
+            .expect("command should not wait for terminal input");
 
-        assert!(result.ok);
-        assert!(result.content.contains("eof"));
+        assert!(
+            result.ok,
+            "command should complete on closed stdin: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("eof"),
+            "expected eof marker in output: {}",
+            result.content
+        );
     }
 
     #[tokio::test]
