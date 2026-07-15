@@ -179,6 +179,7 @@ pub struct ModelRequest<'a> {
     pub messages: &'a [Message],
     pub tools: &'a [ToolSpec],
     pub cancellation: CancellationToken,
+    pub reasoning_level: crate::ReasoningLevel,
     /// Provider-specific prompt cache key metadata.
     ///
     /// Providers must opt in explicitly when their API supports this field.

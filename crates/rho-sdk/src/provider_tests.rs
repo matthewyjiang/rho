@@ -26,6 +26,7 @@ fn request<'a>(
         messages,
         tools,
         cancellation,
+        reasoning_level: crate::ReasoningLevel::default(),
         prompt_cache_key: Some("session-1"),
     }
 }

@@ -105,6 +105,7 @@ pub trait ModelProvider: Send + Sync {
 pub struct RecordedModelRequest {
     pub messages: Vec<crate::model::Message>,
     pub tools: Vec<crate::model::ToolSpec>,
+    pub reasoning_level: crate::ReasoningLevel,
     pub prompt_cache_key: Option<String>,
 }
 
@@ -169,6 +170,7 @@ impl ScriptedProvider {
             .push(RecordedModelRequest {
                 messages: request.messages.to_vec(),
                 tools: request.tools.to_vec(),
+                reasoning_level: request.reasoning_level,
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         self.turns

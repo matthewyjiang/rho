@@ -641,6 +641,37 @@ async fn dropping_a_run_cancels_work_and_releases_the_session() {
     assert!(!session.is_running());
 }
 
+#[tokio::test]
+async fn reasoning_level_is_explicit_and_can_change_between_runs() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("done".into()),
+        ]))],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .reasoning_level(crate::ReasoningLevel::Low)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    assert_eq!(session.reasoning_level(), crate::ReasoningLevel::Low);
+    session
+        .set_reasoning_level(crate::ReasoningLevel::High)
+        .unwrap();
+    session.complete("reason").await.unwrap();
+
+    assert_eq!(
+        provider.recorded_requests()[0].reasoning_level,
+        crate::ReasoningLevel::High
+    );
+    assert_eq!(
+        session.diagnostics().reasoning_level(),
+        crate::ReasoningLevel::High
+    );
+}
+
 #[test]
 fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() {
     let runtime = Rho::builder()

@@ -77,6 +77,7 @@ pub(crate) async fn execute_run(
             &history,
             &runtime.tools.specs(),
             &accumulated_usage,
+            runtime.reasoning_level,
             &mut control,
         )
         .await
@@ -223,11 +224,19 @@ async fn request_valid_response(
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
+    reasoning_level: crate::ReasoningLevel,
     control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     for attempt in 1..=INVALID_RESPONSE_ATTEMPTS {
-        let (response, capture) =
-            provider_turn(provider, history, tools, accumulated_usage, control).await?;
+        let (response, capture) = provider_turn(
+            provider,
+            history,
+            tools,
+            accumulated_usage,
+            reasoning_level,
+            control,
+        )
+        .await?;
         if valid_response(&response) {
             return Ok((response, capture));
         }
@@ -271,6 +280,7 @@ async fn provider_turn(
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
+    reasoning_level: crate::ReasoningLevel,
     control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     let (provider_events, mut receiver) =
@@ -279,6 +289,7 @@ async fn provider_turn(
         messages: history,
         tools,
         cancellation: control.cancellation.clone(),
+        reasoning_level,
         prompt_cache_key: None,
     };
     let mut future = provider.send_turn_stream(request, provider_events);

@@ -82,6 +82,7 @@ pub struct RhoBuilder {
     approval_handler: Option<Arc<dyn crate::ApprovalHandler>>,
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
+    reasoning_level: crate::ReasoningLevel,
 }
 
 impl RhoBuilder {
@@ -156,6 +157,11 @@ impl RhoBuilder {
         self
     }
 
+    pub fn reasoning_level(mut self, reasoning_level: crate::ReasoningLevel) -> Self {
+        self.reasoning_level = reasoning_level;
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
@@ -192,6 +198,7 @@ impl RhoBuilder {
                 .unwrap_or_else(|| Arc::new(crate::DenyApprovals)),
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
+            reasoning_level: self.reasoning_level,
         })
     }
 }
@@ -209,6 +216,7 @@ pub struct Rho {
     pub(crate) approval_handler: Arc<dyn crate::ApprovalHandler>,
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
+    pub(crate) reasoning_level: crate::ReasoningLevel,
 }
 
 impl Rho {
@@ -232,11 +240,15 @@ impl Rho {
                 .as_ref()
                 .map(|workspace| workspace.root().to_path_buf()),
             prompt_sources,
-            self.event_capacity.get(),
-            self.max_steps.get(),
-            self.compaction_policy
-                .as_ref()
-                .map(|policy| policy.trigger_messages().get()),
+            crate::diagnostics::ExecutionSettings {
+                event_capacity: self.event_capacity.get(),
+                max_steps: self.max_steps.get(),
+                compaction_trigger_messages: self
+                    .compaction_policy
+                    .as_ref()
+                    .map(|policy| policy.trigger_messages().get()),
+                reasoning_level: self.reasoning_level,
+            },
         )
     }
 
@@ -270,6 +282,7 @@ impl std::fmt::Debug for Rho {
             .field("workspace_policy", &self.workspace_policy)
             .field("approval_handler", &self.approval_handler)
             .field("compaction_policy", &self.compaction_policy)
+            .field("reasoning_level", &self.reasoning_level)
             .finish()
     }
 }

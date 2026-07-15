@@ -266,6 +266,22 @@ impl Session {
         )
     }
 
+    pub fn reasoning_level(&self) -> crate::ReasoningLevel {
+        self.core.runtime().reasoning_level
+    }
+
+    pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
+        if self.is_running() {
+            return Err(Error::SessionBusy);
+        }
+        self.core
+            .runtime
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .reasoning_level = reasoning_level;
+        Ok(())
+    }
+
     pub fn diagnostics(&self) -> crate::DiagnosticsSnapshot {
         self.core.runtime().diagnostics()
     }

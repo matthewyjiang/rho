@@ -52,7 +52,15 @@ pub struct DiagnosticsSnapshot {
     event_capacity: usize,
     max_steps: usize,
     compaction_trigger_messages: Option<usize>,
+    reasoning_level: crate::ReasoningLevel,
     default_features: Vec<String>,
+}
+
+pub(crate) struct ExecutionSettings {
+    pub(crate) event_capacity: usize,
+    pub(crate) max_steps: usize,
+    pub(crate) compaction_trigger_messages: Option<usize>,
+    pub(crate) reasoning_level: crate::ReasoningLevel,
 }
 
 impl DiagnosticsSnapshot {
@@ -61,18 +69,17 @@ impl DiagnosticsSnapshot {
         tool_names: Vec<String>,
         workspace_root: Option<PathBuf>,
         prompt_sources: Vec<PromptSource>,
-        event_capacity: usize,
-        max_steps: usize,
-        compaction_trigger_messages: Option<usize>,
+        execution: ExecutionSettings,
     ) -> Self {
         Self {
             provider,
             tool_names,
             workspace_root,
             prompt_sources,
-            event_capacity,
-            max_steps,
-            compaction_trigger_messages,
+            event_capacity: execution.event_capacity,
+            max_steps: execution.max_steps,
+            compaction_trigger_messages: execution.compaction_trigger_messages,
+            reasoning_level: execution.reasoning_level,
             default_features: Vec::new(),
         }
     }
@@ -103,6 +110,10 @@ impl DiagnosticsSnapshot {
 
     pub fn compaction_trigger_messages(&self) -> Option<usize> {
         self.compaction_trigger_messages
+    }
+
+    pub fn reasoning_level(&self) -> crate::ReasoningLevel {
+        self.reasoning_level
     }
 
     /// Enabled capability feature labels. Empty for the minimal default SDK.
