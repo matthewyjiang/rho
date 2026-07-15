@@ -104,6 +104,7 @@ pub(crate) struct InteractiveRuntime {
     storage: Option<StoredSession>,
     pending_model_user: Option<Message>,
     pending_display_user: Option<Message>,
+    pending_history_start: Option<usize>,
     pending_session_id: Option<SessionId>,
     pending_context_usage: Option<rho_sdk::model::ContextUsage>,
     pending_notices: Vec<String>,
@@ -212,6 +213,7 @@ impl InteractiveRuntime {
             storage,
             pending_model_user: None,
             pending_display_user: None,
+            pending_history_start: None,
             pending_session_id: None,
             pending_context_usage: None,
             pending_notices: Vec::new(),
@@ -274,11 +276,12 @@ impl InteractiveRuntime {
                 })?;
         }
         let model_user = Message::User(input.blocks().to_vec());
+        let mut request_history = self.session.history();
+        self.pending_history_start = Some(request_history.len());
         self.pending_model_user = Some(model_user);
         self.pending_display_user = display_user;
         self.cumulative_input_tokens = 0;
         self.step_input_token_baseline = 0;
-        let mut request_history = self.session.history();
         request_history.push(Message::User(input.blocks().to_vec()));
         self.pending_context_usage = Some(rho_sdk::model::ContextUsage::estimated(
             rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
@@ -343,9 +346,10 @@ impl InteractiveRuntime {
             .take()
             .ok_or_else(|| anyhow::anyhow!("no active run"))?;
         let outcome = run.outcome().await;
-        let storage_result = self.sync_storage();
+        let storage_result = self.sync_storage(outcome.as_ref().ok());
         self.pending_model_user = None;
         self.pending_display_user = None;
+        self.pending_history_start = None;
         self.state = InteractiveState::Idle;
         storage_result?;
         Ok(outcome?)
@@ -541,30 +545,27 @@ impl InteractiveRuntime {
         Ok(())
     }
 
-    fn sync_storage(&mut self) -> anyhow::Result<()> {
+    fn sync_storage(&mut self, outcome: Option<&RunOutcome>) -> anyhow::Result<()> {
         let history = self.session.history();
         let Some(storage) = &self.storage else {
             return Ok(());
         };
-        let mut display_tail = match self
+        let history_start = self.pending_history_start.unwrap_or(history.len());
+        let current_turn_committed = self
             .pending_model_user
             .as_ref()
-            .and_then(|user| history.iter().rposition(|message| message == user))
-        {
-            Some(display_start) => history[display_start..].to_vec(),
-            // Compaction replaced the turn's messages mid-run. Preserve at
-            // least the user's prompt and the final reply in the transcript.
-            None => self
-                .pending_model_user
+            .is_some_and(|user| history.get(history_start) == Some(user));
+        let mut display_tail = if current_turn_committed {
+            history[history_start..].to_vec()
+        } else {
+            self.pending_model_user
                 .clone()
                 .into_iter()
-                .chain(
-                    history
-                        .last()
-                        .filter(|message| message.completed_assistant_content().is_some())
-                        .cloned(),
-                )
-                .collect(),
+                .chain(outcome.and_then(|outcome| {
+                    (!outcome.text().is_empty())
+                        .then(|| Message::assistant_text(outcome.text().to_string()))
+                }))
+                .collect()
         };
         if let (Some(display), Some(first)) = (&self.pending_display_user, display_tail.first_mut())
         {

@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, ModelIdentity, ModelResponse},
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     CompactionFuture, CompactionOutput, CompactionRequest, Compactor, HostChoice, HostInputRequest,
-    HostQuestion, Retryability, RunEvent, SelectionMode, SessionOptions, SystemPrompt, ToolCallId,
-    UserInput, Workspace,
+    HostQuestion, ProviderError, ProviderErrorKind, Retryability, RunEvent, SelectionMode,
+    SessionId, SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
 };
 
 use super::{
@@ -223,12 +223,10 @@ impl Compactor for PendingCompactor {
     }
 }
 
-async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
+async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),
-        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-            ContentBlock::Text(response.into()),
-        ]))],
+        turns,
     ));
     let shared_provider: Arc<dyn ModelProvider> = provider;
     let tools = AppToolSet::disabled();
@@ -254,12 +252,20 @@ async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
         storage: None,
         pending_model_user: None,
         pending_display_user: None,
+        pending_history_start: None,
         pending_session_id: None,
         pending_context_usage: None,
         pending_notices: Vec::new(),
         cumulative_input_tokens: 0,
         step_input_token_baseline: 0,
     }
+}
+
+async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
+    test_runtime(vec![ScriptedTurn::completed(ModelResponse::Assistant(
+        vec![ContentBlock::Text(response.into())],
+    ))])
+    .await
 }
 
 #[tokio::test]
@@ -277,6 +283,57 @@ async fn dropping_manual_compaction_does_not_leave_the_runtime_busy() {
         .start(UserInput::text("continue"), None)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn failed_turn_does_not_duplicate_the_previous_assistant_in_display_history() {
+    let mut interactive = test_runtime(vec![
+        ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+            "previous answer".into(),
+        )])),
+        ScriptedTurn::failed(ProviderError::new(
+            ProviderErrorKind::Unavailable,
+            "provider unavailable",
+            Retryability::Permanent,
+        )),
+    ])
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
+    interactive.session = interactive
+        .runtime
+        .session(SessionOptions::new().id(SessionId::from_string(storage.id()).unwrap()))
+        .await
+        .unwrap();
+    interactive.storage = Some(storage.clone());
+
+    interactive
+        .start(UserInput::text("successful prompt"), None)
+        .await
+        .unwrap();
+    while interactive.next_event().await.is_some() {}
+    interactive.finish_run().await.unwrap();
+
+    interactive
+        .start(UserInput::text("failed prompt"), None)
+        .await
+        .unwrap();
+    while interactive.next_event().await.is_some() {}
+    assert!(interactive.finish_run().await.is_err());
+    let committed_assistant = interactive.history()[1].clone();
+
+    let (_, histories) =
+        StoredSession::open_by_id_with_histories_in_root(root.path(), &cwd, storage.id()).unwrap();
+    assert_eq!(
+        histories.display,
+        vec![
+            Message::user_text("successful prompt"),
+            committed_assistant,
+            Message::user_text("failed prompt"),
+        ]
+    );
 }
 
 #[tokio::test]
