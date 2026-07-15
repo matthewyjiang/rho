@@ -1,17 +1,21 @@
-use std::io::{self, IsTerminal};
+use std::{
+    io::{self, IsTerminal},
+    sync::Arc,
+};
 
 use crate::{
-    agent::Agent,
     cli::{Cli, Command},
     credentials::OsCredentialStore,
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
-    model::{build_provider, models_dev::cached_model_metadata, ModelError, UnavailableProvider},
-    tool::{ToolContext, ToolRegistry},
-    tools, update,
+    model::{models_dev::cached_model_metadata, ModelError},
+    update,
 };
 
-use super::{automation, cli_config, config_repository::ConfigRepository, interactive, login};
+use super::{
+    automation, cli_config, config_repository::ConfigRepository, interactive, login,
+    sdk_config::SdkBootstrapOptions,
+};
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
@@ -44,67 +48,53 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         let _ =
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
-    let pending_update_notice = (cli.command.is_none() && config.check_for_updates)
+    let cwd = std::env::current_dir()?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    let herdr = HerdrReporter::from_env();
+    if let Some(prompt) = automation_prompt {
+        return automation::run(
+            prompt,
+            automation::Startup {
+                config: &config,
+                cwd,
+                no_system_prompt: cli.no_system_prompt,
+                no_tools: cli.no_tools,
+                diagnostics,
+                herdr,
+            },
+        )
+        .await;
+    }
+
+    let pending_update_notice = config
+        .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
-    let provider_result = build_provider(&config.provider, &config.model, config.reasoning);
-    let missing_auth_error = provider_result
-        .as_ref()
-        .err()
-        .filter(|error| is_interactive_startup_unavailable_error(error))
-        .map(ToString::to_string);
-    let provider = match provider_result {
-        Ok(provider) => provider,
-        Err(error)
-            if automation_prompt.is_none() && is_interactive_startup_unavailable_error(&error) =>
-        {
-            Box::new(UnavailableProvider::new(error))
+    let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
+    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+        Arc::new(OsCredentialStore),
+    );
+    let provider_result =
+        crate::providers::build_sdk_provider_with_source(sdk_options.provider, &credentials);
+    let (missing_auth_error, missing_auth_model_error) = match provider_result {
+        Ok(_) => (None, None),
+        Err(error) if is_interactive_startup_unavailable_error(&error) => {
+            (Some(error.to_string()), Some(error))
         }
         Err(error) => return Err(error.into()),
     };
-    let cwd = std::env::current_dir()?;
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    let registry = if cli.no_tools {
-        ToolRegistry::new()
-    } else {
-        tools::registry(&config, diagnostics.clone())
-    };
-    let context = ToolContext {
-        cwd: cwd.clone(),
-        max_output_bytes: config.max_output_bytes,
-    };
-    let herdr = HerdrReporter::from_env();
-    let mut agent = Agent::new(provider, registry, context).with_history(Vec::new());
-    if cli.no_system_prompt {
-        agent = agent.without_system_prompt();
-    }
-    agent.set_diagnostics(diagnostics.clone());
-    agent.set_compaction_config((&config).into());
-    agent.set_context_window(
-        cached_model_metadata(&config.provider, &config.model)
-            .and_then(|metadata| metadata.display_context_window()),
-    );
-
-    let result = match automation_prompt {
-        Some(prompt) => automation::run(&mut agent, prompt, &herdr).await,
-        None => {
-            interactive::run(
-                &mut agent,
-                interactive::Startup {
-                    cli: &cli,
-                    config,
-                    config_repository,
-                    cwd,
-                    missing_auth_error,
-                    pending_update_notice,
-                    diagnostics,
-                    herdr,
-                },
-            )
-            .await
-        }
-    };
-    agent.shutdown().await;
+    let result = interactive::run(interactive::Startup {
+        cli: &cli,
+        config,
+        config_repository,
+        cwd,
+        missing_auth_error,
+        missing_auth_model_error,
+        pending_update_notice,
+        diagnostics,
+        herdr,
+    })
+    .await;
     result
 }
 

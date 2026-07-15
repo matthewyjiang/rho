@@ -1,0 +1,60 @@
+name: SDK semver
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      baseline-rev:
+        description: Git revision or tag containing the rho-sdk baseline
+        required: true
+        default: HEAD^
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-semver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semver:
+    name: public API compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select repository baseline
+        id: baseline
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE: ${{ github.event.pull_request.base.sha }}
+          DISPATCH_BASELINE: ${{ inputs.baseline-rev }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            revision="$PULL_REQUEST_BASE"
+          else
+            revision="$DISPATCH_BASELINE"
+          fi
+          git rev-parse --verify "${revision}^{commit}"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          if git cat-file -e "${revision}:crates/rho-sdk/Cargo.toml"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Explain initial baseline
+        if: steps.baseline.outputs.available != 'true'
+        run: |
+          echo "The selected revision predates rho-sdk, so it cannot be a semver baseline."
+          echo "This exception applies only to the commit that first introduces the crate."
+      - name: Check rho-sdk public API
+        if: steps.baseline.outputs.available == 'true'
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: rho-sdk
+          baseline-rev: ${{ steps.baseline.outputs.revision }}
+          feature-group: all-features
+          release-type: minor

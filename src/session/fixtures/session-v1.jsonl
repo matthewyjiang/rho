@@ -1,0 +1,5 @@
+{"type":"session","version":1,"id":"11111111-1111-4111-8111-111111111111","timestamp":"100","cwd":"/historical/workspace"}
+{"type":"message","timestamp":"101","message":{"User":[{"Text":"legacy prompt"}]},"display_message":{"User":[{"Text":"/goal legacy prompt"}]}}
+{"type":"message","timestamp":"102","message":{"Assistant":[{"Text":"legacy answer"}]}}
+{"type":"replace_history","timestamp":"103","messages":[{"User":[{"Text":"compacted legacy summary"}]}]}
+{"type":"message","timestamp":"104","message":{"Assistant":[{"Text":"answer after compaction"}]}}

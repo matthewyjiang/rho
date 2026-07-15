@@ -4,12 +4,9 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
-use crate::tool::ToolShutdown;
 use std::{
     collections::{HashMap, VecDeque},
-    future::Future,
     path::Path,
-    pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -43,11 +40,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct ProcessManager(Arc<Mutex<Inner>>);
 
-impl ToolShutdown for ProcessManager {
-    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(ProcessManager::shutdown(self))
-    }
-}
 impl ProcessManager {
     pub fn new(limits: ProcessLimits) -> Self {
         Self(Arc::new(Mutex::new(Inner {

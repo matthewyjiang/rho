@@ -14,7 +14,7 @@ const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GitHubCopilotDeviceLogin {
     pub user_code: String,
     pub verification_uri: String,
@@ -22,6 +22,20 @@ pub struct GitHubCopilotDeviceLogin {
     pub expires_in: Duration,
     device_code: String,
     interval: Duration,
+}
+
+impl std::fmt::Debug for GitHubCopilotDeviceLogin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GitHubCopilotDeviceLogin")
+            .field("user_code", &"[REDACTED]")
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &"[REDACTED]")
+            .field("expires_in", &self.expires_in)
+            .field("device_code", &"[REDACTED]")
+            .field("interval", &self.interval)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,7 +52,7 @@ pub enum GitHubCopilotDeviceError {
     Timeout,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct DeviceCodeResponse {
     device_code: Option<String>,
     user_code: Option<String>,
@@ -50,7 +64,7 @@ struct DeviceCodeResponse {
     error_description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -59,11 +73,21 @@ struct TokenResponse {
     error_description: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct GitHubCopilotGithubToken {
     pub(crate) access_token: String,
     pub(crate) refresh_token: Option<String>,
     pub(crate) expires_at_unix: Option<i64>,
+}
+
+impl std::fmt::Debug for GitHubCopilotGithubToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GitHubCopilotGithubToken")
+            .field("credentials", &"[REDACTED]")
+            .field("expires_at_unix", &self.expires_at_unix)
+            .finish()
+    }
 }
 
 pub async fn start_github_copilot_device_login(
@@ -240,6 +264,23 @@ fn now_unix_seconds() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_login_debug_redacts_codes() {
+        let login = GitHubCopilotDeviceLogin {
+            user_code: "user-secret".into(),
+            verification_uri: "https://example.test/device".into(),
+            verification_uri_complete: Some("https://example.test/device?code=secret".into()),
+            expires_in: Duration::from_secs(60),
+            device_code: "device-secret".into(),
+            interval: Duration::from_secs(5),
+        };
+        let debug = format!("{login:?}");
+        assert!(!debug.contains("user-secret"));
+        assert!(!debug.contains("device-secret"));
+        assert!(!debug.contains("code=secret"));
+    }
+
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,

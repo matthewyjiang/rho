@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::{
@@ -8,53 +9,54 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
-    credentials::CredentialStore,
-    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
-    provider_backend::stream_timeout::provider_client,
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     reasoning::ReasoningLevel,
 };
 
-const API_BASE: &str = "https://api.x.ai/v1";
+#[cfg(test)]
+use crate::{credentials::CredentialStore, provider_backend::stream_timeout::provider_client};
 
 pub struct XaiProvider {
     client: reqwest::Client,
     model: String,
     auth: XaiAuthManager,
     api_base: String,
-    reasoning_effort: Option<String>,
 }
 
 impl XaiProvider {
-    pub(crate) fn new(
+    pub(crate) fn new_with_transport(
         model: String,
-        store: Arc<dyn CredentialStore>,
-        reasoning: ReasoningLevel,
-    ) -> Result<Self, ModelError> {
-        Self::new_with_api_base(model, store, reasoning, API_BASE.into())
+        auth: XaiAuthManager,
+        client: reqwest::Client,
+        api_base: String,
+    ) -> Self {
+        Self {
+            client,
+            model,
+            auth,
+            api_base,
+        }
     }
 
+    #[cfg(test)]
     fn new_with_api_base(
         model: String,
         store: Arc<dyn CredentialStore>,
-        reasoning: ReasoningLevel,
         api_base: String,
     ) -> Result<Self, ModelError> {
-        let reasoning_effort = xai_reasoning_effort(&model, reasoning).map(str::to_string);
-        Ok(Self {
-            client: provider_client(),
+        Ok(Self::new_with_transport(
             model,
-            auth: XaiAuthManager::new(store)?,
+            XaiAuthManager::new(store)?,
+            provider_client(),
             api_base,
-            reasoning_effort,
-        })
+        ))
     }
 
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
     ) -> Result<reqwest::Response, ModelError> {
-        let body =
-            build_xai_responses_body(&self.model, request, self.reasoning_effort.as_deref())?;
+        let body = build_xai_responses_body(&self.model, request)?;
         let auth = self.auth.auth_material().await?;
         let response = self
             .send_request_with_token(&body, &auth.access_token)
@@ -87,7 +89,7 @@ impl XaiProvider {
     async fn send_responses_turn(
         &self,
         request: ModelRequest<'_>,
-        mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
         let response = self.send_request(request).await?;
         if !response.status().is_success() {
@@ -101,25 +103,30 @@ impl XaiProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for XaiProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new("xai", "openai-responses", &self.model))
+impl XaiProvider {
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("xai", "openai-responses", &self.model)
     }
 
-    fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-        self.reasoning_effort = xai_reasoning_effort(&self.model, reasoning).map(str::to_string);
-        true
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.send_responses_turn(request, None).await
-    }
-
-    async fn send_turn_stream(
+    /// Completes one turn using a `Send` future suitable for the public SDK trait.
+    pub(crate) async fn complete_turn(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.send_request(request).await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ModelError::HttpStatus { status, body });
+        }
+        crate::providers::send_stream::collect_codex_model_response_silent(response).await
+    }
+
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
@@ -129,11 +136,10 @@ impl ModelProvider for XaiProvider {
     }
 }
 
-fn build_xai_responses_body(
-    model: &str,
-    request: ModelRequest<'_>,
-    reasoning_effort: Option<&str>,
-) -> Result<Value, ModelError> {
+crate::impl_sdk_model_provider!(XaiProvider);
+
+fn build_xai_responses_body(model: &str, request: ModelRequest<'_>) -> Result<Value, ModelError> {
+    let reasoning_effort = xai_reasoning_effort(model, request.reasoning_level)?;
     let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new("xai", "openai-responses", model);
     let input =
@@ -167,8 +173,13 @@ fn build_xai_responses_body(
     Ok(body)
 }
 
-fn xai_reasoning_effort(model: &str, reasoning: ReasoningLevel) -> Option<&'static str> {
-    match model {
+fn xai_reasoning_effort(
+    model: &str,
+    reasoning: ReasoningLevel,
+) -> Result<Option<&'static str>, ModelError> {
+    // Non-reasoning models omit the field regardless of the session default so
+    // configured models like grok-build keep working without forcing reasoning=off.
+    Ok(match model {
         "grok-4.5" => match reasoning {
             ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
             ReasoningLevel::Medium => Some("medium"),
@@ -182,7 +193,7 @@ fn xai_reasoning_effort(model: &str, reasoning: ReasoningLevel) -> Option<&'stat
         },
         "grok-build-0.1" | "grok-composer-2.5-fast" => None,
         _ => None,
-    }
+    })
 }
 
 #[cfg(test)]

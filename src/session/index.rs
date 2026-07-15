@@ -5,18 +5,24 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
+
+const INDEX_SCHEMA_VERSION: u32 = 1;
 
 static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
     OnceLock::new();
 
+#[cfg(test)]
 use crate::model::Message;
 
 use super::{
     clamp_u64_to_i64, session_dir_in_root, session_file_stats, session_id_from_path,
-    set_private_dir_permissions, summarize_session_file, unix_timestamp_secs, user_message_text,
-    workspace_key, Session, SessionIndexRecord, SessionSummary,
+    set_private_dir_permissions, summarize_session_file, workspace_key, Session,
+    SessionIndexRecord, SessionSummary,
 };
+
+#[cfg(test)]
+use super::{unix_timestamp_secs, user_message_text};
 
 pub(super) fn list_workspace_sessions(
     session_root: &Path,
@@ -182,6 +188,7 @@ pub(super) fn set_title(
     }
 }
 
+#[cfg(test)]
 pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
@@ -215,6 +222,16 @@ pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Re
     Ok(())
 }
 
+pub(super) fn record_snapshot(session: &Session) -> anyhow::Result<()> {
+    let connection = open_index(&session.session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let record = summarize_session_file(&session.path, &session.cwd)?;
+    upsert_record(&connection, &session.workspace_key, &record)
+}
+
+#[cfg(test)]
 pub(super) fn record_replaced(session: &Session) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
@@ -233,10 +250,33 @@ fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
     }
     fs::create_dir_all(session_root)?;
     set_private_dir_permissions(session_root)?;
-    let connection = Connection::open(&path)?;
+    let mut connection = Connection::open(&path)?;
     set_private_file_permissions(&path)?;
-    connection.execute_batch(
-        "create table if not exists sessions (
+    migrate_index(&mut connection)?;
+    let connection = Arc::new(Mutex::new(connection));
+    connections.insert(path, Arc::clone(&connection));
+    Ok(connection)
+}
+
+fn migrate_index(connection: &mut Connection) -> anyhow::Result<()> {
+    migrate_index_with_hook(connection, |_| Ok(()))
+}
+
+fn migrate_index_with_hook(
+    connection: &mut Connection,
+    before_commit: impl FnOnce(&Transaction<'_>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let version: u32 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    if version > INDEX_SCHEMA_VERSION {
+        anyhow::bail!(
+            "unsupported session index schema {version} (maximum supported: {INDEX_SCHEMA_VERSION})"
+        );
+    }
+
+    let transaction = connection.transaction()?;
+    if version == 0 {
+        transaction.execute_batch(
+            "create table if not exists sessions (
             workspace_key text not null,
             cwd text not null,
             id text not null,
@@ -250,17 +290,55 @@ fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
             file_size integer,
             file_mtime integer,
             primary key (workspace_key, id)
-        );
-        create index if not exists sessions_workspace_updated_idx
+        );",
+        )?;
+        ensure_column(&transaction, "title text")?;
+        ensure_column(&transaction, "first_user_message text")?;
+    }
+    validate_index_columns(&transaction)?;
+    transaction.execute_batch(
+        "create index if not exists sessions_workspace_updated_idx
             on sessions(workspace_key, updated_at desc);
-        create index if not exists sessions_workspace_id_idx
+         create index if not exists sessions_workspace_id_idx
             on sessions(workspace_key, id);",
     )?;
-    ensure_column(&connection, "title text")?;
-    ensure_column(&connection, "first_user_message text")?;
-    let connection = Arc::new(Mutex::new(connection));
-    connections.insert(path, Arc::clone(&connection));
-    Ok(connection)
+    transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
+    before_commit(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
+    const REQUIRED_COLUMNS: &[&str] = &[
+        "workspace_key",
+        "cwd",
+        "id",
+        "path",
+        "created_at",
+        "updated_at",
+        "message_count",
+        "title",
+        "first_user_message",
+        "last_user_message",
+        "file_size",
+        "file_mtime",
+    ];
+    let mut statement = connection.prepare("pragma table_info(sessions)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let missing = REQUIRED_COLUMNS
+        .iter()
+        .filter(|column| !columns.contains(**column))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "malformed session index schema: missing column(s): {}",
+            missing.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn ensure_column(connection: &Connection, column_definition: &str) -> anyhow::Result<()> {
@@ -428,6 +506,86 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    const INDEX_V0: &str = include_str!("fixtures/index-v0.sql");
+    const INDEX_V1: &str = include_str!("fixtures/index-v1.sql");
+
+    #[test]
+    fn every_supported_index_fixture_migrates_transactionally() {
+        for (source_version, fixture) in [(0, INDEX_V0), (1, INDEX_V1)] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            connection.execute_batch(fixture).unwrap();
+            let before: u32 = connection
+                .query_row("pragma user_version", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(before, source_version);
+
+            migrate_index(&mut connection).unwrap();
+
+            let after: u32 = connection
+                .query_row("pragma user_version", [], |row| row.get(0))
+                .unwrap();
+            let title: Option<String> = connection
+                .query_row(
+                    "select title from sessions where id = 'fixture-session'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(after, INDEX_SCHEMA_VERSION);
+            if source_version == 1 {
+                assert_eq!(title.as_deref(), Some("fixture title"));
+            }
+            validate_index_columns(&connection).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_newer_and_malformed_index_schemas() {
+        let mut newer = Connection::open_in_memory().unwrap();
+        newer
+            .pragma_update(None, "user_version", INDEX_SCHEMA_VERSION + 1)
+            .unwrap();
+        let error = migrate_index(&mut newer).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported session index schema"));
+
+        let mut malformed = Connection::open_in_memory().unwrap();
+        malformed
+            .execute_batch(
+                "pragma user_version = 1;
+                 create table sessions (workspace_key text not null);",
+            )
+            .unwrap();
+        let error = migrate_index(&mut malformed).unwrap_err();
+        assert!(error.to_string().contains("malformed session index schema"));
+    }
+
+    #[test]
+    fn failed_index_migration_rolls_back_every_schema_change() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(INDEX_V0).unwrap();
+
+        let error = migrate_index_with_hook(&mut connection, |_| {
+            anyhow::bail!("injected migration failure")
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("injected migration failure"));
+        let version: u32 = connection
+            .query_row("pragma user_version", [], |row| row.get(0))
+            .unwrap();
+        let mut statement = connection.prepare("pragma table_info(sessions)").unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(version, 0);
+        assert!(!columns.iter().any(|column| column == "title"));
+        assert!(!columns.iter().any(|column| column == "first_user_message"));
+    }
+
     #[test]
     fn open_index_creates_schema() {
         let root = TempDir::new().unwrap();
@@ -443,6 +601,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(table_count, 1);
+        let version: u32 = connection
+            .query_row("pragma user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, INDEX_SCHEMA_VERSION);
         assert!(root.path().join("index.sqlite3").exists());
     }
 }

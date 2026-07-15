@@ -32,9 +32,9 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             messages: &messages,
             tools: &tools,
             cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
             prompt_cache_key: Some("rho:session"),
         },
-        xai_reasoning_effort("grok-4.5", ReasoningLevel::High),
     )
     .unwrap();
 
@@ -50,21 +50,51 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
 }
 
 #[test]
+fn responses_body_uses_each_request_reasoning_level() {
+    let messages = [Message::user_text("hello")];
+    let low = build_xai_responses_body(
+        "grok-4.5",
+        ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+    let high = build_xai_responses_body(
+        "grok-4.5",
+        ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(low["reasoning"], json!({"effort": "low"}));
+    assert_eq!(high["reasoning"], json!({"effort": "high"}));
+}
+
+#[test]
 fn reasoning_effort_is_only_sent_for_supported_models() {
     assert_eq!(
-        xai_reasoning_effort("grok-4.5", ReasoningLevel::Off),
+        xai_reasoning_effort("grok-4.5", ReasoningLevel::Off).unwrap(),
         Some("low")
     );
     assert_eq!(
-        xai_reasoning_effort("grok-4.3", ReasoningLevel::Off),
+        xai_reasoning_effort("grok-4.3", ReasoningLevel::Off).unwrap(),
         Some("none")
     );
     assert_eq!(
-        xai_reasoning_effort("grok-build-0.1", ReasoningLevel::High),
+        xai_reasoning_effort("grok-build-0.1", ReasoningLevel::High).unwrap(),
         None
     );
     assert_eq!(
-        xai_reasoning_effort("grok-composer-2.5-fast", ReasoningLevel::High),
+        xai_reasoning_effort("grok-composer-2.5-fast", ReasoningLevel::Medium).unwrap(),
         None
     );
 }
@@ -121,15 +151,14 @@ async fn provider_posts_to_responses_and_collects_stream() {
         },
     )
     .unwrap();
-    let provider =
-        XaiProvider::new_with_api_base("grok-4.5".into(), store, ReasoningLevel::Medium, api_base)
-            .unwrap();
+    let provider = XaiProvider::new_with_api_base("grok-4.5".into(), store, api_base).unwrap();
 
     let response = provider
-        .send_turn(ModelRequest {
+        .complete_turn(ModelRequest {
             messages: &[Message::user_text("hello")],
             tools: &[],
             cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Medium,
             prompt_cache_key: None,
         })
         .await

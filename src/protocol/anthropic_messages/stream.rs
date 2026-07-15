@@ -75,7 +75,7 @@ impl AnthropicSseState {
 
 pub(crate) async fn collect_anthropic_sse_response(
     response: reqwest::Response,
-    on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<ModelResponse, ModelError> {
     let mut state = AnthropicSseState::default();
     let mut decoder = LineDecoder::default();
@@ -110,7 +110,7 @@ fn sse_data(line: &str) -> Option<&str> {
 pub(crate) fn handle_anthropic_stream_line(
     line: &str,
     state: &mut AnthropicSseState,
-    on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<bool, ModelError> {
     let Some(data) = sse_data(line) else {
         return Ok(false);

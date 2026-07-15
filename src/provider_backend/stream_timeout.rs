@@ -3,6 +3,7 @@ use std::{future::Future, time::Duration};
 use tokio::time::Instant;
 
 pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(test)]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Builds the shared HTTP client for provider requests.
@@ -10,6 +11,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Connection establishment is bounded, while stream idle timeouts are applied
 /// when receiving and parsing streamed provider events. Keeping the client free
 /// of a read timeout allows non-streaming requests to run as long as needed.
+#[cfg(test)]
 pub(crate) fn provider_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)

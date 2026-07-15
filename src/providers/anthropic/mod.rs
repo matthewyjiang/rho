@@ -6,13 +6,14 @@ use crate::{
         AnthropicOutputConfig, AnthropicRequest, AnthropicResponse, AnthropicRole,
         AnthropicSystemBlock, AnthropicThinkingConfig, ProviderContextReplay,
     },
-    provider_backend::{
-        stream_timeout::provider_client, ModelError, ModelEvent, ModelProvider, ModelRequest,
-        ModelResponse,
-    },
+    provider_backend::{ModelError, ModelEvent, ModelRequest, ModelResponse},
     reasoning::ReasoningLevel,
 };
 
+#[cfg(test)]
+use crate::provider_backend::stream_timeout::provider_client;
+
+#[cfg(test)]
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -24,19 +25,33 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
-    reasoning: ReasoningLevel,
 }
 
 impl AnthropicProvider {
+    #[cfg(test)]
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
-        let reasoning = default_reasoning(&model);
-        Self {
-            client: provider_client(),
+        Self::new_with_transport(
+            model,
             api_key,
-            api_base: ANTHROPIC_API_BASE.into(),
+            max_tokens,
+            provider_client(),
+            ANTHROPIC_API_BASE.into(),
+        )
+    }
+
+    pub(crate) fn new_with_transport(
+        model: String,
+        api_key: String,
+        max_tokens: fn(&str) -> u32,
+        client: reqwest::Client,
+        api_base: String,
+    ) -> Self {
+        Self {
+            client,
+            api_key,
+            api_base,
             model,
             max_tokens,
-            reasoning,
         }
     }
 
@@ -45,9 +60,10 @@ impl AnthropicProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
-        let target = self.identity().expect("Anthropic provider has an identity");
+        let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) = thinking_config(&self.model, self.reasoning, max_tokens);
+        let (thinking, output_config) =
+            thinking_config(&self.model, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
@@ -81,6 +97,31 @@ impl AnthropicProvider {
         })
     }
 
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("anthropic", "anthropic-messages", &self.model)
+    }
+
+    /// Completes one turn using inherent async methods so the future is `Send`.
+    pub(crate) async fn complete_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_messages(request).await
+    }
+
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_messages_stream(request, on_event) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
+
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
         let response = self
@@ -99,7 +140,7 @@ impl AnthropicProvider {
     async fn send_messages_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
         let response = self
@@ -132,28 +173,38 @@ fn thinking_config(
     model: &str,
     reasoning: ReasoningLevel,
     max_tokens: u32,
-) -> (
-    Option<AnthropicThinkingConfig>,
-    Option<AnthropicOutputConfig>,
-) {
+) -> Result<
+    (
+        Option<AnthropicThinkingConfig>,
+        Option<AnthropicOutputConfig>,
+    ),
+    ModelError,
+> {
+    if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(model) {
+        return Err(ModelError::UnsupportedReasoning {
+            provider: "anthropic",
+            model: model.to_string(),
+            requested: reasoning,
+        });
+    }
     if reasoning == ReasoningLevel::Off {
         let thinking =
             supports_disabled_thinking(model).then_some(AnthropicThinkingConfig::Disabled);
-        return (thinking, None);
+        return Ok((thinking, None));
     }
     if supports_adaptive_thinking(model) {
-        return (
+        return Ok((
             Some(AnthropicThinkingConfig::Adaptive {
                 display: "summarized",
             }),
             Some(AnthropicOutputConfig {
                 effort: adaptive_effort(model, reasoning),
             }),
-        );
+        ));
     }
 
     let requested_budget = match reasoning {
-        ReasoningLevel::Off => return (None, None),
+        ReasoningLevel::Off => return Ok((None, None)),
         ReasoningLevel::Minimal => 1_024,
         ReasoningLevel::Low => 2_048,
         ReasoningLevel::Medium => 4_096,
@@ -162,10 +213,17 @@ fn thinking_config(
         ReasoningLevel::Max => 32_768,
     };
     let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
-    let thinking = (available >= 1_024).then_some(AnthropicThinkingConfig::Enabled {
-        budget_tokens: requested_budget.min(available),
-    });
-    (thinking, None)
+    if available < 1_024 {
+        return Err(ModelError::InvalidResponse(format!(
+            "Anthropic max output tokens {max_tokens} cannot reserve a reasoning budget"
+        )));
+    }
+    Ok((
+        Some(AnthropicThinkingConfig::Enabled {
+            budget_tokens: requested_budget.min(available),
+        }),
+        None,
+    ))
 }
 
 fn supports_adaptive_thinking(model: &str) -> bool {
@@ -180,14 +238,6 @@ fn supports_adaptive_thinking(model: &str) -> bool {
         "claude-mythos-preview",
     ];
     MODELS.iter().any(|prefix| model_matches(model, prefix))
-}
-
-fn default_reasoning(model: &str) -> ReasoningLevel {
-    if adaptive_thinking_is_mandatory(model) {
-        ReasoningLevel::Low
-    } else {
-        ReasoningLevel::Off
-    }
 }
 
 fn adaptive_thinking_is_mandatory(model: &str) -> bool {
@@ -271,40 +321,7 @@ async fn error_for_status_with_body(
     Err(ModelError::HttpStatus { status, body })
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for AnthropicProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new(
-            "anthropic",
-            "anthropic-messages",
-            &self.model,
-        ))
-    }
-
-    fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-        if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(&self.model) {
-            return false;
-        }
-        self.reasoning = reasoning;
-        true
-    }
-
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        self.send_messages(request).await
-    }
-
-    async fn send_turn_stream(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
-    ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = self.send_messages_stream(request, on_event) => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        }
-    }
-}
+crate::impl_sdk_model_provider!(AnthropicProvider);
 
 #[cfg(test)]
 #[path = "provider_tests.rs"]

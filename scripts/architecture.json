@@ -10,9 +10,21 @@
   },
   "forbidden_dependencies": [
     {
+      "path": "crates/rho-sdk/src",
+      "modules": ["app", "cli", "config", "keybindings", "tui", "update"],
+      "reason": "keep the headless SDK independent from application and terminal policy"
+    },
+    {
       "path": "src/credentials.rs",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
+    }
+  ],
+  "forbidden_package_dependencies": [
+    {
+      "manifest": "crates/rho-sdk/Cargo.toml",
+      "packages": ["rho-coding-agent"],
+      "reason": "the application depends on the SDK, never the reverse"
     }
   ]
 }

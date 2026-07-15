@@ -13,7 +13,7 @@ impl std::fmt::Display for SkillSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BuiltIn => formatter.write_str("built in to rho"),
-            Self::File(path) => write!(formatter, "{}", path.display()),
+            Self::File(path) => formatter.write_str(&crate::paths::display(path)),
         }
     }
 }

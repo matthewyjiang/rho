@@ -19,7 +19,7 @@ pub(crate) fn handle_openai_stream_line(
     line: &str,
     text: &mut String,
     tool_calls: &mut Vec<StreamedToolCall>,
-    on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+    on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<bool, ModelError> {
     let Some(data) = sse_data(line) else {
         return Ok(false);
@@ -164,7 +164,7 @@ pub(crate) struct CodexSseResponse {
 
 pub(crate) async fn collect_codex_sse_response(
     response: reqwest::Response,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<CodexSseResponse, ModelError> {
     let mut state = CodexSseState::default();
     let mut decoder = LineDecoder::default();
@@ -351,7 +351,7 @@ fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCa
 pub(crate) fn handle_codex_sse_line(
     line: &str,
     state: &mut CodexSseState,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<bool, ModelError> {
     let Some(data) = sse_data(line) else {
         return Ok(false);

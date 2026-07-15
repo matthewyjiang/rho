@@ -6,14 +6,17 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{Duration, Instant},
 };
 
 use futures_util::{task::noop_waker_ref, FutureExt};
 use history_cache::{CachedCodeBlock, HistoryLineCache};
-use tokio::sync::{mpsc, oneshot};
+use questionnaire::QuestionnaireCancelReason;
+#[cfg(test)]
+use std::sync::Mutex;
+use tokio::sync::oneshot;
 
 use crossterm::{
     event::{
@@ -37,7 +40,7 @@ mod config_editor;
 mod config_picker;
 mod copy_interaction;
 mod doctor;
-mod event_batch;
+mod event_adapter;
 mod file_palette;
 mod file_picker;
 mod goal;
@@ -65,6 +68,8 @@ mod run_lifecycle;
 mod scrollbar;
 mod session_picker;
 mod skill_picker;
+#[cfg(debug_assertions)]
+mod smoke_injection;
 mod statusline;
 mod stream;
 mod text_selection;
@@ -79,15 +84,16 @@ use config_editor::{
     ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
+use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use goal::GoalState;
 use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use prompt_turn::FailedTurn;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
-    QuestionAnswerRequest, QuestionnaireCancelReason, QuestionnaireComposer, QuestionnaireReply,
-    QuestionnaireResponseChannel,
+    QuestionAnswerRequest, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
@@ -105,8 +111,8 @@ use theme::Theme;
 use turn_prompt::TurnPrompt;
 
 use crate::{
-    agent::{Agent, AgentEvent, ModelAndDisplayContent, QuestionnaireRequest, SessionHistorySink},
     app::config_repository::ConfigRepository,
+    app::interactive_runtime::InteractiveRuntime,
     auth::{codex_oauth, github_copilot_device, xai_oauth},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
@@ -119,7 +125,6 @@ use crate::{
     herdr::{HerdrReporter, HerdrState},
     keybindings::Keybindings,
     model::{
-        build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
@@ -128,6 +133,7 @@ use crate::{
         ModelResponse, ModelUsage, UnavailableProvider,
     },
     provider::{self, ProviderAuthKind},
+    providers::build_sdk_provider,
     reasoning::ReasoningLevel,
     session::Session,
     tool::ToolDisplayStyle,
@@ -155,7 +161,6 @@ pub struct TuiInfo {
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
-    pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
@@ -170,8 +175,7 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
-    agent.set_session_id(info.session_id.clone());
+pub async fn run(agent: &mut InteractiveRuntime, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
     let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
@@ -191,7 +195,17 @@ pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> 
             info.session_id.as_deref(),
         )
         .await;
-    let result = App::new(info).run(&mut terminal, agent).await;
+    let result = {
+        #[cfg(debug_assertions)]
+        let injected = smoke_injection::after_terminal_init();
+        #[cfg(not(debug_assertions))]
+        let injected: anyhow::Result<()> = Ok(());
+
+        match injected {
+            Ok(()) => App::new(info).run(&mut terminal, agent).await,
+            Err(error) => Err(error),
+        }
+    };
     herdr.release().await;
     if keyboard_enhancements_enabled {
         let _ = disable_keyboard_enhancements();
@@ -256,6 +270,7 @@ struct App {
     stream_preview_deadline: Option<Instant>,
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
+    provider_attempt_start: Option<usize>,
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     running: bool,
@@ -404,13 +419,32 @@ struct CommandChoice {
     kind: CommandChoiceKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum TurnOutcome {
     Completed,
     Interrupted,
     /// User cancelled interactive work such as a questionnaire.
     Cancelled,
+    Failed(FailedTurn),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TurnOutcomeKind {
+    Completed,
+    Interrupted,
+    Cancelled,
     Failed,
+}
+
+impl TurnOutcome {
+    fn kind(&self) -> TurnOutcomeKind {
+        match self {
+            Self::Completed => TurnOutcomeKind::Completed,
+            Self::Interrupted => TurnOutcomeKind::Interrupted,
+            Self::Cancelled => TurnOutcomeKind::Cancelled,
+            Self::Failed(_) => TurnOutcomeKind::Failed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -445,7 +479,6 @@ enum ToolEntryState {
 #[derive(Clone, Debug)]
 enum Entry {
     User(String),
-    #[allow(dead_code)]
     Assistant(String),
     Reasoning(String),
     Tool(ToolEntry),
@@ -464,6 +497,16 @@ enum StreamKind {
 enum PasteBurstKey {
     Char(char),
     Enter,
+}
+
+async fn questionnaire_reply(
+    pending: &mut Option<(rho_sdk::HostInputId, oneshot::Receiver<QuestionnaireReply>)>,
+) -> Option<(rho_sdk::HostInputId, QuestionnaireReply)> {
+    let (request_id, receiver) = pending.as_mut()?;
+    let request_id = request_id.clone();
+    let reply = receiver.await.ok();
+    pending.take();
+    reply.map(|reply| (request_id, reply))
 }
 
 fn is_tool_entry(entry: &Entry) -> bool {
@@ -592,6 +635,7 @@ impl App {
             stream_preview_deadline: None,
             live_stream_preview: None,
             current_turn_start: None,
+            provider_attempt_start: None,
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             running: false,
@@ -648,7 +692,7 @@ impl App {
     async fn run(
         mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
@@ -726,7 +770,7 @@ impl App {
         &mut self,
         event: Event,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -906,7 +950,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
             return Ok(());
@@ -1077,7 +1121,7 @@ impl App {
         }
     }
 
-    fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
+    fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
         }
@@ -1096,7 +1140,7 @@ impl App {
         }));
     }
 
-    fn poll_model_metadata_fetch(&mut self, agent: &mut Agent) {
+    fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -1110,22 +1154,24 @@ impl App {
                     .info
                     .reasoning
                     .normalize(metadata.supported_reasoning_levels.as_deref());
-                let provider_updated = if agent.set_provider_reasoning(reasoning) {
-                    true
-                } else {
-                    match build_provider(&self.info.provider, &self.info.model, reasoning) {
-                        Ok(provider) => {
-                            agent.replace_provider(provider);
-                            true
-                        }
+                let provider_updated =
+                    match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+                        Ok(provider) => match agent.replace_provider(provider, reasoning) {
+                            Ok(_) => true,
+                            Err(err) => {
+                                self.insert_entry(&Entry::Error(format!(
+                                    "could not apply model reasoning metadata: {err}"
+                                )));
+                                false
+                            }
+                        },
                         Err(err) => {
                             self.insert_entry(&Entry::Error(format!(
                                 "could not apply model reasoning metadata: {err}"
                             )));
                             false
                         }
-                    }
-                };
+                    };
                 if provider_updated && reasoning != self.info.reasoning {
                     self.info.reasoning = reasoning;
                     self.info.diagnostics.update_identity(
@@ -1197,7 +1243,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let ComposerMode::SecretInput(secret) = &mut self.composer else {
             return Ok(false);
@@ -1462,7 +1508,7 @@ impl App {
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let is_shift_tab = matches!(key.code, KeyCode::BackTab)
             || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
@@ -1480,7 +1526,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Picker(_)) {
             return Ok(false);
@@ -1557,7 +1603,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !self.command_palette_visible() {
             return Ok(false);
@@ -1894,13 +1940,12 @@ impl App {
         }
     }
 
-    fn ensure_session(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
-            let session = Session::create(&self.info.cwd)?;
-            let session_id = session.id().to_string();
-            self.info.session_id = Some(session_id.clone());
-            agent.set_session_id(Some(session_id));
-            agent.set_history_sink(SessionHistorySink::new(session));
+            let session_id = agent.session_id().to_string();
+            let session = Session::create_with_id(&self.info.cwd, &session_id)?;
+            self.info.session_id = Some(session_id);
+            agent.attach_storage(session);
         }
         Ok(())
     }
@@ -1937,7 +1982,7 @@ impl App {
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let mut prompt = self.expanded_input().trim().to_string();
         let mut display_prompt = self.input.trim().to_string();
@@ -2022,9 +2067,27 @@ impl App {
                 agent,
             )
             .await?;
-        while matches!(outcome, TurnOutcome::Completed) && !self.should_quit {
+        let mut pending_goal_retries = VecDeque::new();
+        let final_outcome = loop {
+            let outcome_kind = outcome.kind();
+            let resume_goal = goal_command::should_resume_goal_after_turn(
+                outcome_kind,
+                self.goal.is_some(),
+                self.should_quit,
+            );
+            if let TurnOutcome::Failed(failed_turn) = outcome {
+                if resume_goal {
+                    pending_goal_retries.push_back(failed_turn);
+                }
+            }
+
+            let should_drain_queue =
+                goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
+            if self.should_quit || !should_drain_queue {
+                break outcome_kind;
+            }
             let Some(prompt) = self.queued_prompts.pop_front() else {
-                break;
+                break outcome_kind;
             };
             outcome = self
                 .run_prompt_turn(
@@ -2034,39 +2097,14 @@ impl App {
                     agent,
                 )
                 .await?;
-        }
-        // If a turn failed while a goal is active, still drain any queued user
-        // messages before autonomous goal retries take over.
-        if matches!(outcome, TurnOutcome::Failed)
-            && goal_command::should_resume_goal_after_turn(
-                outcome,
-                self.goal.is_some(),
-                self.should_quit,
-            )
-        {
-            while !self.should_quit {
-                let Some(prompt) = self.queued_prompts.pop_front() else {
-                    break;
-                };
-                outcome = self
-                    .run_prompt_turn(
-                        TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                        Vec::new(),
-                        terminal,
-                        agent,
-                    )
-                    .await?;
-                if !matches!(outcome, TurnOutcome::Completed) {
-                    break;
-                }
-            }
-        }
+        };
         if goal_command::should_resume_goal_after_turn(
-            outcome,
+            final_outcome,
             self.goal.is_some(),
             self.should_quit,
         ) {
-            self.continue_goal(terminal, agent).await?;
+            self.continue_goal(terminal, agent, pending_goal_retries)
+                .await?;
         }
         Ok(())
     }
@@ -2085,14 +2123,6 @@ impl App {
                 self.info.session_id.as_deref(),
             )
             .await;
-    }
-
-    fn drain_steering_prompts_to(&mut self, target: &Arc<Mutex<VecDeque<String>>>) {
-        if self.steering_prompts.is_empty() {
-            return;
-        }
-        let mut target = target.lock().unwrap();
-        target.extend(self.steering_prompts.drain(..));
     }
 
     fn paste_clipboard_image(&mut self) {
@@ -2409,7 +2439,10 @@ impl App {
         Ok(())
     }
 
-    fn apply_pending_model_selection(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn apply_pending_model_selection(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let Some(selection) = self.pending_model_selection.take() else {
             return Ok(());
         };
@@ -2741,13 +2774,32 @@ impl App {
         self.hidden_reasoning_active = false;
     }
 
+    fn reset_provider_attempt_stream(&mut self) {
+        self.reset_streams();
+        let Some(start) = self.provider_attempt_start else {
+            return;
+        };
+        let mut index = 0;
+        let original_len = self.transcript.len();
+        self.transcript.retain(|entry| {
+            let keep = index < start || !matches!(entry, Entry::Assistant(_) | Entry::Reasoning(_));
+            index += 1;
+            keep
+        });
+        if self.transcript.len() != original_len {
+            self.history_lines.invalidate_from(start);
+        }
+        self.provider_attempt_start = Some(self.transcript.len());
+        self.status = "retrying provider response".into();
+    }
+
     fn loading_active(&self) -> bool {
         self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
     }
 
     fn handle_queued_agent_event(
         &mut self,
-        event: AgentEvent,
+        event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
     ) -> Result<(), crate::model::ModelError> {
         self.handle_agent_event(event, terminal)?;
@@ -2845,24 +2897,28 @@ impl App {
 
     fn handle_agent_event(
         &mut self,
-        event: AgentEvent,
+        event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
         match event {
-            AgentEvent::OutputDelta(text) => {
+            ViewModelEvent::ProviderStreamReset => {
+                self.reset_provider_attempt_stream();
+                Ok(true)
+            }
+            ViewModelEvent::OutputDelta(text) => {
                 self.hidden_reasoning_active = false;
-                let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
+                let switched = self.switch_stream_kind(StreamKind::Assistant);
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
             }
-            AgentEvent::ReasoningDelta(text) => {
+            ViewModelEvent::ReasoningDelta(text) => {
                 if !self.active_turn_show_reasoning_output {
                     self.hidden_reasoning_active = true;
                     return Ok(true);
                 }
-                let switched = self.switch_stream_kind(terminal, StreamKind::Reasoning)?;
+                let switched = self.switch_stream_kind(StreamKind::Reasoning);
                 self.reasoning_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
                 self.update_stream_preview_deadline(StreamKind::Reasoning);
@@ -2871,13 +2927,13 @@ impl App {
             other => {
                 if matches!(
                     other,
-                    AgentEvent::StepStarted(_)
-                        | AgentEvent::ToolCallUpdated { .. }
-                        | AgentEvent::ToolStarted { .. }
-                        | AgentEvent::ToolFinished { .. }
+                    ViewModelEvent::StepStarted(_)
+                        | ViewModelEvent::ToolCallUpdated { .. }
+                        | ViewModelEvent::ToolStarted { .. }
+                        | ViewModelEvent::ToolFinished { .. }
                 ) {
                     self.hidden_reasoning_active = false;
-                    self.finish_streams(terminal)?;
+                    self.finish_streams();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
                     self.insert_entry(&entry);
@@ -2888,22 +2944,18 @@ impl App {
         }
     }
 
-    fn switch_stream_kind(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    fn switch_stream_kind(&mut self, kind: StreamKind) -> bool {
         let inserted = if self
             .current_stream_kind
             .is_some_and(|current| current != kind)
         {
-            self.finish_current_stream(terminal)?
+            self.finish_current_stream()
         } else {
             false
         };
         self.current_stream_kind = Some(kind);
         self.update_stream_preview_deadline(kind);
-        Ok(inserted)
+        inserted
     }
 
     fn drain_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
@@ -2927,35 +2979,28 @@ impl App {
         };
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
-            self.insert_stream_fragment(terminal, fragment, kind)?;
+            self.insert_stream_fragment(fragment, kind);
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    fn finish_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
-        let reasoning_finished = self.finish_stream(terminal, StreamKind::Reasoning)?;
-        let assistant_finished = self.finish_stream(terminal, StreamKind::Assistant)?;
+    fn finish_streams(&mut self) -> bool {
+        let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
+        let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
-        Ok(reasoning_finished || assistant_finished)
+        reasoning_finished || assistant_finished
     }
 
-    fn finish_current_stream(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
-        if let Some(kind) = self.current_stream_kind {
-            self.finish_stream(terminal, kind)
-        } else {
-            Ok(false)
-        }
+    fn finish_current_stream(&mut self) -> bool {
+        self.current_stream_kind
+            .is_some_and(|kind| self.finish_stream(kind))
     }
 
-    fn finish_stream(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    fn finish_stream(&mut self, kind: StreamKind) -> bool {
         let fragment = match kind {
             StreamKind::Assistant => self.assistant_stream.finish(),
             StreamKind::Reasoning => self.reasoning_stream.finish(),
@@ -2963,10 +3008,10 @@ impl App {
         self.update_stream_preview_deadline(kind);
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
-            self.insert_stream_fragment(terminal, fragment, kind)?;
-            Ok(true)
+            self.insert_stream_fragment(fragment, kind);
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 
@@ -3015,24 +3060,19 @@ impl App {
         }
     }
 
-    fn insert_final_answer_suffix(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        answer: &str,
-    ) -> std::io::Result<()> {
+    fn insert_final_answer_suffix(&mut self, answer: &str) {
         match final_answer_delta(self.assistant_stream.emitted_text(), answer) {
             FinalAnswerDelta::None => {}
             FinalAnswerDelta::Append(suffix) => {
                 self.assistant_stream.push_delta(suffix);
                 if let Some(fragment) = self.assistant_stream.finish() {
-                    self.insert_stream_fragment(terminal, fragment, StreamKind::Assistant)?;
+                    self.insert_stream_fragment(fragment, StreamKind::Assistant);
                 }
             }
             FinalAnswerDelta::Mismatch => {
                 self.replace_current_turn_assistant_transcript(answer);
             }
         }
-        Ok(())
     }
 
     fn render_stream_preview_lines(
@@ -3066,13 +3106,7 @@ impl App {
         lines
     }
 
-    fn insert_stream_fragment(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        fragment: StreamFragment,
-        kind: StreamKind,
-    ) -> std::io::Result<()> {
-        let _ = terminal;
+    fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             if matches!(kind, StreamKind::Assistant) {
@@ -3082,7 +3116,6 @@ impl App {
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
-        Ok(())
     }
 
     fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
@@ -3113,7 +3146,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
@@ -3151,11 +3184,8 @@ impl App {
     async fn execute_compact_command(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Ok(config) = self.info.config_repository.load() {
-            agent.set_compaction_config((&config).into());
-        }
         self.steering_prompts.clear();
         self.status = "compacting context".into();
         self.running = true;
@@ -3164,42 +3194,30 @@ impl App {
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let compacted = {
-            let mut compact_future = Box::pin(agent.compact(move |event| {
-                let _ = event_tx.send(event);
-                Ok(())
-            }));
-            loop {
-                tokio::select! {
-                    result = &mut compact_future => break result,
-                    Some(event) = event_rx.recv() => {
-                        self.handle_queued_agent_event(event, terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
-                    }
-                    _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
-                        match self.handle_running_terminal_events(
-                            terminal,
-                            &interrupt_requested,
-                            &tool_call_active,
-                            RunningInputMode::Compacting,
-                        ) {
-                            Ok(StreamControl::Interrupt) => {
-                                break Err(crate::agent::AgentError::Provider(
-                                    crate::model::ModelError::Interrupted,
-                                ));
-                            }
-                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
-                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
+        let mut compact_future = Box::pin(agent.compact());
+        let compacted = loop {
+            tokio::select! {
+                result = &mut compact_future => break result,
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    match self.handle_running_terminal_events(
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Compacting,
+                    )? {
+                        StreamControl::Interrupt => {
+                            break Err(anyhow::anyhow!("compaction interrupted"));
                         }
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
+                        StreamControl::Continue | StreamControl::Resize => {}
                     }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
                 }
             }
         };
-        while let Ok(event) = event_rx.try_recv() {
-            self.handle_queued_agent_event(event, terminal)?;
+        drop(compact_future);
+        if let Some(context) = agent.take_context_usage() {
+            self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.running = false;
         self.loading_spinner.stop();
@@ -3211,10 +3229,9 @@ impl App {
             }
             Ok(false) => {
                 self.insert_entry(&Entry::Notice(
-                        "not enough conversation history to compact, or the model context window is unknown"
-                            .into(),
-                    ),
-                );
+                    "not enough conversation history to compact, or the model context window is unknown"
+                        .into(),
+                ));
                 self.status = "context not compacted".into();
             }
             Err(err) => {
@@ -3237,11 +3254,9 @@ impl App {
     fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        agent.reset();
-        agent.set_session_id(None);
-        agent.clear_history_sink();
+        agent.reset()?;
         self.info.session_id = None;
         self.composer = ComposerMode::Input;
         self.input.clear();
@@ -3328,7 +3343,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let model = invocation.args.trim();
         if model.is_empty() {
@@ -3355,7 +3370,7 @@ impl App {
     async fn open_model_picker(
         &mut self,
         terminal: &mut DefaultTerminal,
-        _agent: &mut Agent,
+        _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
@@ -3430,7 +3445,7 @@ impl App {
     async fn submit_picker_selection(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.composer = ComposerMode::Input;
@@ -3494,7 +3509,11 @@ impl App {
         }
     }
 
-    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
+    fn submit_config_selection(
+        &mut self,
+        value: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         match value {
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
@@ -3777,7 +3796,7 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         let supported_reasoning = crate::model::models_dev::cached_reasoning_levels(
             &self.info.provider,
             &self.info.model,
@@ -3786,19 +3805,17 @@ impl App {
             .info
             .reasoning
             .next_supported(supported_reasoning.as_deref());
-        if !agent.set_provider_reasoning(reasoning) {
-            let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not update reasoning to {reasoning}: {err}"
-                    )));
-                    self.status = "reasoning change failed".into();
-                    return Ok(());
-                }
-            };
-            agent.replace_provider(provider);
-        }
+        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not update reasoning to {reasoning}: {err}"
+                )));
+                self.status = "reasoning change failed".into();
+                return Ok(());
+            }
+        };
+        agent.replace_provider(provider, reasoning)?;
         self.info.reasoning = reasoning;
         self.info.diagnostics.update_identity(
             &self.info.provider,
@@ -3953,7 +3970,11 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    fn select_model(&mut self, selection: ModelSelection, agent: &mut Agent) -> anyhow::Result<()> {
+    fn select_model(
+        &mut self,
+        selection: ModelSelection,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -3964,7 +3985,7 @@ impl App {
             .info
             .reasoning
             .normalize(supported_reasoning.as_deref());
-        let new_provider = match build_provider(&provider, &model, reasoning) {
+        let new_provider = match build_sdk_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -3975,7 +3996,7 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider);
+        let handoff = agent.replace_provider(new_provider, reasoning)?;
         if handoff.has_omissions() {
             let kinds = handoff.omitted_kinds.join(", ");
             self.insert_entry(&Entry::Notice(format!(
@@ -4065,7 +4086,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let session_id = invocation.args.trim();
         if !session_id.is_empty() {
@@ -4110,9 +4131,9 @@ impl App {
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        match self.resume_session_by_id(session_id, terminal, agent) {
+        match self.resume_session_by_id(session_id, terminal, agent).await {
             Ok(()) => {
                 self.info
                     .herdr
@@ -4129,20 +4150,18 @@ impl App {
         }
     }
 
-    fn resume_session_by_id(
+    async fn resume_session_by_id(
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let (session, histories) = Session::open_by_id_with_histories(&self.info.cwd, session_id)?;
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
         let display_history = histories.display;
-        agent.replace_history(histories.model);
-        agent.set_session_id(Some(full_id.clone()));
-        agent.set_history_sink(SessionHistorySink::new(session));
+        agent.resume(session, histories.model).await?;
         self.info.session_id = Some(full_id);
         self.info.recovered_messages = display_history.clone();
         self.composer = ComposerMode::Input;
@@ -4157,7 +4176,7 @@ impl App {
         self.cumulative_usage = None;
         self.latest_usage = None;
         self.current_context = None;
-        let entries = transcript_entries_from_messages(&display_history);
+        let entries = transcript_entries_from_messages(&display_history, &self.info.cwd);
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
@@ -4170,9 +4189,16 @@ impl App {
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
+        self.insert_runtime_notices(agent);
         self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
         self.status = format!("resumed {short_id}");
         Ok(())
+    }
+
+    fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
+        for notice in agent.take_notices() {
+            self.insert_entry(&Entry::Notice(notice));
+        }
     }
 
     fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
@@ -4211,7 +4237,11 @@ impl App {
         Ok(())
     }
 
-    fn execute_skill_command(&mut self, name: &str, agent: &mut Agent) -> anyhow::Result<bool> {
+    fn execute_skill_command(
+        &mut self,
+        name: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
         let Some(name) = name.strip_prefix("skill:") else {
             return Ok(false);
         };
@@ -4223,7 +4253,7 @@ impl App {
         };
 
         self.ensure_session(agent)?;
-        agent.load_skill(&skill)?;
+        agent.load_skill(&skill, self.info.config_repository.load()?.max_output_bytes)?;
         self.insert_entry(&Entry::Notice(format!(
             "loaded skill {} from {}",
             skill.name, skill.source
@@ -4275,10 +4305,11 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)
     }
 
-    fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
+    fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
-            AgentEvent::StepStarted(step) => {
+            ViewModelEvent::StepStarted(step) => {
                 self.reset_streams();
+                self.provider_attempt_start = Some(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
                 self.active_tool_call = false;
@@ -4287,7 +4318,7 @@ impl App {
                 self.status = format!("running step {step}");
                 None
             }
-            AgentEvent::ToolStarted { display_lines, .. } => {
+            ViewModelEvent::ToolStarted { display_lines, .. } => {
                 self.active_tool_call = true;
                 self.pending_tool_call = Some(ToolEntry {
                     state: ToolEntryState::Running,
@@ -4296,7 +4327,7 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolUpdated { display_lines } => {
+            ViewModelEvent::ToolUpdated { display_lines } => {
                 let expanded = self
                     .pending_tool_call
                     .as_ref()
@@ -4308,7 +4339,7 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
+            ViewModelEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
                 self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
@@ -4316,23 +4347,24 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { .. } => None,
-            AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
-            AgentEvent::ContextUsage(usage) => {
+            ViewModelEvent::ToolCallUpdated { .. } => None,
+            ViewModelEvent::ProviderStreamReset => None,
+            ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::ContextUsage(usage) => {
+                self.info.diagnostics.record_context(usage.clone());
                 self.current_context = Some(usage);
                 None
             }
-            AgentEvent::Usage(usage) => {
+            ViewModelEvent::Usage(usage) => {
                 let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
                 self.latest_usage = Some(usage.clone());
                 merge_usage(&mut self.cumulative_usage, usage);
                 None
             }
-            AgentEvent::ToolFinished {
+            ViewModelEvent::ToolFinished {
                 ok,
                 display_style,
                 display_lines,
-                ..
             } => {
                 self.statusline.refresh_git_branch();
                 self.active_tool_call = false;
@@ -4347,8 +4379,6 @@ impl App {
                     expanded,
                 }))
             }
-            AgentEvent::QuestionnaireStarted(_) => None,
-            AgentEvent::QuestionnaireFinished(_) => None,
         }
     }
 
@@ -5187,7 +5217,8 @@ impl App {
     }
 
     fn insert_recovered_history(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        let entries = transcript_entries_from_messages(&self.info.recovered_messages);
+        let entries =
+            transcript_entries_from_messages(&self.info.recovered_messages, &self.info.cwd);
         if entries.is_empty() {
             return Ok(());
         }
@@ -5364,7 +5395,7 @@ async fn generate_session_title(
     model: String,
     first_user_message: String,
 ) -> anyhow::Result<String> {
-    let provider = build_provider(&provider_name, &model, ReasoningLevel::Low)?;
+    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
     let request_messages = vec![
                 Message::System(
                     "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
@@ -5378,6 +5409,7 @@ async fn generate_session_title(
             messages: &request_messages,
             tools: &[],
             cancellation: Default::default(),
+            reasoning_level: Default::default(),
             prompt_cache_key: None,
         }),
     )
@@ -5737,8 +5769,7 @@ enum HistoryDirection {
 mod tests {
     use super::*;
     use crate::credentials::{
-        save_anthropic_api_key, save_openai_api_key, CredentialError, CredentialResult,
-        MemoryCredentialStore,
+        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
     };
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
@@ -5793,7 +5824,7 @@ mod tests {
 
     pub(super) fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
-        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         App::new_with_credentials(
             TuiInfo {
                 cwd: PathBuf::from("/tmp/project"),
@@ -5806,7 +5837,6 @@ mod tests {
                 title_model: None,
                 title_auth: None,
                 favorite_models: Vec::new(),
-                questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,
@@ -5822,75 +5852,6 @@ mod tests {
             },
             store,
         )
-    }
-
-    #[derive(Debug)]
-    struct ReasoningRecordingProvider {
-        levels: Arc<Mutex<Vec<ReasoningLevel>>>,
-    }
-
-    #[async_trait::async_trait(?Send)]
-    impl crate::model::ModelProvider for ReasoningRecordingProvider {
-        fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-            self.levels.lock().unwrap().push(reasoning);
-            true
-        }
-
-        async fn send_turn(
-            &self,
-            _request: ModelRequest<'_>,
-        ) -> Result<ModelResponse, crate::model::ModelError> {
-            unreachable!("metadata tests do not send model requests")
-        }
-    }
-
-    #[tokio::test]
-    async fn metadata_fetch_completion_normalizes_active_provider_reasoning() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let config = crate::config::Config {
-            reasoning: ReasoningLevel::Max,
-            ..crate::config::Config::default()
-        };
-        config.save(Some(config_path.clone())).unwrap();
-
-        let mut app = test_app();
-        app.info.reasoning = ReasoningLevel::Max;
-        app.info.config_repository = ConfigRepository::new(Some(config_path.clone()));
-        app.pending_model_metadata = Some(tokio::spawn(async {
-            Some(ModelMetadata {
-                supported_reasoning_levels: Some(vec![
-                    ReasoningLevel::Off,
-                    ReasoningLevel::Low,
-                    ReasoningLevel::High,
-                ]),
-                ..ModelMetadata::default()
-            })
-        }));
-        let recorded_levels = Arc::new(Mutex::new(Vec::new()));
-        let provider = ReasoningRecordingProvider {
-            levels: Arc::clone(&recorded_levels),
-        };
-        let mut agent = Agent::new(
-            Box::new(provider),
-            crate::tool::ToolRegistry::new(),
-            crate::tool::ToolContext {
-                cwd: temp_dir.path().into(),
-                max_output_bytes: 12_000,
-            },
-        );
-        tokio::task::yield_now().await;
-
-        app.poll_model_metadata_fetch(&mut agent);
-
-        assert_eq!(app.info.reasoning, ReasoningLevel::High);
-        assert_eq!(*recorded_levels.lock().unwrap(), vec![ReasoningLevel::High]);
-        assert_eq!(
-            crate::config::Config::load(Some(config_path))
-                .unwrap()
-                .reasoning,
-            ReasoningLevel::High
-        );
     }
 
     #[test]
@@ -5974,7 +5935,7 @@ mod tests {
         });
 
         assert!(app
-            .record_agent_event(AgentEvent::ContextUsage(ContextUsage::estimated(
+            .record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
                 250,
                 Some(10_000),
             )))
@@ -5997,7 +5958,7 @@ mod tests {
         let mut app = test_app();
 
         assert!(app
-            .record_agent_event(AgentEvent::Usage(ModelUsage {
+            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(20),
                 cache_read_tokens: Some(400),
@@ -6005,7 +5966,7 @@ mod tests {
             }))
             .is_none());
         assert!(app
-            .record_agent_event(AgentEvent::Usage(ModelUsage {
+            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
                 input_tokens: Some(300),
                 output_tokens: Some(40),
                 cache_read_tokens: Some(700),
@@ -6247,27 +6208,30 @@ mod tests {
 
     #[test]
     fn recovered_session_messages_become_transcript_entries() {
-        let entries = transcript_entries_from_messages(&[
-            Message::System("system".into()),
-            Message::User(vec![
-                ContentBlock::Text("hello".into()),
-                ContentBlock::Image(ImageContent {
-                    data: "aW1n".into(),
-                    mime_type: "image/png".into(),
+        let entries = transcript_entries_from_messages(
+            &[
+                Message::System("system".into()),
+                Message::User(vec![
+                    ContentBlock::Text("hello".into()),
+                    ContentBlock::Image(ImageContent {
+                        data: "aW1n".into(),
+                        mime_type: "image/png".into(),
+                    }),
+                ]),
+                Message::Assistant(vec![ContentBlock::Text("hi".into())]),
+                Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+                    id: "call_1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "src/main.rs"}),
+                })]),
+                Message::ToolResult(crate::tool::ToolResult {
+                    id: "call_1".into(),
+                    ok: false,
+                    content: "missing file".into(),
                 }),
-            ]),
-            Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-            Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
-                id: "call_1".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "src/main.rs"}),
-            })]),
-            Message::ToolResult(crate::tool::ToolResult {
-                id: "call_1".into(),
-                ok: false,
-                content: "missing file".into(),
-            }),
-        ]);
+            ],
+            std::path::Path::new(""),
+        );
 
         assert!(
             matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]")
@@ -6282,7 +6246,7 @@ mod tests {
                 },
                 ref display_lines,
                 ..
-            }) if display_lines == &vec!["read_file".to_string(), "missing file".to_string()]
+            }) if display_lines == &vec!["read_file src/main.rs".to_string()]
         ));
         let lines = entry_lines(&entries[2], 40, 10);
         assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
@@ -6517,7 +6481,9 @@ mod tests {
         app.assistant_stream.push_delta("current");
         app.reasoning_stream.push_delta("reasoning");
 
-        assert!(app.record_agent_event(AgentEvent::StepStarted(2)).is_none());
+        assert!(app
+            .record_agent_event(ViewModelEvent::StepStarted(2))
+            .is_none());
 
         assert!(app.assistant_stream.is_empty());
         assert!(app.reasoning_stream.is_empty());
@@ -7011,8 +6977,8 @@ mod tests {
     #[test]
     fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
         let store = MemoryCredentialStore::default();
-        save_openai_api_key(&store, "sk-test").unwrap();
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+        save_provider_api_key(&store, "openai", "sk-test").unwrap();
+        save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
         let picker = provider_picker::logout_provider_picker(&store).unwrap();
         let values = picker
@@ -7037,7 +7003,7 @@ mod tests {
     #[test]
     fn model_picker_uses_all_available_auths() {
         let store = Arc::new(MemoryCredentialStore::default());
-        save_openai_api_key(store.as_ref(), "sk-test").unwrap();
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         save_codex_tokens(
             store.as_ref(),
             &crate::credentials::CodexTokens {
@@ -7048,7 +7014,7 @@ mod tests {
             },
         )
         .unwrap();
-        save_anthropic_api_key(store.as_ref(), "sk-ant-test").unwrap();
+        save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
         let mut app = App::new_with_credentials(
             TuiInfo {
                 cwd: PathBuf::from("/tmp/project"),
@@ -7061,7 +7027,6 @@ mod tests {
                 title_model: None,
                 title_auth: None,
                 favorite_models: Vec::new(),
-                questionnaire_enabled: true,
                 session_id: None,
                 recovered_messages: Vec::new(),
                 open_resume_picker: false,

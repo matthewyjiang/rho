@@ -4,6 +4,25 @@ use tokio::{
     net::TcpListener,
 };
 
+#[test]
+fn oauth_debug_redacts_codes_and_pkce_secrets() {
+    let request = XaiOAuthRequest {
+        authorize_url: "https://example.test?state=oauth-state-secret".into(),
+        redirect_uri: "http://localhost/callback".into(),
+        state: "oauth-state-secret".into(),
+        verifier: "pkce-verifier-secret".into(),
+        challenge: "pkce-challenge-secret".into(),
+    };
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("oauth-state-secret"));
+    assert!(!debug.contains("pkce-verifier-secret"));
+    assert!(!debug.contains("pkce-challenge-secret"));
+    assert!(
+        !format!("{:?}", CallbackOutcome::Code("oauth-code-secret".into()))
+            .contains("oauth-code-secret")
+    );
+}
+
 async fn capture_form(body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());

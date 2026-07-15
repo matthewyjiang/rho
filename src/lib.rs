@@ -1,10 +1,10 @@
-mod agent;
 mod app;
 mod auth;
 mod cancellation;
 mod cli;
 mod clipboard_image;
 mod commands;
+mod compaction;
 mod config;
 mod config_writer;
 mod credentials;
@@ -20,6 +20,7 @@ mod protocol;
 mod provider;
 mod provider_backend;
 mod providers;
+mod questionnaire;
 mod reasoning;
 mod session;
 mod skills;
@@ -31,5 +32,6 @@ mod update;
 mod usage_limits;
 mod workspace;
 
-pub use app::run;
+pub use app::{run, AutomationInterrupted};
 pub use cli::Cli;
+pub use rho_sdk as sdk;

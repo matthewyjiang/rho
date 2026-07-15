@@ -1,19 +1,15 @@
 mod adapters;
-mod display;
 mod fetch;
-mod process;
+mod sdk_fetch_content;
 mod search;
 mod storage;
 mod util;
 
-pub use adapters::{FetchContent, GetSearchContent, WebSearch};
+pub use adapters::{GetSearchContent, WebSearch};
+pub(super) use sdk_fetch_content::SdkFetchContent;
 
-pub(super) fn access_tools(config: &crate::config::Config) -> (WebSearch, FetchContent) {
-    let client = util::http_client();
-    (
-        WebSearch::with_client(config, client.clone()),
-        FetchContent::with_client(client),
-    )
+pub(super) fn access_tools(config: &crate::config::Config) -> WebSearch {
+    WebSearch::with_client(config, util::http_client())
 }
 
 #[cfg(test)]

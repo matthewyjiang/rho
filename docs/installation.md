@@ -65,4 +65,4 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Next, configure [authentication and models](/authentication-and-models).
+Next, configure [authentication and models](/authentication-and-models). To embed Rho as a headless Rust library instead of installing the CLI, start with [SDK installation and support](/sdk/installation).

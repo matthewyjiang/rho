@@ -242,7 +242,7 @@ impl super::App {
         mode: InlineShellMode,
         command: String,
         terminal: &mut ratatui::DefaultTerminal,
-        agent: &mut crate::agent::Agent,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.running {
             return self.block_inline_shell_during_turn();

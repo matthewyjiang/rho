@@ -1,24 +1,90 @@
 name: publish crates.io
 
+# Coordinated publication is owned by release-please after draft releases and
+# exact-SHA evidence succeed. This workflow remains for manual recovery only so
+# a published GitHub release cannot start a second independent crates.io path.
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
+    inputs:
+      package:
+        description: Crate to validate and publish
+        required: true
+        type: choice
+        options:
+          - rho-sdk
+          - rho-coding-agent
+      candidate-sha:
+        description: Exact full commit SHA to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.crate.outputs.package }}
+      sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate-sha }}
+      - name: Select crate
+        id: crate
+        env:
+          DISPATCH_PACKAGE: ${{ inputs.package }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "package=$DISPATCH_PACKAGE" >> "$GITHUB_OUTPUT"
+      - name: Record exact candidate commit
+        id: candidate
+        env:
+          REQUESTED_SHA: ${{ inputs.candidate-sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate SHA must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          candidate_sha="$(git rev-parse HEAD)"
+          if [[ "$candidate_sha" != "$REQUESTED_SHA" ]]; then
+            echo "Checked out $candidate_sha instead of requested $REQUESTED_SHA" >&2
+            exit 1
+          fi
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+  sdk-release-evidence:
+    needs: candidate
+    uses: ./.github/workflows/sdk-release-evidence.yml
+    with:
+      candidate-sha: ${{ needs.candidate.outputs.sha }}
+
   publish:
+    needs: [candidate, sdk-release-evidence]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
-      - name: Publish crate
-        run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+      - name: Publish selected crate for exact candidate SHA
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CANDIDATE_SHA: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
+          PACKAGE: ${{ needs.candidate.outputs.package }}
+        run: |
+          set -euo pipefail
+          args=(--sha "$CANDIDATE_SHA")
+          if [[ "$PACKAGE" == "rho-sdk" ]]; then
+            args+=(--sdk)
+          else
+            args+=(--app)
+          fi
+          ./scripts/publish_workspace_crates.sh "${args[@]}"

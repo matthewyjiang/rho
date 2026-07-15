@@ -6,9 +6,9 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::tool::{resolve_path, truncate, ToolContext, ToolError};
+use crate::tool::{truncate, ToolError};
 
-use super::util::{extract_title, html_to_text, is_video_extension, is_youtube_url};
+use super::util::{extract_title, html_to_text, is_video_extension};
 
 pub(super) const PREVIEW_BYTES: usize = 8_000;
 const MAX_FETCH_BYTES: usize = 2 * 1024 * 1024;
@@ -20,54 +20,25 @@ pub(super) struct FetchedTarget {
     pub(super) metadata: Value,
 }
 
-pub(super) async fn fetch_target(
+pub(super) async fn fetch_http_url(
     client: &reqwest::Client,
-    target: &str,
-    ctx: &ToolContext,
+    url: &Url,
     prompt: Option<&str>,
-    timestamp: Option<&str>,
-    frames: usize,
-    force_clone: bool,
 ) -> Result<FetchedTarget, ToolError> {
-    if let Some(github) = github::parse_url(target) {
-        return github::fetch(client, &github, force_clone).await;
-    }
-
-    if is_youtube_url(target) {
-        let content = format!(
-            "YouTube video analysis requires optional video extraction dependencies. prompt: {}; timestamp: {}; frames: {frames}",
-            prompt.unwrap_or("none"),
-            timestamp.unwrap_or("none")
-        );
-        return Ok(FetchedTarget {
-            title: Some("youtube video".into()),
-            content: content.clone(),
-            preview: json!({"type": "youtube_video", "warning": content}),
-            metadata: json!({"mode": "video_placeholder", "timestamp": timestamp, "frames": frames}),
-        });
-    }
-
-    if let Ok(url) = Url::parse(target) {
-        if content_type_from_path(url.path()) == "pdf" {
-            return Ok(remote_pdf_fallback(target));
-        }
-        let content = fetch_url_text(client, url.as_str()).await?;
-        let title = extract_title(&content);
-        let markdown = html_to_text(&content);
-        return Ok(FetchedTarget {
-            title: title.clone(),
-            content: markdown.clone(),
-            preview: json!({
-                "type": content_type_from_path(url.path()),
-                "url": target,
-                "title": title,
-                "preview": truncate(markdown.clone(), PREVIEW_BYTES)
-            }),
-            metadata: json!({"mode": "http_fetch", "prompt": prompt}),
-        });
-    }
-
-    fetch_local_path(target, &ctx.cwd, prompt, timestamp, frames)
+    let content = fetch_url_text(client, url.as_str()).await?;
+    let title = extract_title(&content);
+    let markdown = html_to_text(&content);
+    Ok(FetchedTarget {
+        title: title.clone(),
+        content: markdown.clone(),
+        preview: json!({
+            "type": content_type_from_path(url.path()),
+            "url": url.as_str(),
+            "title": title,
+            "preview": truncate(markdown.clone(), PREVIEW_BYTES)
+        }),
+        metadata: json!({"mode": "http_fetch", "prompt": prompt}),
+    })
 }
 
 pub(super) async fn fetch_url_text(
@@ -110,15 +81,13 @@ async fn fetch_url_text_with_auth(
     String::from_utf8(bytes).map_err(ToolError::Utf8)
 }
 
-fn fetch_local_path(
-    target: &str,
-    cwd: &Path,
+pub(super) fn fetch_local_path(
+    path: &Path,
     prompt: Option<&str>,
     timestamp: Option<&str>,
     frames: usize,
 ) -> Result<FetchedTarget, ToolError> {
-    let path = resolve_path(cwd, target);
-    let metadata = fs::metadata(&path)?;
+    let metadata = fs::metadata(path)?;
     let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     if is_video_extension(extension) {
         let content = format!(
@@ -152,7 +121,7 @@ fn fetch_local_path(
         });
     }
 
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(path)?;
     Ok(FetchedTarget {
         title: path
             .file_name()
@@ -167,7 +136,26 @@ fn fetch_local_path(
     })
 }
 
-fn content_type_from_path(path: &str) -> &'static str {
+pub(super) fn youtube_placeholder(
+    _target: &str,
+    prompt: Option<&str>,
+    timestamp: Option<&str>,
+    frames: usize,
+) -> FetchedTarget {
+    let content = format!(
+        "YouTube video analysis requires optional video extraction dependencies. prompt: {}; timestamp: {}; frames: {frames}",
+        prompt.unwrap_or("none"),
+        timestamp.unwrap_or("none")
+    );
+    FetchedTarget {
+        title: Some("youtube video".into()),
+        content: content.clone(),
+        preview: json!({"type": "youtube_video", "warning": content}),
+        metadata: json!({"mode": "video_placeholder", "timestamp": timestamp, "frames": frames}),
+    }
+}
+
+pub(super) fn content_type_from_path(path: &str) -> &'static str {
     if path.ends_with(".pdf") {
         "pdf"
     } else {
@@ -175,7 +163,7 @@ fn content_type_from_path(path: &str) -> &'static str {
     }
 }
 
-fn remote_pdf_fallback(url: &str) -> FetchedTarget {
+pub(super) fn remote_pdf_fallback(url: &str) -> FetchedTarget {
     let content = format!(
         "Remote PDF detected at {url}. PDF text extraction is not available in this local MVP."
     );

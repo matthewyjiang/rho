@@ -6,8 +6,16 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  quality:
+    name: quality and workspace tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,33 +23,125 @@ jobs:
         run: python3 scripts/check_architecture.py
       - name: Test architecture guardrails
         run: python3 scripts/check_architecture.py --self-test
+      - name: Check SDK compatibility metadata
+        run: python3 scripts/check_sdk_compatibility.py
+      - name: Test SDK redaction evidence schema
+        run: python3 scripts/audit_sdk_redaction_tests.py
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Run tests
-        run: cargo test --all
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Check crate package
-        run: cargo publish --dry-run --locked
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --locked
+      - name: Run workspace tests
+        run: cargo test --workspace --all-targets --locked
+      - name: Run documentation tests
+        run: cargo test --workspace --doc --all-features --locked
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-  platform-check:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
+  sdk-features:
+    name: SDK feature and downstream contracts
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
-      - name: Check platform build
-        run: cargo check --all-targets --locked
-      - name: Run Bash behavior tests
-        if: runner.os == 'macOS'
-        run: cargo test --locked tools::bash::tests
+        with:
+          shared-key: sdk-features
+      - name: Test default, no-default, and all SDK features
+        run: python3 scripts/check_sdk_compatibility.py --test-features
+      - name: Compile downstream-only fixtures
+        run: python3 scripts/check_sdk_compatibility.py --test-downstream
+
+  msrv:
+    name: MSRV ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: rho-sdk
+            manifest: crates/rho-sdk/Cargo.toml
+            command: cargo test -p rho-sdk --all-targets --all-features --locked
+          - package: rho-coding-agent
+            manifest: Cargo.toml
+            command: cargo check --workspace --all-targets --locked
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read MSRV from Cargo metadata
+        id: msrv
+        shell: bash
+        run: |
+          version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["rust-version"])' '${{ matrix.manifest }}')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: msrv-${{ matrix.package }}-${{ steps.msrv.outputs.version }}
+      - name: Validate MSRV
+        run: ${{ matrix.command }}
+
+  platform:
+    name: ${{ matrix.os }} workspace
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: platform-${{ matrix.os }}
+      - name: Compile and test the workspace
+        run: cargo test --workspace --all-targets --locked
+
+  package:
+    name: release package checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: package
+      - name: Verify SDK package
+        run: cargo package --locked -p rho-sdk
+      - name: Verify SDK publish preparation
+        run: cargo publish --dry-run --locked -p rho-sdk
+      - name: Build application package contents
+        run: >-
+          cargo package --locked --no-verify -p rho-coding-agent
+          --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+      - name: Check package file lists
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo package --list -p rho-sdk > /tmp/rho-sdk-package-files
+          cargo package --list -p rho-coding-agent > /tmp/rho-application-package-files
+          grep -Fxq Cargo.toml /tmp/rho-sdk-package-files
+          grep -Fxq README.md /tmp/rho-sdk-package-files
+          grep -Fxq src/lib.rs /tmp/rho-sdk-package-files
+          grep -Fxq examples/simple_completion.rs /tmp/rho-sdk-package-files
+          grep -Fxq Cargo.toml /tmp/rho-application-package-files
+          grep -Fxq src/main.rs /tmp/rho-application-package-files
+          grep -Fxq tests/automation_cli.rs /tmp/rho-application-package-files
+          grep -Fxq build.rs /tmp/rho-application-package-files
+          if grep -Eq '^(\.github|docs|fixtures)/' /tmp/rho-application-package-files; then
+            echo "application crate contains repository-only files" >&2
+            exit 1
+          fi

@@ -1,24 +1,8 @@
-use serde_json::Value;
-
 use super::types::{Snapshot, State, Stream};
 
-pub(super) fn result_lines(content: &str) -> Option<Vec<String>> {
-    if let Ok(snapshot) = serde_json::from_str::<Snapshot>(content) {
-        return Some(snapshot_lines(&snapshot));
-    }
-
-    let value: Value = serde_json::from_str(content).ok()?;
-    let process_id = value.get("process_id")?.as_str()?;
-    value
-        .get("stop_requested")
-        .and_then(Value::as_bool)
-        .filter(|requested| *requested)
-        .map(|_| vec!["process".into(), format!("stop requested: {process_id}")])
-}
-
-pub(super) fn snapshot_lines(snapshot: &Snapshot) -> Vec<String> {
-    let mut lines = vec!["process".into(), snapshot.command.clone()];
-    lines.push(status_line(snapshot));
+/// Progress lines rendered beneath the presenter-owned tool header.
+pub(super) fn snapshot_progress_lines(snapshot: &Snapshot) -> Vec<String> {
+    let mut lines = vec![status_line(snapshot)];
 
     if snapshot.truncated {
         lines.push(format!(

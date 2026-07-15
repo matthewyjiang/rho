@@ -555,7 +555,7 @@ fn repeated_statusline_frames_render_once() {
 fn hidden_reasoning_shows_thinking_placeholder() {
     let mut app = test_app();
     app.active_turn_show_reasoning_output = false;
-    app.record_agent_event(AgentEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
 
     let thinking = app
         .history_live_lines(60, Instant::now())
@@ -572,13 +572,10 @@ fn hidden_reasoning_shows_thinking_placeholder() {
 fn started_tool_display_ignores_late_argument_previews() {
     let mut app = test_app();
 
-    app.record_agent_event(AgentEvent::ToolStarted {
-        name: "edit_file".into(),
-        command: None,
-        display_style: ToolDisplayStyle::file_diff(),
+    app.record_agent_event(ViewModelEvent::ToolStarted {
         display_lines: vec!["edit_file src/main.rs".into()],
     });
-    app.record_agent_event(AgentEvent::ToolCallUpdated {
+    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         display_lines: vec!["edit_file".into()],
     });
 

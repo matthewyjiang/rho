@@ -237,9 +237,9 @@ impl App {
     pub(super) fn open_questionnaire(
         &mut self,
         request: QuestionAnswerRequest,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
-        self.finish_streams(terminal)?;
+        self.finish_streams();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;

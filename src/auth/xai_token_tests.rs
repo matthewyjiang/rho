@@ -62,3 +62,14 @@ fn refresh_with_expires_in_sets_absolute_expiry() {
         }
     );
 }
+
+#[test]
+fn auth_material_debug_redacts_access_token() {
+    let material = XaiAuthMaterial {
+        access_token: "xai-secret-token".into(),
+    };
+
+    let debug = format!("{material:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("xai-secret-token"));
+}

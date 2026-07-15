@@ -8,8 +8,13 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::xai_oauth::{CLIENT_ID, TOKEN_URL},
-    credentials::{load_xai_tokens, save_xai_tokens, CredentialStore, XaiTokens},
+    credentials::{save_xai_tokens, CredentialStore, XaiTokens},
     model::ModelError,
+};
+
+#[cfg(test)]
+use crate::{
+    credentials::load_xai_tokens,
     provider::{self, ProviderId},
 };
 
@@ -22,19 +27,28 @@ pub(crate) enum XaiAuthSource {
     Store,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct XaiAuthMaterial {
     pub access_token: String,
+}
+
+impl std::fmt::Debug for XaiAuthMaterial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XaiAuthMaterial")
+            .field("access_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 pub(crate) struct XaiAuthManager {
     client: reqwest::Client,
     store: Arc<dyn CredentialStore>,
     source: XaiAuthSource,
-    env_tokens: Option<XaiTokens>,
+    tokens: Mutex<XaiTokens>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct XaiRefreshResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -43,33 +57,42 @@ struct XaiRefreshResponse {
 }
 
 impl XaiAuthManager {
+    #[cfg(test)]
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
         let descriptor = provider::provider_descriptor_by_id(ProviderId::Xai);
-        let (source, env_tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
+        let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
             Ok(access_token) if !access_token.trim().is_empty() => (
                 XaiAuthSource::Env,
-                Some(XaiTokens {
+                XaiTokens {
                     access_token,
                     refresh_token: None,
                     expires_at_unix: None,
                     id_token: None,
-                }),
+                },
             ),
-            _ => {
-                load_xai_tokens(store.as_ref())?.ok_or(ModelError::MissingXaiAuth)?;
-                (XaiAuthSource::Store, None)
-            }
+            _ => (
+                XaiAuthSource::Store,
+                load_xai_tokens(store.as_ref())?.ok_or(ModelError::MissingXaiAuth)?,
+            ),
         };
-        Ok(Self {
+        Ok(Self::from_tokens(store, source, tokens))
+    }
+
+    pub(crate) fn from_tokens(
+        store: Arc<dyn CredentialStore>,
+        source: XaiAuthSource,
+        tokens: XaiTokens,
+    ) -> Self {
+        Self {
             client: reqwest::Client::new(),
             store,
             source,
-            env_tokens,
-        })
+            tokens: Mutex::new(tokens),
+        }
     }
 
     pub(crate) async fn auth_material(&self) -> Result<XaiAuthMaterial, ModelError> {
-        let tokens = self.load_tokens()?;
+        let tokens = self.tokens.lock().await.clone();
         if self.source == XaiAuthSource::Store && token_is_expiring(&tokens) {
             self.refresh_if_current(&tokens.access_token).await
         } else {
@@ -89,24 +112,15 @@ impl XaiAuthManager {
         self.refresh_if_current(failed_access_token).await.map(Some)
     }
 
-    fn load_tokens(&self) -> Result<XaiTokens, ModelError> {
-        match self.source {
-            XaiAuthSource::Env => self.env_tokens.clone().ok_or(ModelError::MissingXaiAuth),
-            XaiAuthSource::Store => {
-                load_xai_tokens(self.store.as_ref())?.ok_or(ModelError::MissingXaiAuth)
-            }
-        }
-    }
-
     async fn refresh_if_current(
         &self,
         failed_access_token: &str,
     ) -> Result<XaiAuthMaterial, ModelError> {
         let _guard = REFRESH_LOCK.lock().await;
-        let current = self.load_tokens()?;
+        let mut current = self.tokens.lock().await;
         if current.access_token != failed_access_token {
             return Ok(XaiAuthMaterial {
-                access_token: current.access_token,
+                access_token: current.access_token.clone(),
             });
         }
         let refresh_token = current
@@ -115,9 +129,9 @@ impl XaiAuthManager {
             .ok_or(ModelError::MissingXaiAuth)?;
         let refreshed = refresh_xai_tokens(&self.client, &refresh_token, &current).await?;
         save_xai_tokens(self.store.as_ref(), &refreshed)?;
-        Ok(XaiAuthMaterial {
-            access_token: refreshed.access_token,
-        })
+        let access_token = refreshed.access_token.clone();
+        *current = refreshed;
+        Ok(XaiAuthMaterial { access_token })
     }
 }
 

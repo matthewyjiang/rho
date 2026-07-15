@@ -42,12 +42,6 @@ impl Tool for Rho {
         }
     }
 
-    fn display_content(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Option<String> {
-        args.get("action")
-            .and_then(|action| action.as_str())
-            .map(|action| format!("rho {action}"))
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,

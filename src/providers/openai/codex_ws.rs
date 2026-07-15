@@ -84,7 +84,7 @@ impl CodexWsTransport {
         body: Value,
         tokens: &CodexTokens,
         mode: CodexRequestMode,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
@@ -98,6 +98,65 @@ impl CodexWsTransport {
 
         match state
             .send_frame(&self.ws_url, tokens, frame, self.idle_timeout, on_event)
+            .await
+        {
+            Ok(output) => {
+                let CodexWsCompleted {
+                    response,
+                    server_output_items,
+                } = output;
+                let continuation_response = CodexContinuationResponse::from_response(
+                    &response.response,
+                    response.response_id.clone(),
+                    server_output_items,
+                );
+                state
+                    .continuation
+                    .record_success(&candidate, continuation_response);
+                Ok(CodexWsTurn::Completed(response.response))
+            }
+            Err(CodexWsFailure::Transport {
+                events_emitted: false,
+                ..
+            }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Ok(CodexWsTurn::FullSseFallback)
+            }
+            Err(CodexWsFailure::Transport {
+                message,
+                events_emitted: true,
+            }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Err(ModelError::StreamFailedAfterOutput { message })
+            }
+            Err(CodexWsFailure::Model(err)) => {
+                state.connection = None;
+                state.continuation.reset();
+                Err(err)
+            }
+        }
+    }
+
+    pub(super) async fn send_responses_turn_silent(
+        &self,
+        body: Value,
+        tokens: &CodexTokens,
+        mode: CodexRequestMode,
+    ) -> Result<CodexWsTurn, ModelError> {
+        let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
+        let mut state = self.state.lock().await;
+        let body = if mode.supports_incremental_websocket() {
+            state.continuation.continuation_body(&candidate, body)
+        } else {
+            state.continuation.reset();
+            body
+        };
+        let frame = response_create_frame(body, mode);
+
+        match state
+            .send_frame_silent(&self.ws_url, tokens, frame, self.idle_timeout)
             .await
         {
             Ok(output) => {
@@ -171,7 +230,7 @@ impl CodexWsState {
         tokens: &CodexTokens,
         frame: Value,
         idle_timeout: std::time::Duration,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
         if self.connection.is_none() {
             self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
@@ -192,6 +251,34 @@ impl CodexWsState {
         })?;
 
         collect_codex_ws_response(socket, idle_timeout, on_event).await
+    }
+
+    async fn send_frame_silent(
+        &mut self,
+        ws_url: &str,
+        tokens: &CodexTokens,
+        frame: Value,
+        idle_timeout: std::time::Duration,
+    ) -> Result<CodexWsCompleted, CodexWsFailure> {
+        if self.connection.is_none() {
+            self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
+        }
+        let socket = self.connection.as_mut().expect("connection was just set");
+        wait_for_stream_activity_for(
+            socket.send(Message::Text(frame.to_string().into())),
+            idle_timeout,
+        )
+        .await
+        .map_err(|err| CodexWsFailure::Transport {
+            message: err.to_string(),
+            events_emitted: false,
+        })?
+        .map_err(|err| CodexWsFailure::Transport {
+            message: format!("websocket send failed: {err}"),
+            events_emitted: false,
+        })?;
+
+        collect_codex_ws_response_silent(socket, idle_timeout).await
     }
 }
 
@@ -246,7 +333,7 @@ async fn connect_codex_ws(
 async fn collect_codex_ws_response(
     socket: &mut CodexSocket,
     idle_timeout: std::time::Duration,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<CodexWsCompleted, CodexWsFailure> {
     let mut state = CodexSseState::default();
     let mut server_output_items = Vec::new();
@@ -308,10 +395,72 @@ async fn collect_codex_ws_response(
     })
 }
 
+async fn collect_codex_ws_response_silent(
+    socket: &mut CodexSocket,
+    idle_timeout: std::time::Duration,
+) -> Result<CodexWsCompleted, CodexWsFailure> {
+    let mut state = CodexSseState::default();
+    let mut server_output_items = Vec::new();
+    let mut idle_deadline = StreamIdleDeadline::with_timeout(idle_timeout);
+    loop {
+        let Some(message) = idle_deadline.wait_for(socket.next()).await.map_err(|err| {
+            CodexWsFailure::Transport {
+                message: err.to_string(),
+                events_emitted: false,
+            }
+        })?
+        else {
+            break;
+        };
+        let message = message.map_err(|err| CodexWsFailure::Transport {
+            message: format!("websocket receive failed: {err}"),
+            events_emitted: false,
+        })?;
+        let text = match message {
+            Message::Text(text) => text.to_string(),
+            Message::Binary(bytes) => std::str::from_utf8(&bytes)
+                .map_err(|err| CodexWsFailure::Transport {
+                    message: format!("websocket binary frame contained invalid utf-8: {err}"),
+                    events_emitted: false,
+                })?
+                .to_string(),
+            Message::Ping(_) | Message::Pong(_) => continue,
+            Message::Close(_) => {
+                return Err(CodexWsFailure::Transport {
+                    message: "websocket closed before response.completed".into(),
+                    events_emitted: false,
+                });
+            }
+            Message::Frame(_) => continue,
+        };
+        let payload =
+            serde_json::from_str::<Value>(&text).map_err(|err| CodexWsFailure::Transport {
+                message: format!("websocket frame was not valid JSON: {err}"),
+                events_emitted: false,
+            })?;
+        collect_server_output_item(&payload, &mut server_output_items);
+        let (completed, activity) = handle_codex_ws_value_silent(&payload, &mut state)?;
+        if completed {
+            let response = state.into_response().map_err(CodexWsFailure::Model)?;
+            return Ok(CodexWsCompleted {
+                response,
+                server_output_items,
+            });
+        }
+        if activity {
+            idle_deadline.record_activity();
+        }
+    }
+    Err(CodexWsFailure::Transport {
+        message: "websocket ended before response.completed".into(),
+        events_emitted: false,
+    })
+}
+
 fn handle_codex_ws_value(
     value: &Value,
     state: &mut CodexSseState,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     events_emitted: &mut bool,
 ) -> Result<(bool, bool), CodexWsFailure> {
     let mut emit_event = |event| {
@@ -324,9 +473,23 @@ fn handle_codex_ws_value(
     handle_codex_sse_line(
         &format!("data: {value}"),
         state,
-        &mut Some(&mut emit_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>),
+        &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
     )
     .map_err(CodexWsFailure::Model)?;
+    let event_type = value.get("type").and_then(Value::as_str);
+    Ok((
+        event_type == Some("response.completed"),
+        event_type.is_some_and(|event_type| event_type.starts_with("response.")),
+    ))
+}
+
+fn handle_codex_ws_value_silent(
+    value: &Value,
+    state: &mut CodexSseState,
+) -> Result<(bool, bool), CodexWsFailure> {
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
+    handle_codex_sse_line(&format!("data: {value}"), state, &mut on_event)
+        .map_err(CodexWsFailure::Model)?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),

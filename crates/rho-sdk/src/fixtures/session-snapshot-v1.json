@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "session_id": "11111111-1111-4111-8111-111111111111",
+  "revision": 3,
+  "history": [
+    {"User": [{"Text": "historical prompt"}]},
+    {"Assistant": [{"Text": "historical answer"}]}
+  ],
+  "provider": {
+    "provider": "fixture-provider",
+    "api": "fixture-api",
+    "model": "fixture-model"
+  },
+  "compaction": {
+    "completed_compactions": 1,
+    "removed_messages": 4,
+    "last_revision": 2
+  },
+  "metadata": {"title": "snapshot v1"}
+}

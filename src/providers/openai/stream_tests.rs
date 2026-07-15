@@ -8,9 +8,7 @@ use super::{
 use crate::{
     cancellation::RunCancellation,
     credentials::{CodexTokens, MemoryCredentialStore},
-    model::{
-        ContentBlock, Message, ModelError, ModelEvent, ModelProvider, ModelRequest, ModelResponse,
-    },
+    model::{ContentBlock, Message, ModelError, ModelEvent, ModelRequest, ModelResponse},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -46,19 +44,18 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
         "gpt-4.1".into(),
         Auth::ApiKey("test-key".into()),
         Arc::new(MemoryCredentialStore::default()),
-        None,
-        None,
     );
     provider.api_base = api_base;
     provider.client = reqwest::Client::new();
 
     let mut events = Vec::new();
     let response = provider
-        .send_turn_stream(
+        .stream_turn(
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
             &mut |event| {
@@ -134,8 +131,6 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             source: CodexAuthSource::Env,
         },
         Arc::new(MemoryCredentialStore::default()),
-        None,
-        None,
     );
     provider.codex_ws = CodexWsTransport::new_with_url(ws_url);
 
@@ -149,11 +144,12 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     };
     let first_messages = [Message::user_text("first")];
     let mut on_first_event = |_| Ok(());
-    let first_turn = provider.send_turn_stream(
+    let first_turn = provider.stream_turn(
         ModelRequest {
             messages: &first_messages,
             tools: &[],
             cancellation,
+            reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
         &mut on_first_event,
@@ -162,11 +158,12 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     assert!(matches!(result, Err(ModelError::Interrupted)));
 
     let response = provider
-        .send_turn_stream(
+        .stream_turn(
             ModelRequest {
                 messages: &[Message::user_text("second")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
             &mut |_| Ok(()),

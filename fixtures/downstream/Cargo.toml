@@ -1,0 +1,5 @@
+# Keep Cargo.lock committed so this excluded downstream workspace exercises a
+# reproducible dependency graph in local and CI compatibility checks.
+[workspace]
+members = ["default-features", "no-default-features"]
+resolver = "2"

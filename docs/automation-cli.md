@@ -85,3 +85,19 @@ Options:
 `rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It runs in the current working directory and can read files, write files, edit files, and run shell commands when the model chooses those tools.
 
 Use `--no-tools` to remove tool access and send only the raw prompt and model response behavior.
+
+### Automation output and exit contract
+
+For the 1.0 CLI contract, `rho run` writes exactly one final assistant answer and
+a trailing newline to stdout. Reasoning, provider activity, tool lifecycle,
+diagnostics, and errors never write to stdout. Actionable errors go to stderr.
+This keeps command substitution, pipes, and redirected output stable.
+
+A successful run exits with status 0. Provider, configuration, tool setup, and
+output failures exit with status 1. SIGINT exits with 130 and SIGTERM exits with
+143 after SDK shutdown and managed-process cleanup.
+
+Rho 1.0 does not add a JSON Lines or other machine-readable event mode. The
+versioned Rust `RunEvent` API is the machine-readable streaming contract. A
+future CLI event protocol must be explicitly opted into, independently
+versioned, and must not change default stdout behavior.

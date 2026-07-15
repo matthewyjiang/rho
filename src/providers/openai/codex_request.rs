@@ -44,9 +44,8 @@ impl CodexRequestMode {
 pub(super) fn build_codex_responses_body(
     model: &str,
     request: ModelRequest<'_>,
-    reasoning_effort: Option<&str>,
-    reasoning_summary: Option<&str>,
 ) -> Result<Value, ModelError> {
+    let reasoning = super::openai_reasoning_config("openai-codex", model, request.reasoning_level)?;
     let mode = CodexRequestMode::for_model(model);
     let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new("openai-codex", "openai-responses", model);
@@ -104,7 +103,9 @@ pub(super) fn build_codex_responses_body(
     if let Some(prompt_cache_key) = request.prompt_cache_key {
         body["prompt_cache_key"] = json!(prompt_cache_key);
     }
-    if let Some(mut reasoning) = codex_reasoning_param(reasoning_effort, reasoning_summary) {
+    if let Some(mut reasoning) =
+        codex_reasoning_param(reasoning.effort.as_deref(), reasoning.summary.as_deref())
+    {
         if mode == CodexRequestMode::ResponsesLite {
             reasoning["context"] = json!("all_turns");
         }
@@ -140,10 +141,9 @@ mod tests {
                         input_schema: json!({"type": "object"}),
                     }],
                     cancellation: Default::default(),
+                    reasoning_level: Default::default(),
                     prompt_cache_key: None,
                 },
-                Some("medium"),
-                Some("auto"),
             )
             .unwrap();
 
@@ -167,10 +167,9 @@ mod tests {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            Some("medium"),
-            Some("auto"),
         )
         .unwrap();
 
@@ -195,10 +194,9 @@ mod tests {
                     input_schema: json!({"type": "object"}),
                 }],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            None,
-            None,
         )
         .unwrap();
 
@@ -244,10 +242,9 @@ mod tests {
                     input_schema: json!({"type": "object"}),
                 }],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            None,
-            None,
         )
         .unwrap();
 

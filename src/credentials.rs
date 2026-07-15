@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt,
     sync::{Mutex, OnceLock},
 };
 
@@ -27,7 +28,7 @@ const MAX_SECRET_CHUNK_UTF16_UNITS: usize = 1000;
 
 const CHUNK_MANIFEST_VERSION: &str = "v2";
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CodexTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -35,7 +36,7 @@ pub struct CodexTokens {
     pub account_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GitHubCopilotTokens {
     pub github_access_token: String,
     pub github_refresh_token: Option<String>,
@@ -48,13 +49,38 @@ pub struct GitHubCopilotTokens {
     pub copilot_models_endpoint: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct XaiTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at_unix: Option<i64>,
     pub id_token: Option<String>,
 }
+
+macro_rules! redacted_token_debug {
+    ($type:ty, $($visible:ident),* $(,)?) => {
+        impl fmt::Debug for $type {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($type));
+                debug.field("credentials", &"[REDACTED]");
+                $(debug.field(stringify!($visible), &self.$visible);)*
+                debug.finish()
+            }
+        }
+    };
+}
+
+redacted_token_debug!(CodexTokens, account_id);
+redacted_token_debug!(
+    GitHubCopilotTokens,
+    github_expires_at_unix,
+    copilot_expires_at_unix,
+    copilot_refresh_after_unix,
+    copilot_token_endpoint,
+    copilot_chat_endpoint,
+    copilot_models_endpoint,
+);
+redacted_token_debug!(XaiTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
@@ -522,36 +548,6 @@ pub fn delete_provider_credentials(
     store.delete_secret(auth_kind.account())
 }
 
-#[allow(dead_code)]
-pub fn load_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    load_provider_api_key(store, "openai")
-}
-
-#[allow(dead_code)]
-pub fn save_openai_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    save_provider_api_key(store, "openai", key)
-}
-
-#[allow(dead_code)]
-pub fn delete_openai_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    delete_provider_credentials(store, "openai")
-}
-
-#[allow(dead_code)]
-pub fn load_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<Option<String>> {
-    load_provider_api_key(store, "anthropic")
-}
-
-#[allow(dead_code)]
-pub fn save_anthropic_api_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
-    save_provider_api_key(store, "anthropic", key)
-}
-
-#[allow(dead_code)]
-pub fn delete_anthropic_api_key(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    delete_provider_credentials(store, "anthropic")
-}
-
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
     let Some(secret) = store.get_secret(CODEX_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -585,11 +581,6 @@ pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> Crede
     store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
 }
 
-#[allow(dead_code)]
-pub fn delete_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(CODEX_TOKENS_ACCOUNT)
-}
-
 pub fn load_github_copilot_tokens(
     store: &dyn CredentialStore,
 ) -> CredentialResult<Option<GitHubCopilotTokens>> {
@@ -608,11 +599,6 @@ pub fn save_github_copilot_tokens(
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
     store.set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, &secret)
-}
-
-#[allow(dead_code)]
-pub fn delete_github_copilot_tokens(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    store.delete_secret(GITHUB_COPILOT_TOKENS_ACCOUNT)
 }
 
 pub fn provider_has_env_override(provider: &str) -> bool {
@@ -674,6 +660,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn token_debug_redacts_every_secret_field() {
+        let codex = CodexTokens {
+            access_token: "codex-access-secret".into(),
+            refresh_token: Some("codex-refresh-secret".into()),
+            id_token: Some("codex-id-secret".into()),
+            account_id: Some("account".into()),
+        };
+        let xai = XaiTokens {
+            access_token: "xai-access-secret".into(),
+            refresh_token: Some("xai-refresh-secret".into()),
+            expires_at_unix: Some(123),
+            id_token: Some("xai-id-secret".into()),
+        };
+
+        let debug = format!("{codex:?} {xai:?}");
+        for secret in [
+            "codex-access-secret",
+            "codex-refresh-secret",
+            "codex-id-secret",
+            "xai-access-secret",
+            "xai-refresh-secret",
+            "xai-id-secret",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
     fn web_search_api_keys_use_dedicated_accounts() {
         let store = MemoryCredentialStore::default();
 
@@ -694,34 +709,25 @@ mod tests {
     }
 
     #[test]
-    fn api_key_round_trips_through_memory_store() {
+    fn provider_api_keys_round_trip_through_memory_store() {
         let store = MemoryCredentialStore::default();
 
-        assert_eq!(load_openai_api_key(&store).unwrap(), None);
-        save_openai_api_key(&store, "sk-test").unwrap();
-        assert_eq!(load_openai_api_key(&store).unwrap(), Some("sk-test".into()));
-        assert!(delete_openai_api_key(&store).unwrap());
-        assert_eq!(load_openai_api_key(&store).unwrap(), None);
-    }
-
-    #[test]
-    fn anthropic_api_key_round_trips_through_memory_store() {
-        let store = MemoryCredentialStore::default();
-
-        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
-        assert_eq!(
-            load_anthropic_api_key(&store).unwrap(),
-            Some("sk-ant-test".into())
-        );
-        assert!(delete_anthropic_api_key(&store).unwrap());
-        assert_eq!(load_anthropic_api_key(&store).unwrap(), None);
+        for (provider, key) in [("openai", "sk-test"), ("anthropic", "sk-ant-test")] {
+            assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);
+            save_provider_api_key(&store, provider, key).unwrap();
+            assert_eq!(
+                load_provider_api_key(&store, provider).unwrap().as_deref(),
+                Some(key)
+            );
+            assert!(delete_provider_credentials(&store, provider).unwrap());
+            assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);
+        }
     }
 
     #[test]
     fn available_auth_modes_includes_anthropic_api_key() {
         let store = MemoryCredentialStore::default();
-        save_anthropic_api_key(&store, "sk-ant-test").unwrap();
+        save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
         assert!(available_auth_modes(&store).contains(&"anthropic-api-key".into()));
     }

@@ -1,10 +1,3 @@
-use std::{
-    fs,
-    io::{Read, Write},
-    net::TcpListener,
-    thread,
-};
-
 use serde_json::{json, Value};
 
 use crate::{
@@ -56,21 +49,13 @@ fn parses_github_root_tree_blob_and_commit_urls() {
 async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
     let ctx = test_context();
-    let web_search = super::access_tools(&Config::default()).0;
-    let result = web_search
-        .call(args.clone(), ctx.clone(), "call_1".into())
-        .await
-        .unwrap();
+    let web_search = super::access_tools(&Config::default());
+    let result = web_search.call(args, ctx, "call_1".into()).await.unwrap();
     let value: Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(value["fullContentAvailable"], false);
     assert_eq!(value["sourceContentAvailable"], false);
     assert_eq!(value["storedContentAvailable"], true);
     let response_id = value["responseId"].as_str().unwrap();
-
-    assert_eq!(
-        web_search.display_lines(&args, &ctx, &result),
-        vec!["web search: no live results for \"rho web access\""]
-    );
 
     let retrieved = GetSearchContent
         .call(
@@ -133,75 +118,6 @@ fn content_availability_matches_stored_content_kind() {
 }
 
 #[tokio::test]
-async fn fetch_content_stores_local_file_content() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("note.txt"), "hello from local file").unwrap();
-    let ctx = ToolContext {
-        cwd: dir.path().to_path_buf(),
-        max_output_bytes: 12000,
-    };
-
-    let args = json!({"url": "note.txt"});
-    let result = super::access_tools(&Config::default())
-        .1
-        .call(args.clone(), ctx.clone(), "call_1".into())
-        .await
-        .unwrap();
-    let value: Value = serde_json::from_str(&result.content).unwrap();
-    let response_id = value["responseId"].as_str().unwrap();
-
-    assert_eq!(
-        super::access_tools(&Config::default())
-            .1
-            .display_lines(&args, &ctx, &result),
-        vec!["fetch content: fetched 1 item"]
-    );
-
-    let get_args = json!({"responseId": response_id, "urlIndex": 0});
-    let retrieved = GetSearchContent
-        .call(get_args.clone(), ctx.clone(), "call_2".into())
-        .await
-        .unwrap();
-    assert_eq!(
-        GetSearchContent.display_lines(&get_args, &ctx, &retrieved),
-        vec!["retrieved content: note.txt"]
-    );
-    assert!(retrieved.content.contains("hello from local file"));
-}
-
-#[tokio::test]
-async fn fetch_content_reads_local_http_response() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0; 512];
-        let _ = stream.read(&mut request).unwrap();
-        let body = "<html><title>Local Test</title><p>Hello from HTTP</p></html>";
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).unwrap();
-    });
-
-    let result = super::access_tools(&Config::default())
-        .1
-        .call(
-            json!({"url": format!("http://{addr}/article")}),
-            test_context(),
-            "call_1".into(),
-        )
-        .await
-        .unwrap();
-    server.join().unwrap();
-
-    assert!(result.content.contains("Hello from HTTP"));
-    assert!(result.content.contains("Local Test"));
-}
-
-#[tokio::test]
 async fn get_search_content_rejects_invalid_response_id() {
     let err = GetSearchContent
         .call(
@@ -232,14 +148,23 @@ fn search_provider_parses_tool_and_config_values() {
 }
 
 #[test]
-fn tool_specs_preserve_public_names() {
+fn tool_specs_and_fetch_security_preserve_public_contract() {
     assert_eq!(
-        super::access_tools(&Config::default()).0.spec().name,
+        super::access_tools(&Config::default()).spec().name,
         "web_search"
     );
+    let fetch_content = super::SdkFetchContent::new(12_000);
     assert_eq!(
-        super::access_tools(&Config::default()).1.spec().name,
+        rho_sdk::tool::Tool::spec(&fetch_content).name,
         "fetch_content"
+    );
+    assert_eq!(
+        rho_sdk::tool::Tool::security(&fetch_content).capabilities(),
+        [
+            rho_sdk::CapabilityKind::Read,
+            rho_sdk::CapabilityKind::Process,
+            rho_sdk::CapabilityKind::Network,
+        ]
     );
     assert_eq!(GetSearchContent.spec().name, "get_search_content");
 }

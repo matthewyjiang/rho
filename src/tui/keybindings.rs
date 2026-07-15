@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
-use super::{Agent, App, Entry};
+use super::{App, Entry, InteractiveRuntime};
 
 impl App {
     pub(super) fn handle_configurable_running_key(
@@ -34,7 +34,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> std::io::Result<bool> {
         if self.info.keybindings.paste_image.matches(key)
             || matches!(
@@ -46,10 +46,8 @@ impl App {
         } else if self.info.keybindings.toggle_tool_output.matches(key) {
             self.toggle_latest_tool_output(terminal)?;
         } else if self.info.keybindings.reset_conversation.matches(key) {
-            agent.reset();
+            let _ = agent.reset();
             self.info.session_id = None;
-            agent.set_session_id(None);
-            agent.clear_history_sink();
             self.cumulative_usage = None;
             self.latest_usage = None;
             self.current_context = None;

@@ -7,13 +7,13 @@ use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
-    provider_backend::{
-        line_decoder::LineDecoder,
-        stream_timeout::{provider_client, StreamIdleDeadline},
-    },
+    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
+
+#[cfg(test)]
+use crate::provider_backend::stream_timeout::provider_client;
 
 const DEFAULT_COPILOT_CHAT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
 const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
@@ -25,15 +25,33 @@ pub struct GitHubCopilotProvider {
     client: reqwest::Client,
     auth: GitHubCopilotAuthManager,
     model: String,
+    chat_endpoint: Option<String>,
 }
 
 impl GitHubCopilotProvider {
+    #[cfg(test)]
     pub fn new(model: String, auth: GitHubCopilotAuthManager) -> Result<Self, ModelError> {
         auth.ensure_auth_available()?;
         Ok(Self {
             client: provider_client(),
             auth,
             model,
+            chat_endpoint: None,
+        })
+    }
+
+    pub(crate) fn new_with_transport(
+        model: String,
+        auth: GitHubCopilotAuthManager,
+        client: reqwest::Client,
+        chat_endpoint: Option<String>,
+    ) -> Result<Self, ModelError> {
+        auth.ensure_auth_available()?;
+        Ok(Self {
+            client,
+            auth,
+            model,
+            chat_endpoint,
         })
     }
 
@@ -47,6 +65,7 @@ impl GitHubCopilotProvider {
             client,
             auth,
             model,
+            chat_endpoint: None,
         }
     }
 
@@ -55,9 +74,7 @@ impl GitHubCopilotProvider {
         request: ModelRequest<'_>,
         stream: bool,
     ) -> Result<ChatRequest, ModelError> {
-        let target = self
-            .identity()
-            .expect("GitHub Copilot provider has an identity");
+        let target = self.model_identity();
         let messages = request
             .messages
             .iter()
@@ -80,6 +97,7 @@ impl GitHubCopilotProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            reasoning_effort: None,
         })
     }
 
@@ -102,11 +120,13 @@ impl GitHubCopilotProvider {
         body: &ChatRequest,
         auth: &GitHubCopilotAuthMaterial,
     ) -> Result<reqwest::Response, ModelError> {
-        let endpoint = if auth.chat_endpoint.trim().is_empty() {
-            DEFAULT_COPILOT_CHAT_COMPLETIONS_URL
-        } else {
-            auth.chat_endpoint.as_str()
-        };
+        let endpoint = self.chat_endpoint.as_deref().unwrap_or_else(|| {
+            if auth.chat_endpoint.trim().is_empty() {
+                DEFAULT_COPILOT_CHAT_COMPLETIONS_URL
+            } else {
+                auth.chat_endpoint.as_str()
+            }
+        });
         Ok(self
             .apply_headers(self.client.post(endpoint), auth)
             .json(body)
@@ -130,17 +150,16 @@ impl GitHubCopilotProvider {
     }
 }
 
-#[async_trait::async_trait(?Send)]
-impl ModelProvider for GitHubCopilotProvider {
-    fn identity(&self) -> Option<ModelIdentity> {
-        Some(ModelIdentity::new(
-            "github-copilot",
-            "openai-chat-completions",
-            &self.model,
-        ))
+impl GitHubCopilotProvider {
+    pub(crate) fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("github-copilot", "openai-chat-completions", &self.model)
     }
 
-    async fn send_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+    /// Completes one turn using inherent async methods so the future is `Send`.
+    pub(crate) async fn complete_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
@@ -151,10 +170,11 @@ impl ModelProvider for GitHubCopilotProvider {
         convert_openai_response(response)
     }
 
-    async fn send_turn_stream(
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
@@ -164,11 +184,13 @@ impl ModelProvider for GitHubCopilotProvider {
     }
 }
 
+crate::impl_sdk_model_provider!(GitHubCopilotProvider);
+
 impl GitHubCopilotProvider {
     async fn send_turn_stream_inner(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, true)?;
         let auth = self.auth.auth_material(&self.client).await?;
@@ -243,9 +265,11 @@ mod tests {
             },
         )
         .unwrap();
-        let provider =
-            GitHubCopilotProvider::new("gpt-4.1".into(), GitHubCopilotAuthManager::new(store))
-                .unwrap();
+        let provider = GitHubCopilotProvider::new(
+            "gpt-4.1".into(),
+            GitHubCopilotAuthManager::new(store).unwrap(),
+        )
+        .unwrap();
 
         let body = provider
             .chat_request(
@@ -253,6 +277,7 @@ mod tests {
                     messages: &[Message::user_text("hello")],
                     tools: &[],
                     cancellation: Default::default(),
+                    reasoning_level: Default::default(),
                     prompt_cache_key: None,
                 },
                 true,
@@ -266,13 +291,11 @@ mod tests {
 
     #[test]
     fn provider_construction_requires_available_auth() {
-        let result = GitHubCopilotProvider::new(
-            "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new_with_env_token(
-                Arc::new(MemoryCredentialStore::default()),
-                None,
-            ),
-        );
+        let result = GitHubCopilotAuthManager::new_with_env_token(
+            Arc::new(MemoryCredentialStore::default()),
+            None,
+        )
+        .and_then(|auth| GitHubCopilotProvider::new("gpt-4.1".into(), auth));
 
         assert!(matches!(result, Err(ModelError::MissingGithubCopilotAuth)));
     }
@@ -332,15 +355,16 @@ mod tests {
         .unwrap();
         let provider = GitHubCopilotProvider::new_with_client(
             "gpt-4.1".into(),
-            GitHubCopilotAuthManager::new(store),
+            GitHubCopilotAuthManager::new(store).unwrap(),
             reqwest::Client::new(),
         );
 
         let response = provider
-            .send_turn(ModelRequest {
+            .complete_turn(ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
                 cancellation: Default::default(),
+                reasoning_level: Default::default(),
                 prompt_cache_key: None,
             })
             .await

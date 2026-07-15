@@ -7,8 +7,6 @@ use crate::{
 };
 
 use super::{
-    display,
-    fetch::fetch_target,
     search::{self, SearchBackendConfig},
     storage::{self, StoredContent, StoredItem},
     util::to_pretty_json,
@@ -19,16 +17,7 @@ pub struct WebSearch {
     client: reqwest::Client,
 }
 
-pub struct FetchContent {
-    client: reqwest::Client,
-}
 pub struct GetSearchContent;
-
-impl FetchContent {
-    pub(super) fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
-    }
-}
 
 impl WebSearch {
     pub(super) fn with_client(config: &Config, client: reqwest::Client) -> Self {
@@ -68,17 +57,6 @@ struct WebSearchArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct FetchContentArgs {
-    url: Option<String>,
-    urls: Option<Vec<String>>,
-    prompt: Option<String>,
-    timestamp: Option<String>,
-    frames: Option<usize>,
-    force_clone: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct GetSearchContentArgs {
     response_id: String,
     query: Option<String>,
@@ -107,10 +85,6 @@ impl Tool for WebSearch {
                 "required": ["queries"]
             }),
         }
-    }
-
-    fn display_lines(&self, args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::web_search(args, result)]
     }
 
     async fn call(
@@ -212,88 +186,6 @@ impl Tool for WebSearch {
 }
 
 #[async_trait::async_trait]
-impl Tool for FetchContent {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "fetch_content".into(),
-            description: "Fetch URLs, GitHub repos/files, YouTube/local videos, PDFs, local files, or web pages. Returns previews, artifacts, and responseId handles instead of dumping large content.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs or local paths. Use one item for a single fetch, or multiple items to fetch several targets."},
-                    "prompt": {"type": "string", "description": "Question for video or page analysis."},
-                    "timestamp": {"type": "string", "description": "Video frame timestamp or range, e.g. 23:41 or 23:41-25:00."},
-                    "frames": {"type": "integer", "minimum": 1, "maximum": 12},
-                    "forceClone": {"type": "boolean", "description": "Clone GitHub repos even over the 350MB threshold."}
-                },
-                "required": ["urls"]
-            }),
-        }
-    }
-
-    fn display_lines(&self, _args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::fetch_content(result)]
-    }
-
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: FetchContentArgs = serde_json::from_value(args)?;
-        let urls = collect_values(args.url, args.urls, "url", "urls")?;
-        let frames = args.frames.unwrap_or(6).clamp(1, 12);
-        let response_id = storage::new_response_id();
-        let mut items = Vec::new();
-        let mut previews = Vec::new();
-
-        for target in urls {
-            let fetched = fetch_target(
-                &self.client,
-                &target,
-                &ctx,
-                args.prompt.as_deref(),
-                args.timestamp.as_deref(),
-                frames,
-                args.force_clone.unwrap_or(false),
-            )
-            .await?;
-            previews.push(fetched.preview.clone());
-            items.push(StoredItem {
-                url: Some(target),
-                query: args.prompt.clone(),
-                title: fetched.title,
-                content: fetched.content,
-                metadata: fetched.metadata,
-            });
-        }
-
-        storage::store(
-            response_id.clone(),
-            StoredContent {
-                kind: "fetch_content".into(),
-                items,
-            },
-        );
-
-        let content = json!({
-            "responseId": response_id,
-            "type": "fetch_content",
-            "items": previews,
-            "fullContentAvailable": true,
-            "note": "Large fetched content is stored out-of-band. Use get_search_content with responseId to retrieve it."
-        });
-
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(to_pretty_json(&content), ctx.max_output_bytes),
-        })
-    }
-}
-
-#[async_trait::async_trait]
 impl Tool for GetSearchContent {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -311,10 +203,6 @@ impl Tool for GetSearchContent {
                 "required": ["responseId"]
             }),
         }
-    }
-
-    fn display_lines(&self, _args: &Value, _ctx: &ToolContext, result: &ToolResult) -> Vec<String> {
-        vec![display::get_search_content(result)]
     }
 
     async fn call(

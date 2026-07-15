@@ -4,14 +4,24 @@
       "release-type": "rust",
       "package-name": "rho-coding-agent",
       "component": "rho-coding-agent",
-      "bump-minor-pre-major": true,
+      "release-as": "1.0.0",
       "changelog-path": "CHANGELOG.md",
+      "draft": true,
       "extra-files": [
         {
           "type": "generic",
           "path": "PKGBUILD"
         }
       ]
+    },
+    "crates/rho-sdk": {
+      "release-type": "rust",
+      "package-name": "rho-sdk",
+      "component": "rho-sdk",
+      "release-as": "1.0.0",
+      "changelog-path": "CHANGELOG.md",
+      "draft": true
     }
-  }
+  },
+  "plugins": ["cargo-workspace"]
 }

@@ -5,54 +5,18 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
-use tokio::process::Command;
 use url::Url;
 
 use crate::tool::{truncate, ToolError};
 
 use super::{FetchedTarget, PREVIEW_BYTES};
-use crate::tools::web::{
-    process,
-    storage::{create_private_dir_all, web_access_cache_root},
-    util::{safe_path_component, to_pretty_json},
-};
+use crate::tools::web::util::to_pretty_json;
 
-const LARGE_REPO_THRESHOLD_KB: u64 = 350 * 1024;
-
-pub(super) async fn fetch(
+pub(in crate::tools::web) async fn fetch_via_api(
     client: &reqwest::Client,
     github: &GitHubTarget,
-    force_clone: bool,
 ) -> Result<FetchedTarget, ToolError> {
-    if github.kind == GitHubKind::Commit {
-        return github_api_fallback(client, github, None).await;
-    }
-
-    let repo_api = format!(
-        "https://api.github.com/repos/{}/{}",
-        github.owner, github.repo
-    );
-    let repo_size_kb = github_api_json(client, &repo_api)
-        .await
-        .ok()
-        .and_then(|value| value.get("size").and_then(Value::as_u64));
-    let oversized = repo_size_kb.is_some_and(|size| size > LARGE_REPO_THRESHOLD_KB);
-    if oversized && !force_clone {
-        return github_api_fallback(client, github, repo_size_kb).await;
-    }
-
-    match ensure_github_clone(github).await {
-        Ok(local_path) => read_github_clone(github, &local_path).await,
-        Err(_) => github_api_fallback(client, github, repo_size_kb).await,
-    }
-}
-
-async fn github_api_fallback(
-    client: &reqwest::Client,
-    github: &GitHubTarget,
-    repo_size_kb: Option<u64>,
-) -> Result<FetchedTarget, ToolError> {
-    let api_url = github_api_content_url(github);
+    let api_url = api_url(github);
     let content = match github.kind {
         GitHubKind::Blob => github_api_file_content(client, &api_url).await?,
         GitHubKind::Root | GitHubKind::Tree | GitHubKind::Commit => {
@@ -62,18 +26,17 @@ async fn github_api_fallback(
     Ok(FetchedTarget {
         title: Some(format!("{}/{}", github.owner, github.repo)),
         preview: json!({
-            "type": "github_api_fallback",
+            "type": "github_api",
             "repo": format!("{}/{}", github.owner, github.repo),
-            "reason": repo_size_kb.map(|size| format!("repo size {size}KB exceeds 350MB threshold")).unwrap_or_else(|| "clone unavailable".into()),
-            "canForceClone": true,
+            "canForceClone": github.kind != GitHubKind::Commit,
             "preview": truncate(content.clone(), PREVIEW_BYTES)
         }),
         content,
-        metadata: json!({"mode": "api_fallback", "repoSizeKb": repo_size_kb}),
+        metadata: json!({"mode": "github_api"}),
     })
 }
 
-fn github_api_content_url(github: &GitHubTarget) -> String {
+pub(in crate::tools::web) fn api_url(github: &GitHubTarget) -> String {
     match github.kind {
         GitHubKind::Root | GitHubKind::Tree | GitHubKind::Blob => format!(
             "https://api.github.com/repos/{}/{}/contents/{}{}",
@@ -92,6 +55,20 @@ fn github_api_content_url(github: &GitHubTarget) -> String {
             github.repo,
             github.ref_name.as_deref().unwrap_or("HEAD")
         ),
+    }
+}
+
+pub(in crate::tools::web) fn clone_url(github: &GitHubTarget) -> String {
+    format!("https://github.com/{}/{}.git", github.owner, github.repo)
+}
+
+pub(in crate::tools::web) fn authenticated_clone_url(github: &GitHubTarget) -> String {
+    match github_token() {
+        Ok(token) => format!(
+            "https://x-access-token:{token}@github.com/{}/{}.git",
+            github.owner, github.repo
+        ),
+        Err(_) => clone_url(github),
     }
 }
 
@@ -134,112 +111,11 @@ fn github_token() -> Result<String, std::env::VarError> {
     std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN"))
 }
 
-async fn ensure_github_clone(github: &GitHubTarget) -> Result<PathBuf, ToolError> {
-    let cache_root = web_access_cache_root()
-        .join(std::process::id().to_string())
-        .join("github")
-        .join(safe_path_component(&github.owner))
-        .join(safe_path_component(&github.repo));
-    let ref_key = github.ref_name.as_deref().unwrap_or("HEAD");
-    let local_path = cache_root.join(safe_path_component(ref_key));
-    create_private_dir_all(&cache_root)?;
-    if local_path.join(".git").is_dir() {
-        checkout_github_ref(github, &local_path).await?;
-        return Ok(local_path);
-    }
-
-    let repo_slug = format!("{}/{}", github.owner, github.repo);
-    let clone_url = format!("https://github.com/{repo_slug}.git");
-    let mut command = if let Ok(token) = github_token() {
-        let mut command = Command::new("gh");
-        command
-            .arg("repo")
-            .arg("clone")
-            .arg(&repo_slug)
-            .arg(&local_path)
-            .arg("--")
-            .arg("--depth")
-            .arg("1");
-        if std::env::var_os("GH_TOKEN").is_none() {
-            command.env("GH_TOKEN", token);
-        }
-        command
-    } else {
-        let mut command = Command::new("git");
-        command
-            .arg("clone")
-            .arg("--depth")
-            .arg("1")
-            .arg(clone_url)
-            .arg(&local_path);
-        command
-    };
-    process::run(
-        &mut command,
-        &format!("git clone for {}/{}", github.owner, github.repo),
-    )
-    .await?;
-    checkout_github_ref(github, &local_path).await?;
-    Ok(local_path)
-}
-
-async fn checkout_github_ref(github: &GitHubTarget, local_path: &Path) -> Result<(), ToolError> {
-    let Some(ref_name) = github.ref_name.as_deref() else {
-        return Ok(());
-    };
-    let mut fetch = Command::new("git");
-    fetch
-        .arg("-C")
-        .arg(local_path)
-        .arg("fetch")
-        .arg("--depth")
-        .arg("1")
-        .arg("origin")
-        .arg(ref_name);
-    process::run(
-        &mut fetch,
-        &format!(
-            "git fetch for {}/{} ref {ref_name}",
-            github.owner, github.repo
-        ),
-    )
-    .await?;
-    let mut checkout = Command::new("git");
-    checkout
-        .arg("-C")
-        .arg(local_path)
-        .arg("checkout")
-        .arg("--detach")
-        .arg("FETCH_HEAD");
-    process::run(
-        &mut checkout,
-        &format!(
-            "git checkout for {}/{} ref {ref_name}",
-            github.owner, github.repo
-        ),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn read_github_clone(
+pub(in crate::tools::web) async fn read_clone(
     github: &GitHubTarget,
     local_path: &Path,
 ) -> Result<FetchedTarget, ToolError> {
     let target_path = local_path.join(&github.path);
-    let commit = process::output(
-        Command::new("git")
-            .arg("-C")
-            .arg(local_path)
-            .arg("rev-parse")
-            .arg("HEAD"),
-        "git rev-parse HEAD",
-    )
-    .await
-    .ok()
-    .filter(|output| output.status.success())
-    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
-
     match github.kind {
         GitHubKind::Root | GitHubKind::Tree => {
             let dir = if github.kind == GitHubKind::Root {
@@ -250,9 +126,8 @@ async fn read_github_clone(
             let tree = directory_listing(dir)?;
             let readme = find_readme(dir).and_then(|path| fs::read_to_string(path).ok());
             let content = format!(
-                "localPath: {}\ncommit: {}\n\n{}{}",
+                "localPath: {}\n\n{}{}",
                 local_path.display(),
-                commit.clone().unwrap_or_else(|| "unknown".into()),
                 tree,
                 readme
                     .as_ref()
@@ -264,12 +139,11 @@ async fn read_github_clone(
                 preview: json!({
                     "type": "github_repo",
                     "localPath": local_path,
-                    "commit": commit,
                     "tree": tree,
                     "readmePreview": readme.map(|readme| truncate(readme, PREVIEW_BYTES))
                 }),
                 content,
-                metadata: json!({"mode": "clone", "localPath": local_path, "commit": commit}),
+                metadata: json!({"mode": "clone", "localPath": local_path}),
             })
         }
         GitHubKind::Blob => {
@@ -279,33 +153,16 @@ async fn read_github_clone(
                 preview: json!({
                     "type": "github_file",
                     "localPath": target_path,
-                    "commit": commit,
                     "preview": truncate(content.clone(), PREVIEW_BYTES)
                 }),
                 content,
-                metadata: json!({"mode": "clone", "localPath": local_path, "commit": commit}),
+                metadata: json!({"mode": "clone", "localPath": local_path}),
             })
         }
-        GitHubKind::Commit => github_api_fallback_sync_notice(github, local_path, commit),
+        GitHubKind::Commit => Err(ToolError::Message(
+            "commit URLs must use the GitHub API fetch plan".into(),
+        )),
     }
-}
-
-fn github_api_fallback_sync_notice(
-    github: &GitHubTarget,
-    local_path: &Path,
-    commit: Option<String>,
-) -> Result<FetchedTarget, ToolError> {
-    let content = format!(
-        "Commit URLs are handled via GitHub API in fetch_content. Clone is available at {} with HEAD {}.",
-        local_path.display(),
-        commit.as_deref().unwrap_or("unknown")
-    );
-    Ok(FetchedTarget {
-        title: Some(format!("{}/{} commit", github.owner, github.repo)),
-        preview: json!({"type": "github_commit", "warning": content}),
-        content,
-        metadata: json!({"mode": "commit_notice", "localPath": local_path, "commit": commit}),
-    })
 }
 
 fn directory_listing(path: &Path) -> Result<String, ToolError> {

@@ -1,5 +1,9 @@
 use crate::cancellation::RunCancellation;
 use crate::tool::*;
+use rho_sdk::{
+    ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation,
+    ProcessOutputLimits,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::{process::Stdio, time::Instant};
@@ -37,33 +41,6 @@ impl Tool for PowerShell {
         }
     }
 
-    fn display_style(&self) -> ToolDisplayStyle {
-        ToolDisplayStyle::file_or_command()
-    }
-
-    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
-        args.get("command")
-            .and_then(|command| command.as_str())
-            .map(str::to_string)
-    }
-
-    fn display_preview_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
-        vec![command_line(args)]
-    }
-
-    fn display_start_lines(&self, args: &serde_json::Value, _ctx: &ToolContext) -> Vec<String> {
-        command_lines(args)
-    }
-
-    fn display_lines(
-        &self,
-        args: &serde_json::Value,
-        _ctx: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        display_lines_with_content(args, &result.content)
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,
@@ -98,106 +75,144 @@ impl Tool for PowerShell {
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        let mut raw_args = args.clone();
         let mut args: Args = serde_json::from_value(args)?;
         if self.rtk_enabled {
             if let Some(command) = super::rtk::rewrite(&args.command).await {
                 args.command = command;
-                raw_args["command"] = serde_json::Value::String(args.command.clone());
             }
         }
-        let start = Instant::now();
-        let mut child = Command::new("powershell.exe")
-            .kill_on_drop(true)
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-Command")
-            .arg(wrapped_command(&args.command))
-            .current_dir(&ctx.cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut process_tree = ProcessTreeGuard::attach(&child)?;
-
-        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
-        if let Some(stdout) = child.stdout.take() {
-            tokio::spawn(read_stream(StreamKind::Stdout, stdout, chunk_tx.clone()));
+        let execution = ProcessExecution::new(
+            &ctx.cwd,
+            ProcessInvocation::shell_from_path(
+                "powershell.exe",
+                vec![
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-Command".into(),
+                ],
+                wrapped_command(&args.command),
+            ),
+            ProcessEnvironment::InheritAll,
+            ProcessOutputLimits::new(
+                ctx.max_output_bytes,
+                args.timeout_seconds.map(std::time::Duration::from_secs),
+            ),
+        );
+        let result = execute_process(execution, id, cancellation, on_update).await?;
+        if self.rtk_enabled {
+            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
         }
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(read_stream(StreamKind::Stderr, stderr, chunk_tx));
+        Ok(result)
+    }
+}
+
+pub(super) async fn execute_process(
+    execution: ProcessExecution,
+    id: String,
+    cancellation: RunCancellation,
+    on_update: &mut (dyn FnMut(Vec<String>) + Send),
+) -> Result<ToolResult, ToolError> {
+    let ProcessInvocation::Shell {
+        executable,
+        selection: ExecutableSelection::SearchPath,
+        arguments,
+        command: shell_command,
+    } = execution.invocation()
+    else {
+        return Err(ToolError::Message(
+            "PowerShell received an unsupported process plan".into(),
+        ));
+    };
+    if execution.environment() != &ProcessEnvironment::InheritAll {
+        return Err(ToolError::Message(
+            "PowerShell received an unsupported process environment".into(),
+        ));
+    }
+
+    let start = Instant::now();
+    let mut child = Command::new(executable)
+        .kill_on_drop(true)
+        .args(arguments)
+        .arg(shell_command)
+        .current_dir(execution.working_directory())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut process_tree = ProcessTreeGuard::attach(&child)?;
+
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(read_stream(StreamKind::Stdout, stdout, chunk_tx.clone()));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(read_stream(StreamKind::Stderr, stderr, chunk_tx));
+    }
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut last_update = Instant::now();
+    let timeout = execution.output_limits().timeout();
+    let status = loop {
+        while let Ok((kind, bytes)) = chunk_rx.try_recv() {
+            match kind {
+                StreamKind::Stdout => stdout.extend(bytes),
+                StreamKind::Stderr => stderr.extend(bytes),
+            }
         }
 
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let mut last_update = Instant::now();
-        let timeout = args.timeout_seconds.map(std::time::Duration::from_secs);
-        let status = loop {
-            while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-                match kind {
-                    StreamKind::Stdout => stdout.extend(bytes),
-                    StreamKind::Stderr => stderr.extend(bytes),
-                }
-            }
+        if last_update.elapsed() >= std::time::Duration::from_millis(50) {
+            on_update(vec![running_content(&stdout, &stderr)]);
+            last_update = Instant::now();
+        }
 
-            if last_update.elapsed() >= std::time::Duration::from_millis(50) {
-                on_update(display_lines_with_content(
-                    &raw_args,
-                    &running_content(&stdout, &stderr),
-                ));
-                last_update = Instant::now();
-            }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
 
-            if let Some(status) = child.try_wait()? {
-                break status;
-            }
+        if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
+            process_tree.kill();
+            let _ = child.wait().await;
+            drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+            let seconds = timeout.unwrap_or_default().as_secs();
+            return Err(ToolError::Message(truncate(
+                timeout_content(&stdout, &stderr, seconds),
+                execution.output_limits().max_output_bytes(),
+            )));
+        }
 
-            if timeout.is_some_and(|timeout| start.elapsed() >= timeout) {
+        tokio::select! {
+            () = cancellation.cancelled() => {
                 process_tree.kill();
                 let _ = child.wait().await;
-                drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-                let secs = args.timeout_seconds.unwrap_or_default();
-                return Err(ToolError::Message(truncate(
-                    timeout_content(&stdout, &stderr, secs),
-                    ctx.max_output_bytes,
-                )));
+                return Err(ToolError::Message("tool interrupted".into()));
             }
+            () = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+        }
+    };
 
-            tokio::select! {
-                () = cancellation.cancelled() => {
-                    process_tree.kill();
-                    let _ = child.wait().await;
-                    return Err(ToolError::Message("tool interrupted".into()));
-                }
-                () = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
-            }
-        };
+    process_tree.kill();
+    drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
-        process_tree.kill();
-        drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-
-        let elapsed_secs = start.elapsed().as_secs_f64();
-        let exit_code = status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "signal".into());
-        let mut content = finished_content(
+    let elapsed_secs = start.elapsed().as_secs_f64();
+    let exit_code = status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "signal".into());
+    let content = truncate(
+        finished_content(
             String::from_utf8_lossy(&stdout).into_owned(),
             String::from_utf8_lossy(&stderr).into_owned(),
             elapsed_secs,
             &exit_code,
-        );
-        content = truncate(content, ctx.max_output_bytes);
-        let result = ToolResult {
-            id,
-            ok: status.success(),
-            content,
-        };
-        if self.rtk_enabled {
-            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
-        }
-        on_update(display_lines_with_content(&raw_args, &result.content));
-        Ok(result)
-    }
+        ),
+        execution.output_limits().max_output_bytes(),
+    );
+    Ok(ToolResult {
+        id,
+        ok: status.success(),
+        content,
+    })
 }
 
 #[cfg(windows)]
@@ -286,26 +301,6 @@ async fn drain_stream_chunks(
     }
 }
 
-fn command_line(args: &serde_json::Value) -> String {
-    match args.get("command").and_then(|command| command.as_str()) {
-        Some(command) if !command.trim().is_empty() => format!("powershell {command}"),
-        _ => "powershell".into(),
-    }
-}
-
-fn command_lines(args: &serde_json::Value) -> Vec<String> {
-    vec![command_line(args), format_timeout(args)]
-}
-
-fn display_lines_with_content(args: &serde_json::Value, content: &str) -> Vec<String> {
-    let mut lines = command_lines(args);
-    if !content.trim().is_empty() {
-        lines.push(String::new());
-        lines.push(content.to_string());
-    }
-    lines
-}
-
 fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
     format!(
         "stdout:\n{}\n\nstderr:\n{}\n\ntime: running",
@@ -326,13 +321,6 @@ fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
         String::from_utf8_lossy(stdout),
         String::from_utf8_lossy(stderr)
     )
-}
-
-fn format_timeout(args: &serde_json::Value) -> String {
-    match args.get("timeout_seconds").and_then(|value| value.as_u64()) {
-        Some(seconds) => format!("timeout: {seconds}s"),
-        None => "timeout: none".into(),
-    }
 }
 
 pub(crate) fn wrapped_command(command: &str) -> String {

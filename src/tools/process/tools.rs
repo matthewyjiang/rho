@@ -64,22 +64,6 @@ impl Tool for Process {
         }
     }
 
-    fn display_command(&self, args: &serde_json::Value) -> Option<String> {
-        (args["action"] == "start")
-            .then(|| args["command"].as_str().map(str::to_owned))
-            .flatten()
-    }
-
-    fn display_lines(
-        &self,
-        _args: &serde_json::Value,
-        _context: &ToolContext,
-        result: &ToolResult,
-    ) -> Vec<String> {
-        display::result_lines(&result.content)
-            .unwrap_or_else(|| vec!["process".into(), result.content.clone()])
-    }
-
     async fn call(
         &self,
         args: serde_json::Value,
@@ -110,7 +94,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(display::snapshot_lines(&snapshot));
+                on_update(display::snapshot_progress_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Poll {
@@ -133,7 +117,7 @@ impl Tool for Process {
                     )
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(display::snapshot_lines(&snapshot));
+                on_update(display::snapshot_progress_lines(&snapshot));
                 result!(id, snapshot)
             }
             ProcessArgs::Stop { process_id } => {
@@ -141,10 +125,7 @@ impl Tool for Process {
                     .stop(&process_id, STOP_GRACE)
                     .await
                     .map_err(ToolError::Message)?;
-                on_update(vec![
-                    "process".into(),
-                    format!("stop requested: {process_id}"),
-                ]);
+                on_update(vec![format!("stop requested: {process_id}")]);
                 result!(id, json!({"process_id":process_id,"stop_requested":true}))
             }
         }

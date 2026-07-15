@@ -31,17 +31,12 @@ pub(super) fn http_client() -> reqwest::Client {
         .expect("HTTP client configuration must be valid")
 }
 
-pub(super) fn safe_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
+pub(super) fn fetch_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("fetch HTTP client configuration must be valid")
 }
 
 pub(super) fn html_to_text(content: &str) -> String {
