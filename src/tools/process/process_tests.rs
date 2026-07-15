@@ -504,18 +504,37 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
         .start(command.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
-    let first = manager
-        .poll(&started.process_id, Some(0), Duration::from_secs(5))
-        .await
-        .unwrap();
-    let identity = first
-        .chunks
-        .iter()
-        .map(|chunk| chunk.text.as_str())
-        .collect::<String>();
-    let mut identity = identity.split_whitespace();
-    let pid: i32 = identity.next().unwrap().parse().unwrap();
-    let port: u16 = identity.next().unwrap().parse().unwrap();
+    let (pid, port, output_cursor) = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut cursor = 0;
+        let mut stdout = String::new();
+        loop {
+            let snapshot = manager
+                .poll(&started.process_id, Some(cursor), Duration::from_secs(5))
+                .await
+                .unwrap();
+            cursor = snapshot.next_cursor;
+            stdout.extend(
+                snapshot
+                    .chunks
+                    .iter()
+                    .filter(|chunk| chunk.stream == Stream::Stdout)
+                    .map(|chunk| chunk.text.as_str()),
+            );
+            let numbers = stdout
+                .split_whitespace()
+                .filter_map(|value| value.parse::<u32>().ok())
+                .collect::<Vec<_>>();
+            if let [pid, port, ..] = numbers.as_slice() {
+                break (*pid as i32, *port as u16, cursor);
+            }
+            assert!(
+                !terminal(snapshot.state),
+                "server exited before reporting its address: {snapshot:?}"
+            );
+        }
+    })
+    .await
+    .expect("server did not report its address");
     let url = format!("http://127.0.0.1:{port}/Cargo.toml");
     let body = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
@@ -531,7 +550,7 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     let after_access = manager
         .poll(
             &started.process_id,
-            Some(first.next_cursor),
+            Some(output_cursor),
             Duration::from_secs(1),
         )
         .await
