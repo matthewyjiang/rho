@@ -286,6 +286,7 @@ impl Session {
         let runtime = self.core.runtime();
         let core = Arc::clone(&self.core);
         let (events, receiver) = tokio::sync::mpsc::channel(runtime.event_capacity.get());
+        let (commands, command_receiver) = tokio::sync::mpsc::channel(runtime.event_capacity.get());
         let worker_cancellation = cancellation.clone();
         let worker_run_id = run_id.clone();
         let guard = ActiveRunGuard::new(Arc::clone(&core));
@@ -298,10 +299,11 @@ impl Session {
                 input,
                 worker_cancellation,
                 events,
+                command_receiver,
             )
             .await
         });
-        Ok(Run::new(run_id, cancellation, receiver, worker))
+        Ok(Run::new(run_id, cancellation, receiver, commands, worker))
     }
 
     pub async fn complete(&self, input: impl Into<String>) -> Result<RunOutcome, Error> {

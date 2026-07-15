@@ -10,6 +10,7 @@ use crate::{
         ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall, ToolResult,
     },
     provider::{provider_event_channel, ModelProvider},
+    run::RunCommand,
     session::{SessionCore, SessionState, UserInput},
     tool::{tool_progress_channel, ToolContext, ToolInvocation},
     CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
@@ -37,6 +38,7 @@ pub(crate) async fn execute_run(
     input: UserInput,
     cancellation: CancellationToken,
     events: mpsc::Sender<RunEvent>,
+    mut commands: mpsc::Receiver<RunCommand>,
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
     history.push(Message::User(input.into_blocks()));
@@ -48,7 +50,9 @@ pub(crate) async fn execute_run(
     .await?;
 
     let mut accumulated_usage = ModelUsage::default();
+    let mut steering = Vec::new();
     for step in 1..=runtime.max_steps.get() {
+        drain_steering(&mut commands, &mut history);
         match maybe_compact(&core, &runtime, &mut history, &cancellation, &events).await {
             Ok(()) => {}
             Err(Error::Cancelled) => {
@@ -62,13 +66,18 @@ pub(crate) async fn execute_run(
         }
         emit(&events, &cancellation, RunEvent::StepStarted { step }).await?;
 
+        let mut control = RunControl {
+            cancellation: &cancellation,
+            events: &events,
+            commands: &mut commands,
+            steering: &mut steering,
+        };
         let (response, capture) = match request_valid_response(
             runtime.provider.as_ref(),
             &history,
             &runtime.tools.specs(),
             &accumulated_usage,
-            &cancellation,
-            &events,
+            &mut control,
         )
         .await
         {
@@ -101,8 +110,10 @@ pub(crate) async fn execute_run(
             provider_context: capture.provider_context,
         };
         history.push(Message::assistant(assistant));
+        drain_steering(&mut commands, &mut steering);
+        let was_steered = !steering.is_empty();
 
-        if tool_calls.is_empty() {
+        if tool_calls.is_empty() && !was_steered {
             let revision = core.commit(history)?;
             let outcome =
                 RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
@@ -137,6 +148,7 @@ pub(crate) async fn execute_run(
             };
             history.push(Message::ToolResult(result));
         }
+        history.append(&mut steering);
     }
 
     let error = Error::Provider(ProviderError::new(
@@ -199,31 +211,30 @@ struct RequestFailure {
     capture: StreamCapture,
 }
 
+struct RunControl<'a> {
+    cancellation: &'a CancellationToken,
+    events: &'a mpsc::Sender<RunEvent>,
+    commands: &'a mut mpsc::Receiver<RunCommand>,
+    steering: &'a mut Vec<Message>,
+}
+
 async fn request_valid_response(
     provider: &dyn ModelProvider,
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
-    cancellation: &CancellationToken,
-    events: &mpsc::Sender<RunEvent>,
+    control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     for attempt in 1..=INVALID_RESPONSE_ATTEMPTS {
-        let (response, capture) = provider_turn(
-            provider,
-            history,
-            tools,
-            accumulated_usage,
-            cancellation,
-            events,
-        )
-        .await?;
+        let (response, capture) =
+            provider_turn(provider, history, tools, accumulated_usage, control).await?;
         if valid_response(&response) {
             return Ok((response, capture));
         }
         if attempt < INVALID_RESPONSE_ATTEMPTS {
             let _ = emit(
-                events,
-                cancellation,
+                control.events,
+                control.cancellation,
                 RunEvent::ProviderActivity {
                     kind: "invalid_response_retry".into(),
                     detail: format!("retrying malformed provider response after attempt {attempt}"),
@@ -260,15 +271,14 @@ async fn provider_turn(
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
-    cancellation: &CancellationToken,
-    events: &mpsc::Sender<RunEvent>,
+    control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     let (provider_events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(PROVIDER_EVENT_CAPACITY).unwrap());
     let request = ModelRequest {
         messages: history,
         tools,
-        cancellation: cancellation.clone(),
+        cancellation: control.cancellation.clone(),
         prompt_cache_key: None,
     };
     let mut future = provider.send_turn_stream(request, provider_events);
@@ -283,14 +293,19 @@ async fn provider_turn(
                         provider.identity(),
                         accumulated_usage,
                         &mut capture,
-                        events,
-                        cancellation,
+                        control.events,
+                        control.cancellation,
                     ).await {
                         return Err(RequestFailure { error, capture });
                     }
                 }
             }
-            () = cancellation.cancelled() => {
+            command = control.commands.recv() => {
+                if let Some(command) = command {
+                    accept_steering(command, control.steering);
+                }
+            }
+            () = control.cancellation.cancelled() => {
                 return Err(RequestFailure {
                     error: ProviderError::interrupted("provider request cancelled"),
                     capture,
@@ -304,8 +319,8 @@ async fn provider_turn(
             provider.identity(),
             accumulated_usage,
             &mut capture,
-            events,
-            cancellation,
+            control.events,
+            control.cancellation,
         )
         .await
         {
@@ -315,6 +330,18 @@ async fn provider_turn(
     match result {
         Ok(response) => Ok((response, capture)),
         Err(error) => Err(RequestFailure { error, capture }),
+    }
+}
+
+fn accept_steering(command: RunCommand, steering: &mut Vec<Message>) {
+    let RunCommand::Steer { input, accepted } = command;
+    steering.push(Message::User(input.into_blocks()));
+    let _ = accepted.send(());
+}
+
+fn drain_steering(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut Vec<Message>) {
+    while let Ok(command) = commands.try_recv() {
+        accept_steering(command, steering);
     }
 }
 

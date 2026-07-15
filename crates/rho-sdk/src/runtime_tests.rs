@@ -1,7 +1,14 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use tokio::sync::Notify;
 
 use crate::{
     model::{
@@ -363,6 +370,106 @@ async fn manual_and_automatic_compaction_use_separate_policy_transport_and_mutat
     assert_eq!(
         automatic_session.snapshot().compaction().last_revision(),
         Some(crate::Revision::from_u64(1))
+    );
+}
+
+#[derive(Debug)]
+struct SteeringProvider {
+    calls: AtomicUsize,
+    release_first: Arc<Notify>,
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+impl SteeringProvider {
+    fn new(release_first: Arc<Notify>) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            release_first,
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl ModelProvider for SteeringProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async {
+            Err(crate::ProviderError::new(
+                crate::ProviderErrorKind::Other,
+                "streaming path required",
+                crate::Retryability::Permanent,
+            ))
+        })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.messages.to_vec());
+            let call = self.calls.fetch_add(1, Ordering::AcqRel);
+            if call == 0 {
+                events.send(ModelEvent::OutputDelta("draft".into())).await?;
+                self.release_first.notified().await;
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "draft".into(),
+                )]))
+            } else {
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "final".into(),
+                )]))
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
+    let release_first = Arc::new(Notify::new());
+    let provider = Arc::new(SteeringProvider::new(Arc::clone(&release_first)));
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
+            break;
+        }
+    }
+
+    run.steer(UserInput::text("refine")).await.unwrap();
+    release_first.notify_one();
+    while run.next_event().await.is_some() {}
+    let outcome = run.outcome().await.unwrap();
+
+    assert_eq!(outcome.text(), "final");
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1],
+        [
+            Message::user_text("initial"),
+            Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("draft".into())],
+                provenance: Some(identity()),
+                reasoning_summary: None,
+                provider_context: Vec::new(),
+            }),
+            Message::user_text("refine"),
+        ]
     );
 }
 

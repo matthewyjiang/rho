@@ -2,11 +2,19 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{CancellationToken, Error, RunEvent, RunId, RunOutcome};
 
+pub(crate) enum RunCommand {
+    Steer {
+        input: crate::UserInput,
+        accepted: tokio::sync::oneshot::Sender<()>,
+    },
+}
+
 /// Handle for one active SDK run and its ordered event stream.
 pub struct Run {
     id: RunId,
     cancellation: CancellationToken,
     events: mpsc::Receiver<RunEvent>,
+    commands: mpsc::Sender<RunCommand>,
     worker: Option<JoinHandle<Result<RunOutcome, Error>>>,
     finished: bool,
 }
@@ -16,12 +24,14 @@ impl Run {
         id: RunId,
         cancellation: CancellationToken,
         events: mpsc::Receiver<RunEvent>,
+        commands: mpsc::Sender<RunCommand>,
         worker: JoinHandle<Result<RunOutcome, Error>>,
     ) -> Self {
         Self {
             id,
             cancellation,
             events,
+            commands,
             worker: Some(worker),
             finished: false,
         }
@@ -33,6 +43,19 @@ impl Run {
 
     pub fn cancellation_handle(&self) -> CancellationToken {
         self.cancellation.clone()
+    }
+
+    pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
+        let (accepted, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(RunCommand::Steer { input, accepted })
+            .await
+            .map_err(|_| Error::InvalidHostResponse {
+                message: "run no longer accepts steering input".into(),
+            })?;
+        receipt.await.map_err(|_| Error::InvalidHostResponse {
+            message: "run completed before accepting steering input".into(),
+        })
     }
 
     pub async fn next_event(&mut self) -> Option<RunEvent> {
