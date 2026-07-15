@@ -23,6 +23,8 @@ jobs:
         run: python3 scripts/check_architecture.py
       - name: Test architecture guardrails
         run: python3 scripts/check_architecture.py --self-test
+      - name: Check release version consistency
+        run: python3 scripts/check_release_versions.py
       - name: Check SDK compatibility metadata
         run: python3 scripts/check_sdk_compatibility.py
       - name: Test SDK redaction evidence schema
@@ -69,7 +71,7 @@ jobs:
             manifest: crates/rho-sdk/Cargo.toml
             command: cargo test -p rho-sdk --all-targets --all-features --locked
           - package: rho-coding-agent
-            manifest: Cargo.toml
+            manifest: crates/rho/Cargo.toml
             command: cargo check --workspace --all-targets --locked
     steps:
       - uses: actions/checkout@v4
