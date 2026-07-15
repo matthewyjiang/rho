@@ -36,19 +36,48 @@ cargo build >"$BUILD_LOG" 2>&1
 
 On failure, inspect focused excerpts and stop rather than launching an obsolete binary.
 
-### 2. Launch in a sibling pane
+### 2. Prefer the deterministic fixture matrix
+
+For provider, streaming, tool, questionnaire, cancellation, failure, steering, compaction, and scrolling flows, launch the debug build with `RHO_TUI_TEST_MODE=matrix`. This replaces the configured provider with a deterministic local fixture and registers a fixture progress tool, so the test needs no credentials or network access:
+
+```bash
+RHO_TUI_TEST_MODE=matrix target/debug/rho
+```
+
+The fixture is available only in debug builds. Use these exact prompts:
+
+| Prompt | Deterministic behavior |
+| --- | --- |
+| `fixture stream` | Streams two reasoning chunks and two assistant output chunks with short delays. |
+| `fixture tool` | Streams and executes a `write_file` call, then reports exactly one tool result. |
+| `fixture questionnaire` | Opens a red/blue questionnaire and reports exactly-once host input delivery. |
+| `fixture progress tool` | Runs `tui_fixture_progress`, emits two progress updates, and returns a fixed result. |
+| `fixture steering` | Keeps a turn open for two seconds so queued input or steering can be exercised. |
+| `fixture steer detail` | Returns a fixed steering acknowledgement. |
+| `fixture delay` | Emits partial output and waits 30 seconds for cancellation testing. |
+| `fixture stream failure` | Emits partial output and then returns a permanent provider failure. |
+| `fixture bulk one` or `fixture bulk two` | Produces 180 deterministic transcript lines for scrolling tests. |
+| `/goal fixture goal retry` | Fails retryably once and then succeeds with the original goal. |
+
+Compaction requests receive a fixed summary. Any other prompt receives `fixture response: <prompt>`.
+
+Use a live provider only when the fixture matrix cannot exercise the behavior under test. When a live run is necessary, use a cheap model such as `gpt-5.4-mini` unless the behavior requires another model. Keep prompts short and use explicit timeouts.
+
+`fixture tool` creates `.rho-tui-fixture-output.txt` in the workspace. Remove that file after the test. Matrix mode replaces model and tool behavior only, so normal session persistence and other application side effects still apply.
+
+### 3. Launch in a sibling pane
 
 ```bash
 TUI_PANE=$(herdr pane split "$CURRENT_PANE" --direction right --no-focus \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
-herdr pane run "$TUI_PANE" "target/debug/rho"
+herdr pane run "$TUI_PANE" "RHO_TUI_TEST_MODE=matrix target/debug/rho"
 herdr wait agent-status "$TUI_PANE" --status idle --timeout 30000
 herdr pane read "$TUI_PANE" --source visible --format ansi
 ```
 
-If status detection remains unknown, inspect the screen and synchronize on stable startup output rather than using a long fixed sleep.
+If the test requires a live provider, omit `RHO_TUI_TEST_MODE=matrix`. If status detection remains unknown, inspect the screen and synchronize on stable startup output rather than using a long fixed sleep.
 
-### 3. Interact like a user
+### 4. Interact like a user
 
 ```bash
 # Submit a prompt
@@ -77,15 +106,13 @@ Useful Rho controls:
 
 Rho owns its transcript viewport, so use these controls instead of terminal scrollback.
 
-### 4. Assert observable behavior
+### 5. Assert observable behavior
 
 Choose concrete assertions before testing, such as visible text, picker transitions, selection movement, viewport changes, clean shell restoration, or expected agent-state transitions.
 
-For model runs, verify both that status changes to `working` and that the pane shows an actual response or tool call. Text remaining in the composer is not proof of submission.
+Prefer the deterministic fixture matrix over model-dependent tests. For model runs, verify both that status changes to `working` and that the pane shows an actual response or tool call. Text remaining in the composer is not proof of submission.
 
-Prefer local UI transitions over model-dependent tests. When prompts are required, use a cheap model such as `gpt-5.4-mini`; use another model only for behavior that specifically requires it. Keep prompts short and use explicit timeouts.
-
-### 5. Exit and clean up
+### 6. Exit and clean up
 
 Exercise the user-facing exit path first:
 
@@ -101,7 +128,7 @@ herdr pane send-text "$TUI_PANE" $'\003'
 herdr pane close "$TUI_PANE"
 ```
 
-Never leave test panes or processes running.
+Never leave test panes or processes running. Remove `.rho-tui-fixture-output.txt` if the `fixture tool` flow created it.
 
 ## Guidance and report
 
