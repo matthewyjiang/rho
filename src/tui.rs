@@ -6,14 +6,20 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use crate::questionnaire::QuestionnaireRequest;
 use futures_util::{task::noop_waker_ref, FutureExt};
 use history_cache::{CachedCodeBlock, HistoryLineCache};
-use tokio::sync::{mpsc, oneshot};
+#[cfg(test)]
+use questionnaire::QuestionnaireCancelReason;
+#[cfg(test)]
+use std::sync::Mutex;
+use tokio::sync::oneshot;
 
 use crossterm::{
     event::{
@@ -37,7 +43,7 @@ mod config_editor;
 mod config_picker;
 mod copy_interaction;
 mod doctor;
-mod event_batch;
+mod event_adapter;
 mod file_palette;
 mod file_picker;
 mod goal;
@@ -78,6 +84,7 @@ use config_editor::{
     ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
+use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use goal::GoalState;
 use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
@@ -85,8 +92,7 @@ use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
-    QuestionAnswerRequest, QuestionnaireCancelReason, QuestionnaireComposer, QuestionnaireReply,
-    QuestionnaireResponseChannel,
+    QuestionAnswerRequest, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
@@ -104,8 +110,8 @@ use theme::Theme;
 use turn_prompt::TurnPrompt;
 
 use crate::{
-    agent::{Agent, AgentEvent, ModelAndDisplayContent, QuestionnaireRequest, SessionHistorySink},
     app::config_repository::ConfigRepository,
+    app::interactive_runtime::InteractiveRuntime,
     auth::{codex_oauth, github_copilot_device, xai_oauth},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
@@ -118,7 +124,6 @@ use crate::{
     herdr::{HerdrReporter, HerdrState},
     keybindings::Keybindings,
     model::{
-        build_provider,
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
@@ -127,6 +132,7 @@ use crate::{
         ModelResponse, ModelUsage, UnavailableProvider,
     },
     provider::{self, ProviderAuthKind},
+    providers::build_sdk_provider,
     reasoning::ReasoningLevel,
     session::Session,
     tool::ToolDisplayStyle,
@@ -154,6 +160,7 @@ pub struct TuiInfo {
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
+    #[allow(dead_code)]
     pub questionnaire_enabled: bool,
     pub session_id: Option<String>,
     pub recovered_messages: Vec<Message>,
@@ -169,8 +176,7 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-pub async fn run(agent: &mut Agent, info: TuiInfo) -> anyhow::Result<TuiResult> {
-    agent.set_session_id(info.session_id.clone());
+pub async fn run(agent: &mut InteractiveRuntime, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
     let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
@@ -463,6 +469,16 @@ enum PasteBurstKey {
     Enter,
 }
 
+async fn questionnaire_reply(
+    pending: &mut Option<(rho_sdk::HostInputId, oneshot::Receiver<QuestionnaireReply>)>,
+) -> Option<(rho_sdk::HostInputId, QuestionnaireReply)> {
+    let (request_id, receiver) = pending.as_mut()?;
+    let request_id = request_id.clone();
+    let reply = receiver.await.ok();
+    pending.take();
+    reply.map(|reply| (request_id, reply))
+}
+
 fn is_tool_entry(entry: &Entry) -> bool {
     matches!(entry, Entry::Tool(_))
 }
@@ -645,7 +661,7 @@ impl App {
     async fn run(
         mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
@@ -723,7 +739,7 @@ impl App {
         &mut self,
         event: Event,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -903,7 +919,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
             return Ok(());
@@ -1074,7 +1090,7 @@ impl App {
         }
     }
 
-    fn start_model_metadata_fetch(&mut self, agent: &mut Agent) {
+    fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
         }
@@ -1093,7 +1109,7 @@ impl App {
         }));
     }
 
-    fn poll_model_metadata_fetch(&mut self, agent: &mut Agent) {
+    fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -1107,22 +1123,24 @@ impl App {
                     .info
                     .reasoning
                     .normalize(metadata.supported_reasoning_levels.as_deref());
-                let provider_updated = if agent.set_provider_reasoning(reasoning) {
-                    true
-                } else {
-                    match build_provider(&self.info.provider, &self.info.model, reasoning) {
-                        Ok(provider) => {
-                            agent.replace_provider(provider);
-                            true
-                        }
+                let provider_updated =
+                    match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+                        Ok(provider) => match agent.replace_provider(provider, reasoning) {
+                            Ok(_) => true,
+                            Err(err) => {
+                                self.insert_entry(&Entry::Error(format!(
+                                    "could not apply model reasoning metadata: {err}"
+                                )));
+                                false
+                            }
+                        },
                         Err(err) => {
                             self.insert_entry(&Entry::Error(format!(
                                 "could not apply model reasoning metadata: {err}"
                             )));
                             false
                         }
-                    }
-                };
+                    };
                 if provider_updated && reasoning != self.info.reasoning {
                     self.info.reasoning = reasoning;
                     self.info.diagnostics.update_identity(
@@ -1194,7 +1212,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let ComposerMode::SecretInput(secret) = &mut self.composer else {
             return Ok(false);
@@ -1459,7 +1477,7 @@ impl App {
     fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let is_shift_tab = matches!(key.code, KeyCode::BackTab)
             || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
@@ -1477,7 +1495,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !matches!(self.composer, ComposerMode::Picker(_)) {
             return Ok(false);
@@ -1554,7 +1572,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !self.command_palette_visible() {
             return Ok(false);
@@ -1891,13 +1909,12 @@ impl App {
         }
     }
 
-    fn ensure_session(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
-            let session = Session::create(&self.info.cwd)?;
-            let session_id = session.id().to_string();
-            self.info.session_id = Some(session_id.clone());
-            agent.set_session_id(Some(session_id));
-            agent.set_history_sink(SessionHistorySink::new(session));
+            let session_id = agent.session_id().to_string();
+            let session = Session::create_with_id(&self.info.cwd, &session_id)?;
+            self.info.session_id = Some(session_id);
+            agent.attach_storage(session);
         }
         Ok(())
     }
@@ -1934,7 +1951,7 @@ impl App {
     async fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let mut prompt = self.expanded_input().trim().to_string();
         let mut display_prompt = self.input.trim().to_string();
@@ -2043,7 +2060,7 @@ impl App {
         prompt: TurnPrompt,
         images: Vec<ImageContent>,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
         if !prompt.history.is_empty() {
             self.push_input_history(&prompt.history);
@@ -2055,7 +2072,7 @@ impl App {
             .report_session(self.info.session_id.as_deref())
             .await;
         if !agent
-            .messages()
+            .history()
             .iter()
             .any(|message| matches!(message, Message::User(_)))
         {
@@ -2076,180 +2093,122 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        if let Ok(config) = self.info.config_repository.load() {
-            agent.set_compaction_config((&config).into());
-        }
         self.active_tool_call = false;
         self.pending_tool_call = None;
-        let interrupt_requested = Arc::new(AtomicBool::new(false));
-        let cancellation = crate::cancellation::RunCancellation::default();
-        let tool_call_active = Arc::new(AtomicBool::new(false));
-        let steering_prompts = Arc::new(Mutex::new(VecDeque::new()));
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let result = {
-            let callback_interrupt_requested = Arc::clone(&interrupt_requested);
-            let run_interrupt_requested = Arc::clone(&interrupt_requested);
-            let run_cancellation = cancellation.clone();
-            let callback_tool_call_active = Arc::clone(&tool_call_active);
-            let run_steering_prompts = Arc::clone(&steering_prompts);
-            let (question_tx, mut question_rx) = mpsc::unbounded_channel::<QuestionAnswerRequest>();
+        let mut content = Vec::with_capacity(1 + images.len());
+        if !prompt.model.is_empty() {
+            content.push(ContentBlock::Text(prompt.model));
+        }
+        content.extend(images.iter().cloned().map(ContentBlock::Image));
+        let input = rho_sdk::UserInput::content(content)?;
+        let display_user = prompt.persisted_display.map(|display| {
             let mut content = Vec::with_capacity(1 + images.len());
-            if !prompt.model.is_empty() {
-                content.push(ContentBlock::Text(prompt.model));
-            }
-            let display_content = prompt.persisted_display.map(|display| {
-                let mut display_content = Vec::with_capacity(1 + images.len());
-                display_content.push(ContentBlock::Text(display));
-                display_content.extend(images.iter().cloned().map(ContentBlock::Image));
-                display_content
-            });
+            content.push(ContentBlock::Text(display));
             content.extend(images.into_iter().map(ContentBlock::Image));
-            let user_content = match display_content {
-                Some(display) => ModelAndDisplayContent::Separate {
-                    model: content,
-                    display,
-                },
-                None => ModelAndDisplayContent::Same(content),
-            };
-            let question_request_tx = question_tx.clone();
-            let mut ask_questionnaire =
-                move |request: QuestionnaireRequest| -> crate::agent::QuestionnaireFuture {
-                    let question_request_tx = question_request_tx.clone();
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    Box::pin(async move {
-                        question_request_tx
-                            .send(QuestionAnswerRequest {
-                                request,
-                                response: QuestionnaireResponseChannel::new(reply_tx),
-                            })
-                            .map_err(|_| {
-                                crate::agent::AgentError::Questionnaire(
-                                    "questionnaire UI is unavailable".into(),
-                                )
-                            })?;
-                        match reply_rx.await {
-                            Ok(QuestionnaireReply::Answer(response)) => Ok(response),
-                            Ok(QuestionnaireReply::Cancelled(
-                                QuestionnaireCancelReason::UserCancelled,
-                            )) => Err(crate::agent::AgentError::Questionnaire(
-                                "questionnaire answer was cancelled".into(),
-                            )),
-                            Ok(QuestionnaireReply::Cancelled(
-                                QuestionnaireCancelReason::UiUnavailable,
-                            ))
-                            | Err(_) => Err(crate::agent::AgentError::Questionnaire(
-                                "questionnaire UI is unavailable".into(),
-                            )),
+            Message::User(content)
+        });
+        agent.start(input, display_user).await?;
+
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
+        let mut adapter = SdkEventAdapter::default();
+        let mut pending_questionnaire: Option<(
+            rho_sdk::HostInputId,
+            oneshot::Receiver<QuestionnaireReply>,
+        )> = None;
+        let mut terminal_event = false;
+        let mut sdk_failure = None;
+        while !terminal_event {
+            tokio::select! {
+                event = agent.next_event() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    match adapter.translate(event) {
+                        ViewEvent::Update(event) => {
+                            self.handle_queued_agent_event(event, terminal)?;
+                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
                         }
-                    })
-                };
-            let questionnaire_handler = self
-                .info
-                .questionnaire_enabled
-                .then_some(&mut ask_questionnaire as crate::agent::QuestionnaireHandler<'_>);
-            let mut run_future = Box::pin(
-                agent.run_with_model_and_display_content_events_questionnaire_and_steering(
-                    user_content,
-                    move |event| {
-                        match &event {
-                            AgentEvent::ToolStarted { .. } => {
-                                callback_tool_call_active.store(true, Ordering::SeqCst)
-                            }
-                            AgentEvent::ToolFinished { .. } => {
-                                callback_tool_call_active.store(false, Ordering::SeqCst)
-                            }
-                            AgentEvent::StepStarted(_)
-                            | AgentEvent::OutputDelta(_)
-                            | AgentEvent::ReasoningDelta(_)
-                            | AgentEvent::ContextUsage(_)
-                            | AgentEvent::Usage(_)
-                            | AgentEvent::ToolUpdated { .. }
-                            | AgentEvent::ToolCallUpdated { .. }
-                            | AgentEvent::QuestionnaireStarted(_)
-                            | AgentEvent::QuestionnaireFinished(_) => {}
+                        ViewEvent::Questionnaire(request) => {
+                            let request_id = request.id().clone();
+                            let (reply_tx, reply_rx) = oneshot::channel();
+                            self.open_questionnaire(
+                                QuestionAnswerRequest {
+                                    request: event_adapter::questionnaire_request(&request),
+                                    response: QuestionnaireResponseChannel::new(reply_tx),
+                                },
+                                terminal,
+                            )?;
+                            pending_questionnaire = Some((request_id, reply_rx));
                         }
-                        let _ = event_tx.send(event);
-                        if callback_interrupt_requested.load(Ordering::SeqCst) {
-                            return Err(crate::model::ModelError::Interrupted);
+                        ViewEvent::Notice(notice) => self.insert_entry(&Entry::Notice(notice)),
+                        ViewEvent::Completed => terminal_event = true,
+                        ViewEvent::Cancelled => terminal_event = true,
+                        ViewEvent::Failed(message) => {
+                            sdk_failure = Some(message);
+                            terminal_event = true;
                         }
-                        Ok(())
-                    },
-                    questionnaire_handler,
-                    run_cancellation,
-                    move || run_interrupt_requested.load(Ordering::SeqCst),
-                    move || Ok(run_steering_prompts.lock().unwrap().pop_front()),
-                ),
-            );
-            loop {
-                tokio::select! {
-                    result = &mut run_future => {
-                        let mut result = result;
-                        while let Ok(event) = event_rx.try_recv() {
-                            if let Err(err) = self.handle_queued_agent_event(event, terminal) {
-                                result = Err(crate::agent::AgentError::Provider(err));
-                                break;
-                            }
-                        }
-                        terminal.draw(|frame| self.draw(frame))?;
-                        break result;
+                        ViewEvent::Ignored => {}
                     }
-                    Some(request) = question_rx.recv() => {
-                        self.open_questionnaire(request, terminal)?;
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
-                    }
-                    Some(event) = event_rx.recv() => {
-                        event_batch::handle_batch(event, &mut event_rx, |event| self.handle_queued_agent_event(event, terminal)).map_err(crate::agent::AgentError::Provider)?;
-                        match self.handle_running_terminal_events(
-                            terminal,
-                            &interrupt_requested,
-                            &tool_call_active,
-                            RunningInputMode::Turn,
-                        ) {
-                            Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
-                                cancellation.cancel();
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
+                    let Some((request_id, reply)) = reply else {
+                        agent.cancel();
+                        continue;
+                    };
+                    match reply {
+                        QuestionnaireReply::Answer(response) => {
+                            if let Err(error) = agent
+                                .respond(request_id, event_adapter::host_response(response))
+                                .await
+                            {
+                                sdk_failure = Some(error.to_string());
+                                agent.cancel();
                             }
-                            Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
-                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
                         }
-                        self.drain_steering_prompts_to(&steering_prompts);
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
-                    }
-                    _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
-                        self.drain_stream_preview(terminal)?;
-                        match self.handle_running_terminal_events(
-                            terminal,
-                            &interrupt_requested,
-                            &tool_call_active,
-                            RunningInputMode::Turn,
-                        ) {
-                            Ok(StreamControl::Interrupt) if !tool_call_active.load(Ordering::SeqCst) => {
-                                cancellation.cancel();
-                            }
-                            Ok(StreamControl::Interrupt | StreamControl::Continue | StreamControl::Resize) => {}
-                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
-                        }
-                        self.drain_steering_prompts_to(&steering_prompts);
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
+                        QuestionnaireReply::Cancelled(_) => agent.cancel(),
                     }
                 }
+                _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
+                    self.drain_stream_preview(terminal)?;
+                    match self.handle_running_terminal_events(
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Turn,
+                    ) {
+                        Ok(StreamControl::Interrupt) => agent.cancel(),
+                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                        Err(error) => {
+                            sdk_failure = Some(error.to_string());
+                            agent.cancel();
+                        }
+                    }
+                    while let Some(prompt) = self.steering_prompts.pop_front() {
+                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
+                            self.steering_prompts.push_front(prompt);
+                            sdk_failure = Some(error.to_string());
+                            break;
+                        }
+                    }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
             }
-        };
-
-        while let Ok(event) = event_rx.try_recv() {
-            self.handle_agent_event(event, terminal)?;
         }
+
         self.active_tool_call = false;
         self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
+        let result = agent.finish_run().await;
         let outcome = match result {
-            Ok(answer) => {
+            Ok(outcome) if sdk_failure.is_none() => {
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
-                self.insert_final_answer_suffix(terminal, &answer)?;
+                self.insert_final_answer_suffix(terminal, outcome.text())?;
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.status = if self.queued_prompts.is_empty() {
@@ -2262,8 +2221,13 @@ impl App {
                 };
                 TurnOutcome::Completed
             }
-            Err(crate::agent::AgentError::Provider(crate::model::ModelError::Interrupted)) => {
-                self.restore_pending_work_to_input(&steering_prompts);
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<rho_sdk::Error>(),
+                    Some(rho_sdk::Error::Cancelled | rho_sdk::Error::Interrupted { .. })
+                ) =>
+            {
+                self.restore_pending_work_to_input(&Arc::default());
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams(terminal)?;
@@ -2273,12 +2237,16 @@ impl App {
                 self.status = "interrupted".into();
                 TurnOutcome::Interrupted
             }
-            Err(err) => {
+            result => {
                 self.reset_streams();
                 self.current_turn_start = None;
                 self.running = false;
                 self.loading_spinner.stop();
-                self.insert_entry(&Entry::Error(err.to_string()));
+                let message = sdk_failure.unwrap_or_else(|| match result {
+                    Ok(_) => "model run failed".into(),
+                    Err(error) => error.to_string(),
+                });
+                self.insert_entry(&Entry::Error(message));
                 self.status = "error".into();
                 TurnOutcome::Failed
             }
@@ -2303,14 +2271,6 @@ impl App {
                 self.info.session_id.as_deref(),
             )
             .await;
-    }
-
-    fn drain_steering_prompts_to(&mut self, target: &Arc<Mutex<VecDeque<String>>>) {
-        if self.steering_prompts.is_empty() {
-            return;
-        }
-        let mut target = target.lock().unwrap();
-        target.extend(self.steering_prompts.drain(..));
     }
 
     fn paste_clipboard_image(&mut self) {
@@ -2627,7 +2587,10 @@ impl App {
         Ok(())
     }
 
-    fn apply_pending_model_selection(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn apply_pending_model_selection(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let Some(selection) = self.pending_model_selection.take() else {
             return Ok(());
         };
@@ -2965,7 +2928,7 @@ impl App {
 
     fn handle_queued_agent_event(
         &mut self,
-        event: AgentEvent,
+        event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
     ) -> Result<(), crate::model::ModelError> {
         self.handle_agent_event(event, terminal)?;
@@ -3063,11 +3026,11 @@ impl App {
 
     fn handle_agent_event(
         &mut self,
-        event: AgentEvent,
+        event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
         match event {
-            AgentEvent::OutputDelta(text) => {
+            ViewModelEvent::OutputDelta(text) => {
                 self.hidden_reasoning_active = false;
                 let switched = self.switch_stream_kind(terminal, StreamKind::Assistant)?;
                 self.assistant_stream.push_delta(&text);
@@ -3075,7 +3038,7 @@ impl App {
                 self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
             }
-            AgentEvent::ReasoningDelta(text) => {
+            ViewModelEvent::ReasoningDelta(text) => {
                 if !self.active_turn_show_reasoning_output {
                     self.hidden_reasoning_active = true;
                     return Ok(true);
@@ -3089,10 +3052,10 @@ impl App {
             other => {
                 if matches!(
                     other,
-                    AgentEvent::StepStarted(_)
-                        | AgentEvent::ToolCallUpdated { .. }
-                        | AgentEvent::ToolStarted { .. }
-                        | AgentEvent::ToolFinished { .. }
+                    ViewModelEvent::StepStarted(_)
+                        | ViewModelEvent::ToolCallUpdated { .. }
+                        | ViewModelEvent::ToolStarted { .. }
+                        | ViewModelEvent::ToolFinished { .. }
                 ) {
                     self.hidden_reasoning_active = false;
                     self.finish_streams(terminal)?;
@@ -3331,7 +3294,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
@@ -3369,11 +3332,8 @@ impl App {
     async fn execute_compact_command(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Ok(config) = self.info.config_repository.load() {
-            agent.set_compaction_config((&config).into());
-        }
         self.steering_prompts.clear();
         self.status = "compacting context".into();
         self.running = true;
@@ -3382,43 +3342,27 @@ impl App {
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let compacted = {
-            let mut compact_future = Box::pin(agent.compact(move |event| {
-                let _ = event_tx.send(event);
-                Ok(())
-            }));
-            loop {
-                tokio::select! {
-                    result = &mut compact_future => break result,
-                    Some(event) = event_rx.recv() => {
-                        self.handle_queued_agent_event(event, terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
-                    }
-                    _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
-                        match self.handle_running_terminal_events(
-                            terminal,
-                            &interrupt_requested,
-                            &tool_call_active,
-                            RunningInputMode::Compacting,
-                        ) {
-                            Ok(StreamControl::Interrupt) => {
-                                break Err(crate::agent::AgentError::Provider(
-                                    crate::model::ModelError::Interrupted,
-                                ));
-                            }
-                            Ok(StreamControl::Continue | StreamControl::Resize) => {}
-                            Err(err) => break Err(crate::agent::AgentError::Provider(err)),
+        let mut compact_future = Box::pin(agent.compact());
+        let compacted = loop {
+            tokio::select! {
+                result = &mut compact_future => break result,
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    match self.handle_running_terminal_events(
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Compacting,
+                    )? {
+                        StreamControl::Interrupt => {
+                            break Err(anyhow::anyhow!("compaction interrupted"));
                         }
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        terminal.draw(|frame| self.draw(frame))?;
+                        StreamControl::Continue | StreamControl::Resize => {}
                     }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
                 }
             }
         };
-        while let Ok(event) = event_rx.try_recv() {
-            self.handle_queued_agent_event(event, terminal)?;
-        }
         self.running = false;
         self.loading_spinner.stop();
 
@@ -3429,10 +3373,9 @@ impl App {
             }
             Ok(false) => {
                 self.insert_entry(&Entry::Notice(
-                        "not enough conversation history to compact, or the model context window is unknown"
-                            .into(),
-                    ),
-                );
+                    "not enough conversation history to compact, or the model context window is unknown"
+                        .into(),
+                ));
                 self.status = "context not compacted".into();
             }
             Err(err) => {
@@ -3455,11 +3398,9 @@ impl App {
     fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        agent.reset();
-        agent.set_session_id(None);
-        agent.clear_history_sink();
+        agent.reset()?;
         self.info.session_id = None;
         self.composer = ComposerMode::Input;
         self.input.clear();
@@ -3546,7 +3487,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let model = invocation.args.trim();
         if model.is_empty() {
@@ -3573,7 +3514,7 @@ impl App {
     async fn open_model_picker(
         &mut self,
         terminal: &mut DefaultTerminal,
-        _agent: &mut Agent,
+        _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.status = "loading models".into();
         terminal.draw(|frame| self.draw(frame))?;
@@ -3648,7 +3589,7 @@ impl App {
     async fn submit_picker_selection(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.composer = ComposerMode::Input;
@@ -3712,7 +3653,11 @@ impl App {
         }
     }
 
-    fn submit_config_selection(&mut self, value: &str, agent: &mut Agent) -> anyhow::Result<()> {
+    fn submit_config_selection(
+        &mut self,
+        value: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         match value {
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
@@ -3995,7 +3940,7 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(&mut self, agent: &mut Agent) -> anyhow::Result<()> {
+    fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         let supported_reasoning = crate::model::models_dev::cached_reasoning_levels(
             &self.info.provider,
             &self.info.model,
@@ -4004,19 +3949,17 @@ impl App {
             .info
             .reasoning
             .next_supported(supported_reasoning.as_deref());
-        if !agent.set_provider_reasoning(reasoning) {
-            let provider = match build_provider(&self.info.provider, &self.info.model, reasoning) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not update reasoning to {reasoning}: {err}"
-                    )));
-                    self.status = "reasoning change failed".into();
-                    return Ok(());
-                }
-            };
-            agent.replace_provider(provider);
-        }
+        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not update reasoning to {reasoning}: {err}"
+                )));
+                self.status = "reasoning change failed".into();
+                return Ok(());
+            }
+        };
+        agent.replace_provider(provider, reasoning)?;
         self.info.reasoning = reasoning;
         self.info.diagnostics.update_identity(
             &self.info.provider,
@@ -4171,7 +4114,11 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    fn select_model(&mut self, selection: ModelSelection, agent: &mut Agent) -> anyhow::Result<()> {
+    fn select_model(
+        &mut self,
+        selection: ModelSelection,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -4182,7 +4129,7 @@ impl App {
             .info
             .reasoning
             .normalize(supported_reasoning.as_deref());
-        let new_provider = match build_provider(&provider, &model, reasoning) {
+        let new_provider = match build_sdk_provider(&provider, &model, reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -4193,7 +4140,7 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider);
+        let handoff = agent.replace_provider(new_provider, reasoning)?;
         if handoff.has_omissions() {
             let kinds = handoff.omitted_kinds.join(", ");
             self.insert_entry(&Entry::Notice(format!(
@@ -4283,7 +4230,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let session_id = invocation.args.trim();
         if !session_id.is_empty() {
@@ -4328,9 +4275,9 @@ impl App {
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        match self.resume_session_by_id(session_id, terminal, agent) {
+        match self.resume_session_by_id(session_id, terminal, agent).await {
             Ok(()) => {
                 self.info
                     .herdr
@@ -4347,20 +4294,18 @@ impl App {
         }
     }
 
-    fn resume_session_by_id(
+    async fn resume_session_by_id(
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let (session, histories) = Session::open_by_id_with_histories(&self.info.cwd, session_id)?;
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
         let display_history = histories.display;
-        agent.replace_history(histories.model);
-        agent.set_session_id(Some(full_id.clone()));
-        agent.set_history_sink(SessionHistorySink::new(session));
+        agent.resume(session, histories.model).await?;
         self.info.session_id = Some(full_id);
         self.info.recovered_messages = display_history.clone();
         self.composer = ComposerMode::Input;
@@ -4429,7 +4374,11 @@ impl App {
         Ok(())
     }
 
-    fn execute_skill_command(&mut self, name: &str, agent: &mut Agent) -> anyhow::Result<bool> {
+    fn execute_skill_command(
+        &mut self,
+        name: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
         let Some(name) = name.strip_prefix("skill:") else {
             return Ok(false);
         };
@@ -4441,7 +4390,7 @@ impl App {
         };
 
         self.ensure_session(agent)?;
-        agent.load_skill(&skill)?;
+        agent.load_skill(&skill, self.info.config_repository.load()?.max_output_bytes)?;
         self.insert_entry(&Entry::Notice(format!(
             "loaded skill {} from {}",
             skill.name, skill.source
@@ -4493,9 +4442,9 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)
     }
 
-    fn record_agent_event(&mut self, event: AgentEvent) -> Option<Entry> {
+    fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
-            AgentEvent::StepStarted(step) => {
+            ViewModelEvent::StepStarted(step) => {
                 self.reset_streams();
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
@@ -4505,7 +4454,7 @@ impl App {
                 self.status = format!("running step {step}");
                 None
             }
-            AgentEvent::ToolStarted { display_lines, .. } => {
+            ViewModelEvent::ToolStarted { display_lines, .. } => {
                 self.active_tool_call = true;
                 self.pending_tool_call = Some(ToolEntry {
                     state: ToolEntryState::Running,
@@ -4514,7 +4463,7 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolUpdated { display_lines } => {
+            ViewModelEvent::ToolUpdated { display_lines } => {
                 let expanded = self
                     .pending_tool_call
                     .as_ref()
@@ -4526,7 +4475,7 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
+            ViewModelEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
                 self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
@@ -4534,23 +4483,22 @@ impl App {
                 });
                 None
             }
-            AgentEvent::ToolCallUpdated { .. } => None,
-            AgentEvent::OutputDelta(_) | AgentEvent::ReasoningDelta(_) => None,
-            AgentEvent::ContextUsage(usage) => {
+            ViewModelEvent::ToolCallUpdated { .. } => None,
+            ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::ContextUsage(usage) => {
                 self.current_context = Some(usage);
                 None
             }
-            AgentEvent::Usage(usage) => {
+            ViewModelEvent::Usage(usage) => {
                 let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
                 self.latest_usage = Some(usage.clone());
                 merge_usage(&mut self.cumulative_usage, usage);
                 None
             }
-            AgentEvent::ToolFinished {
+            ViewModelEvent::ToolFinished {
                 ok,
                 display_style,
                 display_lines,
-                ..
             } => {
                 self.statusline.refresh_git_branch();
                 self.active_tool_call = false;
@@ -4565,8 +4513,6 @@ impl App {
                     expanded,
                 }))
             }
-            AgentEvent::QuestionnaireStarted(_) => None,
-            AgentEvent::QuestionnaireFinished(_) => None,
         }
     }
 
@@ -5582,7 +5528,7 @@ async fn generate_session_title(
     model: String,
     first_user_message: String,
 ) -> anyhow::Result<String> {
-    let provider = build_provider(&provider_name, &model, ReasoningLevel::Low)?;
+    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
     let request_messages = vec![
                 Message::System(
                     "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
@@ -6043,75 +5989,6 @@ mod tests {
         )
     }
 
-    #[derive(Debug)]
-    struct ReasoningRecordingProvider {
-        levels: Arc<Mutex<Vec<ReasoningLevel>>>,
-    }
-
-    #[async_trait::async_trait(?Send)]
-    impl crate::model::ModelProvider for ReasoningRecordingProvider {
-        fn set_reasoning(&mut self, reasoning: ReasoningLevel) -> bool {
-            self.levels.lock().unwrap().push(reasoning);
-            true
-        }
-
-        async fn send_turn(
-            &self,
-            _request: ModelRequest<'_>,
-        ) -> Result<ModelResponse, crate::model::ModelError> {
-            unreachable!("metadata tests do not send model requests")
-        }
-    }
-
-    #[tokio::test]
-    async fn metadata_fetch_completion_normalizes_active_provider_reasoning() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let config = crate::config::Config {
-            reasoning: ReasoningLevel::Max,
-            ..crate::config::Config::default()
-        };
-        config.save(Some(config_path.clone())).unwrap();
-
-        let mut app = test_app();
-        app.info.reasoning = ReasoningLevel::Max;
-        app.info.config_repository = ConfigRepository::new(Some(config_path.clone()));
-        app.pending_model_metadata = Some(tokio::spawn(async {
-            Some(ModelMetadata {
-                supported_reasoning_levels: Some(vec![
-                    ReasoningLevel::Off,
-                    ReasoningLevel::Low,
-                    ReasoningLevel::High,
-                ]),
-                ..ModelMetadata::default()
-            })
-        }));
-        let recorded_levels = Arc::new(Mutex::new(Vec::new()));
-        let provider = ReasoningRecordingProvider {
-            levels: Arc::clone(&recorded_levels),
-        };
-        let mut agent = Agent::new(
-            Box::new(provider),
-            crate::tool::ToolRegistry::new(),
-            crate::tool::ToolContext {
-                cwd: temp_dir.path().into(),
-                max_output_bytes: 12_000,
-            },
-        );
-        tokio::task::yield_now().await;
-
-        app.poll_model_metadata_fetch(&mut agent);
-
-        assert_eq!(app.info.reasoning, ReasoningLevel::High);
-        assert_eq!(*recorded_levels.lock().unwrap(), vec![ReasoningLevel::High]);
-        assert_eq!(
-            crate::config::Config::load(Some(config_path))
-                .unwrap()
-                .reasoning,
-            ReasoningLevel::High
-        );
-    }
-
     #[test]
     fn info_command_uses_runtime_diagnostics() {
         let mut app = test_app();
@@ -6193,7 +6070,7 @@ mod tests {
         });
 
         assert!(app
-            .record_agent_event(AgentEvent::ContextUsage(ContextUsage::estimated(
+            .record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
                 250,
                 Some(10_000),
             )))
@@ -6216,7 +6093,7 @@ mod tests {
         let mut app = test_app();
 
         assert!(app
-            .record_agent_event(AgentEvent::Usage(ModelUsage {
+            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(20),
                 cache_read_tokens: Some(400),
@@ -6224,7 +6101,7 @@ mod tests {
             }))
             .is_none());
         assert!(app
-            .record_agent_event(AgentEvent::Usage(ModelUsage {
+            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
                 input_tokens: Some(300),
                 output_tokens: Some(40),
                 cache_read_tokens: Some(700),
@@ -6736,7 +6613,9 @@ mod tests {
         app.assistant_stream.push_delta("current");
         app.reasoning_stream.push_delta("reasoning");
 
-        assert!(app.record_agent_event(AgentEvent::StepStarted(2)).is_none());
+        assert!(app
+            .record_agent_event(ViewModelEvent::StepStarted(2))
+            .is_none());
 
         assert!(app.assistant_stream.is_empty());
         assert!(app.reasoning_stream.is_empty());

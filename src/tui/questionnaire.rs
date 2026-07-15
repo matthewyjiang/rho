@@ -6,7 +6,7 @@ pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lin
 #[cfg(test)]
 use render::{questionnaire_frame, questionnaire_question_cursor};
 
-use crate::agent::{
+use crate::questionnaire::{
     QuestionnaireAnswer, QuestionnaireQuestion, QuestionnaireQuestionKind, QuestionnaireRequest,
     QuestionnaireResponse,
 };

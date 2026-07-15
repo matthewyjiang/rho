@@ -1,12 +1,12 @@
 use super::*;
-use crate::{model::registry, provider};
+use crate::{model::registry, provider, providers::build_sdk_provider};
 
 impl App {
     pub(super) async fn execute_login_command(
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
             self.open_provider_picker("login", PickerAction::LoginProvider);
@@ -19,7 +19,7 @@ impl App {
     pub(super) async fn execute_logout_command(
         &mut self,
         invocation: CommandInvocation,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
             match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
@@ -46,7 +46,7 @@ impl App {
         &mut self,
         provider: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
@@ -83,7 +83,7 @@ impl App {
         target: LoginTarget,
         key: String,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if key.trim().is_empty() {
             self.insert_entry(&Entry::Error("API key cannot be empty".into()));
@@ -105,7 +105,7 @@ impl App {
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
-        _agent: &mut Agent,
+        _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.pending_oauth_login.is_some() {
             self.insert_entry(&Entry::Notice(
@@ -242,7 +242,7 @@ impl App {
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
-        _agent: &mut Agent,
+        _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.pending_oauth_login.is_some() {
             self.insert_entry(&Entry::Notice(
@@ -289,7 +289,7 @@ impl App {
     pub(super) async fn poll_pending_oauth_login(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(pending) = self.pending_oauth_login.as_ref() else {
             return Ok(());
@@ -350,7 +350,7 @@ impl App {
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.refresh_available_auths();
         self.refresh_model_list_after_login(&target, terminal)
@@ -417,10 +417,10 @@ impl App {
     fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let new_provider =
-            match build_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
+            match build_sdk_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
                 Ok(provider) => provider,
                 Err(err) => {
                     self.insert_entry(&Entry::Error(format!(
@@ -432,7 +432,7 @@ impl App {
                 }
             };
 
-        agent.replace_provider(new_provider);
+        agent.replace_provider(new_provider, self.info.reasoning)?;
         self.info.auth = target.auth.clone();
         self.info.auth_unavailable = None;
         self.status = "login saved".into();
@@ -442,7 +442,7 @@ impl App {
     fn activate_provider_after_login(
         &mut self,
         target: &LoginTarget,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
             self.insert_entry(&Entry::Notice(format!(
@@ -453,7 +453,7 @@ impl App {
             self.status = "login saved".into();
             return Ok(false);
         };
-        let new_provider = match build_provider(&target.provider, &model, self.info.reasoning) {
+        let new_provider = match build_sdk_provider(&target.provider, &model, self.info.reasoning) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -465,7 +465,7 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider);
+        agent.replace_provider(new_provider, self.info.reasoning)?;
         self.info.provider = target.provider.clone();
         self.info.auth = target.auth.clone();
         self.info.model = model;
@@ -494,7 +494,7 @@ impl App {
     pub(super) async fn logout_provider(
         &mut self,
         provider: &str,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
@@ -544,7 +544,7 @@ impl App {
     fn invalidate_active_provider_if_needed(
         &mut self,
         target: &LoginTarget,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> bool {
         if self.info.provider != target.provider {
             self.status = "logout complete".into();
@@ -560,7 +560,10 @@ impl App {
         let error = registry::missing_credentials_error(&target.provider);
         self.info.auth_unavailable = Some(error.to_string());
         self.using_unavailable_provider = true;
-        agent.replace_provider(Box::new(UnavailableProvider::new(error)));
+        let _ = agent.replace_provider(
+            std::sync::Arc::new(UnavailableProvider::new(error)),
+            self.info.reasoning,
+        );
         self.status = "no providers configured; run /login".into();
         true
     }

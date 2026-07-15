@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 pub use rho_sdk::model::{
     AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent,
     ModelIdentity, ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
@@ -63,7 +64,7 @@ pub trait ModelProvider: Send + Sync {
     async fn send_turn_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         let response = tokio::select! {

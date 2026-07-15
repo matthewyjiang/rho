@@ -96,6 +96,7 @@ struct SessionData {
     history: Vec<Message>,
     revision: Revision,
     compaction: crate::CompactionState,
+    prompt_cache_key: Option<String>,
 }
 
 pub(crate) struct SessionCore {
@@ -111,6 +112,7 @@ impl SessionCore {
         history: Vec<Message>,
         revision: Revision,
         compaction: crate::CompactionState,
+        prompt_cache_key: Option<String>,
         runtime: Rho,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -119,6 +121,7 @@ impl SessionCore {
                 history,
                 revision,
                 compaction,
+                prompt_cache_key,
             }),
             runtime: RwLock::new(runtime),
             state: AtomicU8::new(SessionState::Idle.code()),
@@ -129,6 +132,14 @@ impl SessionCore {
         self.runtime
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn prompt_cache_key(&self) -> Option<String> {
+        self.data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .prompt_cache_key
             .clone()
     }
 
@@ -383,6 +394,16 @@ impl Session {
         let outcome = self.core.commit_compaction(output.into_messages())?;
         self.core.set_state(SessionState::Completed);
         Ok(outcome)
+    }
+
+    /// Appends host-provided context while the session is idle.
+    pub fn append_message(&self, message: Message) -> Result<Revision, Error> {
+        if self.is_running() {
+            return Err(Error::SessionBusy);
+        }
+        let mut history = self.history();
+        history.push(message);
+        self.core.commit(history)
     }
 
     pub fn reset(&self) -> Result<(), Error> {

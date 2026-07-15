@@ -4,6 +4,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{CancellationToken, Error, HostInputId};
 
+use serde_json::Value;
+
 /// One selectable answer in a host question.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostChoice {
@@ -44,6 +46,9 @@ pub struct HostQuestion {
     choices: Vec<HostChoice>,
     selection: SelectionMode,
     allow_other: bool,
+    help: Option<String>,
+    default: Option<Value>,
+    required: bool,
 }
 
 impl HostQuestion {
@@ -76,11 +81,29 @@ impl HostQuestion {
             choices,
             selection,
             allow_other: false,
+            help: None,
+            default: None,
+            required: true,
         })
     }
 
     pub fn allow_other(mut self) -> Self {
         self.allow_other = true;
+        self
+    }
+
+    pub fn help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
+    pub fn default_value(mut self, default: Value) -> Self {
+        self.default = Some(default);
+        self
+    }
+
+    pub fn optional(mut self) -> Self {
+        self.required = false;
         self
     }
 
@@ -102,6 +125,18 @@ impl HostQuestion {
 
     pub fn permits_other(&self) -> bool {
         self.allow_other
+    }
+
+    pub fn help_text(&self) -> Option<&str> {
+        self.help.as_deref()
+    }
+
+    pub fn default_value_ref(&self) -> Option<&Value> {
+        self.default.as_ref()
+    }
+
+    pub fn is_required(&self) -> bool {
+        self.required
     }
 }
 
@@ -162,8 +197,8 @@ impl HostInputRequest {
                     .ok_or_else(|| Error::InvalidHostResponse {
                         message: format!("host response is missing question '{}'", question.id),
                     })?;
-            if answers.is_empty()
-                || (question.selection == SelectionMode::One && answers.len() != 1)
+            if (answers.is_empty() && question.required)
+                || (question.selection == SelectionMode::One && answers.len() > 1)
             {
                 return Err(Error::InvalidHostResponse {
                     message: format!("invalid answer count for question '{}'", question.id),

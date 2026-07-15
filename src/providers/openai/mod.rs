@@ -96,6 +96,38 @@ impl OpenAiProvider {
             }
         }
     }
+
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = async {
+                match &self.auth {
+                    Auth::ApiKey(key) => {
+                        self.send_chat_completions_stream(request, key, on_event).await
+                    }
+                    Auth::Codex { tokens, source } => {
+                        let request_tokens = load_codex_tokens_for_request(
+                            self.credential_store.as_ref(), tokens, *source,
+                        )?;
+                        self.send_codex_responses_stream(
+                            request, request_tokens, *source, on_event,
+                        ).await
+                    }
+                }
+            } => result,
+            () = cancellation.cancelled() => {
+                if matches!(&self.auth, Auth::Codex { .. }) {
+                    self.codex_ws.reset().await;
+                }
+                Err(ModelError::Interrupted)
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait(?Send)]
@@ -124,7 +156,7 @@ impl ModelProvider for OpenAiProvider {
     async fn send_turn_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
@@ -198,7 +230,7 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
         key: &str,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let target = self.identity().expect("OpenAI provider has an identity");
         let messages = request
@@ -352,7 +384,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         tokens: CodexTokens,
         source: CodexAuthSource,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         self.send_codex_responses_inner(request, tokens, source, Some(on_event))
             .await
@@ -363,7 +395,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         tokens: CodexTokens,
         source: CodexAuthSource,
-        mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
         let body = build_codex_responses_body(
             &self.model,
@@ -457,7 +489,7 @@ impl OpenAiProvider {
     async fn collect_codex_sse_response(
         &self,
         response: reqwest::Response,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         body: &Value,
     ) -> Result<ModelResponse, ModelError> {
         match collect_codex_sse_response(response, on_event).await {

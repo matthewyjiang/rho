@@ -84,7 +84,7 @@ impl CodexWsTransport {
         body: Value,
         tokens: &CodexTokens,
         mode: CodexRequestMode,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
@@ -230,7 +230,7 @@ impl CodexWsState {
         tokens: &CodexTokens,
         frame: Value,
         idle_timeout: std::time::Duration,
-        on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
         if self.connection.is_none() {
             self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
@@ -333,7 +333,7 @@ async fn connect_codex_ws(
 async fn collect_codex_ws_response(
     socket: &mut CodexSocket,
     idle_timeout: std::time::Duration,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<CodexWsCompleted, CodexWsFailure> {
     let mut state = CodexSseState::default();
     let mut server_output_items = Vec::new();
@@ -460,7 +460,7 @@ async fn collect_codex_ws_response_silent(
 fn handle_codex_ws_value(
     value: &Value,
     state: &mut CodexSseState,
-    on_event: &mut Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     events_emitted: &mut bool,
 ) -> Result<(bool, bool), CodexWsFailure> {
     let mut emit_event = |event| {
@@ -473,7 +473,7 @@ fn handle_codex_ws_value(
     handle_codex_sse_line(
         &format!("data: {value}"),
         state,
-        &mut Some(&mut emit_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>),
+        &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
     )
     .map_err(CodexWsFailure::Model)?;
     let event_type = value.get("type").and_then(Value::as_str);
@@ -487,7 +487,7 @@ fn handle_codex_ws_value_silent(
     value: &Value,
     state: &mut CodexSseState,
 ) -> Result<(bool, bool), CodexWsFailure> {
-    let mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>> = None;
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
     handle_codex_sse_line(&format!("data: {value}"), state, &mut on_event)
         .map_err(CodexWsFailure::Model)?;
     let event_type = value.get("type").and_then(Value::as_str);

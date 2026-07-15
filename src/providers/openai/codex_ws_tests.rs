@@ -419,7 +419,7 @@ async fn websocket_emits_delta_before_response_completes() {
         Ok(())
     };
     let mut on_event =
-        Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>);
+        Some(&mut collect_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send));
 
     transport
         .send_responses_turn(
@@ -444,8 +444,9 @@ async fn websocket_failure_after_delta_does_not_replay_request() {
             }
             Ok(())
         };
-        let mut on_event =
-            Some(&mut collect_event as &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>);
+        let mut on_event = Some(
+            &mut collect_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        );
 
         transport
             .send_responses_turn(

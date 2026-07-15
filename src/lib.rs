@@ -1,10 +1,10 @@
-mod agent;
 mod app;
 mod auth;
 mod cancellation;
 mod cli;
 mod clipboard_image;
 mod commands;
+mod compaction;
 mod config;
 mod config_writer;
 mod credentials;
@@ -12,6 +12,7 @@ mod diagnostics;
 mod export;
 mod herdr;
 mod keybindings;
+#[allow(dead_code)]
 mod model;
 mod paths;
 mod prompt;
@@ -20,10 +21,13 @@ mod protocol;
 mod provider;
 mod provider_backend;
 mod providers;
+mod questionnaire;
 mod reasoning;
 mod session;
 mod skills;
+#[allow(dead_code)]
 mod tool;
+#[allow(dead_code)]
 mod tools;
 mod transcript;
 mod tui;

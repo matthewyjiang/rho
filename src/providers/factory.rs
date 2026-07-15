@@ -199,6 +199,23 @@ fn clone_model_error(error: &ModelError) -> ModelError {
     }
 }
 
+impl rho_sdk::provider::ModelProvider for UnavailableProvider {
+    fn identity(&self) -> rho_sdk::model::ModelIdentity {
+        rho_sdk::model::ModelIdentity::new("unavailable", "unavailable", "unavailable")
+    }
+
+    fn send_turn<'a>(
+        &'a self,
+        _request: rho_sdk::model::ModelRequest<'a>,
+    ) -> rho_sdk::provider::ProviderFuture<'a> {
+        Box::pin(async move {
+            Err(super::sdk_adapter::provider_error_from_model_error(
+                clone_model_error(&self.error),
+            ))
+        })
+    }
+}
+
 impl fmt::Display for UnavailableProvider {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.error)

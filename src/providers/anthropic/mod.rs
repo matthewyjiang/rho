@@ -93,6 +93,19 @@ impl AnthropicProvider {
         self.send_messages(request).await
     }
 
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_messages_stream(request, on_event) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
+
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
         let response = self
@@ -111,7 +124,7 @@ impl AnthropicProvider {
     async fn send_messages_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
         let response = self
@@ -304,7 +317,7 @@ impl ModelProvider for AnthropicProvider {
     async fn send_turn_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {

@@ -104,6 +104,7 @@ pub struct SessionOptions {
     history: Vec<Message>,
     revision: crate::Revision,
     compaction: crate::CompactionState,
+    prompt_cache_key: Option<String>,
     apply_system_prompt: bool,
 }
 
@@ -114,6 +115,7 @@ impl Default for SessionOptions {
             history: Vec::new(),
             revision: crate::Revision::INITIAL,
             compaction: crate::CompactionState::default(),
+            prompt_cache_key: None,
             apply_system_prompt: true,
         }
     }
@@ -134,12 +136,19 @@ impl SessionOptions {
         self
     }
 
+    /// Sets an opaque, non-secret cache key forwarded to supporting providers.
+    pub fn prompt_cache_key(mut self, prompt_cache_key: impl Into<String>) -> Self {
+        self.prompt_cache_key = Some(prompt_cache_key.into());
+        self
+    }
+
     pub fn from_snapshot(snapshot: SessionSnapshot) -> Self {
         Self {
             id: snapshot.session_id().clone(),
             history: snapshot.history().to_vec(),
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
+            prompt_cache_key: None,
             apply_system_prompt: false,
         }
     }
@@ -355,6 +364,7 @@ impl Rho {
             history,
             options.revision,
             options.compaction,
+            options.prompt_cache_key,
             self.clone(),
         )))
     }

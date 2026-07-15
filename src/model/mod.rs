@@ -10,11 +10,14 @@ pub mod registry;
 
 pub(crate) use crate::providers::{build_provider, UnavailableProvider};
 pub use context::{ContextUsage, ContextUsageSource};
+#[cfg(test)]
+pub use contract::AbortedAssistant;
 pub use contract::{
-    AbortedAssistant, AssistantMessage, ContentBlock, DynModelProvider, ImageContent, Message,
-    ModelError, ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
+    AssistantMessage, ContentBlock, DynModelProvider, ImageContent, Message, ModelError,
+    ModelEvent, ModelIdentity, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
     PartialToolCall, ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
 };
+#[allow(unused_imports)]
 pub use handoff::HandoffReport;
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;

@@ -8,23 +8,11 @@
 //!
 //! # Streaming fidelity
 //!
-//! The public SDK streams through a bounded async [`ProviderEventSender`] with
-//! backpressure. Application providers still emit through a synchronous
-//! `FnMut` callback, and the private trait is `async_trait(?Send)`, so its
-//! futures are not `Send`. Bridging those models with mid-stream fidelity would
-//! require either:
-//!
-//! - awaiting a non-`Send` callback future inside a `Send` SDK future, or
-//! - blocking on the async channel from inside the sync callback, or
-//! - rewriting every transport and protocol stream decoder onto
-//!   `ProviderEventSender`.
-//!
-//! This adapter therefore implements [`ModelProvider::send_turn`] fully and
-//! relies on the SDK default [`ModelProvider::send_turn_stream`], which
-//! synthesizes ordered `OutputDelta` events from the completed assistant text.
-//! Reasoning deltas, tool-call deltas, usage, web-search, and provider-native
-//! context events are not forwarded until transports target the SDK event
-//! channel natively.
+//! Application transports emit semantic events through synchronous callbacks.
+//! The adapter drains those callbacks concurrently into the SDK's bounded event
+//! sender, preserving ordering while the public runtime applies backpressure.
+//! Provider execution remains owned by the SDK and the compatibility channel is
+//! scoped to one in-flight provider turn.
 //!
 //! # Per-request reasoning
 //!
@@ -36,8 +24,8 @@
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
 use rho_sdk::{
-    model::{ModelIdentity, ModelRequest, ModelResponse},
-    provider::{ModelProvider as SdkModelProvider, ProviderFuture},
+    model::{ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    provider::{ModelProvider as SdkModelProvider, ProviderEventSender, ProviderFuture},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -58,6 +46,24 @@ pub trait AdaptableProvider: Send + Sync {
 
     /// Completes one model turn without streaming intermediate events.
     fn complete_turn<'a>(&'a self, request: ModelRequest<'a>) -> AppProviderFuture<'a>;
+
+    /// Completes one model turn while emitting semantic events in order.
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        on_event: &'a mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> AppProviderFuture<'a> {
+        Box::pin(async move {
+            let response = self.complete_turn(request).await?;
+            let ModelResponse::Assistant(blocks) = &response;
+            for block in blocks {
+                if let rho_sdk::model::ContentBlock::Text(text) = block {
+                    on_event(ModelEvent::OutputDelta(text.clone()))?;
+                }
+            }
+            Ok(response)
+        })
+    }
 }
 
 /// Wraps an [`AdaptableProvider`] as a public [`rho_sdk::provider::ModelProvider`].
@@ -102,6 +108,35 @@ impl<P: AdaptableProvider> SdkModelProvider for SdkProviderAdapter<P> {
                 .map_err(provider_error_from_model_error)
         })
     }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut on_event =
+                move |event| event_tx.send(event).map_err(|_| ModelError::Interrupted);
+            let mut provider = self.inner.stream_turn(request, &mut on_event);
+            loop {
+                tokio::select! {
+                    biased;
+                    event = event_rx.recv() => {
+                        if let Some(event) = event {
+                            events.send(event).await?;
+                        }
+                    }
+                    result = &mut provider => {
+                        while let Ok(event) = event_rx.try_recv() {
+                            events.send(event).await?;
+                        }
+                        return result.map_err(provider_error_from_model_error);
+                    }
+                }
+            }
+        })
+    }
 }
 
 impl AdaptableProvider for crate::providers::anthropic::AnthropicProvider {
@@ -111,6 +146,16 @@ impl AdaptableProvider for crate::providers::anthropic::AnthropicProvider {
 
     fn complete_turn<'a>(&'a self, request: ModelRequest<'a>) -> AppProviderFuture<'a> {
         Box::pin(crate::providers::anthropic::AnthropicProvider::complete_turn(self, request))
+    }
+
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        on_event: &'a mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> AppProviderFuture<'a> {
+        Box::pin(crate::providers::anthropic::AnthropicProvider::stream_turn(
+            self, request, on_event,
+        ))
     }
 }
 
@@ -122,6 +167,18 @@ impl AdaptableProvider for crate::providers::github_copilot::GitHubCopilotProvid
     fn complete_turn<'a>(&'a self, request: ModelRequest<'a>) -> AppProviderFuture<'a> {
         Box::pin(
             crate::providers::github_copilot::GitHubCopilotProvider::complete_turn(self, request),
+        )
+    }
+
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        on_event: &'a mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> AppProviderFuture<'a> {
+        Box::pin(
+            crate::providers::github_copilot::GitHubCopilotProvider::stream_turn(
+                self, request, on_event,
+            ),
         )
     }
 }
@@ -136,6 +193,16 @@ impl AdaptableProvider for crate::providers::openai::OpenAiProvider {
             self, request,
         ))
     }
+
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        on_event: &'a mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> AppProviderFuture<'a> {
+        Box::pin(crate::providers::openai::OpenAiProvider::stream_turn(
+            self, request, on_event,
+        ))
+    }
 }
 
 impl AdaptableProvider for crate::providers::xai::XaiProvider {
@@ -146,6 +213,16 @@ impl AdaptableProvider for crate::providers::xai::XaiProvider {
     fn complete_turn<'a>(&'a self, request: ModelRequest<'a>) -> AppProviderFuture<'a> {
         Box::pin(crate::providers::xai::XaiProvider::complete_turn(
             self, request,
+        ))
+    }
+
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        on_event: &'a mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> AppProviderFuture<'a> {
+        Box::pin(crate::providers::xai::XaiProvider::stream_turn(
+            self, request, on_event,
         ))
     }
 }

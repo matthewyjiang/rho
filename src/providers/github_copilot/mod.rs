@@ -149,6 +149,19 @@ impl GitHubCopilotProvider {
         let response: ChatResponse = response.json().await?;
         convert_openai_response(response)
     }
+
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_turn_stream_inner(request, on_event) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
 }
 
 #[async_trait::async_trait(?Send)]
@@ -164,7 +177,7 @@ impl ModelProvider for GitHubCopilotProvider {
     async fn send_turn_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
@@ -178,7 +191,7 @@ impl GitHubCopilotProvider {
     async fn send_turn_stream_inner(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, true)?;
         let auth = self.auth.auth_material(&self.client).await?;

@@ -42,7 +42,7 @@ pub(crate) async fn collect_codex_sse_silent(
 }
 
 fn apply_codex_sse_line_silent(state: &mut CodexSseState, line: &str) -> Result<bool, ModelError> {
-    let mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>> = None;
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
     handle_codex_sse_line(line, state, &mut on_event)
 }
 

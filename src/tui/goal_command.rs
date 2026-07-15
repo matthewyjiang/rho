@@ -62,7 +62,7 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let condition = invocation.args.trim();
         if condition.is_empty() {
@@ -111,7 +111,7 @@ impl App {
     pub(super) async fn continue_goal(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut Agent,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         while !self.should_quit && self.goal.is_some() {
             self.status = "evaluating goal".into();
@@ -132,15 +132,12 @@ impl App {
                         .unwrap_or_else(|| self.info.model.clone()),
                 )
             };
+            let history = agent.history();
             let evaluation = {
                 let interrupt_requested = AtomicBool::new(false);
                 let tool_call_active = AtomicBool::new(false);
-                let mut evaluation = Box::pin(goal::evaluate(
-                    &provider,
-                    &model,
-                    &condition,
-                    agent.messages(),
-                ));
+                let mut evaluation =
+                    Box::pin(goal::evaluate(&provider, &model, &condition, &history));
                 let deadline = tokio::time::Instant::now() + goal::EVALUATION_TIMEOUT;
                 loop {
                     tokio::select! {

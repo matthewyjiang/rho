@@ -17,4 +17,6 @@ pub(crate) mod sdk_adapter;
 mod send_stream;
 pub(crate) mod xai;
 
-pub(crate) use factory::{build_automation_provider, build_provider, UnavailableProvider};
+pub(crate) use factory::{
+    build_automation_provider, build_provider, build_sdk_provider, UnavailableProvider,
+};

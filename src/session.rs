@@ -228,13 +228,23 @@ impl Session {
         }
     }
 
+    #[allow(dead_code)]
     pub fn create(cwd: &Path) -> anyhow::Result<Self> {
         Self::create_in_root(&session_root()?, cwd)
     }
 
+    pub(crate) fn create_with_id(cwd: &Path, id: &str) -> anyhow::Result<Self> {
+        Self::create_with_id_in_root(&session_root()?, cwd, id)
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
+        Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string())
+    }
+
+    fn create_with_id_in_root(session_root: &Path, cwd: &Path, id: &str) -> anyhow::Result<Self> {
         let dir = ensure_session_dir(session_root, cwd)?;
-        let id = Uuid::new_v4().to_string();
+        let id = id.to_string();
         let created_at = unix_timestamp_secs();
         let path = dir.join(format!("{created_at}_{id}.jsonl"));
         let session = Self::from_parts(session_root, cwd, id.clone(), path);

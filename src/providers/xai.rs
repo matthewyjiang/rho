@@ -87,7 +87,7 @@ impl XaiProvider {
     async fn send_responses_turn(
         &self,
         request: ModelRequest<'_>,
-        mut on_event: Option<&mut dyn FnMut(ModelEvent) -> Result<(), ModelError>>,
+        mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
         let response = self.send_request(request).await?;
         if !response.status().is_success() {
@@ -119,6 +119,19 @@ impl XaiProvider {
         }
         crate::providers::send_stream::collect_codex_model_response_silent(response).await
     }
+
+    /// Streams one turn through a `Send` callback for the public SDK adapter.
+    pub(crate) async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        tokio::select! {
+            result = self.send_responses_turn(request, Some(on_event)) => result,
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
 }
 
 #[async_trait::async_trait(?Send)]
@@ -139,7 +152,7 @@ impl ModelProvider for XaiProvider {
     async fn send_turn_stream(
         &self,
         request: ModelRequest<'_>,
-        on_event: &mut dyn FnMut(ModelEvent) -> Result<(), ModelError>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {

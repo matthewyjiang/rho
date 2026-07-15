@@ -211,6 +211,7 @@ pub fn response_content(response: &QuestionnaireResponse) -> String {
     serde_json::to_string(response).unwrap_or_else(|_| format!("answers: {:?}", response.answers))
 }
 
+#[allow(dead_code)]
 pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
     let heading = request.title.as_ref().map_or_else(
         || TOOL_NAME.to_string(),
@@ -223,6 +224,7 @@ pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
     lines
 }
 
+#[allow(dead_code)]
 pub fn finished_display_lines(request: &QuestionnaireRequest, result: &ToolResult) -> Vec<String> {
     if !result.ok {
         let mut lines = start_display_lines(request);
@@ -253,6 +255,7 @@ pub fn finished_display_lines(request: &QuestionnaireRequest, result: &ToolResul
     lines
 }
 
+#[allow(dead_code)]
 fn questionnaire_value_display(value: &Value) -> String {
     match value {
         Value::Array(values) => values

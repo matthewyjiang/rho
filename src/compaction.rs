@@ -47,6 +47,7 @@ struct MessageGroup {
     tokens: u64,
 }
 
+#[allow(dead_code)]
 pub fn should_compact(
     config: &CompactionConfig,
     estimated_tokens: Option<u64>,

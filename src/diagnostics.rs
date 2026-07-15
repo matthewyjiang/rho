@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use serde::Serialize;
 
 use crate::{
-    agent::CompactionConfig, config::Config, model::ContextUsage, reasoning::ReasoningLevel,
+    compaction::CompactionConfig, config::Config, model::ContextUsage, reasoning::ReasoningLevel,
 };
 
 #[cfg(test)]
@@ -100,10 +100,12 @@ impl RuntimeDiagnostics {
         self.write().identity = RuntimeIdentity::new(provider, model, reasoning);
     }
 
+    #[allow(dead_code)]
     pub fn record_context(&self, context: ContextUsage) {
         self.write().context = Some(context);
     }
 
+    #[allow(dead_code)]
     pub fn clear_context(&self) {
         self.write().context = None;
     }

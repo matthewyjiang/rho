@@ -1,6 +1,6 @@
 use ratatui::{layout::Position, style::Style, text::Line};
 
-use crate::agent::{QuestionnaireQuestion, QuestionnaireQuestionKind};
+use crate::questionnaire::{QuestionnaireQuestion, QuestionnaireQuestionKind};
 
 use super::{
     choice_count, questionnaire_default_display, FieldSelection, QuestionnaireComposer,

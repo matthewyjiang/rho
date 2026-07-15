@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, fs, path::PathBuf, str::FromStr};
 
 use crate::{
-    agent::CompactionConfig,
+    compaction::CompactionConfig,
     credentials::{
         load_web_search_api_key, save_web_search_api_key, CredentialStore, OsCredentialStore,
         WebSearchCredential,

@@ -8,9 +8,12 @@
 
 use std::sync::Arc;
 
-use rho_sdk::tool::{
-    OperationKind, Tool as SdkTool, ToolContext as SdkToolContext, ToolError as SdkToolError,
-    ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+use rho_sdk::{
+    tool::{
+        OperationKind, Tool as SdkTool, ToolContext as SdkToolContext, ToolError as SdkToolError,
+        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+    },
+    HostChoice, HostInputRequest, HostQuestion, SelectionMode,
 };
 
 use crate::{
@@ -38,6 +41,18 @@ impl AutomationToolSet {
     }
 
     pub fn enabled(config: &Config, diagnostics: RuntimeDiagnostics) -> Self {
+        Self::build(config, diagnostics, /*questionnaire*/ false)
+    }
+
+    pub fn interactive(
+        config: &Config,
+        diagnostics: RuntimeDiagnostics,
+        questionnaire: bool,
+    ) -> Self {
+        Self::build(config, diagnostics, questionnaire)
+    }
+
+    fn build(config: &Config, diagnostics: RuntimeDiagnostics, questionnaire: bool) -> Self {
         let mut tools =
             coding_tools(CodingToolOptions::new().max_output_bytes(config.max_output_bytes));
         let processes = ProcessManager::new(ProcessLimits::default());
@@ -62,6 +77,9 @@ impl AutomationToolSet {
             super::rho::Rho::new(diagnostics),
             config.max_output_bytes,
         ));
+        if questionnaire {
+            tools.push(Arc::new(QuestionnaireTool));
+        }
 
         let (web_search, fetch_content) = super::web::access_tools(config);
         if web_search.is_available() {
@@ -88,6 +106,114 @@ impl AutomationToolSet {
         if let Some(processes) = &self.processes {
             processes.shutdown().await;
         }
+    }
+}
+
+struct QuestionnaireTool;
+
+impl SdkTool for QuestionnaireTool {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        crate::questionnaire::tool_spec()
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let request = crate::questionnaire::parse_request(invocation.into_arguments())
+                .map_err(|message| SdkToolError::new(ToolErrorKind::InvalidArguments, message))?;
+            let questions = request
+                .questions
+                .iter()
+                .map(host_question)
+                .collect::<Result<Vec<_>, _>>()?;
+            let title = request
+                .title
+                .clone()
+                .unwrap_or_else(|| "questionnaire".into());
+            let host_request =
+                HostInputRequest::questionnaire(title, questions).map_err(map_sdk_error)?;
+            let response = context
+                .request_host_input(host_request)
+                .await
+                .map_err(map_sdk_error)?;
+            let answers = response
+                .answers()
+                .iter()
+                .map(|(id, values)| crate::questionnaire::QuestionnaireAnswer {
+                    id: id.clone(),
+                    answer: if values.len() == 1 {
+                        serde_json::Value::String(values[0].clone())
+                    } else {
+                        serde_json::Value::Array(
+                            values
+                                .iter()
+                                .cloned()
+                                .map(serde_json::Value::String)
+                                .collect(),
+                        )
+                    },
+                })
+                .collect();
+            let content = crate::questionnaire::response_content(
+                &crate::questionnaire::QuestionnaireResponse { answers },
+            );
+            Ok(ToolOutput::text(content).metadata(
+                ToolMetadata::new().operation(OperationKind::Other("questionnaire".into())),
+            ))
+        })
+    }
+}
+
+fn host_question(
+    question: &crate::questionnaire::QuestionnaireQuestion,
+) -> Result<HostQuestion, SdkToolError> {
+    use crate::questionnaire::QuestionnaireQuestionKind;
+
+    let (choices, selection) = match question.kind {
+        QuestionnaireQuestionKind::Choice => (
+            question
+                .choices
+                .iter()
+                .map(|choice| HostChoice::new(choice, choice))
+                .collect(),
+            SelectionMode::One,
+        ),
+        QuestionnaireQuestionKind::MultiSelect => (
+            question
+                .choices
+                .iter()
+                .map(|choice| HostChoice::new(choice, choice))
+                .collect(),
+            SelectionMode::Many,
+        ),
+        QuestionnaireQuestionKind::Confirm => (
+            vec![HostChoice::new("yes", "Yes"), HostChoice::new("no", "No")],
+            SelectionMode::One,
+        ),
+        QuestionnaireQuestionKind::Text => {
+            (vec![HostChoice::new("other", "Other")], SelectionMode::One)
+        }
+    };
+    let mut host = HostQuestion::new(&question.id, &question.question, choices, selection)
+        .map_err(map_sdk_error)?;
+    if question.allow_other || matches!(question.kind, QuestionnaireQuestionKind::Text) {
+        host = host.allow_other();
+    }
+    if let Some(help) = &question.help {
+        host = host.help(help);
+    }
+    if let Some(default) = &question.default {
+        host = host.default_value(default.clone());
+    }
+    if !question.required {
+        host = host.optional();
+    }
+    Ok(host)
+}
+
+fn map_sdk_error(error: rho_sdk::Error) -> SdkToolError {
+    match error {
+        rho_sdk::Error::Cancelled => SdkToolError::cancelled(),
+        error => SdkToolError::new(ToolErrorKind::Execution, error.to_string()),
     }
 }
 
