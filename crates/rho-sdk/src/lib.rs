@@ -9,6 +9,19 @@
 //! The application crate remains the owner of CLI parsing, terminal behavior,
 //! interactive rendering, keybindings, updates, and application configuration.
 //!
+//! # Runtime ownership
+//!
+//! - [`Rho`] is the process-scoped runtime built from explicit providers, tools,
+//!   policies, and optional adapters.
+//! - [`Session`] owns one conversation history and permits a single active
+//!   [`Run`].
+//! - [`Run`] exposes ordered [`RunEvent`]s, cooperative cancellation, host input
+//!   responses, and a typed [`RunOutcome`].
+//!
+//! Construction is side-effect-free by default: no automatic writes to `~/.rho`,
+//! no implicit environment reads, no credential-store access, and no terminal or
+//! logger setup.
+//!
 //! # Completion
 //!
 //! ```
@@ -34,10 +47,75 @@
 //! # }
 //! ```
 //!
+//! # Streaming
+//!
 //! [`Session::start`](crate::Session::start) provides ordered semantic events,
 //! bounded backpressure, a cancellation handle, and a typed final outcome. A
 //! dropped [`Run`](crate::Run) cancels and aborts its provider or tool future so
 //! one session never retains abandoned work.
+//!
+//! ```
+//! use rho_sdk::{
+//!     model::{ContentBlock, ModelEvent, ModelIdentity, ModelResponse},
+//!     provider::{ScriptedProvider, ScriptedTurn},
+//!     Rho, RunEvent, SessionOptions, UserInput,
+//! };
+//!
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn main() -> Result<(), rho_sdk::Error> {
+//! let provider = ScriptedProvider::new(
+//!     ModelIdentity::new("scripted", "test", "model"),
+//!     [ScriptedTurn::streaming(
+//!         vec![ModelEvent::OutputDelta("hi".into())],
+//!         ModelResponse::Assistant(vec![ContentBlock::Text("hi".into())]),
+//!     )],
+//! );
+//! let rho = Rho::builder().provider(provider).build()?;
+//! let session = rho.session(SessionOptions::default()).await?;
+//! let mut run = session.start(UserInput::text("stream")).await?;
+//! while let Some(event) = run.next_event().await {
+//!     if let RunEvent::AssistantTextDelta { text } = event {
+//!         assert_eq!(text, "hi");
+//!     }
+//! }
+//! assert_eq!(run.outcome().await?.text(), "hi");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Extension points
+//!
+//! Hosts can supply custom [`ModelProvider`](crate::provider::ModelProvider)
+//! and [`Tool`](crate::tool::Tool) implementations. Both return explicit `Send`
+//! futures suitable for trait objects. Tools use only capabilities supplied
+//! through [`ToolContext`](crate::tool::ToolContext).
+//!
+//! # Session snapshots
+//!
+//! [`Session::snapshot`](crate::Session::snapshot) produces a versioned,
+//! JSON-serializable [`SessionSnapshot`] restored through
+//! [`SessionOptions::from_snapshot`](crate::SessionOptions::from_snapshot).
+//! [`InMemorySessionStore`] is a concrete atomic adapter for tests and simple
+//! hosts. Snapshots never include credentials or raw reasoning.
+//!
+//! # Cancellation and host interaction
+//!
+//! - Cancel a run with [`Run::cancel`](crate::Run::cancel) or
+//!   [`Run::cancellation_handle`](crate::Run::cancellation_handle).
+//! - Answer questionnaires with [`Run::respond`](crate::Run::respond) after
+//!   [`RunEvent::HostInputRequested`].
+//! - Gate sensitive work with [`WorkspacePolicy`] and [`ApprovalHandler`].
+//!
+//! The compiling examples under `examples/` cover simple completion, streaming,
+//! custom providers, custom tools, snapshot restore, cancellation, and
+//! questionnaire/approval flows.
+//!
+//! # Security defaults
+//!
+//! The default feature set is empty. Creating an SDK runtime does not
+//! implicitly read environment variables, access an OS credential store, write
+//! to `~/.rho`, initialize a terminal or logger, check for updates, or grant
+//! tools filesystem, process, or network access.
 
 #![forbid(unsafe_code)]
 
