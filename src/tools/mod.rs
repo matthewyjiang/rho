@@ -13,6 +13,8 @@ pub mod rtk;
 pub mod sdk_adapter;
 pub mod sdk_registry;
 pub mod skill;
+#[cfg(debug_assertions)]
+mod tui_fixture;
 pub mod web;
 pub mod write_file;
 

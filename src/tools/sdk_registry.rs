@@ -90,6 +90,10 @@ impl AutomationToolSet {
         if questionnaire {
             tools.push(Arc::new(QuestionnaireTool));
         }
+        #[cfg(debug_assertions)]
+        if let Some(tool) = super::tui_fixture::from_env() {
+            tools.push(tool);
+        }
 
         let (web_search, fetch_content) = super::web::access_tools(config);
         if web_search.is_available() {

@@ -16,6 +16,8 @@ pub(crate) mod github_copilot;
 pub(crate) mod openai;
 pub(crate) mod sdk_adapter;
 mod send_stream;
+#[cfg(debug_assertions)]
+mod tui_fixture;
 pub(crate) mod xai;
 
 pub(crate) use builder::ProviderBuildOptions;

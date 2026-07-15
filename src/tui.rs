@@ -70,6 +70,8 @@ mod run_lifecycle;
 mod scrollbar;
 mod session_picker;
 mod skill_picker;
+#[cfg(debug_assertions)]
+mod smoke_injection;
 mod statusline;
 mod stream;
 mod text_selection;
@@ -196,7 +198,17 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiInfo) -> anyhow::Resul
             info.session_id.as_deref(),
         )
         .await;
-    let result = App::new(info).run(&mut terminal, agent).await;
+    let result = {
+        #[cfg(debug_assertions)]
+        let injected = smoke_injection::after_terminal_init();
+        #[cfg(not(debug_assertions))]
+        let injected: anyhow::Result<()> = Ok(());
+
+        match injected {
+            Ok(()) => App::new(info).run(&mut terminal, agent).await,
+            Err(error) => Err(error),
+        }
+    };
     herdr.release().await;
     if keyboard_enhancements_enabled {
         let _ = disable_keyboard_enhancements();

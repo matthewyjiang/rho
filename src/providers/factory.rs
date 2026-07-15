@@ -38,6 +38,13 @@ pub(crate) fn build_sdk_provider_with_source(
     options: ProviderBuildOptions,
     credentials: &dyn ProviderCredentialSource,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    #[cfg(debug_assertions)]
+    if let Some(provider) = super::tui_fixture::from_env(options.provider(), options.model())
+        .map_err(ModelError::InvalidResponse)?
+    {
+        return Ok(provider);
+    }
+
     let credential = credentials.acquire(options.provider())?;
     build_sdk_provider_explicit(options, credential)
 }
