@@ -1,14 +1,10 @@
-# Draft coordinated 1.0 release notes
+# Coordinated 1.0 release notes
 
-::: warning Forward-looking contract
-The published SDK version is currently `rho-sdk 0.1.0`. These notes describe
-what will become the 1.0 contract after the release-candidate gates pass; they
-do not announce a 1.0 release.
+`rho-sdk 1.0.0` and `rho-coding-agent 1.0.0` were published on 2026-07-15 from [#262](https://github.com/matthewyjiang/rho/issues/262). `rho-coding-agent` was immediately followed by a `1.0.1` patch ([#272](https://github.com/matthewyjiang/rho/issues/272)) that separated the application release process from the SDK's; it carries no SDK or user-facing behavior change.
+
+::: warning Known gap
+Not every entry gate in the [release-candidate process](/sdk/release-candidates) was verified before publication. In particular, the terminal-event delivery guarantee described in [known limitations](/sdk/events-and-cancellation#known-limitations) shipped unresolved. Treat this page as an accurate record of what shipped, not proof every gate passed.
 :::
-
-Status: draft release notes for the coordinated `rho-sdk` and
-`rho-coding-agent` 1.0 release. Publishing remains blocked on the release gates
-listed in the [release-candidate process](/sdk/release-candidates).
 
 ## `rho-sdk 1.0.0`
 
@@ -90,13 +86,10 @@ listed in the [release-candidate process](/sdk/release-candidates).
 
 ## Release order
 
-1. Publish and verify `rho-sdk 1.0.0`.
-2. Update `rho-coding-agent` to the verified registry dependency and lockfile.
-3. Publish `rho-coding-agent 1.0.0`.
-4. Verify clean installs, executable naming, package contents, documentation,
-   checksums, and supported-platform artifacts.
-5. Announce both packages together with links to the security model, migration
-   guide, and known upstream-dependent provider behavior.
+`rho-sdk` and `rho-coding-agent` were published together from the same commit rather than through the fully sequenced coordinated flow in [release candidates](/sdk/release-candidates):
 
-No item in this draft is evidence of publication. Registry verification and
-release artifacts must be attached to the final release record.
+1. `rho-sdk 1.0.0` and `rho-coding-agent 1.0.0` were published in the same release-please run.
+2. `rho-coding-agent 1.0.1` followed same-day to separate the application's release automation from the SDK's.
+3. Clean install, executable naming, package contents, and supported-platform artifacts have not been independently re-verified against this specific release beyond CI's existing packaging checks.
+
+See [known limitations](/sdk/events-and-cancellation#known-limitations) for behavior that shipped without the full release-candidate evidence this document originally called for.

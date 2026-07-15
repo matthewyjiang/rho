@@ -2,23 +2,28 @@
 
 ## Add the dependency
 
-`rho-sdk` has not reached its stable 1.0 contract. Until a registry release is announced, use a repository checkout, a workspace path, or a pinned Git revision rather than assuming a crates.io version exists.
+`rho-sdk 1.0.0` is published on [crates.io](https://crates.io/crates/rho-sdk). Depend on the released version and commit a lockfile:
 
-From a workspace checkout:
+```toml
+[dependencies]
+rho-sdk = { version = "1.0", default-features = false }
+```
+
+From a workspace checkout, for example when developing alongside this repository:
 
 ```toml
 [dependencies]
 rho-sdk = { path = "crates/rho-sdk", default-features = false }
 ```
 
-From Git, pin an exact reviewed revision for reproducible builds:
+From Git, pin an exact reviewed revision for reproducible builds against unreleased changes:
 
 ```toml
 [dependencies]
 rho-sdk = { git = "https://github.com/matthewyjiang/rho", rev = "<full-commit-hash>", package = "rho-sdk", default-features = false }
 ```
 
-After a registry release is published, use the released version and a lockfile. The coordinated publication procedure is described in [release candidates](/sdk/release-candidates).
+The coordinated publication procedure for future major/minor releases is described in [release candidates](/sdk/release-candidates).
 
 ## Async runtime
 

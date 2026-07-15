@@ -5,9 +5,7 @@ This guide covers two audiences:
 - Rust integrations that previously imported private `rho-coding-agent` modules
 - users upgrading the `rho` CLI and its application-owned config and sessions
 
-::: warning Pre-release guide
-Rho 1.0 and `rho-sdk 1.0` have not been published. This guide records the intended and currently implemented migration boundaries. Final release notes must list any additional change found during release-candidate testing.
-:::
+`rho-sdk 1.0.0` and `rho-coding-agent 1.0.0` are published. This guide records the migration boundaries between the pre-1.0 application-internal usage and the released SDK contract. See the [1.0 release notes](/sdk/release-notes-1.0) for the final list of changes and [known limitations](/sdk/events-and-cancellation#known-limitations) for gaps that shipped despite the drafted release-candidate gates.
 
 ## Rust integration checklist
 
@@ -71,7 +69,7 @@ Match non-exhaustive typed SDK errors. Do not parse application or provider stri
 
 ## CLI user compatibility
 
-The intended 1.0 CLI contract keeps the `rho` binary name and installation flow. Current intentional behavior is:
+The 1.0 CLI contract keeps the `rho` binary name and installation flow. Current intentional behavior is:
 
 - `rho run` writes only the final answer to stdout
 - diagnostics and errors go to stderr
@@ -81,7 +79,7 @@ The intended 1.0 CLI contract keeps the `rho` binary name and installation flow.
 - current working-directory and `AGENTS.md` behavior remains application policy
 - Rho 1.0 does not add a JSON Lines event mode; a future machine protocol must be separately opt-in and versioned
 
-No CLI flag removal is intentionally documented at this stage. Any intentional exit-status, output, default, or flag change discovered before 1.0 must be added here and to coordinated release notes before the release candidate is approved.
+No CLI flag removal is intentionally documented for 1.0. Any intentional exit-status, output, default, or flag change discovered after release must be added here and to coordinated release notes for the next version.
 
 ## CLI tools versus SDK defaults
 
@@ -142,7 +140,7 @@ Embedded hosts must explicitly review these intentional changes:
 
 ## Before switching to 1.0
 
-- pin and test a release candidate
+- pin `rho-sdk = "1.0"` and test against the published crate
 - compile all downstream feature combinations
 - test provider/tool contracts without network credentials where possible
 - run cancellation and shutdown tests around every external resource

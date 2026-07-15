@@ -1,6 +1,5 @@
 {
   "force-tag-creation": true,
-  "group-pull-request-title-pattern": "chore(release): prepare Rho releases",
   "pull-request-header": "## Release preparation\n\nThis automated PR prepares the next Rho releases. The sections below list each package version, its generated release notes, and the version files that will be updated.\n\nMerging this PR creates draft GitHub releases, validates and publishes the selected crates, publishes the GitHub releases, and builds the release artifacts.",
   "packages": {
     "crates/rho": {
