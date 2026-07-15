@@ -309,6 +309,11 @@ fn machine_metadata() -> Value {
 }
 
 fn main() {
+    if cfg!(debug_assertions) {
+        eprintln!("release benchmark budgets are skipped outside an optimized bench profile");
+        return;
+    }
+
     let samples = std::env::var("RHO_BENCH_SAMPLES")
         .ok()
         .and_then(|value| value.parse().ok())
