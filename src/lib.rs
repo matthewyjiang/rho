@@ -33,3 +33,4 @@ mod workspace;
 
 pub use app::run;
 pub use cli::Cli;
+pub use rho_sdk as sdk;

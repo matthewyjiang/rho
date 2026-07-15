@@ -1,0 +1,13 @@
+[package]
+name = "rho-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Embeddable, headless agent runtime for Rho"
+license = "MIT"
+repository = "https://github.com/matthewyjiang/rho"
+readme = "README.md"
+keywords = ["agent", "ai", "sdk"]
+categories = ["asynchronous", "development-tools"]
+
+[features]
+default = []

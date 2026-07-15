@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import tomllib
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,15 @@ class ForbiddenDependency:
 
 
 @dataclass(frozen=True)
+class ForbiddenPackageDependency:
+    """A Cargo manifest forbidden from depending on specified packages."""
+
+    manifest: str
+    packages: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
 class ArchitectureConfig:
     """Repository-specific architecture policy loaded from a config file."""
 
@@ -61,6 +71,8 @@ class ArchitectureConfig:
     thin_binary_budgets: dict[str, int] = field(default_factory=dict)
     # Source files that may not depend on the listed crate-root modules.
     forbidden_dependencies: tuple[ForbiddenDependency, ...] = ()
+    # Cargo package dependencies forbidden across a crate boundary.
+    forbidden_package_dependencies: tuple[ForbiddenPackageDependency, ...] = ()
     test_file_names: tuple[str, ...] = DEFAULT_TEST_FILE_NAMES
     test_file_suffixes: tuple[str, ...] = DEFAULT_TEST_FILE_SUFFIXES
 
@@ -142,6 +154,41 @@ def _forbidden_dependencies(raw: object) -> tuple[ForbiddenDependency, ...]:
     return tuple(entries)
 
 
+def _forbidden_package_dependencies(raw: object) -> tuple[ForbiddenPackageDependency, ...]:
+    if raw is None:
+        return ()
+    _require(isinstance(raw, list), "forbidden_package_dependencies must be an array")
+    entries: list[ForbiddenPackageDependency] = []
+    for index, item in enumerate(raw):  # type: ignore[union-attr]
+        label = f"forbidden_package_dependencies[{index}]"
+        _require(isinstance(item, dict), f"{label} must be an object")
+        manifest = item.get("manifest")
+        packages = item.get("packages")
+        reason = item.get("reason", "")
+        _require(
+            isinstance(manifest, str) and manifest,
+            f"{label}.manifest must be a non-empty string",
+        )
+        _require(
+            isinstance(packages, list) and packages,
+            f"{label}.packages must be a non-empty array",
+        )
+        for package in packages:
+            _require(
+                isinstance(package, str) and package,
+                f"{label}.packages entries must be non-empty strings",
+            )
+        _require(isinstance(reason, str), f"{label}.reason must be a string")
+        entries.append(
+            ForbiddenPackageDependency(
+                manifest=manifest,
+                packages=tuple(packages),
+                reason=reason,
+            )
+        )
+    return tuple(entries)
+
+
 def parse_config(data: object) -> ArchitectureConfig:
     _require(isinstance(data, dict), "config root must be an object")
     default_budget = data.get("default_production_line_budget", DEFAULT_PRODUCTION_RUST_LINE_BUDGET)
@@ -155,6 +202,9 @@ def parse_config(data: object) -> ArchitectureConfig:
         generated_files=_string_string_map(data.get("generated_files", {}), "generated_files"),
         thin_binary_budgets=_string_int_map(data.get("thin_binary_budgets", {}), "thin_binary_budgets"),
         forbidden_dependencies=_forbidden_dependencies(data.get("forbidden_dependencies")),
+        forbidden_package_dependencies=_forbidden_package_dependencies(
+            data.get("forbidden_package_dependencies")
+        ),
         test_file_names=_string_tuple(data.get("test_file_names"), "test_file_names", DEFAULT_TEST_FILE_NAMES),
         test_file_suffixes=_string_tuple(
             data.get("test_file_suffixes"), "test_file_suffixes", DEFAULT_TEST_FILE_SUFFIXES
@@ -192,10 +242,16 @@ def count_lines(path: Path) -> int:
 
 
 def production_rust_files(root: Path) -> list[Path]:
-    files = list((root / "src").rglob("*.rs"))
-    build_script = root / "build.rs"
-    if build_script.is_file():
-        files.append(build_script)
+    source_roots = [root / "src"]
+    crates_directory = root / "crates"
+    if crates_directory.is_dir():
+        source_roots.extend(path / "src" for path in crates_directory.iterdir() if path.is_dir())
+
+    files = [path for source_root in source_roots for path in source_root.rglob("*.rs")]
+    build_scripts = [root / "build.rs"]
+    if crates_directory.is_dir():
+        build_scripts.extend(path / "build.rs" for path in crates_directory.iterdir() if path.is_dir())
+    files.extend(path for path in build_scripts if path.is_file())
     return sorted(files)
 
 
@@ -388,15 +444,72 @@ def check_dependency_boundaries(
     errors: list[str] = []
     for dependency in sorted(forbidden_dependencies, key=lambda entry: entry.path):
         path = root / dependency.path
-        if not path.is_file():
+        if path.is_file():
+            sources = [path]
+        elif path.is_dir():
+            sources = sorted(path.rglob("*.rs"))
+        else:
             errors.append(f"dependency-boundary source does not exist: {dependency.path}")
             continue
-        source = path.read_text(encoding="utf-8")
-        for module in sorted(dependency.modules):
-            if references_crate_module(source, module):
-                message = f"{dependency.path}: must not depend on crate::{module}"
-                if dependency.reason:
-                    message += f"; {dependency.reason}"
+        for source_path in sources:
+            source = source_path.read_text(encoding="utf-8")
+            relative = relative_path(source_path, root)
+            for module in sorted(dependency.modules):
+                if references_crate_module(source, module):
+                    message = f"{relative}: must not depend on crate::{module}"
+                    if dependency.reason:
+                        message += f"; {dependency.reason}"
+                    errors.append(message)
+    return errors
+
+
+def manifest_dependency_packages(manifest: dict[str, object]) -> set[str]:
+    """Return package names from top-level and target-specific dependency tables."""
+    packages: set[str] = set()
+
+    def add_dependencies(table: object) -> None:
+        if not isinstance(table, dict):
+            return
+        for dependency_name, specification in table.items():
+            if not isinstance(dependency_name, str):
+                continue
+            if isinstance(specification, dict):
+                package = specification.get("package", dependency_name)
+                if isinstance(package, str):
+                    packages.add(package)
+            else:
+                packages.add(dependency_name)
+
+    for table_name in ("dependencies", "dev-dependencies", "build-dependencies"):
+        add_dependencies(manifest.get(table_name))
+    targets = manifest.get("target")
+    if isinstance(targets, dict):
+        for target in targets.values():
+            if not isinstance(target, dict):
+                continue
+            for table_name in ("dependencies", "dev-dependencies", "build-dependencies"):
+                add_dependencies(target.get(table_name))
+    return packages
+
+
+def check_package_dependency_boundaries(
+    root: Path,
+    forbidden_dependencies: Iterable[ForbiddenPackageDependency],
+) -> list[str]:
+    errors: list[str] = []
+    for boundary in sorted(forbidden_dependencies, key=lambda entry: entry.manifest):
+        path = root / boundary.manifest
+        if not path.is_file():
+            errors.append(f"dependency-boundary manifest does not exist: {boundary.manifest}")
+            continue
+        with path.open("rb") as file:
+            manifest = tomllib.load(file)
+        dependencies = manifest_dependency_packages(manifest)
+        for package in sorted(boundary.packages):
+            if package in dependencies:
+                message = f"{boundary.manifest}: must not depend on package {package}"
+                if boundary.reason:
+                    message += f"; {boundary.reason}"
                 errors.append(message)
     return errors
 
@@ -430,6 +543,9 @@ def run_checks(root: Path, config: ArchitectureConfig) -> int:
     )
     errors = list(size_result.errors)
     errors.extend(check_dependency_boundaries(root, config.forbidden_dependencies))
+    errors.extend(
+        check_package_dependency_boundaries(root, config.forbidden_package_dependencies)
+    )
     errors.extend(check_thin_binaries(root, config.thin_binary_budgets))
 
     if errors:
@@ -442,7 +558,8 @@ def run_checks(root: Path, config: ArchitectureConfig) -> int:
     print(f"  dedicated test files excluded: {size_result.excluded_test_files}")
     print(f"  generated Rust files excluded: {size_result.excluded_generated_files}")
     print(f"  legacy file-size budgets: {len(config.legacy_file_budgets)}")
-    print(f"  dependency boundaries: {len(config.forbidden_dependencies)}")
+    print(f"  source dependency boundaries: {len(config.forbidden_dependencies)}")
+    print(f"  package dependency boundaries: {len(config.forbidden_package_dependencies)}")
     print(f"  thin binary budgets: {len(config.thin_binary_budgets)}")
     return 0
 
@@ -503,6 +620,13 @@ class ArchitectureCheckTests(unittest.TestCase):
                 "forbidden_dependencies": [
                     {"path": "src/a.rs", "modules": ["model", "web"], "reason": "keep it clean"}
                 ],
+                "forbidden_package_dependencies": [
+                    {
+                        "manifest": "crates/sdk/Cargo.toml",
+                        "packages": ["application"],
+                        "reason": "one-way dependency",
+                    }
+                ],
             }
         )
         self.assertEqual(config.default_production_line_budget, 800)
@@ -513,11 +637,24 @@ class ArchitectureCheckTests(unittest.TestCase):
             (ForbiddenDependency(path="src/a.rs", modules=("model", "web"), reason="keep it clean"),),
         )
 
+        self.assertEqual(
+            config.forbidden_package_dependencies,
+            (
+                ForbiddenPackageDependency(
+                    manifest="crates/sdk/Cargo.toml",
+                    packages=("application",),
+                    reason="one-way dependency",
+                ),
+            ),
+        )
+
     def test_parse_config_rejects_malformed_entries(self) -> None:
         with self.assertRaises(ConfigError):
             parse_config({"legacy_file_budgets": {"src/a.rs": "nope"}})
         with self.assertRaises(ConfigError):
             parse_config({"forbidden_dependencies": [{"modules": ["model"]}]})
+        with self.assertRaises(ConfigError):
+            parse_config({"forbidden_package_dependencies": [{"packages": ["app"]}]})
 
     def test_dependency_boundary_message_includes_optional_reason(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -536,6 +673,77 @@ class ArchitectureCheckTests(unittest.TestCase):
                 with_reason, ["src/a.rs: must not depend on crate::model; because layering"]
             )
             self.assertEqual(without_reason, ["src/a.rs: must not depend on crate::model"])
+
+    def test_dependency_boundary_scans_source_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "crates/sdk/src"
+            source.mkdir(parents=True)
+            (source / "lib.rs").write_text("mod safe;\n", encoding="utf-8")
+            (source / "bad.rs").write_text("use crate::tui::Event;\n", encoding="utf-8")
+
+            errors = check_dependency_boundaries(
+                root,
+                [ForbiddenDependency("crates/sdk/src", ("tui",), "headless")],
+            )
+
+            self.assertEqual(
+                errors,
+                ["crates/sdk/src/bad.rs: must not depend on crate::tui; headless"],
+            )
+
+    def test_package_dependency_boundary_handles_aliases_and_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            crate = root / "crates/sdk"
+            crate.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                """
+                [package]
+                name = "sdk"
+                version = "0.1.0"
+
+                [dependencies]
+                app = { package = "application", version = "1" }
+
+                [target.'cfg(windows)'.build-dependencies]
+                terminal = "1"
+                """,
+                encoding="utf-8",
+            )
+
+            errors = check_package_dependency_boundaries(
+                root,
+                [
+                    ForbiddenPackageDependency(
+                        "crates/sdk/Cargo.toml",
+                        ("application", "terminal"),
+                        "one-way",
+                    )
+                ],
+            )
+
+            self.assertEqual(
+                errors,
+                [
+                    "crates/sdk/Cargo.toml: must not depend on package application; one-way",
+                    "crates/sdk/Cargo.toml: must not depend on package terminal; one-way",
+                ],
+            )
+
+    def test_production_files_include_workspace_crates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            sdk_source = root / "crates/sdk/src"
+            sdk_source.mkdir(parents=True)
+            (root / "src/lib.rs").write_text("", encoding="utf-8")
+            (sdk_source / "lib.rs").write_text("", encoding="utf-8")
+
+            self.assertEqual(
+                [relative_path(path, root) for path in production_rust_files(root)],
+                ["crates/sdk/src/lib.rs", "src/lib.rs"],
+            )
 
 
 def run_self_tests() -> int:

@@ -2313,6 +2313,7 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "rho-sdk",
  "rusqlite",
  "rustls",
  "same-file",
@@ -2333,6 +2334,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
 ]
+
+[[package]]
+name = "rho-sdk"
+version = "0.1.0"
 
 [[package]]
 name = "ring"
