@@ -367,6 +367,10 @@ async fn force_clone_authorizes_exact_network_and_process_plan_before_execution(
     );
     let clone_path = std::path::Path::new(&arguments[4]);
     assert!(!clone_path.exists());
+    assert_eq!(
+        clone_path.file_name().and_then(|name| name.to_str()),
+        Some("0")
+    );
 }
 
 #[cfg(unix)]

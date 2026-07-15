@@ -89,14 +89,14 @@ fn reasoning_effort_is_only_sent_for_supported_models() {
         xai_reasoning_effort("grok-4.3", ReasoningLevel::Off).unwrap(),
         Some("none")
     );
-    assert!(matches!(
-        xai_reasoning_effort("grok-build-0.1", ReasoningLevel::High),
-        Err(ModelError::UnsupportedReasoning { .. })
-    ));
-    assert!(matches!(
-        xai_reasoning_effort("grok-composer-2.5-fast", ReasoningLevel::High),
-        Err(ModelError::UnsupportedReasoning { .. })
-    ));
+    assert_eq!(
+        xai_reasoning_effort("grok-build-0.1", ReasoningLevel::High).unwrap(),
+        None
+    );
+    assert_eq!(
+        xai_reasoning_effort("grok-composer-2.5-fast", ReasoningLevel::Medium).unwrap(),
+        None
+    );
 }
 
 #[tokio::test]

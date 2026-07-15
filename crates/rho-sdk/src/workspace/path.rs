@@ -297,7 +297,7 @@ impl Workspace {
 
         if requested.is_absolute() {
             let scope = self
-                .scope_for_lexical(requested)
+                .scope_for_absolute(requested)
                 .ok_or_else(|| outside_error(requested))?;
             return Ok((requested.to_path_buf(), scope));
         }
@@ -317,6 +317,16 @@ impl Workspace {
         Ok((self.root.join(requested), PathScope::PrimaryWorkspace))
     }
 
+    fn scope_for_absolute(&self, path: &Path) -> Option<PathScope> {
+        if let Some(scope) = self.scope_for_lexical(path) {
+            return Some(scope);
+        }
+        // Absolute inputs may use a non-canonical form of a granted root before
+        // canonicalize runs. Common cases are macOS /var -> /private/var and
+        // Windows extended-length \\?\ prefixes from canonicalize().
+        self.scope_for_normalized_absolute(path)
+    }
+
     fn scope_for_lexical(&self, path: &Path) -> Option<PathScope> {
         if path.starts_with(&self.root) {
             return Some(PathScope::PrimaryWorkspace);
@@ -326,6 +336,16 @@ impl Workspace {
             .filter(|root| path.starts_with(root))
             .max_by_key(|root| root.components().count())
             .map(|root| PathScope::GrantedRoot { root: root.clone() })
+    }
+
+    fn scope_for_normalized_absolute(&self, path: &Path) -> Option<PathScope> {
+        let mut current = path;
+        loop {
+            if let Ok(canonical) = std::fs::canonicalize(current) {
+                return self.scope_for(&canonical);
+            }
+            current = current.parent()?;
+        }
     }
 
     fn scope_for(&self, canonical: &Path) -> Option<PathScope> {

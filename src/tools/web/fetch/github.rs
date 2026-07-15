@@ -62,6 +62,16 @@ pub(in crate::tools::web) fn clone_url(github: &GitHubTarget) -> String {
     format!("https://github.com/{}/{}.git", github.owner, github.repo)
 }
 
+pub(in crate::tools::web) fn authenticated_clone_url(github: &GitHubTarget) -> String {
+    match github_token() {
+        Ok(token) => format!(
+            "https://x-access-token:{token}@github.com/{}/{}.git",
+            github.owner, github.repo
+        ),
+        Err(_) => clone_url(github),
+    }
+}
+
 async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<String, ToolError> {
     let value = github_api_json(client, url).await?;
     let encoding = value.get("encoding").and_then(Value::as_str);

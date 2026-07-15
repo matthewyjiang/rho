@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -24,7 +24,7 @@ use codex_ws::{CodexWsTransport, CodexWsTurn};
 use reasoning::openai_reasoning_config;
 
 use crate::{
-    credentials::{CodexTokens, CredentialStore},
+    credentials::{load_codex_tokens, CodexTokens, CredentialStore},
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -40,6 +40,7 @@ pub struct OpenAiProvider {
     provider: &'static str,
     codex_ws: CodexWsTransport,
     credential_store: Arc<dyn CredentialStore>,
+    refreshed_codex_tokens: Mutex<Option<CodexTokens>>,
 }
 
 impl OpenAiProvider {
@@ -76,6 +77,7 @@ impl OpenAiProvider {
             provider,
             codex_ws,
             credential_store,
+            refreshed_codex_tokens: Mutex::new(None),
         }
     }
 }
@@ -97,7 +99,8 @@ impl OpenAiProvider {
         match &self.auth {
             Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
             Auth::Codex { tokens, source } => {
-                self.send_codex_responses_complete(request, tokens.clone(), *source)
+                let tokens = self.codex_turn_tokens(tokens, *source);
+                self.send_codex_responses_complete(request, tokens, *source)
                     .await
             }
         }
@@ -117,7 +120,8 @@ impl OpenAiProvider {
                         self.send_chat_completions_stream(request, key, on_event).await
                     }
                     Auth::Codex { tokens, source } => {
-                        self.send_codex_responses_stream(request, tokens.clone(), *source, on_event)
+                        let tokens = self.codex_turn_tokens(tokens, *source);
+                        self.send_codex_responses_stream(request, tokens, *source, on_event)
                             .await
                     }
                 }
@@ -128,6 +132,25 @@ impl OpenAiProvider {
                 }
                 Err(ModelError::Interrupted)
             }
+        }
+    }
+
+    fn codex_turn_tokens(&self, initial: &CodexTokens, source: CodexAuthSource) -> CodexTokens {
+        if source == CodexAuthSource::Store {
+            if let Ok(Some(tokens)) = load_codex_tokens(self.credential_store.as_ref()) {
+                return tokens;
+            }
+        }
+        self.refreshed_codex_tokens
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| initial.clone())
+    }
+
+    fn remember_refreshed_codex_tokens(&self, tokens: CodexTokens) {
+        if let Ok(mut guard) = self.refreshed_codex_tokens.lock() {
+            *guard = Some(tokens);
         }
     }
 }
@@ -283,6 +306,7 @@ impl OpenAiProvider {
                     &tokens,
                 )
                 .await?;
+                self.remember_refreshed_codex_tokens(refreshed.clone());
                 let mut req = make_request(&refreshed.access_token);
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);
@@ -385,6 +409,7 @@ impl OpenAiProvider {
                     &tokens,
                 )
                 .await?;
+                self.remember_refreshed_codex_tokens(refreshed.clone());
                 let mut req = make_request(&refreshed.access_token);
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);

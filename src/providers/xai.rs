@@ -177,7 +177,9 @@ fn xai_reasoning_effort(
     model: &str,
     reasoning: ReasoningLevel,
 ) -> Result<Option<&'static str>, ModelError> {
-    let effort = match model {
+    // Non-reasoning models omit the field regardless of the session default so
+    // configured models like grok-build keep working without forcing reasoning=off.
+    Ok(match model {
         "grok-4.5" => match reasoning {
             ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
             ReasoningLevel::Medium => Some("medium"),
@@ -191,15 +193,7 @@ fn xai_reasoning_effort(
         },
         "grok-build-0.1" | "grok-composer-2.5-fast" => None,
         _ => None,
-    };
-    if effort.is_none() && reasoning != ReasoningLevel::Off {
-        return Err(ModelError::UnsupportedReasoning {
-            provider: "xai",
-            model: model.to_string(),
-            requested: reasoning,
-        });
-    }
-    Ok(effort)
+    })
 }
 
 #[cfg(test)]

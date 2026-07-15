@@ -149,6 +149,34 @@ fn symlinks_require_deliberate_outside_root_grants_and_policy_grants() {
 
 #[cfg(unix)]
 #[test]
+fn absolute_paths_match_granted_roots_after_symlink_normalization() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let file = outside.path().join("granted.txt");
+    std::fs::write(&file, "granted").unwrap();
+    let alias_parent = TempDir::new().unwrap();
+    let alias = alias_parent.path().join("alias");
+    symlink(outside.path(), &alias).unwrap();
+
+    let workspace = Workspace::new(root.path())
+        .unwrap()
+        .with_granted_root(outside.path())
+        .unwrap();
+    let resolved = workspace
+        .resolve_for_read(alias.join("granted.txt"))
+        .unwrap();
+    assert_eq!(
+        resolved.scope(),
+        &PathScope::GrantedRoot {
+            root: std::fs::canonicalize(outside.path()).unwrap(),
+        }
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn write_resolution_rejects_broken_symlinks_instead_of_authorizing_them() {
     use std::os::unix::fs::symlink;
 

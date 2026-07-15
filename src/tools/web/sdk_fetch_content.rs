@@ -52,6 +52,7 @@ struct FetchContentArgs {
 
 struct TargetOptions<'a> {
     response_id: &'a str,
+    target_index: usize,
     prompt: Option<&'a str>,
     timestamp: Option<&'a str>,
     frames: usize,
@@ -129,12 +130,13 @@ impl FetchPlan {
             )
         })?;
         let mut plans = Vec::with_capacity(targets.len());
-        for target in targets {
+        for (target_index, target) in targets.into_iter().enumerate() {
             plans.push(TargetPlan::parse(
                 target,
                 workspace,
                 TargetOptions {
                     response_id: &response_id,
+                    target_index,
                     prompt: arguments.prompt.as_deref(),
                     timestamp: arguments.timestamp.as_deref(),
                     frames,
@@ -211,6 +213,7 @@ impl TargetPlan {
                     requested,
                     target,
                     options.response_id,
+                    options.target_index,
                     workspace.root(),
                     options.max_output_bytes,
                 )));

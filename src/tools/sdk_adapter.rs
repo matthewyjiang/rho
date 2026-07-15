@@ -22,7 +22,7 @@ use rho_sdk::{
         OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
         ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError,
+    CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError, WorkspacePathState,
 };
 
 #[cfg(test)]
@@ -221,7 +221,9 @@ impl Tool for WriteFileTool {
     }
 
     fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([CapabilityKind::Write])
+        // Diff-producing writes read existing content, so both capabilities are
+        // independently required and independently authorized.
+        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
     }
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
@@ -260,7 +262,8 @@ impl Tool for EditFileTool {
     }
 
     fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([CapabilityKind::Write])
+        // Edits always read current file contents before applying replacements.
+        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
     }
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
@@ -275,14 +278,14 @@ impl Tool for EditFileTool {
             let root = workspace_root(&context)?.to_path_buf();
             let mut authorized_paths = std::collections::HashMap::new();
             for edit in &edits {
-                let path = authorize_existing_path(
-                    &context,
-                    &edit.path,
-                    PathCapability::Write,
-                    "edit_file",
-                )
-                .await?;
-                authorized_paths.insert(edit.path.clone(), path);
+                let workspace = workspace(&context)?;
+                let resolved = workspace
+                    .resolve_for_read(&edit.path)
+                    .map_err(map_path_error)?;
+                authorize_path(&context, &resolved, PathCapability::Write, "edit_file").await?;
+                authorize_path(&context, &resolved, PathCapability::Read, "edit_file").await?;
+                workspace.revalidate(&resolved).map_err(map_path_error)?;
+                authorized_paths.insert(edit.path.clone(), resolved.path().to_path_buf());
             }
             let total = edits.len() as u64;
             let _ = context
@@ -388,6 +391,11 @@ async fn authorize_write_path(
     let workspace = workspace(context)?;
     let resolved = workspace.resolve_for_write(path).map_err(map_path_error)?;
     authorize_path(context, &resolved, PathCapability::Write, tool_name).await?;
+    // Existing targets are read to build unified diffs, so write-only policies
+    // must not observe old content through tool output.
+    if resolved.state() == WorkspacePathState::Existing {
+        authorize_path(context, &resolved, PathCapability::Read, tool_name).await?;
+    }
     workspace.revalidate(&resolved).map_err(map_path_error)?;
     Ok(resolved.path().to_path_buf())
 }

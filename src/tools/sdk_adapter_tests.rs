@@ -215,6 +215,54 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
 }
 
 #[tokio::test]
+async fn write_only_policy_cannot_diff_existing_file_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("secret.txt"), "old secret").unwrap();
+    let runtime = build_runtime_with_coding_tools(
+        ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "call-1".into(),
+                        name: "write_file".into(),
+                        arguments: json!({"path": "secret.txt", "content": "new secret"}),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "blocked".into(),
+                )])),
+            ],
+        ),
+        workspace(&dir),
+        ScopedWorkspacePolicy::new().allow_write_paths(),
+        CodingToolOptions::default(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(UserInput::text("overwrite a file"))
+        .await
+        .unwrap();
+
+    let mut completion = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolFinished { result, .. } = event {
+            completion = Some(result);
+        }
+    }
+    run.outcome().await.unwrap();
+
+    let ToolCompletion::Failure(failure) = completion.expect("write tool result") else {
+        panic!("write-only policy must deny existing-file diffs");
+    };
+    assert_eq!(failure.kind(), ToolErrorKind::PolicyDenied);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("secret.txt")).unwrap(),
+        "old secret"
+    );
+}
+
+#[tokio::test]
 async fn default_runtime_policy_keeps_coding_tools_inert() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "safe").unwrap();
