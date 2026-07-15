@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "audit": "rho-sdk-secret-canary",
-  "date_utc": "2026-07-15T03:51:19.322640+00:00",
-  "source_revision": "ab72cc4591c146263c25699fb1dfd8188218c68a",
-  "working_tree_changes_included": true,
+  "date_utc": "2026-07-15T03:52:54.453987+00:00",
+  "source_revision": "9ed7d0b2cde6fa08013e8dae7f7e5024428faf7d",
+  "working_tree_changes_included": false,
   "reviewer": "repository-maintainer automated and manual review",
   "independent_audit": false,
   "scope": [
@@ -41,10 +41,10 @@
       "rg -n 'RunEvent::|DiagnosticsSnapshot|ProviderError::new|ToolError::|to_json|Serialize|snapshot' crates/rho-sdk src"
     ],
     "counts": {
-      "rust_files": 249,
-      "debug_display_error_log_candidates": 416,
-      "secret_source_candidates": 2873,
-      "event_diagnostic_snapshot_candidates": 690
+      "rust_files": 265,
+      "debug_display_error_log_candidates": 449,
+      "secret_source_candidates": 3290,
+      "event_diagnostic_snapshot_candidates": 911
     },
     "human_data_flow_reviewed": true
   },
@@ -64,43 +64,12 @@
       "provider context persists in exact-identity snapshot but not diagnostics"
     ]
   },
-  "findings": [
-    {
-      "id": "DEBUG-CodexTokens",
-      "severity": "critical",
-      "sink": "Debug",
-      "source": "credential container",
-      "location": "src/credentials.rs:31",
-      "summary": "CodexTokens derives Debug while containing credential values",
-      "release_action": "replace derived Debug with a fixed redacted representation before release",
-      "owner": "capability/security agent"
-    },
-    {
-      "id": "DEBUG-GitHubCopilotTokens",
-      "severity": "critical",
-      "sink": "Debug",
-      "source": "credential container",
-      "location": "src/credentials.rs:39",
-      "summary": "GitHubCopilotTokens derives Debug while containing credential values",
-      "release_action": "replace derived Debug with a fixed redacted representation before release",
-      "owner": "capability/security agent"
-    },
-    {
-      "id": "DEBUG-XaiTokens",
-      "severity": "critical",
-      "sink": "Debug",
-      "source": "credential container",
-      "location": "src/credentials.rs:52",
-      "summary": "XaiTokens derives Debug while containing credential values",
-      "release_action": "replace derived Debug with a fixed redacted representation before release",
-      "owner": "capability/security agent"
-    }
-  ],
+  "findings": [],
   "remaining_risks": [
     "provider adapters remain responsible for sanitizing transport error text before constructing ProviderError",
     "conversation and tool content intentionally remain visible in events and snapshots",
     "live credentialed provider and external telemetry sinks were not exercised"
   ],
-  "release_decision": "blocked",
-  "passed": false
+  "release_decision": "passed",
+  "passed": true
 }

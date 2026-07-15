@@ -6,7 +6,7 @@
 - Static command: `python3 scripts/audit_sdk_redaction.py --dynamic-result passed --output audits/sdk-redaction-current.json`
 - Real credentials used: no
 - Dynamic canary result: passed
-- Release decision: blocked
+- Release decision: passed
 
 ## Covered sinks
 
@@ -20,19 +20,11 @@ The static review inventoried credential terms, `Debug`/`Display`/error/log
 sites, events, diagnostics, serialization, and snapshots across `crates/rho-sdk`
 and `src`.
 
-## Release-blocking findings
+## Findings
 
-Three application credential containers derive `Debug` while holding token
-values:
-
-- `CodexTokens`
-- `GitHubCopilotTokens`
-- `XaiTokens`
-
-These files are owned by the concurrent capability/security work. Replace the
-derived implementations with fixed redacted output, add direct regression
-tests, and rerun the audit before treating the issue #256 redaction release gate
-as passed.
+No critical or high secret-exposure findings remain. Application credential
+containers use fixed redacted `Debug` output, direct regression tests cover
+those representations, and the combined-branch static and dynamic audit passes.
 
 ## Residual risk
 
