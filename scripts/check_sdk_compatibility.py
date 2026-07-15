@@ -13,8 +13,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SDK_MANIFEST = ROOT / "crates" / "rho-sdk" / "Cargo.toml"
 DOWNSTREAM_ROOT = ROOT / "fixtures" / "downstream"
-SDK_MSRV = "1.86"
-APPLICATION_MSRV = "1.88"
 
 
 def load_toml(path: Path) -> dict:
@@ -33,30 +31,24 @@ def check_metadata() -> None:
 
     if sdk["features"].get("default") != []:
         raise RuntimeError("rho-sdk default features must remain empty")
-    if sdk["package"].get("rust-version") != SDK_MSRV:
-        raise RuntimeError(f"rho-sdk rust-version must be {SDK_MSRV}")
-    if application["package"].get("rust-version") != APPLICATION_MSRV:
-        raise RuntimeError(
-            f"rho-coding-agent rust-version must be {APPLICATION_MSRV}"
-        )
+
+    sdk_msrv = sdk["package"].get("rust-version")
+    application_msrv = application["package"].get("rust-version")
+    if not sdk_msrv:
+        raise RuntimeError("rho-sdk must declare package.rust-version")
+    if not application_msrv:
+        raise RuntimeError("rho-coding-agent must declare package.rust-version")
 
     policy = (ROOT / "docs" / "sdk" / "compatibility.md").read_text(encoding="utf-8")
     policy_markers = {
-        "rho-sdk": f"`rho-sdk` minimum supported Rust version (MSRV) is **{SDK_MSRV}**",
+        "rho-sdk": f"`rho-sdk` minimum supported Rust version (MSRV) is **{sdk_msrv}**",
         "rho-coding-agent": (
-            f"`rho-coding-agent` application MSRV is **{APPLICATION_MSRV}**"
+            f"`rho-coding-agent` application MSRV is **{application_msrv}**"
         ),
     }
     for name, marker in policy_markers.items():
         if marker not in policy:
             raise RuntimeError(f"compatibility policy must document {name} MSRV")
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
-    for version in (SDK_MSRV, APPLICATION_MSRV):
-        if f'rust: "{version}"' not in workflow:
-            raise RuntimeError(f"CI must test Rust {version}")
-
     fixture_workspace = load_toml(DOWNSTREAM_ROOT / "Cargo.toml")
     for member in fixture_workspace["workspace"]["members"]:
         manifest = load_toml(DOWNSTREAM_ROOT / member / "Cargo.toml")

@@ -50,17 +50,9 @@ This is the current validation matrix, not a claim that every provider, host too
 
 ## Minimum supported Rust version
 
-A numeric minimum supported Rust version, or MSRV, is **not currently declared** in `Cargo.toml`. CI uses the rolling stable Rust toolchain. Therefore the current pre-1.0 support statement is "current stable Rust", not a fixed older compiler.
+The `rho-sdk` minimum supported Rust version (MSRV) is Rust 1.86. The application requires Rust 1.88 because of its terminal and credential dependencies. Each crate declares its MSRV with Cargo's `package.rust-version` field, and CI builds the crate with that exact compiler version in addition to testing on current stable Rust.
 
-Before `1.0.0-rc.1`, maintainers must:
-
-1. select and document a numeric MSRV
-2. declare the same value with Cargo's `rust-version` field
-3. build and test the SDK with that toolchain
-4. verify that enabled dependencies support it
-5. apply the [deprecation and compatibility policy](/sdk/compatibility#rust-version-policy)
-
-A release candidate must not claim a fixed MSRV until those checks pass. After 1.0, an MSRV increase must be called out in release notes and follow the documented compatibility policy.
+The Cargo manifests are the source of truth for these versions. CI reads them directly rather than maintaining a separate copy of each version. An MSRV increase must be called out in release notes and follow the [deprecation and compatibility policy](/sdk/compatibility#minimum-supported-rust-version).
 
 ## Runtime and dependency expectations
 

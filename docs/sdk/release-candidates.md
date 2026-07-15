@@ -56,7 +56,7 @@ Do not tag `1.0.0-rc.1` until all applicable gates pass.
 
 ### Support matrix
 
-- choose and declare a numeric MSRV in Cargo metadata and docs
+- verify the declared MSRV in Cargo metadata and docs
 - test that MSRV for all supported SDK features
 - run full Linux tests and the agreed macOS/Windows test matrix, not compile checks alone
 - verify packaging and installation on supported targets

@@ -57,28 +57,34 @@ jobs:
         run: python3 scripts/check_sdk_compatibility.py --test-downstream
 
   msrv:
-    name: MSRV ${{ matrix.package }} (${{ matrix.rust }})
+    name: MSRV ${{ matrix.package }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - package: rho-sdk
-            rust: "1.86"
+            manifest: crates/rho-sdk/Cargo.toml
             command: cargo test -p rho-sdk --all-targets --all-features --locked
           - package: rho-coding-agent
-            rust: "1.88"
+            manifest: Cargo.toml
             command: cargo check --workspace --all-targets --locked
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust ${{ matrix.rust }}
+      - name: Read MSRV from Cargo metadata
+        id: msrv
+        shell: bash
+        run: |
+          version="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["rust-version"])' '${{ matrix.manifest }}')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: ${{ steps.msrv.outputs.version }}
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
         with:
-          shared-key: msrv-${{ matrix.package }}-${{ matrix.rust }}
+          shared-key: msrv-${{ matrix.package }}-${{ steps.msrv.outputs.version }}
       - name: Validate MSRV
         run: ${{ matrix.command }}
 
