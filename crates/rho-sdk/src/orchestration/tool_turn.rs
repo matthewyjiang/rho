@@ -39,8 +39,8 @@ impl StagedToolTurn {
         Self { unresolved }
     }
 
-    pub(super) fn current(&self) -> Option<PendingToolCall> {
-        self.unresolved.front().cloned()
+    pub(super) fn current(&self) -> Option<&PendingToolCall> {
+        self.unresolved.front()
     }
 
     pub(super) fn resolve_current(&mut self, result: ToolResult, history: &mut Vec<Message>) {

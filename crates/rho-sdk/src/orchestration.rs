@@ -59,11 +59,22 @@ pub(crate) async fn execute_run(
     }
 
     let mut accumulated_usage = ModelUsage::default();
-    let mut last_content = Vec::new();
     let mut steering = Vec::new();
+    // The tool set is immutable for the duration of a run, so build the specs
+    // (which deep-clone every tool's JSON schema) once instead of per step.
+    let tool_specs = runtime.tools.specs();
     for step in 1..=runtime.max_steps.get() {
         drain_steering(&mut commands, &mut history);
-        match maybe_compact(&core, &runtime, &mut history, &cancellation, &events).await {
+        match maybe_compact(
+            &core,
+            &runtime,
+            &tool_specs,
+            &mut history,
+            &cancellation,
+            &events,
+        )
+        .await
+        {
             Ok(()) => {}
             Err(Error::Cancelled) => {
                 return commit_cancelled_history(core, history, &events).await;
@@ -91,7 +102,7 @@ pub(crate) async fn execute_run(
         let (response, capture) = match request_valid_response(
             runtime.provider.as_ref(),
             &history,
-            &runtime.tools.specs(),
+            &tool_specs,
             &accumulated_usage,
             runtime.reasoning_level,
             core.prompt_cache_key().as_deref(),
@@ -121,18 +132,18 @@ pub(crate) async fn execute_run(
             })
             .collect::<Vec<_>>();
         let assistant = AssistantMessage {
-            content: content.clone(),
+            content,
             provenance: Some(runtime.provider.identity()),
             reasoning_summary: (!capture.reasoning_summary.is_empty())
                 .then_some(capture.reasoning_summary),
             provider_context: capture.provider_context,
         };
         history.push(Message::assistant(assistant));
-        last_content.clone_from(&content);
         drain_steering(control.commands, control.steering);
         let was_steered = !control.steering.is_empty();
 
         if tool_calls.is_empty() && !was_steered {
+            let content = final_assistant_content(&history);
             let revision = core.commit(history)?;
             let outcome =
                 RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
@@ -165,7 +176,7 @@ pub(crate) async fn execute_run(
                 }
                 Err(error) => return Err(error),
             }
-            match execute_tool(&core, &runtime, &pending, &mut control).await {
+            match execute_tool(&core, &runtime, pending, &mut control).await {
                 Ok(result) => tool_turn.resolve_current(result, &mut history),
                 Err(failure) if matches!(&failure.error, Error::Cancelled) => {
                     if let Some(result) = failure.completed_result {
@@ -184,6 +195,7 @@ pub(crate) async fn execute_run(
         history.append(control.steering);
     }
 
+    let last_content = final_assistant_content(&history);
     let revision = core.commit(history)?;
     let outcome = RunOutcome::new(
         last_content,
@@ -202,9 +214,21 @@ pub(crate) async fn execute_run(
     Ok(outcome)
 }
 
+/// Content of the newest completed assistant message, cloned once for the
+/// terminal run outcome instead of re-cloned on every step.
+fn final_assistant_content(history: &[Message]) -> Vec<ContentBlock> {
+    history
+        .iter()
+        .rev()
+        .find_map(Message::completed_assistant_content)
+        .map(<[ContentBlock]>::to_vec)
+        .unwrap_or_default()
+}
+
 async fn maybe_compact(
     core: &Arc<SessionCore>,
     runtime: &Rho,
+    tool_specs: &[crate::model::ToolSpec],
     history: &mut Vec<Message>,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
@@ -212,8 +236,7 @@ async fn maybe_compact(
     let Some(policy) = &runtime.compaction_policy else {
         return Ok(());
     };
-    let context_tokens =
-        crate::model::context::estimate_context_tokens(history, &runtime.tools.specs());
+    let context_tokens = crate::model::context::estimate_context_tokens(history, tool_specs);
     if !policy.should_compact(history.len(), context_tokens) {
         return Ok(());
     }

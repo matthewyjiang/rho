@@ -76,9 +76,32 @@ fn text_tokens(text: &str) -> u64 {
 }
 
 fn json_tokens(value: &impl Serialize) -> u64 {
-    serde_json::to_string(value)
-        .map(|json| text_tokens(&json))
-        .unwrap_or_default()
+    let mut sink = CharCountingSink::default();
+    match serde_json::to_writer(&mut sink, value) {
+        Ok(()) => sink.chars.div_ceil(CHARS_PER_TOKEN),
+        Err(_) => 0,
+    }
+}
+
+/// Counts serialized characters without materializing the JSON string, so
+/// token estimation over the full history does not allocate per element.
+#[derive(Default)]
+struct CharCountingSink {
+    chars: u64,
+}
+
+impl std::io::Write for CharCountingSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Count Unicode scalar values by skipping UTF-8 continuation bytes,
+        // matching str::chars().count() on the serialized output.
+        let continuation_bytes = buf.iter().filter(|byte| **byte & 0xC0 == 0x80).count();
+        self.chars += (buf.len() - continuation_bytes) as u64;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
