@@ -653,7 +653,7 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Results return automatically. Use `rho attach <id>` to watch the returned subagent ID.\n\nPresets:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. Do not poll or wait when no foreground work remains. Use `rho attach <id>` to watch the returned subagent ID.\n\nPresets:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -704,7 +704,7 @@ impl Tool for AgentTool {
                 id,
                 ok: true,
                 content: format!(
-                    "started background subagent {agent_id} (preset {}); {where_hint}. You will be notified when it finishes; use the agents tool to check status or stop it. Do not read its log output.",
+                    "started background subagent {agent_id} (preset {}); {where_hint}. If no foreground work remains, end your turn. Do not poll or wait; completion starts a new turn automatically. Use the agents tool only to check status when needed or to stop it. Do not read its log output.",
                     preset.name
                 ),
             });

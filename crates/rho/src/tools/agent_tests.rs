@@ -279,6 +279,12 @@ fn agent_tool_spec_lists_presets() {
         .starts_with("Delegate a substantial, self-contained task to a fresh agent."));
     assert!(!spec.description.contains("herdr"));
     assert!(!spec.description.contains("Blocking by default"));
+    assert!(spec
+        .description
+        .contains("Background results start a new turn automatically"));
+    assert!(spec
+        .description
+        .contains("Do not poll or wait when no foreground work remains"));
     assert!(spec.description.contains("rho attach <id>"));
     assert!(spec.description.contains("explorer:"));
     assert!(spec.description.contains("reviewer:"));

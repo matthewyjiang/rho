@@ -65,9 +65,9 @@ The model spawns subagents with the `agent` tool:
 - **Blocking** (default): the tool call resolves when the subagent finishes,
   returning its final answer, turn count, and token usage.
 - **Background** (`background: true`): the call returns immediately with a
-  short ID and the exact `rho attach <id>` command. When the subagent finishes,
-  the parent is notified at its next turn boundary. An idle interactive session
-  is woken with the result.
+  short ID and the exact `rho attach <id>` command. If no foreground work
+  remains, the parent should end its turn instead of polling or waiting.
+  Completion automatically starts a new turn with the result.
 
 The `agents` tool manages running subagents:
 
