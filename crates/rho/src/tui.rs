@@ -4694,17 +4694,17 @@ impl App {
                 }
             }
         }
-        if let Some(scrollbar) = layout
-            .history_scrollbar
-            .filter(|_| self.should_render_history_scrollbar(now))
-        {
-            scrollbar.render(frame, self.history_scrollbar_drag.is_some());
-        }
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(
                 Paragraph::new("").style(Theme::activity_rail()),
                 activity_rail,
             );
+        }
+        if let Some(scrollbar) = layout
+            .history_scrollbar
+            .filter(|_| self.should_render_history_scrollbar(now))
+        {
+            scrollbar.render(frame, self.history_scrollbar_drag.is_some());
         }
         if let Some(activity) = layout.activity {
             frame.render_widget(

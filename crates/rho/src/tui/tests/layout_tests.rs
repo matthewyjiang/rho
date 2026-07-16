@@ -272,20 +272,30 @@ fn activity_rail_has_a_solid_full_width_background() {
     ));
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
     let rail = layout.activity_rail.unwrap();
+    assert!(layout.history_scrollbar.is_some());
+    app.reveal_history_scrollbar(Instant::now());
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
 
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     assert_eq!(rail, Rect::new(0, rail.y, width, 1));
     let buffer = terminal.backend().buffer();
-    assert_ne!(buffer[(rail.x, rail.y.saturating_sub(1))].bg, Color::Reset);
+    let rail_background = Theme::activity_rail().bg.unwrap();
+    assert_ne!(
+        buffer[(rail.x, rail.y.saturating_sub(1))].bg,
+        rail_background
+    );
     for column in rail.x..rail.right() {
-        assert_eq!(buffer[(column, rail.y)].bg, Color::Reset);
+        assert_eq!(buffer[(column, rail.y)].bg, rail_background);
     }
+    assert_eq!(
+        buffer[(rail.right().saturating_sub(1), rail.y)].symbol(),
+        "█"
+    );
 }
 
 #[test]
-fn jump_button_resets_tool_output_background() {
+fn jump_button_uses_activity_rail_background() {
     let mut app = test_app();
     let width = 40;
     let height = 12;
@@ -315,12 +325,13 @@ fn jump_button_resets_tool_output_background() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     let buffer = terminal.backend().buffer();
+    let rail_background = Theme::activity_rail().bg.unwrap();
     assert_ne!(
         buffer[(button.x.saturating_sub(1), button.y)].bg,
-        Color::Reset
+        rail_background
     );
     for column in button.x..button.right() {
-        assert_eq!(buffer[(column, button.y)].bg, Color::Reset);
+        assert_eq!(buffer[(column, button.y)].bg, rail_background);
     }
 }
 

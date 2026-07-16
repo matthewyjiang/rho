@@ -214,15 +214,15 @@ impl Theme {
     }
 
     pub(super) fn activity_rail() -> Style {
-        Style::default().bg(Color::Reset)
+        Self::dim_block(Palette::current().neutral_tool_background)
     }
 
     pub(super) fn jump_to_bottom() -> Style {
-        Self::accent().bg(Color::Reset)
+        Self::activity_rail().fg(Palette::current().accent)
     }
 
     pub(super) fn jump_to_bottom_shortcut() -> Style {
-        Self::dim().bg(Color::Reset)
+        Self::activity_rail().fg(Palette::current().dim)
     }
 
     pub(super) fn success() -> Style {
