@@ -105,14 +105,15 @@ pub enum Retryability {
 
 /// Sanitized provider failure exposed to SDK hosts.
 ///
-/// The message must not include credentials, authorization headers, or raw
-/// provider payloads containing secrets. Transport-specific source errors stay
-/// inside provider adapters.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The message and `Debug` output must not include credentials, authorization
+/// headers, or raw provider payloads. Provider adapters may attach a bounded
+/// diagnostic separately for direct, local display to the user.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProviderError {
     kind: ProviderErrorKind,
     message: String,
     retryability: Retryability,
+    diagnostic: Option<String>,
 }
 
 impl ProviderError {
@@ -125,7 +126,17 @@ impl ProviderError {
             kind,
             message: message.into(),
             retryability,
+            diagnostic: None,
         }
+    }
+
+    /// Adds bounded provider details intended for direct display to the user.
+    ///
+    /// Diagnostics may contain provider-returned data. Hosts must not add them
+    /// to model context, automated reports, or telemetry.
+    pub fn with_diagnostic(mut self, diagnostic: impl Into<String>) -> Self {
+        self.diagnostic = Some(diagnostic.into());
+        self
     }
 
     pub fn kind(&self) -> ProviderErrorKind {
@@ -134,6 +145,11 @@ impl ProviderError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Returns provider details for direct user diagnostics only.
+    pub fn diagnostic(&self) -> Option<&str> {
+        self.diagnostic.as_deref()
     }
 
     pub fn is_retryable(&self) -> bool {
@@ -146,6 +162,18 @@ impl ProviderError {
             message,
             Retryability::Permanent,
         )
+    }
+}
+
+impl fmt::Debug for ProviderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderError")
+            .field("kind", &self.kind)
+            .field("message", &self.message)
+            .field("retryability", &self.retryability)
+            .field("diagnostic_available", &self.diagnostic.is_some())
+            .finish()
     }
 }
 

@@ -28,6 +28,20 @@ fn provider_debug_and_display_contain_only_sanitized_fields() {
     assert_eq!(error.to_string(), "provider failed: service unavailable");
     assert_eq!(
         format!("{error:?}"),
-        "ProviderError { kind: Unavailable, message: \"service unavailable\", retryability: Retryable }"
+        "ProviderError { kind: Unavailable, message: \"service unavailable\", retryability: Retryable, diagnostic_available: false }"
     );
+}
+
+#[test]
+fn provider_diagnostic_is_explicit_and_not_in_display_or_debug() {
+    let error = ProviderError::new(
+        ProviderErrorKind::InvalidResponse,
+        "invalid response",
+        Retryability::Permanent,
+    )
+    .with_diagnostic("secret response body");
+
+    assert_eq!(error.diagnostic(), Some("secret response body"));
+    assert!(!error.to_string().contains("secret response body"));
+    assert!(!format!("{error:?}").contains("secret response body"));
 }

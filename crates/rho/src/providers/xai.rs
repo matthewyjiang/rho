@@ -92,11 +92,7 @@ impl XaiProvider {
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<ModelResponse, ModelError> {
         let response = self.send_request(request).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::HttpStatus { status, body });
-        }
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_codex_sse_response(response, &mut on_event)
             .await
             .map(|output| output.response)
@@ -114,11 +110,7 @@ impl XaiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let response = self.send_request(request).await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::HttpStatus { status, body });
-        }
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
         crate::providers::send_stream::collect_codex_model_response_silent(response).await
     }
 

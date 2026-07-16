@@ -621,6 +621,19 @@ async fn send_terminal(events: &mpsc::Sender<RunEvent>, event: RunEvent) {
 }
 
 async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
+    let diagnostic = match error {
+        Error::Provider(error) => error.diagnostic(),
+        _ => None,
+    };
+    if let Some(detail) = diagnostic {
+        send_terminal(
+            events,
+            RunEvent::ProviderDiagnostic {
+                detail: detail.to_owned(),
+            },
+        )
+        .await;
+    }
     send_terminal(
         events,
         RunEvent::Failed {
