@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 use pretty_assertions::assert_eq;
@@ -24,7 +25,7 @@ use crate::{
         ToolInvocation, ToolOutput,
     },
     Error, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, Rho, RunEvent,
-    SelectionMode, SessionOptions, SystemPrompt, UserInput,
+    SelectionMode, SessionOptions, SteeringRetraction, SystemPrompt, UserInput,
 };
 
 fn identity() -> ModelIdentity {
@@ -709,7 +710,24 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
         }
     }
 
-    run.steer(UserInput::text("refine")).await.unwrap();
+    let first_id = run
+        .steer_retractable(UserInput::text("keep first"))
+        .await
+        .unwrap();
+    let discarded_id = run
+        .steer_retractable(UserInput::text("discard"))
+        .await
+        .unwrap();
+    assert_eq!(
+        run.retract_steering(discarded_id).await.unwrap(),
+        SteeringRetraction::Retracted
+    );
+    let steering_id = run
+        .steer_retractable(UserInput::text("refine"))
+        .await
+        .unwrap();
+    assert!(!first_id.as_str().is_empty());
+    assert!(!steering_id.as_str().is_empty());
     release_first.notify_one();
     while run.next_event().await.is_some() {}
     let outcome = run.outcome().await.unwrap();
@@ -730,9 +748,175 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
                 reasoning_summary: None,
                 provider_context: Vec::new(),
             }),
+            Message::user_text("keep first"),
             Message::user_text("refine"),
         ]
     );
+}
+
+#[tokio::test]
+async fn steering_request_receipt_can_be_polled_while_draining_backpressured_events() {
+    let release_first = Arc::new(Notify::new());
+    let runtime = Rho::builder()
+        .provider(SteeringProvider::new(Arc::clone(&release_first)))
+        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    tokio::task::yield_now().await;
+    let mut receipt = Box::pin(
+        run.request_steer_retractable(UserInput::text("refine"))
+            .unwrap(),
+    );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), receipt.as_mut())
+            .await
+            .is_err(),
+        "the event channel should initially backpressure command processing"
+    );
+    let id = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            tokio::select! {
+                result = receipt.as_mut() => break result.unwrap(),
+                event = run.next_event() => assert!(event.is_some()),
+            }
+        }
+    })
+    .await
+    .expect("draining events should unblock steering acceptance");
+
+    assert!(!id.as_str().is_empty());
+    release_first.notify_one();
+    while run.next_event().await.is_some() {}
+    run.outcome().await.unwrap();
+}
+
+#[derive(Debug)]
+struct BlockingTool {
+    release: Arc<Notify>,
+}
+
+impl Tool for BlockingTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "blocking".into(),
+            description: "blocks until released".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            self.release.notified().await;
+            Ok(ToolOutput::text("released"))
+        })
+    }
+}
+
+#[derive(Debug)]
+struct BlockingToolProvider {
+    calls: AtomicUsize,
+    second_started: Notify,
+    release_second: Notify,
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+impl ModelProvider for BlockingToolProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.messages.to_vec());
+            if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
+                Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "blocked-call".into(),
+                        name: "blocking".into(),
+                        arguments: json!({}),
+                    },
+                )]))
+            } else {
+                self.second_started.notify_one();
+                self.release_second.notified().await;
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )]))
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn steering_retraction_during_blocked_tool_is_atomic_and_reports_too_late() {
+    let release_tool = Arc::new(Notify::new());
+    let provider = Arc::new(BlockingToolProvider {
+        calls: AtomicUsize::new(0),
+        second_started: Notify::new(),
+        release_second: Notify::new(),
+        requests: Mutex::new(Vec::new()),
+    });
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .tool(BlockingTool {
+            release: Arc::clone(&release_tool),
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::ToolStarted { .. }) {
+            break;
+        }
+    }
+
+    let retracted_id = run
+        .steer_retractable(UserInput::text("discard me"))
+        .await
+        .unwrap();
+    assert_eq!(
+        run.retract_steering(retracted_id).await.unwrap(),
+        SteeringRetraction::Retracted
+    );
+    let applied_id = run
+        .steer_retractable(UserInput::text("keep me"))
+        .await
+        .unwrap();
+    release_tool.notify_one();
+    provider.second_started.notified().await;
+    assert_eq!(
+        run.retract_steering(applied_id.clone()).await.unwrap(),
+        SteeringRetraction::AlreadyApplied
+    );
+    provider.release_second.notify_one();
+
+    let mut observed_applied = false;
+    while let Some(event) = run.next_event().await {
+        if matches!(
+            event,
+            RunEvent::SteeringApplied { ref ids } if ids == std::slice::from_ref(&applied_id)
+        ) {
+            observed_applied = true;
+        }
+    }
+    assert!(observed_applied);
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 2);
+    assert!(!requests[1]
+        .iter()
+        .any(|message| message == &Message::user_text("discard me")));
+    assert_eq!(requests[1].last(), Some(&Message::user_text("keep me")));
 }
 
 #[derive(Debug)]

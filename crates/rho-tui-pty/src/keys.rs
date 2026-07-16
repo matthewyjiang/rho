@@ -19,6 +19,7 @@ pub enum Key {
     End,
     Ctrl(char),
     Alt(char),
+    AltUp,
 }
 
 /// SGR mouse button identifiers used by the harness.
@@ -64,6 +65,7 @@ pub fn encode_key(key: &Key) -> Vec<u8> {
             out.extend(encode_key(&Key::Char(*ch)));
             out
         }
+        Key::AltUp => b"\x1b[1;3A".to_vec(),
     }
 }
 
@@ -98,6 +100,7 @@ mod tests {
         assert_eq!(encode_key(&Key::Ctrl('c')), b"\x03");
         assert_eq!(encode_key(&Key::Up), b"\x1b[A");
         assert_eq!(encode_key(&Key::PageDown), b"\x1b[6~");
+        assert_eq!(encode_key(&Key::AltUp), b"\x1b[1;3A");
     }
 
     #[test]

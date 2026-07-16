@@ -60,6 +60,7 @@ mod model_picker;
 mod mouse;
 mod mouse_capture;
 mod paste_burst;
+mod pending_input;
 mod picker;
 mod prompt_turn;
 mod provider_attempt;
@@ -68,6 +69,7 @@ mod questionnaire;
 mod questionnaire_input;
 mod render;
 mod run_lifecycle;
+mod screen_layout;
 mod scrollbar;
 mod session_picker;
 mod skill_picker;
@@ -94,6 +96,7 @@ use goal::GoalState;
 use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
 use paste_burst::{PasteBurst, PasteBurstEnter};
+use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use prompt_turn::FailedTurn;
 use provider_attempt::ProviderAttempt;
@@ -240,20 +243,6 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiInfo) -> anyhow::Resul
 struct ActiveFrame {
     lines: Vec<Line<'static>>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScreenLayout {
-    history: Rect,
-    history_scrollbar: Option<HistoryScrollbar>,
-    activity: Option<Rect>,
-    jump_to_bottom: Option<Rect>,
-    top_divider: Rect,
-    composer: Rect,
-    bottom_divider: Rect,
-    statusline: Rect,
-    commands: Rect,
-    composer_start: usize,
-    history_len: usize,
-}
 struct LiveStreamPreview {
     kind: StreamKind,
     text: String,
@@ -288,7 +277,11 @@ struct App {
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
-    steering_prompts: VecDeque<String>,
+    steering_prompts: VecDeque<QueuedPrompt>,
+    accepted_steering: VecDeque<AcceptedSteering>,
+    retracting_steering: Option<rho_sdk::SteeringId>,
+    pending_input_panel: PendingInputPanel,
+    pending_input_action: Option<PendingInputAction>,
     queued_prompts: VecDeque<QueuedPrompt>,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,
     deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
@@ -681,6 +674,10 @@ impl App {
             active_tool_call: false,
             pending_tool_call: None,
             steering_prompts: VecDeque::new(),
+            accepted_steering: VecDeque::new(),
+            retracting_steering: None,
+            pending_input_panel: PendingInputPanel::default(),
+            pending_input_action: None,
             queued_prompts: VecDeque::new(),
             pending_inline_shells: Vec::new(),
             deferred_inline_shell_context: Vec::new(),
@@ -1029,6 +1026,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_pending_input_key(key) {
+            return Ok(());
+        }
+
         if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
@@ -1123,15 +1124,6 @@ impl App {
                 self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::ALT, KeyCode::Up) => {
-                if self.recall_last_queued_prompt() {
-                    self.notify_status(format!(
-                        "editing queued message; {} queued message(s) remain",
-                        self.queued_prompts.len()
-                    ));
-                }
-                self.ctrl_c_streak = 0;
-            }
             (_, KeyCode::Up) => {
                 let width = terminal.size()?.width as usize;
                 self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
@@ -1222,6 +1214,7 @@ impl App {
                     display_prompt,
                     paste_segments: Vec::new(),
                 });
+                self.select_pending_recall_target();
             } else {
                 self.run_prompt_turn(
                     TurnPrompt::standard(model_prompt, display_prompt),
@@ -1877,19 +1870,6 @@ impl App {
         );
     }
 
-    fn recall_last_queued_prompt(&mut self) -> bool {
-        let Some(prompt) = self.queued_prompts.pop_back() else {
-            return false;
-        };
-        self.input = prompt.display_prompt;
-        self.paste_segments = prompt.paste_segments;
-        self.input_submission_mode = InputSubmissionMode::ParseCommands;
-        self.input_cursor = self.input_char_len();
-        self.reset_input_history_navigation();
-        self.input_changed();
-        true
-    }
-
     fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
         self.reset_input_history_navigation();
         self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
@@ -2205,6 +2185,8 @@ impl App {
             let Some(prompt) = self.queued_prompts.pop_front() else {
                 break outcome_kind;
             };
+            self.pending_input_changed();
+            self.select_pending_recall_target();
             outcome = self
                 .run_prompt_turn(
                     TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
@@ -2293,6 +2275,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_pending_input_key(key) {
+            return Ok(());
+        }
+
         if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
@@ -2362,15 +2348,6 @@ impl App {
                 self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::ALT, KeyCode::Up) => {
-                if self.recall_last_queued_prompt() {
-                    self.notify_status(format!(
-                        "editing queued message; {} queued message(s) remain",
-                        self.queued_prompts.len()
-                    ));
-                }
-                self.ctrl_c_streak = 0;
-            }
             (_, KeyCode::Up) => {
                 let width = terminal.size()?.width as usize;
                 self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
@@ -2423,6 +2400,8 @@ impl App {
 
     fn submit_during_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
+        let display_prompt = self.input.clone();
+        let paste_segments = self.paste_segments.clone();
         if prompt.is_empty() {
             self.input.clear();
             self.paste_segments.clear();
@@ -2449,7 +2428,7 @@ impl App {
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
-                self.queue_steering_prompt(prompt)?;
+                self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.input.clear();
@@ -2465,13 +2444,23 @@ impl App {
         Ok(())
     }
 
-    fn queue_steering_prompt(&mut self, prompt: String) -> anyhow::Result<()> {
+    fn queue_steering_prompt(
+        &mut self,
+        prompt: String,
+        display_prompt: String,
+        paste_segments: Vec<PasteSegment>,
+    ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.input.clear();
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        self.steering_prompts.push_back(prompt);
+        self.steering_prompts.push_back(QueuedPrompt {
+            prompt,
+            display_prompt,
+            paste_segments,
+        });
+        self.select_pending_recall_target();
         self.insert_entry(&Entry::Notice(format!(
             "queued steer {} for after the current assistant turn",
             self.steering_prompts.len()
@@ -2510,6 +2499,7 @@ impl App {
             display_prompt,
             paste_segments,
         });
+        self.select_pending_recall_target();
         self.insert_entry(&Entry::Notice(format!(
             "queued message {} for after the current turn",
             self.queued_prompts.len()
@@ -2989,6 +2979,9 @@ impl App {
                         self.handle_key_during_turn(key, terminal).map_err(|err| {
                             crate::model::ModelError::InvalidResponse(err.to_string())
                         })?;
+                        if self.pending_input_action.is_some() {
+                            break;
+                        }
                     }
                     if self.should_quit {
                         return Ok(
@@ -3028,6 +3021,7 @@ impl App {
     fn running_escape_has_overlay_target(&self) -> bool {
         self.command_palette_visible()
             || self.file_palette_visible()
+            || self.pending_input_focused()
             || !matches!(self.composer, ComposerMode::Input)
     }
 
@@ -3335,6 +3329,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.steering_prompts.clear();
+        self.pending_input_changed();
         self.status = "compacting context".into();
         self.running = true;
         self.loading_spinner.start();
@@ -3419,6 +3414,7 @@ impl App {
         self.queued_prompts.clear();
         self.goal = None;
         self.steering_prompts.clear();
+        self.clear_accepted_steering();
         self.reset_streams();
         self.running = false;
         self.active_tool_call = false;
@@ -4529,6 +4525,10 @@ impl App {
                 self.status = format!("running step {step}");
                 None
             }
+            ViewModelEvent::SteeringApplied(ids) => {
+                self.mark_steering_applied(&ids);
+                None
+            }
             ViewModelEvent::ToolStarted { display_lines, .. } => {
                 self.active_tool_call = true;
                 self.pending_tool_call = Some(ToolEntry {
@@ -4694,6 +4694,18 @@ impl App {
                 button,
             );
         }
+        if layout.pending_input.height > 0 {
+            frame.render_widget(
+                Paragraph::new(
+                    self.pending_input_lines(width)
+                        .into_iter()
+                        .take(layout.pending_input.height as usize)
+                        .collect::<Vec<_>>(),
+                )
+                .style(Style::default()),
+                layout.pending_input,
+            );
+        }
         if layout.top_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
@@ -4815,6 +4827,13 @@ impl App {
             lines[button.y.saturating_sub(layout.history.y) as usize] =
                 self.jump_to_bottom_line(width);
         }
+        if layout.pending_input.height > 0 {
+            lines.extend(
+                self.pending_input_lines(width)
+                    .into_iter()
+                    .take(layout.pending_input.height as usize),
+            );
+        }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width));
         }
@@ -4840,103 +4859,6 @@ impl App {
         );
 
         ActiveFrame { lines }
-    }
-
-    fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
-        let width = area.width as usize;
-        let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width);
-        let command_lines = self.command_suggestion_lines(width);
-        self.screen_layout_for_history_len(area, history_len, &composer_lines, command_lines.len())
-    }
-
-    fn screen_layout_for_history_len(
-        &self,
-        area: Rect,
-        history_len: usize,
-        composer_lines: &[Line<'_>],
-        command_line_count: usize,
-    ) -> ScreenLayout {
-        let width = area.width as usize;
-        let height = area.height as usize;
-        let full_cursor = self.composer_cursor_position(width);
-        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
-        let statusline_height = self.statusline.height().min(height);
-        let bottom_divider_height = usize::from(height > statusline_height);
-        let command_height = command_line_count
-            .min(height.saturating_sub(statusline_height + bottom_divider_height));
-        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
-        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
-        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
-        let history_height_without_jump =
-            self.history_height_from_line_counts(height, composer_lines.len(), command_line_count);
-        let show_jump_to_bottom = history_height_without_jump > 0
-            && self.visible_history_start(history_len, history_height_without_jump)
-                < history_len.saturating_sub(history_height_without_jump);
-        let reserved_above_composer = usize::from(show_top_divider);
-        let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let visible_composer_len = composer_lines.len().min(composer_budget);
-        let composer_start =
-            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
-        let history_height =
-            available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len);
-
-        let mut y = area.y;
-        let history = Rect::new(area.x, y, area.width, history_height as u16);
-        y = y.saturating_add(history.height);
-        let activity_y = history.bottom().saturating_sub(1);
-        let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
-        let jump_width = jump_text.as_deref().map_or(0, display_width).min(width) as u16;
-        let jump_to_bottom = jump_text.map(|_| {
-            Rect::new(
-                history
-                    .x
-                    .saturating_add(history.width.saturating_sub(jump_width)),
-                activity_y,
-                jump_width,
-                1,
-            )
-        });
-        let spinner_available = if jump_width > 0 {
-            width.saturating_sub(jump_width as usize + 1)
-        } else {
-            width
-        };
-        let spinner_width = activity::spinner_width(spinner_available) as u16;
-        let activity = (self.loading_active() && spinner_width > 0 && history.height > 0)
-            .then(|| Rect::new(history.x, activity_y, spinner_width, 1));
-        let top_divider = if show_top_divider {
-            let rect = Rect::new(area.x, y, area.width, 1);
-            y = y.saturating_add(1);
-            rect
-        } else {
-            Rect::new(area.x, y, area.width, 0)
-        };
-        let composer = Rect::new(area.x, y, area.width, visible_composer_len as u16);
-        y = y.saturating_add(composer.height);
-        let bottom_divider = Rect::new(area.x, y, area.width, bottom_divider_height as u16);
-        y = y.saturating_add(bottom_divider.height);
-        let statusline = Rect::new(area.x, y, area.width, statusline_height as u16);
-        y = y.saturating_add(statusline.height);
-        let commands = Rect::new(area.x, y, area.width, command_height as u16);
-
-        ScreenLayout {
-            history,
-            history_scrollbar: HistoryScrollbar::new(
-                history,
-                history_len,
-                self.visible_history_start(history_len, history_height),
-            ),
-            activity,
-            jump_to_bottom,
-            top_divider,
-            composer,
-            bottom_divider,
-            statusline,
-            commands,
-            composer_start,
-            history_len,
-        }
     }
 
     fn divider_line(&self, width: usize) -> Line<'static> {
@@ -5127,33 +5049,6 @@ impl App {
         history_height > 0
             && self.visible_history_start(history_len, history_height)
                 < history_len.saturating_sub(history_height)
-    }
-
-    fn history_height_for_screen(&self, width: usize, height: usize, _now: Instant) -> usize {
-        self.history_height_from_line_counts(
-            height,
-            self.composer_lines(width).len(),
-            self.command_suggestion_lines(width).len(),
-        )
-    }
-
-    fn history_height_from_line_counts(
-        &self,
-        height: usize,
-        composer_line_count: usize,
-        command_line_count: usize,
-    ) -> usize {
-        let statusline_height = self.statusline.height().min(height);
-        let bottom_divider_height = usize::from(height > statusline_height);
-        let command_height = command_line_count
-            .min(height.saturating_sub(statusline_height + bottom_divider_height));
-        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
-        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
-        let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
-        let reserved_above_composer = usize::from(show_top_divider);
-        let composer_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let visible_composer_len = composer_line_count.min(composer_budget);
-        available_above_bottom.saturating_sub(reserved_above_composer + visible_composer_len)
     }
 
     fn scroll_history_to_bottom(&mut self) {
@@ -6399,7 +6294,7 @@ mod tests {
         app.paste_segments.clear();
         app.queued_prompts.push_back(queued);
 
-        assert!(app.recall_last_queued_prompt());
+        assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
         assert_eq!(app.input, "[ pasted: 2 lines ]");
         assert_eq!(app.expanded_input(), "alpha\nbeta");
     }
@@ -6418,7 +6313,7 @@ mod tests {
         app.paste_segments.clear();
         app.queued_prompts.push_back(queued);
 
-        assert!(app.recall_last_queued_prompt());
+        assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
         assert_eq!(app.input, " [ pasted: 2 lines ]");
         assert_eq!(app.expanded_input().trim(), "alpha\nbeta");
     }
@@ -7569,35 +7464,6 @@ mod tests {
         assert_eq!(app.input, "previous!");
         assert_eq!(app.input_history_cursor, None);
         assert_eq!(app.input_history_draft, None);
-    }
-
-    #[test]
-    fn alt_up_recalls_last_queued_message_for_editing() {
-        let mut app = test_app();
-        app.queued_prompts.push_back("first queued".into());
-        app.queued_prompts.push_back("second queued".into());
-
-        assert!(app.recall_last_queued_prompt());
-
-        assert_eq!(app.input, "second queued");
-        assert_eq!(app.input_cursor, "second queued".chars().count());
-        assert_eq!(app.queued_prompts, VecDeque::from(["first queued".into()]));
-    }
-
-    #[test]
-    fn alt_up_removed_queued_messages_do_not_enter_prompt_history() {
-        let mut app = test_app();
-        app.queued_prompts.push_back("first queued".into());
-        app.queued_prompts.push_back("second queued".into());
-
-        assert!(app.recall_last_queued_prompt());
-        app.input.clear();
-        app.input_cursor = 0;
-        assert!(app.recall_last_queued_prompt());
-
-        assert_eq!(app.input, "first queued");
-        assert!(app.queued_prompts.is_empty());
-        assert!(!app.recall_input_history(HistoryDirection::Previous));
     }
 
     #[test]

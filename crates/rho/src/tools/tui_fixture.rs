@@ -34,7 +34,7 @@ impl Tool for TuiFixtureProgressTool {
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             send_progress(&context, "deterministic progress update one", 1).await?;
-            fixture_sleep(&context, Duration::from_millis(800)).await?;
+            fixture_sleep(&context, Duration::from_secs(3)).await?;
             send_progress(&context, "deterministic progress update two", 2).await?;
             fixture_sleep(&context, Duration::from_millis(300)).await?;
             Ok(

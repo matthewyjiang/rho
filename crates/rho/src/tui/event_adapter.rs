@@ -15,6 +15,7 @@ use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, Questionn
 pub(super) enum ViewModelEvent {
     RunStarted,
     StepStarted(usize),
+    SteeringApplied(Vec<rho_sdk::SteeringId>),
     ToolStarted {
         display_lines: Vec<String>,
     },
@@ -70,6 +71,9 @@ impl SdkEventAdapter {
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
                 ViewEvent::Update(ViewModelEvent::StepStarted(step))
+            }
+            RunEvent::SteeringApplied { ids } => {
+                ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))
             }
             RunEvent::AssistantTextDelta { text } => {
                 ViewEvent::Update(ViewModelEvent::OutputDelta(text))
