@@ -203,17 +203,17 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<(Vec<(String, String)>, S
         if line.trim().is_empty() {
             continue;
         }
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if let (Some(key), Some(item)) =
-                (sequence_field.as_deref(), line.trim().strip_prefix("- "))
-            {
-                if let Some((_, value)) = fields.iter_mut().find(|(field, _)| field == key) {
-                    if !value.is_empty() {
-                        value.push(',');
-                    }
-                    value.push_str(&unquote(item.trim()));
+        if let (Some(key), Some(item)) = (sequence_field.as_deref(), line.trim().strip_prefix("- "))
+        {
+            if let Some((_, value)) = fields.iter_mut().find(|(field, _)| field == key) {
+                if !value.is_empty() {
+                    value.push(',');
                 }
+                value.push_str(&unquote(item.trim()));
             }
+            continue;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
             continue;
         }
         sequence_field = None;

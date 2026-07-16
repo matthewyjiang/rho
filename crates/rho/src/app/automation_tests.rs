@@ -74,6 +74,17 @@ async fn cancel_marker_finalizes_a_stopped_partial_result() {
 }
 
 #[tokio::test]
+async fn reporter_clears_a_stale_cancel_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_file = dir.path().join(crate::subagent::RESULT_FILE_NAME);
+    crate::subagent::request_cancel(&output_file).unwrap();
+
+    let reporter = RunReporter::new(output_file, Some("worker".into())).unwrap();
+
+    assert!(!reporter.cancel_file.exists());
+}
+
+#[tokio::test]
 async fn headless_run_compacts_at_configured_threshold_and_completes() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("test", "test", "automation-compaction"),

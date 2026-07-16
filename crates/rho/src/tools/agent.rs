@@ -35,6 +35,8 @@ const STALE_STATUS_TIMEOUT: Duration = Duration::from_secs(120);
 /// Cap on the result text echoed into notifications and blocking returns.
 const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
 
+type ForceKillRequest = tokio::sync::oneshot::Sender<Result<(), String>>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpawnDisplay {
     /// Herdr owns the subagent's pane.
@@ -62,7 +64,7 @@ struct AgentEntry {
     on_exit: OnExit,
     pid: Option<u32>,
     output_file: PathBuf,
-    force_kill: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    force_kill: Option<tokio::sync::mpsc::UnboundedSender<ForceKillRequest>>,
     session_id: Option<String>,
     status: RunStatus,
     done: bool,
@@ -245,24 +247,33 @@ impl SubagentManager {
         &self,
         id: &str,
         mut child: tokio::process::Child,
-    ) -> tokio::sync::mpsc::UnboundedSender<()> {
-        let (force_kill, mut force_kill_requests) = tokio::sync::mpsc::unbounded_channel();
+    ) -> tokio::sync::mpsc::UnboundedSender<ForceKillRequest> {
+        let (force_kill, mut force_kill_requests) =
+            tokio::sync::mpsc::unbounded_channel::<ForceKillRequest>();
         let manager = self.clone();
         let id = id.to_string();
         tokio::spawn(async move {
-            let exit = tokio::select! {
-                exit = child.wait() => exit,
+            let (exit, force_kill_ack) = tokio::select! {
+                exit = child.wait() => (exit, None),
                 request = force_kill_requests.recv() => {
-                    if request.is_some() {
-                        match child.kill().await {
+                    if let Some(ack) = request {
+                        let exit = match child.kill().await {
                             Ok(()) => child.wait().await,
                             Err(error) => Err(error),
-                        }
+                        };
+                        (exit, Some(ack))
                     } else {
-                        child.wait().await
+                        (child.wait().await, None)
                     }
                 }
             };
+            if let Some(ack) = force_kill_ack {
+                let result = exit
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(std::string::ToString::to_string);
+                let _ = ack.send(result);
+            }
             // Give the status-file watcher one poll interval to observe the
             // final write before synthesizing a failure.
             tokio::time::sleep(POLL_INTERVAL * 2).await;
@@ -399,7 +410,14 @@ impl SubagentManager {
             (entry.force_kill.clone(), entry.pid.or(entry.status.pid))
         };
         if let Some(force_kill) = force_kill {
-            let _ = force_kill.send(());
+            let (ack, killed) = tokio::sync::oneshot::channel();
+            force_kill
+                .send(ack)
+                .map_err(|_| anyhow::anyhow!("subagent '{id}' process watcher stopped"))?;
+            killed
+                .await
+                .map_err(|_| anyhow::anyhow!("subagent '{id}' kill was not acknowledged"))?
+                .map_err(anyhow::Error::msg)?;
         } else if let Some(pid) = pid {
             force_kill_process(pid)?;
         } else {
@@ -822,19 +840,31 @@ impl Tool for AgentTool {
         tokio::select! {
             result = &mut call => result,
             () = cancellation.cancelled() => {
-                if !background {
-                    let manager = self.manager.clone();
-                    tokio::spawn(async move {
-                        let running: Vec<String> = manager
+                if background {
+                    // Once pane spawning has started, keep polling it to
+                    // completion so dropping this call cannot orphan a pane
+                    // before it is registered with the manager.
+                    let _ = call.await;
+                } else {
+                    loop {
+                        let running: Vec<String> = self
+                            .manager
                             .list()
                             .into_iter()
                             .filter(|snapshot| !snapshot.done && !snapshot.background)
                             .map(|snapshot| snapshot.id)
                             .collect();
-                        for id in running {
-                            let _ = manager.stop(&id).await;
+                        if !running.is_empty() {
+                            for id in running {
+                                let _ = self.manager.stop(&id).await;
+                            }
+                            break;
                         }
-                    });
+                        tokio::select! {
+                            _ = &mut call => break,
+                            () = tokio::time::sleep(POLL_INTERVAL) => {}
+                        }
+                    }
                 }
                 Err(ToolError::Message("tool interrupted".into()))
             }

@@ -76,6 +76,24 @@ fn parses_yaml_tool_sequence() {
 }
 
 #[test]
+fn parses_unindented_yaml_tool_sequence() {
+    let root = TempDir::new().unwrap();
+    write_preset(
+        root.path(),
+        ".rho/agents/reviewer.md",
+        "---\ndescription: Reviews diffs\ntools:\n- read_file\n- skill\n---\nReview carefully.\n",
+    );
+
+    let presets = discover_with_home(root.path(), Some(root.path()));
+    let reviewer = presets.iter().find(|p| p.name == "reviewer").unwrap();
+
+    assert_eq!(
+        reviewer.tools,
+        Some(vec!["read_file".to_string(), "skill".to_string()])
+    );
+}
+
+#[test]
 fn user_preset_overrides_builtin() {
     let root = TempDir::new().unwrap();
     write_preset(

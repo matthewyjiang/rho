@@ -33,14 +33,39 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let config_path = cli.config.clone();
     let config_repository = ConfigRepository::new(config_path.clone());
     let mut config = config_repository.load()?;
+    let cwd = std::env::current_dir()?;
+    let automation_prompt = automation::prompt_for_command(&cli.command)?;
+    let (preset, output_file) = match &cli.command {
+        Some(Command::Run {
+            preset,
+            output_file,
+            ..
+        }) => (
+            preset
+                .as_deref()
+                .map(|name| crate::subagent::find(&cwd, name))
+                .transpose()?,
+            output_file.clone(),
+        ),
+        _ => (None, None),
+    };
+
     let store = OsCredentialStore;
     cli_config::refresh_model_cache(&cli, &store).await?;
+    if let Some(provider) = preset
+        .as_ref()
+        .and_then(|preset| preset.provider.as_deref())
+    {
+        cli_config::refresh_model_cache_for_provider(provider, &store).await?;
+    }
     if cli_config::apply_overrides(&mut config, &cli)? {
         config_repository.save(&config)?;
     }
+    if let Some(preset) = &preset {
+        apply_preset_overrides(&mut config, preset)?;
+    }
 
     validate_terminal_mode(&cli)?;
-    let automation_prompt = automation::prompt_for_command(&cli.command)?;
     if automation_prompt.is_some()
         && config.provider == "anthropic"
         && cached_model_metadata(&config.provider, &config.model).is_none()
@@ -48,24 +73,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         let _ =
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
-    let cwd = std::env::current_dir()?;
+    if preset.is_some() {
+        cli_config::normalize_reasoning(&mut config);
+    }
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
-        let (preset_name, output_file) = match &cli.command {
-            Some(Command::Run {
-                preset,
-                output_file,
-                ..
-            }) => (preset.clone(), output_file.clone()),
-            _ => (None, None),
-        };
-        let preset = preset_name
-            .as_deref()
-            .map(|name| crate::subagent::find(&cwd, name))
-            .transpose()?;
-        if let Some(preset) = &preset {
-            apply_preset_overrides(&mut config, preset)?;
-        }
         let diagnostics = RuntimeDiagnostics::new(&config);
         return automation::run(
             prompt,

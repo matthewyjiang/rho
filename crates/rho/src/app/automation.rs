@@ -301,6 +301,11 @@ const LAST_TEXT_BYTES: usize = 400;
 impl RunReporter {
     fn new(path: PathBuf, preset: Option<String>) -> anyhow::Result<Self> {
         let cancel_file = subagent::cancel_file_for(&path);
+        match std::fs::remove_file(&cancel_file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let status = RunStatus {
             state: RunState::Starting,
             pid: Some(std::process::id()),

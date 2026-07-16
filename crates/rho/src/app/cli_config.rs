@@ -45,14 +45,26 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         config.reasoning = reasoning;
         save_config = true;
     }
+    save_config |= normalize_reasoning(config);
+    Ok(save_config)
+}
+
+pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
     let supported_reasoning =
         crate::model::models_dev::cached_reasoning_levels(&config.provider, &config.model);
     let reasoning = config.reasoning.normalize(supported_reasoning.as_deref());
-    if reasoning != config.reasoning {
-        config.reasoning = reasoning;
-        save_config = true;
+    if reasoning == config.reasoning {
+        return false;
     }
-    Ok(save_config)
+    config.reasoning = reasoning;
+    true
+}
+
+pub(super) async fn refresh_model_cache_for_provider(
+    provider: &str,
+    store: &dyn CredentialStore,
+) -> anyhow::Result<()> {
+    refresh_model_list_for_provider(provider, store).await
 }
 
 pub(super) fn apply_provider_override(
