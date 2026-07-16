@@ -1,14 +1,14 @@
 [models."openai-codex/gpt-5.6-sol"]
-effective_context_window = 272000
-usable_context_window = 272000
+effective_context_window = 372000
+usable_context_window = 372000
 
 [models."openai-codex/gpt-5.6-terra"]
-effective_context_window = 272000
-usable_context_window = 272000
+effective_context_window = 372000
+usable_context_window = 372000
 
 [models."openai-codex/gpt-5.6-luna"]
-effective_context_window = 272000
-usable_context_window = 272000
+effective_context_window = 372000
+usable_context_window = 372000
 
 [models."openai/gpt-5.5"]
 usable_context_window = 272000

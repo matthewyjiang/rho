@@ -162,13 +162,13 @@ fn reasoning_models_without_options_are_not_capability_complete() {
 }
 
 #[test]
-fn builtin_gpt_56_codex_overrides_use_temporary_context_limit() {
+fn builtin_gpt_56_codex_overrides_match_upstream_catalog() {
     for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
         let metadata = apply_builtin_overrides("openai-codex", model, ModelMetadata::default());
 
-        assert_eq!(metadata.effective_context_window, Some(272_000));
-        assert_eq!(metadata.usable_context_window, Some(272_000));
-        assert_eq!(metadata.display_context_window(), Some(272_000));
+        assert_eq!(metadata.effective_context_window, Some(372_000));
+        assert_eq!(metadata.usable_context_window, Some(372_000));
+        assert_eq!(metadata.display_context_window(), Some(372_000));
         assert_eq!(metadata.supported_reasoning_levels, None);
         assert!(!metadata.reasoning_capabilities_known);
     }
