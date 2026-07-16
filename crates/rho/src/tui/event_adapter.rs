@@ -14,6 +14,7 @@ use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, Questionn
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
+    RunStarted,
     StepStarted(usize),
     ToolStarted {
         display_lines: Vec<String>,
@@ -66,7 +67,7 @@ impl SdkEventAdapter {
 
     pub(super) fn translate(&mut self, event: RunEvent) -> ViewEvent {
         match event {
-            RunEvent::Started { .. } => ViewEvent::Ignored,
+            RunEvent::Started { .. } => ViewEvent::Update(ViewModelEvent::RunStarted),
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
                 ViewEvent::Update(ViewModelEvent::StepStarted(step))

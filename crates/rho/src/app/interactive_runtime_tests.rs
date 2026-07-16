@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse},
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     CompactionFuture, CompactionOutput, CompactionRequest, Compactor, HostChoice, HostInputRequest,
-    HostQuestion, ProviderError, ProviderErrorKind, Retryability, RunEvent, SelectionMode,
+    HostQuestion, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId, SelectionMode,
     SessionId, SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
 };
 
@@ -366,6 +366,35 @@ async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
         vec![ContentBlock::Text(response.into())],
     ))])
     .await
+}
+
+#[tokio::test]
+async fn a_new_run_resets_the_context_usage_baseline() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.context_window = Some(10_000);
+    interactive.cumulative_input_tokens = 50_000;
+    interactive.step_input_token_baseline = 50_000;
+
+    interactive.observe_event(&RunEvent::Started {
+        run_id: RunId::new(),
+        revision: Default::default(),
+    });
+    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
+    interactive.observe_event(&RunEvent::UsageUpdated {
+        usage: ModelUsage {
+            input_tokens: Some(300),
+            cache_read_tokens: Some(700),
+            ..ModelUsage::default()
+        },
+    });
+
+    assert_eq!(
+        interactive.pending_context_usage,
+        Some(rho_sdk::model::ContextUsage::provider_reported(
+            1_000,
+            Some(10_000)
+        ))
+    );
 }
 
 #[tokio::test]

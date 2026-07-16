@@ -499,6 +499,10 @@ impl InteractiveRuntime {
     fn observe_event(&mut self, event: &RunEvent) {
         self.state = state_after_event(self.state, event);
         match event {
+            RunEvent::Started { .. } => {
+                self.cumulative_input_tokens = 0;
+                self.step_input_token_baseline = 0;
+            }
             RunEvent::StepStarted { .. } => {
                 self.step_input_token_baseline = self.cumulative_input_tokens;
             }

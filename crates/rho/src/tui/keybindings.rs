@@ -48,8 +48,7 @@ impl App {
         } else if self.info.keybindings.reset_conversation.matches(key) {
             let _ = agent.reset();
             self.info.session_id = None;
-            self.cumulative_usage = None;
-            self.latest_usage = None;
+            self.reset_usage();
             self.current_context = None;
             self.insert_entry(&Entry::Notice(
                 "conversation reset; next message starts a new session".into(),

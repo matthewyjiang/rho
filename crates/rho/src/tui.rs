@@ -313,6 +313,12 @@ struct App {
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
     cumulative_usage: Option<ModelUsage>,
+    // SDK usage updates are cumulative within a run. These snapshots let the TUI
+    // replace active usage while preserving totals from prior runs and steps.
+    usage_before_current_run: Option<ModelUsage>,
+    usage_before_current_step: Option<ModelUsage>,
+    usage_before_current_attempt: Option<ModelUsage>,
+    current_run_usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
@@ -690,6 +696,10 @@ impl App {
             using_unavailable_provider,
             pending_oauth_login: None,
             cumulative_usage: None,
+            usage_before_current_run: None,
+            usage_before_current_step: None,
+            usage_before_current_attempt: None,
+            current_run_usage: None,
             latest_usage: None,
             current_context: None,
             model_metadata: None,
@@ -3348,8 +3358,7 @@ impl App {
         self.reset_streams();
         self.running = false;
         self.active_tool_call = false;
-        self.cumulative_usage = None;
-        self.latest_usage = None;
+        self.reset_usage();
         self.current_context = None;
         self.pending_session_title = None;
         self.current_turn_start = None;
@@ -4251,8 +4260,7 @@ impl App {
         self.reset_streams();
         self.running = false;
         self.goal = None;
-        self.cumulative_usage = None;
-        self.latest_usage = None;
+        self.reset_usage();
         self.current_context = None;
         let entries = transcript_entries_from_messages(&display_history, &self.info.cwd);
         let width = terminal.size()?.width as usize;
@@ -4383,9 +4391,27 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)
     }
 
+    fn reset_usage(&mut self) {
+        self.cumulative_usage = None;
+        self.usage_before_current_run = None;
+        self.usage_before_current_step = None;
+        self.usage_before_current_attempt = None;
+        self.current_run_usage = None;
+        self.latest_usage = None;
+    }
+
     fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
+            ViewModelEvent::RunStarted => {
+                self.usage_before_current_run = self.cumulative_usage.clone();
+                self.usage_before_current_step = None;
+                self.usage_before_current_attempt = None;
+                self.current_run_usage = None;
+                None
+            }
             ViewModelEvent::StepStarted(step) => {
+                self.usage_before_current_step = self.current_run_usage.clone();
+                self.usage_before_current_attempt = None;
                 self.reset_streams();
                 self.provider_attempt_start = Some(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
@@ -4426,7 +4452,10 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
-            ViewModelEvent::ProviderStreamReset => None,
+            ViewModelEvent::ProviderStreamReset => {
+                self.usage_before_current_attempt = self.current_run_usage.clone();
+                None
+            }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());
@@ -4434,9 +4463,33 @@ impl App {
                 None
             }
             ViewModelEvent::Usage(usage) => {
-                let usage = usage_with_estimated_cost(usage, self.model_metadata.as_ref());
-                self.latest_usage = Some(usage.clone());
-                merge_usage(&mut self.cumulative_usage, usage);
+                let mut current_run_usage = usage;
+                if let Some(attempt_baseline) = &self.usage_before_current_attempt {
+                    current_run_usage =
+                        usage_with_estimated_cost(current_run_usage, self.model_metadata.as_ref());
+                    let mut combined = None;
+                    merge_usage(&mut combined, attempt_baseline.clone());
+                    merge_usage(&mut combined, current_run_usage);
+                    current_run_usage = combined.expect("attempt baseline is present");
+                }
+                let step_baseline = self
+                    .usage_before_current_step
+                    .clone()
+                    .map(|usage| usage_with_estimated_cost(usage, self.model_metadata.as_ref()));
+                let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
+                latest_usage =
+                    usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
+                current_run_usage.cost_usd_micros = add_optional(
+                    step_baseline
+                        .as_ref()
+                        .and_then(|usage| usage.cost_usd_micros),
+                    latest_usage.cost_usd_micros,
+                );
+                self.current_run_usage = Some(current_run_usage.clone());
+                self.latest_usage = Some(latest_usage);
+                self.cumulative_usage
+                    .clone_from(&self.usage_before_current_run);
+                merge_usage(&mut self.cumulative_usage, current_run_usage);
                 None
             }
             ViewModelEvent::ToolFinished {
@@ -5610,7 +5663,28 @@ fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
     tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }
 
-fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
+fn usage_difference(usage: &ModelUsage, baseline: Option<&ModelUsage>) -> ModelUsage {
+    let baseline = baseline.cloned().unwrap_or_default();
+    ModelUsage {
+        input_tokens: subtract_optional(usage.input_tokens, baseline.input_tokens),
+        output_tokens: subtract_optional(usage.output_tokens, baseline.output_tokens),
+        cache_read_tokens: subtract_optional(usage.cache_read_tokens, baseline.cache_read_tokens),
+        cache_write_tokens: subtract_optional(
+            usage.cache_write_tokens,
+            baseline.cache_write_tokens,
+        ),
+        total_tokens: subtract_optional(usage.total_tokens, baseline.total_tokens),
+        context_window: usage.context_window,
+        cost_usd_micros: subtract_optional(usage.cost_usd_micros, baseline.cost_usd_micros),
+    }
+}
+
+fn subtract_optional(value: Option<u64>, baseline: Option<u64>) -> Option<u64> {
+    value.map(|value| value.saturating_sub(baseline.unwrap_or_default()))
+}
+
+fn merge_usage(total: &mut Option<ModelUsage>, mut usage: ModelUsage) {
+    usage.total_tokens = usage.total_tokens.or_else(|| usage_total_tokens(&usage));
     let Some(total) = total.as_mut() else {
         *total = Some(usage);
         return;
@@ -5619,7 +5693,7 @@ fn merge_usage(total: &mut Option<ModelUsage>, usage: ModelUsage) {
     total.output_tokens = add_optional(total.output_tokens, usage.output_tokens);
     total.cache_read_tokens = add_optional(total.cache_read_tokens, usage.cache_read_tokens);
     total.cache_write_tokens = add_optional(total.cache_write_tokens, usage.cache_write_tokens);
-    total.total_tokens = usage.total_tokens.or_else(|| usage_total_tokens(&usage));
+    total.total_tokens = add_optional(total.total_tokens, usage.total_tokens);
     total.cost_usd_micros = add_optional(total.cost_usd_micros, usage.cost_usd_micros);
     total.context_window = usage.context_window.or(total.context_window);
 }
@@ -5884,6 +5958,8 @@ mod tests {
     mod mouse_tests;
     #[path = "questionnaire_interaction_tests.rs"]
     mod questionnaire_interaction_tests;
+    #[path = "usage_tests.rs"]
+    mod usage_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;
@@ -6054,48 +6130,6 @@ mod tests {
                 .as_ref()
                 .and_then(|usage| usage.input_tokens),
             Some(1_000)
-        );
-    }
-
-    #[test]
-    fn usage_event_tracks_latest_usage_separately_from_cumulative_totals() {
-        let mut app = test_app();
-
-        assert!(app
-            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
-                input_tokens: Some(100),
-                output_tokens: Some(20),
-                cache_read_tokens: Some(400),
-                ..ModelUsage::default()
-            }))
-            .is_none());
-        assert!(app
-            .record_agent_event(ViewModelEvent::Usage(ModelUsage {
-                input_tokens: Some(300),
-                output_tokens: Some(40),
-                cache_read_tokens: Some(700),
-                ..ModelUsage::default()
-            }))
-            .is_none());
-
-        assert_eq!(
-            app.latest_usage,
-            Some(ModelUsage {
-                input_tokens: Some(300),
-                output_tokens: Some(40),
-                cache_read_tokens: Some(700),
-                ..ModelUsage::default()
-            })
-        );
-        assert_eq!(
-            app.cumulative_usage,
-            Some(ModelUsage {
-                input_tokens: Some(400),
-                output_tokens: Some(60),
-                cache_read_tokens: Some(1_100),
-                total_tokens: Some(1_040),
-                ..ModelUsage::default()
-            })
         );
     }
 

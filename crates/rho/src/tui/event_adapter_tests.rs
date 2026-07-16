@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
     tool::{OperationKind, ToolMetadata, ToolOutput},
-    HostChoice, HostInputRequest, HostQuestion, RunEvent, SelectionMode, ToolCallId,
-    ToolCompletion,
+    HostChoice, HostInputRequest, HostQuestion, Revision, RunEvent, RunId, SelectionMode,
+    ToolCallId, ToolCompletion,
 };
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -19,6 +19,13 @@ use crate::{
 fn translates_streaming_and_usage_events_without_rendering_state() {
     let mut adapter = SdkEventAdapter::default();
 
+    assert!(matches!(
+        adapter.translate(RunEvent::Started {
+            run_id: RunId::new(),
+            revision: Revision::INITIAL,
+        }),
+        ViewEvent::Update(ViewModelEvent::RunStarted)
+    ));
     assert!(matches!(
         adapter.translate(RunEvent::AssistantTextDelta { text: "hello".into() }),
         ViewEvent::Update(ViewModelEvent::OutputDelta(text)) if text == "hello"
