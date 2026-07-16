@@ -176,7 +176,11 @@ pub(super) async fn execute_process(
                 let _ = child.start_kill();
                 drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
-                drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+                let _ = tokio::time::timeout(
+                    FINAL_OUTPUT_GRACE,
+                    drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
+                )
+                .await;
                 let seconds = timeout.unwrap_or_default().as_secs();
                 return Err(ToolError::Message(truncate(
                     timeout_content(&stdout, &stderr, seconds),
@@ -386,6 +390,29 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("timed out after 5s"));
         assert!(message.contains("started"));
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_when_an_escaped_process_holds_the_output_pipe() {
+        let start = std::time::Instant::now();
+        let err = Bash::new(false)
+            .call(
+                json!({
+                    "command": "python3 -c 'import os,time\nif os.fork() == 0:\n    os.setsid()\n    time.sleep(10)'; sleep 10",
+                    "timeout_seconds": 1
+                }),
+                test_context(),
+                "call_1".into(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("timed out after 1s"));
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "timeout arm blocked on the escaped process: {:?}",
+            start.elapsed()
+        );
     }
 
     #[tokio::test]
