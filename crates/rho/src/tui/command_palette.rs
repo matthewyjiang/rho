@@ -12,12 +12,7 @@ impl App {
         if !argument_choices.is_empty() {
             return argument_choices
                 .iter()
-                .map(|choice| CommandChoice {
-                    name: choice.completion.to_string(),
-                    usage: choice.usage.to_string(),
-                    description: choice.description.to_string(),
-                    kind: CommandChoiceKind::BuiltinArgument(choice),
-                })
+                .map(argument_command_choice)
                 .collect();
         }
 
@@ -28,7 +23,12 @@ impl App {
             .strip_prefix('/')
             .unwrap_or(prefix)
             .to_ascii_lowercase();
-        let mut matches = commands::matching_commands(&prefix)
+        let builtin_matches = commands::matching_commands(&prefix);
+        let exact_builtin = builtin_matches
+            .iter()
+            .find(|command| command.name.eq_ignore_ascii_case(&prefix))
+            .copied();
+        let mut matches = builtin_matches
             .into_iter()
             .map(|command| CommandChoice {
                 name: command.name.to_string(),
@@ -37,6 +37,9 @@ impl App {
                 kind: CommandChoiceKind::Builtin(command),
             })
             .collect::<Vec<_>>();
+        if let Some(command) = exact_builtin {
+            matches.extend(command.argument_choices.iter().map(argument_command_choice));
+        }
         let mut template_matches = self
             .info
             .prompt_templates
@@ -143,6 +146,15 @@ impl App {
         };
         self.input = input;
         self.input_cursor = cursor;
+    }
+}
+
+fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> CommandChoice {
+    CommandChoice {
+        name: choice.completion.to_string(),
+        usage: choice.usage.to_string(),
+        description: choice.description.to_string(),
+        kind: CommandChoiceKind::BuiltinArgument(choice),
     }
 }
 

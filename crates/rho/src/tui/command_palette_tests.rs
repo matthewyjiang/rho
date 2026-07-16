@@ -25,6 +25,8 @@ fn goal_usage_is_not_truncated_when_space_is_available() {
         rendered.contains("/goal [condition|resume|clear]"),
         "{rendered}"
     );
+    assert!(rendered.contains("/goal resume"), "{rendered}");
+    assert!(rendered.contains("/goal clear"), "{rendered}");
     assert!(
         rendered.contains("show status or work until a condition is met"),
         "{rendered}"
@@ -51,6 +53,11 @@ fn completing_goal_command_reveals_lifecycle_actions() {
             .collect::<Vec<_>>(),
         vec!["/goal resume", "/goal clear"]
     );
+
+    app.input = "/goal release is published".into();
+    app.input_cursor = app.input.chars().count();
+    app.input_changed();
+    assert!(!app.command_palette_visible());
 }
 
 #[test]

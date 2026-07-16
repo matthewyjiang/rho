@@ -27,13 +27,14 @@ pub struct CommandSpec {
     pub name: &'static str,
     pub usage: &'static str,
     pub description: &'static str,
+    pub argument_choices: &'static [CommandArgumentChoice],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CommandArgumentChoice {
-    pub(crate) completion: &'static str,
-    pub(crate) usage: &'static str,
-    pub(crate) description: &'static str,
+pub struct CommandArgumentChoice {
+    pub completion: &'static str,
+    pub usage: &'static str,
+    pub description: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,128 +70,121 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "new",
         usage: "/new",
         description: "start a new session",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Login,
         name: "login",
         usage: "/login [provider]",
         description: "log in to a provider",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Logout,
         name: "logout",
         usage: "/logout [provider]",
         description: "delete provider credentials",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Model,
         name: "model",
         usage: "/model [model]",
         description: "show or switch model",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::TitleModel,
         name: "title-model",
         usage: "/title-model [model]",
         description: "show or switch session title model",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::RefreshModelList,
         name: "refresh-model-list",
         usage: "/refresh-model-list [provider]",
         description: "refresh cached API provider models",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Resume,
         name: "resume",
         usage: "/resume [id]",
         description: "resume a saved session",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Config,
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Info,
         name: "info",
         usage: "/info",
         description: "show rho runtime identity",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Compact,
         name: "compact",
         usage: "/compact",
         description: "compact older conversation context",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Goal,
         name: "goal",
         usage: "/goal [condition|resume|clear]",
         description: "show status or work until a condition is met",
+        argument_choices: GOAL_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Skills,
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Diff,
         name: "diff",
         usage: "/diff",
         description: "show Git status and worktree patches",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Doctor,
         name: "doctor",
         usage: "/doctor",
         description: "run local setup diagnostics",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Limits,
         name: "limits",
         usage: "/limits",
         description: "show connected OAuth usage limits",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Export,
         name: "export",
         usage: "/export [path]",
         description: "export the session transcript to an HTML file",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Exit,
         name: "exit",
         usage: "/exit",
         description: "quit rho",
+        argument_choices: &[],
     },
 ];
-
-pub(crate) fn command_argument_choices(
-    command: CommandId,
-) -> &'static [CommandArgumentChoice] {
-    match command {
-        CommandId::Goal => GOAL_ARGUMENT_CHOICES,
-        CommandId::New
-        | CommandId::Login
-        | CommandId::Logout
-        | CommandId::Model
-        | CommandId::TitleModel
-        | CommandId::RefreshModelList
-        | CommandId::Resume
-        | CommandId::Config
-        | CommandId::Info
-        | CommandId::Compact
-        | CommandId::Skills
-        | CommandId::Diff
-        | CommandId::Doctor
-        | CommandId::Limits
-        | CommandId::Export
-        | CommandId::Exit => &[],
-    }
-}
 
 pub(crate) fn argument_choices(input: &str, cursor: usize) -> &'static [CommandArgumentChoice] {
     let cursor_byte = input
@@ -205,8 +199,15 @@ pub(crate) fn argument_choices(input: &str, cursor: usize) -> &'static [CommandA
     let Some((command, args)) = before_cursor.split_once(char::is_whitespace) else {
         return &[];
     };
-    if command.eq_ignore_ascii_case("/goal") && args.trim().is_empty() {
-        command_argument_choices(CommandId::Goal)
+    let command = command.strip_prefix('/').unwrap_or(command);
+    let Some(spec) = COMMANDS
+        .iter()
+        .find(|spec| spec.name.eq_ignore_ascii_case(command))
+    else {
+        return &[];
+    };
+    if args.trim().is_empty() {
+        spec.argument_choices
     } else {
         &[]
     }

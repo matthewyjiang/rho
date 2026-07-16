@@ -399,7 +399,6 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
         text: "/goal [condition|resume|clear]",
         timeout: STREAM,
     },
-    Step::Key(Key::Tab),
     Step::WaitText {
         text: "/goal resume",
         timeout: STREAM,
@@ -408,6 +407,7 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
         text: "/goal clear",
         timeout: STREAM,
     },
+    Step::Key(Key::Tab),
     Step::Phase("block_goal"),
     Step::TypeText("fixture goal blocked"),
     Step::Key(Key::Enter),
