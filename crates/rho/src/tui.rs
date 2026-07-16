@@ -77,6 +77,7 @@ mod skill_picker;
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod subagent_panel;
 mod terminal_events;
 mod text_selection;
 mod theme;
@@ -112,6 +113,7 @@ use render::{
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
+use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
 use text_selection::{
     highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
@@ -258,6 +260,7 @@ struct App {
     info: TuiInfo,
     terminal_events: Option<TerminalEvents>,
     statusline: StatusLine,
+    subagent_panel: SubagentPanel,
     input: String,
     input_cursor: usize,
     status: String,
@@ -654,6 +657,7 @@ impl App {
             info,
             terminal_events: None,
             statusline,
+            subagent_panel: SubagentPanel::default(),
             input: String::new(),
             input_cursor: 0,
             status,
@@ -779,6 +783,7 @@ impl App {
             }
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
+            needs_redraw |= self.subagent_panel.update(agent.subagents());
             needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -4706,6 +4711,16 @@ impl App {
                 layout.pending_input,
             );
         }
+        if layout.subagents.height > 0 {
+            frame.render_widget(
+                Paragraph::new(
+                    self.subagent_panel
+                        .lines(width, layout.subagents.height as usize),
+                )
+                .style(Style::default()),
+                layout.subagents,
+            );
+        }
         if layout.top_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
@@ -4832,6 +4847,12 @@ impl App {
                 self.pending_input_lines(width)
                     .into_iter()
                     .take(layout.pending_input.height as usize),
+            );
+        }
+        if layout.subagents.height > 0 {
+            lines.extend(
+                self.subagent_panel
+                    .lines(width, layout.subagents.height as usize),
             );
         }
         if layout.top_divider.height > 0 {
