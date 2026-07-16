@@ -104,7 +104,9 @@ impl App {
             (_, KeyCode::Home) => self.pending_input_panel.selected = 0,
             (_, KeyCode::End) => self.pending_input_panel.selected = count.saturating_sub(1),
             (_, KeyCode::Enter) => self.edit_selected_pending_input(),
-            (_, KeyCode::Delete) => self.discard_selected_pending_input(),
+            (_, KeyCode::Backspace | KeyCode::Delete) => {
+                self.discard_selected_pending_input();
+            }
             (modifiers, KeyCode::Char(_))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {

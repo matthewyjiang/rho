@@ -31,7 +31,7 @@ impl App {
         let start = visible_start(selected, items.len(), MAX_VISIBLE_ITEMS);
         let steering_count = self.accepted_steering.len() + self.steering_prompts.len();
         let hint = if self.pending_input_panel.focused {
-            "↑↓ select · enter edit · del discard · esc close".to_string()
+            "↑↓ select · enter edit · backspace discard · esc close".to_string()
         } else {
             format!(
                 "{} edit · {} manage",

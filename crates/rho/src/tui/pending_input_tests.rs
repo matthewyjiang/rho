@@ -123,7 +123,7 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
 }
 
 #[test]
-fn focused_panel_can_remove_selected_follow_up() {
+fn backspace_removes_the_selected_follow_up() {
     let mut app = test_app();
     app.queued_prompts.push_back(prompt("first"));
     app.queued_prompts.push_back(prompt("second"));
@@ -131,7 +131,7 @@ fn focused_panel_can_remove_selected_follow_up() {
 
     app.handle_pending_input_key(key(KeyCode::Char('q'), KeyModifiers::ALT));
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::NONE));
-    app.handle_pending_input_key(key(KeyCode::Delete, KeyModifiers::NONE));
+    app.handle_pending_input_key(key(KeyCode::Backspace, KeyModifiers::NONE));
 
     assert_eq!(app.queued_prompts, VecDeque::from([prompt("second")]));
 }
