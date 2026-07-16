@@ -213,12 +213,19 @@ impl Theme {
         Self::accent().add_modifier(Modifier::BOLD)
     }
 
+    pub(super) fn activity_rail() -> Style {
+        let background = Palette::current().neutral_tool_background;
+        Style::reset()
+            .fg(block_foreground(background.rgb))
+            .bg(background.color)
+    }
+
     pub(super) fn jump_to_bottom() -> Style {
-        Self::accent().bg(Color::Reset)
+        Self::activity_rail().fg(Palette::current().accent)
     }
 
     pub(super) fn jump_to_bottom_shortcut() -> Style {
-        Self::dim().bg(Color::Reset)
+        Self::activity_rail().fg(Palette::current().dim)
     }
 
     pub(super) fn success() -> Style {

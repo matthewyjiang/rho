@@ -31,7 +31,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Clear, Paragraph},
     DefaultTerminal, Frame, Terminal,
 };
 mod activity;
@@ -4693,6 +4693,13 @@ impl App {
                         .set_style(Theme::markdown_code_copy_button(/*hovered*/ true));
                 }
             }
+        }
+        if let Some(activity_rail) = layout.activity_rail {
+            frame.render_widget(Clear, activity_rail);
+            frame.render_widget(
+                Paragraph::new("").style(Theme::activity_rail()),
+                activity_rail,
+            );
         }
         if let Some(scrollbar) = layout
             .history_scrollbar
