@@ -181,6 +181,11 @@ impl App {
                         }
                     }
                 }
+                _ = tokio::time::sleep_until(frame_deadline) => {
+                    self.drain_stream_preview(terminal)?;
+                    self.flush_due_paste_burst();
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
                 event = agent.next_event() => {
                     let Some(event) = event else {
                         break;
@@ -229,11 +234,6 @@ impl App {
                     if render_now {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
                     }
-                }
-                _ = tokio::time::sleep_until(frame_deadline) => {
-                    self.drain_stream_preview(terminal)?;
-                    self.flush_due_paste_burst();
-                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
             }
         }
