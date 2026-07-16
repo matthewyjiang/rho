@@ -31,7 +31,13 @@ fn renders_running_agents_with_identity_activity_and_elapsed_time() {
                 Some("tool: read_file"),
                 42,
             ),
-            agent("d4e5f6", "reviewer", RunState::Starting, None, 75),
+            agent(
+                "d4e5f6",
+                "reviewer",
+                RunState::Running,
+                Some("assistant text"),
+                75,
+            ),
         ],
     };
 
@@ -39,8 +45,8 @@ fn renders_running_agents_with_identity_activity_and_elapsed_time() {
         text(&panel.lines(80, 3)),
         vec![
             "● 2 subagents running",
-            "  └ explorer  a1b2c3  ·  tool: read_file  ·  42s",
-            "  └ reviewer  d4e5f6  ·  starting  ·  1m 15s",
+            "  ├ explorer  a1b2c3  ·  read_file                   42s",
+            "  └ reviewer  d4e5f6  ·  responding               1m 15s",
         ]
     );
 }

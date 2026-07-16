@@ -1,9 +1,13 @@
 use ratatui::text::{Line, Span};
 
-use super::{render::truncate_one_line, theme::Theme};
+use super::{
+    render::{display_width, truncate_one_line},
+    theme::Theme,
+};
 use crate::{subagent::RunState, tools::agent::SubagentManager};
 
 const MAX_VISIBLE_AGENTS: usize = 2;
+const MAX_AGENT_CONTENT_WIDTH: usize = 52;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RunningSubagent {
@@ -71,34 +75,82 @@ impl SubagentPanel {
         if height == 1 {
             return lines;
         }
-        for agent in self
+        let visible_count = self
             .agents
-            .iter()
-            .take(MAX_VISIBLE_AGENTS)
-            .take(height.saturating_sub(1))
-        {
-            let state = match agent.state {
+            .len()
+            .min(MAX_VISIBLE_AGENTS)
+            .min(height.saturating_sub(1));
+        for (index, agent) in self.agents.iter().take(visible_count).enumerate() {
+            let activity = match agent.state {
                 RunState::Starting => "starting",
-                RunState::Running => agent.last_activity.as_deref().unwrap_or("working"),
+                RunState::Running => activity_label(agent.last_activity.as_deref()),
                 RunState::Ok | RunState::Error | RunState::Stopped => continue,
             };
-            let available = width.saturating_sub(4);
-            let detail = truncate_one_line(
-                &format!(
-                    "{}  {}  ·  {}  ·  {}",
-                    agent.preset,
-                    agent.id,
-                    state,
-                    format_elapsed(agent.elapsed_seconds)
-                ),
-                available,
-            );
-            lines.push(Line::from(vec![
-                Span::styled("  └ ", Theme::dim()),
-                Span::styled(detail, Theme::dim()),
-            ]));
+            let connector = if index + 1 == visible_count {
+                "  └ "
+            } else {
+                "  ├ "
+            };
+            lines.push(agent_line(agent, activity, connector, width));
         }
         lines
+    }
+}
+
+fn agent_line(
+    agent: &RunningSubagent,
+    activity: &str,
+    connector: &'static str,
+    width: usize,
+) -> Line<'static> {
+    const SEPARATOR: &str = "  ·  ";
+    const MIN_GAP: usize = 2;
+
+    let connector_width = display_width(connector);
+    let content_width = width
+        .saturating_sub(connector_width)
+        .min(MAX_AGENT_CONTENT_WIDTH);
+    let identity_width = display_width(&agent.preset) + 2 + display_width(&agent.id);
+    let separator_width = display_width(SEPARATOR);
+    let elapsed = format_elapsed(agent.elapsed_seconds);
+    let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&elapsed);
+
+    if fixed_width >= content_width {
+        let detail = truncate_one_line(
+            &format!(
+                "{}  {}{SEPARATOR}{activity}  {elapsed}",
+                agent.preset, agent.id
+            ),
+            content_width,
+        );
+        return Line::from(vec![
+            Span::styled(connector, Theme::dim()),
+            Span::styled(detail, Theme::dim()),
+        ]);
+    }
+
+    let activity_width = content_width.saturating_sub(fixed_width);
+    let activity = truncate_one_line(activity, activity_width);
+    let gap = " ".repeat(content_width.saturating_sub(
+        identity_width + separator_width + display_width(&activity) + display_width(&elapsed),
+    ));
+    Line::from(vec![
+        Span::styled(connector, Theme::dim()),
+        Span::styled(agent.preset.clone(), Theme::text_strong()),
+        Span::raw("  "),
+        Span::styled(agent.id.clone(), Theme::dim()),
+        Span::styled(SEPARATOR, Theme::dim()),
+        Span::styled(activity, Theme::text()),
+        Span::raw(gap),
+        Span::styled(elapsed, Theme::dim()),
+    ])
+}
+
+fn activity_label(activity: Option<&str>) -> &str {
+    match activity {
+        Some("assistant text") => "responding",
+        Some(activity) => activity.strip_prefix("tool: ").unwrap_or(activity),
+        None => "working",
     }
 }
 
