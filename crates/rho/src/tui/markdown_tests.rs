@@ -87,12 +87,12 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
 #[test]
 fn stream_preview_renderer_can_hide_inactive_copy_buttons() {
     let mut lines = Vec::new();
-    let mut in_code_block = false;
-    push_wrapped_markdown_without_copy_button(
+    let mut code_fence = CodeFenceState::default();
+    push_wrapped_markdown_without_copy_button_from_fence_state(
         &mut lines,
         "```rust\nlet x = 1;",
         40,
-        &mut in_code_block,
+        &mut code_fence,
     );
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
@@ -190,6 +190,96 @@ fn closed_mermaid_fence_renders_a_titled_diagram_and_preserves_source() {
         .spans
         .iter()
         .any(|span| span.content.as_ref() == " COPY "));
+}
+
+#[test]
+fn mermaid_canvas_is_tightly_cropped_and_uniformly_centered_in_full_width_panel() {
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        "```mermaid\nflowchart TD\nA[Tea] --> B{Milk?}\nB --> C[Drink]\n```",
+        80,
+        &mut in_code_block,
+    );
+    let rows = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(rows.iter().all(|row| display_width(row) == 80));
+    let content = &rows[1..rows.len() - 1];
+    let occupied = content
+        .iter()
+        .flat_map(|row| {
+            row.chars()
+                .enumerate()
+                .filter(|(_, character)| !character.is_whitespace() && *character != '│')
+                .map(|(column, _)| column)
+        })
+        .collect::<Vec<_>>();
+    let left = *occupied.iter().min().unwrap();
+    let right = *occupied.iter().max().unwrap();
+    let left_margin = left.saturating_sub(2);
+    let right_margin = 77usize.saturating_sub(right);
+    assert!(
+        left_margin.abs_diff(right_margin) <= 1,
+        "{}",
+        rows.join("\n")
+    );
+    assert!(content.iter().any(|row| row
+        .chars()
+        .nth(left)
+        .is_some_and(|character| character != ' ')));
+    assert!(content.iter().any(|row| row
+        .chars()
+        .nth(right)
+        .is_some_and(|character| character != ' ')));
+}
+
+#[test]
+fn code_fence_closers_match_marker_length_and_allow_only_whitespace() {
+    let opening = parse_opening_fence("   ````mermaid").expect("valid opening fence");
+    assert_eq!(opening.marker, '`');
+    assert_eq!(opening.length, 4);
+    assert!(!is_closing_fence("```", opening));
+    assert!(!is_closing_fence("~~~~", opening));
+    assert!(!is_closing_fence("````not-a-close", opening));
+    assert!(is_closing_fence("  `````   ", opening));
+    assert!(parse_opening_fence("    ```rust").is_none());
+    assert!(parse_opening_fence("```rust`edition").is_none());
+}
+
+#[test]
+fn streamed_code_fence_state_preserves_marker_and_length_across_chunks() {
+    let mut state = CodeFenceState::default();
+    update_code_block_state("````mermaid\nflowchart TD", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("```", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("````", &mut state);
+    assert!(!state.is_open());
+
+    update_code_block_state("~~~~mermaid", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("```", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("~~~~", &mut state);
+    assert!(!state.is_open());
+}
+
+#[test]
+fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        "````mermaid\nflowchart TD\nA[one]\n```not-a-close\nA --> B[two]\n````",
+        80,
+        &mut in_code_block,
+    );
+    let text = rendered
+        .lines
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("MERMAID"), "{text}");
+    assert!(text.contains("one"), "{text}");
+    assert!(text.contains("two"), "{text}");
 }
 
 #[test]

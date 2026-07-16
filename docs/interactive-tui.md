@@ -25,7 +25,7 @@ For persisted history and resume behavior, see [sessions](/sessions).
 
 Closed fenced code blocks whose first info token is `mermaid` render as terminal-native Unicode diagrams. The match is case-insensitive and extra info tokens are allowed. During streaming, an open fence remains a normal source code block and changes to diagram art only when its closing fence arrives. The diagram is laid out again when the terminal width changes.
 
-Rho uses `mermaid-text` 0.56.0 and supports its documented subsets of flowcharts and graphs, sequence and state diagrams, pie charts, entity-relationship and class diagrams, journeys, Gantt charts, timelines, Git graphs, mindmaps, quadrant charts, requirement diagrams, Sankey and XY charts, block and architecture diagrams, and packet diagrams. This is not full Mermaid.js syntax or visual parity.
+Rho uses `mermaid-rs-renderer` 0.3.1 as its Mermaid parser and semantic model. The terminal painter provides quality-first support for core subsets of flowcharts and graphs, state diagrams, sequence diagrams, class diagrams, and entity-relationship diagrams. Other diagram families and constructs the painter cannot represent losslessly remain raw code blocks, as do unsupported syntax and malformed input. This is not full Mermaid.js syntax or visual parity.
 
 Unsupported, malformed, unsafe, oversized, or too-wide diagrams silently remain normal code blocks. Rendering does not execute links or scripts, requires no external executable or network access, and does not trust Mermaid-provided terminal styles. The panel's `COPY` action copies the original Mermaid source rather than the rendered box art.
 

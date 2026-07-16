@@ -1,20 +1,26 @@
-use std::{collections::HashMap, panic::AssertUnwindSafe};
+use std::panic::AssertUnwindSafe;
 
-use mermaid_text::detect::{detect, DiagramKind};
-use ratatui::{text::Line, text::Span};
+use ratatui::text::{Line, Span};
 
 use super::super::{render::display_width, theme::Theme};
+
+mod canvas;
+mod drawing;
+mod flow;
+mod model;
+mod painter;
+mod policy;
+mod security;
+mod sequence;
 
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_SOURCE_LINES: usize = 2_048;
 const MAX_PRIMARY_ENTITIES: usize = 128;
 const MAX_RELATIONSHIPS: usize = 512;
 const MAX_GROUPS: usize = 24;
-const MAX_NESTING_DEPTH: usize = 6;
 const MAX_DETAILS: usize = 1_024;
 const MAX_RENDERED_LINES: usize = 4_096;
 const MAX_RENDERED_CELLS: usize = 2_000_000;
-const COMPACT_GRAPH_GAPS: (usize, usize) = (2, 1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MermaidFallback {
@@ -38,13 +44,52 @@ pub(super) enum MermaidRender {
     Fallback(MermaidFallback),
 }
 
-#[derive(Default)]
-struct Complexity {
-    primary: usize,
-    relationships: usize,
-    groups: usize,
-    details: usize,
-    depth: usize,
+pub(super) fn panel_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let canvas_width = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| display_width(span.content.as_ref()))
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or_default();
+    lines
+        .into_iter()
+        .map(|line| panel_line(line, width, canvas_width))
+        .collect()
+}
+
+fn panel_line(mut line: Line<'static>, width: usize, canvas_width: usize) -> Line<'static> {
+    let style = Theme::markdown_code_block();
+    if width <= 1 {
+        return line;
+    }
+    if width <= 3 {
+        line.spans.insert(0, Span::styled("│", style));
+        return line;
+    }
+
+    let content_width = width - 4;
+    let line_width = line
+        .spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum::<usize>();
+    let left_padding = content_width.saturating_sub(canvas_width) / 2;
+    let right_padding = content_width
+        .saturating_sub(left_padding)
+        .saturating_sub(line_width);
+    line.spans.insert(
+        0,
+        Span::styled(format!("│ {}", " ".repeat(left_padding)), style),
+    );
+    line.spans.push(Span::styled(
+        format!("{} │", " ".repeat(right_padding)),
+        style,
+    ));
+    line
 }
 
 pub(super) fn render_mermaid(source: &str, inner_width: usize) -> MermaidRender {
@@ -64,348 +109,129 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     if source.lines().count() > MAX_SOURCE_LINES {
         return MermaidRender::Fallback(MermaidFallback::SourceLines);
     }
-    if inner_width == 0 || contains_unsafe_content(source) {
+    if inner_width == 0 || security::contains_unsafe_content(source) {
         return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
     }
+    if !is_supported_header(source) {
+        return MermaidRender::Fallback(MermaidFallback::Unsupported);
+    }
 
-    let kind = match detect(source) {
-        Ok(kind) => kind,
-        Err(mermaid_text::Error::UnsupportedDiagram(_)) => {
-            return MermaidRender::Fallback(MermaidFallback::Unsupported);
-        }
+    let parsed = match mermaid_rs_renderer::parse_mermaid_strict(source) {
+        Ok(parsed) => parsed,
         Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
     };
-    let complexity = match parse_complexity(source, kind) {
-        Ok(complexity) => complexity,
-        Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
-    };
-    if complexity.primary > MAX_PRIMARY_ENTITIES
-        || complexity.relationships > MAX_RELATIONSHIPS
-        || complexity.groups > MAX_GROUPS
-        || complexity.details > MAX_DETAILS
-        || complexity.depth > MAX_NESTING_DEPTH
+    let diagram_policy = policy::diagram_policy(parsed.graph.kind);
+    if diagram_policy == policy::DiagramPolicy::RawFallback {
+        return MermaidRender::Fallback(MermaidFallback::Unsupported);
+    }
+    if !parsed.graph.node_links.is_empty() {
+        return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
+    }
+    if !model::can_paint_losslessly(&parsed.graph) {
+        return MermaidRender::Fallback(MermaidFallback::Unsupported);
+    }
+    let (primary, relationships, groups, details) = model::complexity(&parsed.graph);
+    if primary > MAX_PRIMARY_ENTITIES
+        || relationships > MAX_RELATIONSHIPS
+        || groups > MAX_GROUPS
+        || details > MAX_DETAILS
     {
         return MermaidRender::Fallback(MermaidFallback::StructuralLimit);
     }
 
-    let compact_graph = matches!(kind, DiagramKind::Flowchart | DiagramKind::State);
-    let mut options = mermaid_text::RenderOptions {
-        max_width: Some(inner_width),
-        ascii: false,
-        color: false,
-        // Grok Build's terminal renderer uses a compact layered layout rather
-        // than a general-purpose graph layout. The dependency's native backend
-        // follows the same policy and avoids tall routing bands for simple
-        // terminal flowcharts.
-        backend: if compact_graph {
-            mermaid_text::layout::LayoutBackend::Native
-        } else {
-            mermaid_text::layout::LayoutBackend::default()
-        },
-        gaps_override: compact_graph.then_some(COMPACT_GRAPH_GAPS),
+    let Some(model) = model::from_ir(&parsed.graph) else {
+        return MermaidRender::Fallback(MermaidFallback::Unsupported);
     };
-    let mut output = match mermaid_text::render_with_options(source, &options) {
-        Ok(output) => output,
-        Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
+    let style = Theme::markdown_code_block();
+    let styles = painter::MermaidStyles {
+        border: style,
+        node_text: style,
+        edge: style,
+        edge_label: style,
     };
-    if compact_graph && output.lines().any(|line| display_width(line) > inner_width) {
-        // Explicit gaps bypass the dependency's width compaction. Fall back to
-        // its width-aware pipeline when a compact graph still does not fit.
-        options.gaps_override = None;
-        output = match mermaid_text::render_with_options(source, &options) {
-            Ok(output) => output,
-            Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
-        };
-    }
-    if output.contains('\x1b') {
-        return MermaidRender::Fallback(MermaidFallback::AnsiOutput);
-    }
-
-    let output_lines = output.lines().collect::<Vec<_>>();
-    if output_lines.len() > MAX_RENDERED_LINES {
-        return MermaidRender::Fallback(MermaidFallback::OutputLines);
-    }
-    let mut cells = 0;
-    for line in &output_lines {
-        let width = display_width(line);
-        if width > inner_width {
+    let result = match diagram_policy {
+        policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
+            model
+                .sequence
+                .as_ref()
+                .expect("sequence policy has sequence model"),
+            &styles,
+            Some(inner_width),
+        ),
+        policy::DiagramPolicy::PaintClass | policy::DiagramPolicy::PaintEr => flow::render_class(
+            &model.graph,
+            model
+                .class_info
+                .as_ref()
+                .expect("class policy has class model"),
+            &styles,
+            Some(inner_width),
+        ),
+        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState
+            if model.graph.groups.is_empty() =>
+        {
+            flow::layout_flowchart(&model.graph, &styles, Some(inner_width))
+        }
+        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
+            flow::render_grouped(&model.graph, &styles, Some(inner_width))
+        }
+        policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
+    };
+    let art = match result {
+        Ok(art) => art,
+        Err(painter::Oversize::Width) => {
             return MermaidRender::Fallback(MermaidFallback::TooWide);
         }
-        cells += width;
-        if cells > MAX_RENDERED_CELLS {
+        Err(painter::Oversize::Cells) => {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
         }
-    }
-
-    MermaidRender::Rendered(
-        output_lines
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line.to_owned(), Theme::markdown_code_block())))
-            .collect(),
-    )
-}
-
-fn contains_unsafe_content(source: &str) -> bool {
-    if source.contains('\x1b') {
-        return true;
-    }
-    let lower = source.to_ascii_lowercase();
-    lower.contains("javascript:")
-        || lower.contains("<script")
-        || lower.contains("<iframe")
-        || lower.contains("<a ")
-        || lower.lines().any(|line| {
-            let trimmed = line.trim_start();
-            trimmed.starts_with("click ") || trimmed.starts_with("href ")
-        })
-}
-
-fn parse_complexity(source: &str, kind: DiagramKind) -> Result<Complexity, mermaid_text::Error> {
-    let complexity = match kind {
-        DiagramKind::Flowchart => graph_complexity(mermaid_text::parser::flowchart::parse(source)?),
-        DiagramKind::State => graph_complexity(mermaid_text::parser::state::parse(source)?),
-        DiagramKind::Sequence => {
-            let diagram = mermaid_text::parser::sequence::parse(source)?;
-            Complexity {
-                primary: diagram.participants.len(),
-                relationships: diagram.messages.len(),
-                groups: diagram.blocks.len() + diagram.participant_groups.len(),
-                details: diagram.notes.len() + diagram.activations.len(),
-                depth: sequence_depth(&diagram.blocks),
-            }
-        }
-        DiagramKind::Pie => {
-            let chart = mermaid_text::parser::pie::parse(source)?;
-            Complexity {
-                primary: chart.slices.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Er => {
-            let diagram = mermaid_text::parser::er::parse(source)?;
-            Complexity {
-                primary: diagram.entities.len(),
-                relationships: diagram.relationships.len(),
-                details: diagram
-                    .entities
-                    .iter()
-                    .map(|entity| entity.attributes.len())
-                    .sum(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Class => {
-            let diagram = mermaid_text::parser::class::parse(source)?;
-            Complexity {
-                primary: diagram.classes.len(),
-                relationships: diagram.relations.len(),
-                details: diagram
-                    .classes
-                    .iter()
-                    .map(|class| class.members.len())
-                    .sum(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Journey => {
-            let diagram = mermaid_text::parser::journey::parse(source)?;
-            Complexity {
-                primary: diagram
-                    .sections
-                    .iter()
-                    .map(|section| section.tasks.len())
-                    .sum(),
-                groups: diagram.sections.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Gantt => {
-            let diagram = mermaid_text::parser::gantt::parse(source)?;
-            Complexity {
-                primary: diagram
-                    .sections
-                    .iter()
-                    .map(|section| section.tasks.len())
-                    .sum(),
-                groups: diagram.sections.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Timeline => {
-            let diagram = mermaid_text::parser::timeline::parse(source)?;
-            Complexity {
-                primary: diagram
-                    .sections
-                    .iter()
-                    .map(|section| section.entries.len())
-                    .sum(),
-                groups: diagram.sections.len(),
-                details: diagram
-                    .sections
-                    .iter()
-                    .flat_map(|section| &section.entries)
-                    .map(|entry| entry.events.len())
-                    .sum(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::GitGraph => {
-            let graph = mermaid_text::parser::git_graph::parse(source)?;
-            Complexity {
-                primary: graph.commits.len(),
-                groups: graph.branches.len(),
-                details: graph.events.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Mindmap => {
-            let map = mermaid_text::parser::mindmap::parse(source)?;
-            let (nodes, depth) = mindmap_complexity(&map.root);
-            Complexity {
-                primary: nodes,
-                depth,
-                ..Default::default()
-            }
-        }
-        DiagramKind::QuadrantChart => {
-            let chart = mermaid_text::parser::quadrant_chart::parse(source)?;
-            Complexity {
-                primary: chart.points.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::RequirementDiagram => {
-            let diagram = mermaid_text::parser::requirement_diagram::parse(source)?;
-            Complexity {
-                primary: diagram.requirements.len() + diagram.elements.len(),
-                relationships: diagram.relationships.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Sankey => {
-            let diagram = mermaid_text::parser::sankey::parse(source)?;
-            let mut entities = std::collections::HashSet::new();
-            for flow in &diagram.flows {
-                entities.insert(&flow.source);
-                entities.insert(&flow.target);
-            }
-            Complexity {
-                primary: entities.len(),
-                relationships: diagram.flows.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::XyChart => {
-            let chart = mermaid_text::parser::xy_chart::parse(source)?;
-            Complexity {
-                primary: chart.bar_series.len() + chart.line_series.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::BlockDiagram => {
-            let diagram = mermaid_text::parser::block_diagram::parse(source)?;
-            Complexity {
-                primary: diagram.blocks.len(),
-                relationships: diagram.edges.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Architecture => {
-            let diagram = mermaid_text::parser::architecture::parse(source)?;
-            Complexity {
-                primary: diagram.services.len(),
-                relationships: diagram.edges.len(),
-                groups: diagram.groups.len(),
-                ..Default::default()
-            }
-        }
-        DiagramKind::Packet => {
-            let packet = mermaid_text::parser::packet::parse(source)?;
-            Complexity {
-                primary: packet.fields.len(),
-                ..Default::default()
-            }
-        }
     };
-    Ok(complexity)
+    if let Err(fallback) = validate_output(&art.plain_lines, inner_width) {
+        return fallback;
+    }
+    MermaidRender::Rendered(art.styled_lines)
 }
 
-fn graph_complexity(graph: mermaid_text::Graph) -> Complexity {
-    Complexity {
-        primary: graph.nodes.len(),
-        relationships: graph.edges.len(),
-        groups: graph.subgraphs.len(),
-        depth: subgraph_depth(&graph.subgraphs),
-        ..Default::default()
+fn validate_output(lines: &[String], inner_width: usize) -> Result<(), MermaidRender> {
+    if lines.len() > MAX_RENDERED_LINES {
+        return Err(MermaidRender::Fallback(MermaidFallback::OutputLines));
     }
-}
-
-fn subgraph_depth(subgraphs: &[mermaid_text::types::Subgraph]) -> usize {
-    let by_id = subgraphs
-        .iter()
-        .map(|group| (group.id.as_str(), group))
-        .collect::<HashMap<_, _>>();
-    let child_ids = subgraphs
-        .iter()
-        .flat_map(|group| group.subgraph_ids.iter().map(String::as_str))
-        .collect::<std::collections::HashSet<_>>();
-    let mut stack = subgraphs
-        .iter()
-        .filter(|group| !child_ids.contains(group.id.as_str()))
-        .map(|group| (group, 1))
-        .collect::<Vec<_>>();
-    if stack.is_empty() && !subgraphs.is_empty() {
-        return MAX_NESTING_DEPTH + 1;
-    }
-
-    let mut visited = std::collections::HashSet::new();
-    let mut max_depth = 0;
-    while let Some((group, depth)) = stack.pop() {
-        if !visited.insert(group.id.as_str()) {
-            return MAX_NESTING_DEPTH + 1;
+    let mut cells = 0usize;
+    for line in lines {
+        if line.contains('\x1b') {
+            return Err(MermaidRender::Fallback(MermaidFallback::AnsiOutput));
         }
-        max_depth = max_depth.max(depth);
-        stack.extend(
-            group
-                .subgraph_ids
-                .iter()
-                .filter_map(|id| by_id.get(id.as_str()))
-                .map(|child| (*child, depth + 1)),
-        );
+        let width = display_width(line);
+        if width > inner_width {
+            return Err(MermaidRender::Fallback(MermaidFallback::TooWide));
+        }
+        cells = cells.saturating_add(width);
+        if cells > MAX_RENDERED_CELLS {
+            return Err(MermaidRender::Fallback(MermaidFallback::OutputCells));
+        }
     }
-    max_depth
+    Ok(())
 }
 
-fn mindmap_complexity(root: &mermaid_text::MindmapNode) -> (usize, usize) {
-    let mut stack = vec![(root, 1)];
-    let mut nodes = 0;
-    let mut max_depth = 0;
-    while let Some((node, depth)) = stack.pop() {
-        nodes += 1;
-        max_depth = max_depth.max(depth);
-        stack.extend(node.children.iter().map(|child| (child, depth + 1)));
-    }
-    (nodes, max_depth)
-}
-
-fn sequence_depth(blocks: &[mermaid_text::sequence::Block]) -> usize {
-    // The dependency exposes sequence blocks as a flat list. Overlapping ranges
-    // are nested when one block's message interval strictly contains another.
-    blocks
-        .iter()
-        .map(|outer| {
-            1 + blocks
-                .iter()
-                .filter(|inner| {
-                    outer.start_message <= inner.start_message
-                        && outer.end_message >= inner.end_message
-                        && (outer.start_message, outer.end_message)
-                            != (inner.start_message, inner.end_message)
-                })
-                .count()
-        })
-        .max()
-        .unwrap_or_default()
+fn is_supported_header(source: &str) -> bool {
+    let Some(header) = source
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("%%"))
+        .and_then(|line| line.split_whitespace().next())
+    else {
+        return false;
+    };
+    matches!(
+        header.to_ascii_lowercase().as_str(),
+        "flowchart"
+            | "graph"
+            | "statediagram"
+            | "statediagram-v2"
+            | "sequencediagram"
+            | "classdiagram"
+            | "erdiagram"
+    )
 }
 
 #[cfg(test)]

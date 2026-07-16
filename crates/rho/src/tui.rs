@@ -95,7 +95,10 @@ use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
-use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
+use markdown::{
+    push_wrapped_markdown_without_copy_button_from_fence_state, update_code_block_state,
+    CodeFenceState,
+};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -267,7 +270,7 @@ struct App {
     should_quit: bool,
     ctrl_c_streak: u8,
     assistant_stream: AppendOnlyStream,
-    assistant_stream_in_code_block: bool,
+    assistant_stream_code_fence: CodeFenceState,
     reasoning_stream: AppendOnlyStream,
     current_stream_kind: Option<StreamKind>,
     stream_preview_deadline: Option<Instant>,
@@ -664,7 +667,7 @@ impl App {
             should_quit: false,
             ctrl_c_streak: 0,
             assistant_stream: AppendOnlyStream::default(),
-            assistant_stream_in_code_block: false,
+            assistant_stream_code_fence: CodeFenceState::default(),
             reasoning_stream: AppendOnlyStream::default(),
             current_stream_kind: None,
             stream_preview_deadline: None,
@@ -2899,7 +2902,7 @@ impl App {
 
     fn reset_streams(&mut self) {
         self.assistant_stream.reset();
-        self.assistant_stream_in_code_block = false;
+        self.assistant_stream_code_fence = CodeFenceState::default();
         self.reasoning_stream.reset();
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
@@ -3139,7 +3142,7 @@ impl App {
         let fragment = match kind {
             StreamKind::Assistant => self
                 .assistant_stream
-                .drain_renderable_markdown(inner_width, self.assistant_stream_in_code_block),
+                .drain_renderable_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
             StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
         };
         if let Some(fragment) = fragment {
@@ -3196,7 +3199,7 @@ impl App {
         let preview = match kind {
             StreamKind::Assistant => self
                 .assistant_stream
-                .drain_preview_markdown(inner_width, self.assistant_stream_in_code_block),
+                .drain_preview_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
             StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
         };
         self.stream_preview_deadline = None;
@@ -3251,12 +3254,12 @@ impl App {
         }
         let mut text_lines = Vec::new();
         if matches!(preview.kind, StreamKind::Assistant) {
-            let mut in_code_block = self.assistant_stream_in_code_block;
-            push_wrapped_markdown_without_copy_button(
+            let mut code_fence = self.assistant_stream_code_fence;
+            push_wrapped_markdown_without_copy_button_from_fence_state(
                 &mut text_lines,
                 &preview.text,
                 padded_content_width(width),
-                &mut in_code_block,
+                &mut code_fence,
             );
         } else {
             push_wrapped_text(
@@ -3275,7 +3278,7 @@ impl App {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             if matches!(kind, StreamKind::Assistant) {
-                update_code_block_state(render_text, &mut self.assistant_stream_in_code_block);
+                update_code_block_state(render_text, &mut self.assistant_stream_code_fence);
             }
             self.last_inserted_was_tool = false;
         }

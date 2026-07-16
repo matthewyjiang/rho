@@ -3,9 +3,13 @@ use ratatui::{
     text::{Line, Span},
 };
 
+mod code_fence;
 mod heading;
 mod mermaid;
 mod table;
+
+use code_fence::{is_closing_fence, mermaid_opening_fence, parse_opening_fence, CodeFence};
+pub(in crate::tui) use code_fence::{update_code_block_state, CodeFenceState};
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
@@ -19,23 +23,14 @@ use super::{
     theme::Theme,
 };
 
-pub(super) fn update_code_block_state(text: &str, in_code_block: &mut bool) {
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            *in_code_block = !*in_code_block;
-        }
-    }
-}
-
-pub(super) fn push_wrapped_markdown_without_copy_button(
+pub(super) fn push_wrapped_markdown_without_copy_button_from_fence_state(
     lines: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
-    in_code_block: &mut bool,
+    state: &mut CodeFenceState,
 ) {
     lines.extend(
-        render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Hidden)
-            .lines,
+        render_markdown_from_fence_state(text, width, state, CodeBlockCopyButton::Hidden).lines,
     );
 }
 
@@ -96,10 +91,10 @@ pub(super) fn incremental_markdown_tail_start(text: &str) -> usize {
     let mut trailing_block_start = 0;
     while line_index < raw_lines.len() {
         trailing_block_start = lines[line_index].0;
-        if raw_lines[line_index].trim_start().starts_with("```") {
+        if let Some(opening) = parse_opening_fence(raw_lines[line_index]) {
             line_index += 1;
             while line_index < raw_lines.len() {
-                let closes_block = raw_lines[line_index].trim_start().starts_with("```");
+                let closes_block = is_closing_fence(raw_lines[line_index], opening);
                 line_index += 1;
                 if closes_block {
                     break;
@@ -122,6 +117,18 @@ fn render_markdown_with_copy_button(
     in_code_block: &mut bool,
     copy_button: CodeBlockCopyButton,
 ) -> RenderedMarkdown {
+    let mut state = CodeFenceState::from_open_flag(*in_code_block);
+    let rendered = render_markdown_from_fence_state(text, width, &mut state, copy_button);
+    *in_code_block = state.is_open();
+    rendered
+}
+
+fn render_markdown_from_fence_state(
+    text: &str,
+    width: usize,
+    state: &mut CodeFenceState,
+    copy_button: CodeBlockCopyButton,
+) -> RenderedMarkdown {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut code_blocks = Vec::new();
@@ -129,44 +136,46 @@ fn render_markdown_with_copy_button(
 
     let raw_lines = text.lines().collect::<Vec<_>>();
     let mut line_index = 0;
+    let mut active_fence = state.active;
     while line_index < raw_lines.len() {
         let raw_line = raw_lines[line_index];
-        if !*in_code_block && is_mermaid_opening_fence(raw_line) {
-            if let Some(closing_offset) = raw_lines[line_index + 1..]
-                .iter()
-                .position(|line| line.trim_start().starts_with("```"))
-            {
-                let closing_index = line_index + 1 + closing_offset;
-                let source = raw_lines[line_index + 1..closing_index].join("\n");
-                let inner_width = width.saturating_sub(4);
-                if let mermaid::MermaidRender::Rendered(diagram_lines) =
-                    mermaid::render_mermaid(&source, inner_width)
+        if active_fence.is_none() {
+            if let Some(opening) = mermaid_opening_fence(raw_line) {
+                if let Some(closing_offset) = raw_lines[line_index + 1..]
+                    .iter()
+                    .position(|line| is_closing_fence(line, opening.fence))
                 {
-                    let top_line = lines.len();
-                    lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
-                    lines.extend(
-                        diagram_lines
-                            .into_iter()
-                            .map(|line| mermaid_content_line(line, width)),
-                    );
-                    lines.push(code_block_border(width, '╰', copy_button, None));
-                    if copy_button == CodeBlockCopyButton::Visible {
-                        if let Some(copy_columns) = code_block_copy_columns(width) {
-                            code_blocks.push(MarkdownCodeBlock {
-                                top_line,
-                                copy_columns,
-                                text: source,
-                            });
+                    let closing_index = line_index + 1 + closing_offset;
+                    let source = raw_lines[line_index + 1..closing_index].join("\n");
+                    let inner_width = width.saturating_sub(4);
+                    if let mermaid::MermaidRender::Rendered(diagram_lines) =
+                        mermaid::render_mermaid(&source, inner_width)
+                    {
+                        let top_line = lines.len();
+                        lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
+                        lines.extend(mermaid::panel_lines(diagram_lines, width));
+                        lines.push(code_block_border(width, '╰', copy_button, None));
+                        if copy_button == CodeBlockCopyButton::Visible {
+                            if let Some(copy_columns) = code_block_copy_columns(width) {
+                                code_blocks.push(MarkdownCodeBlock {
+                                    top_line,
+                                    copy_columns,
+                                    text: source,
+                                });
+                            }
                         }
+                        line_index = closing_index + 1;
+                        continue;
                     }
-                    line_index = closing_index + 1;
-                    continue;
                 }
             }
         }
-        let code_fence = raw_line.trim_start().starts_with("```");
-        if code_fence {
-            if *in_code_block {
+        let opening_fence = (active_fence.is_none())
+            .then(|| parse_opening_fence(raw_line))
+            .flatten();
+        let closing_fence = active_fence.is_some_and(|fence| is_closing_fence(raw_line, fence));
+        if opening_fence.is_some() || closing_fence {
+            if closing_fence {
                 lines.push(code_block_border(width, '╰', copy_button, None));
                 if let Some((top_line, copy_columns, content)) = active_code_block.take() {
                     code_blocks.push(MarkdownCodeBlock {
@@ -175,7 +184,9 @@ fn render_markdown_with_copy_button(
                         text: content.join("\n"),
                     });
                 }
+                active_fence = None;
             } else {
+                active_fence = opening_fence;
                 let top_line = lines.len();
                 lines.push(code_block_border(width, '╭', copy_button, None));
                 if copy_button == CodeBlockCopyButton::Visible {
@@ -184,12 +195,12 @@ fn render_markdown_with_copy_button(
                     }
                 }
             }
-            *in_code_block = !*in_code_block;
+            state.active = active_fence;
             line_index += 1;
             continue;
         }
 
-        if *in_code_block {
+        if active_fence.is_some() {
             if let Some((_, _, content)) = &mut active_code_block {
                 content.push(raw_line);
             }
@@ -237,6 +248,7 @@ fn render_markdown_with_copy_button(
         lines.push(Line::from(Span::styled(String::new(), Theme::text())));
     }
 
+    state.active = active_fence;
     RenderedMarkdown { lines, code_blocks }
 }
 
@@ -425,17 +437,19 @@ fn markdown_safe_prefix_len(text: &str, candidate_byte_index: usize, in_code_blo
 }
 
 fn line_starts_in_code_block(text: &str, line_start: usize, in_code_block: bool) -> bool {
-    let mut current_line_in_code_block = in_code_block;
+    let mut active_fence = in_code_block.then_some(CodeFence {
+        marker: '`',
+        length: 3,
+    });
     for complete_line in text[..line_start].split_inclusive('\n') {
-        if complete_line
-            .trim_end_matches('\n')
-            .trim_start()
-            .starts_with("```")
-        {
-            current_line_in_code_block = !current_line_in_code_block;
+        let line = complete_line.trim_end_matches('\n');
+        if active_fence.is_some_and(|fence| is_closing_fence(line, fence)) {
+            active_fence = None;
+        } else if active_fence.is_none() {
+            active_fence = parse_opening_fence(line);
         }
     }
-    current_line_in_code_block
+    active_fence.is_some()
 }
 
 fn code_block_stream_content_width(width: usize) -> usize {
@@ -528,39 +542,6 @@ fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
     let label_width = display_width(code_block_copy_label(width)?);
     let start = width.saturating_sub(label_width + 1);
     Some(start..start + label_width)
-}
-
-fn is_mermaid_opening_fence(line: &str) -> bool {
-    line.trim_start()
-        .strip_prefix("```")
-        .and_then(|info| info.split_whitespace().next())
-        .is_some_and(|token| token.eq_ignore_ascii_case("mermaid"))
-}
-
-fn mermaid_content_line(line: Line<'static>, width: usize) -> Line<'static> {
-    let style = Theme::markdown_code_block();
-    if width <= 1 {
-        return line;
-    }
-    if width <= 3 {
-        let mut spans = vec![Span::styled("│", style)];
-        spans.extend(line.spans);
-        return Line::from(spans);
-    }
-
-    let content_width = width - 4;
-    let line_width = line
-        .spans
-        .iter()
-        .map(|span| display_width(span.content.as_ref()))
-        .sum::<usize>();
-    let mut spans = vec![Span::styled("│ ", style)];
-    spans.extend(line.spans);
-    spans.push(Span::styled(
-        format!("{} │", " ".repeat(content_width.saturating_sub(line_width))),
-        style,
-    ));
-    Line::from(spans)
 }
 
 fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
