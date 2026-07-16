@@ -6,19 +6,73 @@ use ratatui::{
 use super::{theme::Theme, App, Entry};
 use crate::usage_limits::{
     fetch_connected_usage_limits, now_unix, ProviderLimits, ProviderUsageLimits, UsageLimitWindow,
+    UsageLimitsError,
 };
 
 const BAR_WIDTH: usize = 10;
 const RELATIVE_RESET_CUTOFF_SECONDS: i64 = 24 * 60 * 60;
 
+pub(super) type LimitsFetchResult =
+    Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError>;
+
 impl App {
-    pub(super) async fn execute_limits_command(
+    pub(super) fn execute_limits_command(
         &mut self,
         terminal: &mut ratatui::DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.start_limits_command() {
+            terminal.draw(|frame| self.draw(frame))?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn start_limits_command(&mut self) -> bool {
+        if self.pending_usage_limits.is_some() {
+            self.insert_entry(&Entry::Notice(
+                "an OAuth usage limit check is already in progress".into(),
+            ));
+            self.status = "checking OAuth usage limits".into();
+            return false;
+        }
+
+        let credential_store = self.credential_store.clone();
+        self.pending_usage_limits = Some(tokio::spawn(async move {
+            fetch_connected_usage_limits(credential_store.as_ref()).await
+        }));
         self.status = "checking OAuth usage limits".into();
-        terminal.draw(|frame| self.draw(frame))?;
-        match fetch_connected_usage_limits(self.credential_store.as_ref()).await {
+        true
+    }
+
+    pub(super) async fn poll_limits_command(&mut self) -> anyhow::Result<bool> {
+        if !self
+            .pending_usage_limits
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            return Ok(false);
+        }
+        self.finish_limits_command().await?;
+        Ok(true)
+    }
+
+    async fn finish_limits_command(&mut self) -> anyhow::Result<()> {
+        let Some(handle) = self.pending_usage_limits.take() else {
+            return Ok(());
+        };
+        match handle.await {
+            Ok(result) => self.render_limits_result(result),
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not check OAuth usage limits: background task failed: {error}"
+                )));
+                self.status = "OAuth usage limit check failed".into();
+            }
+        }
+        Ok(())
+    }
+
+    fn render_limits_result(&mut self, result: LimitsFetchResult) {
+        match result {
             Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
                 self.insert_entry(&Entry::Notice(
                     "no supported OAuth providers are connected; connect Codex with /login openai-codex or xAI with /login xai"
@@ -59,7 +113,6 @@ impl App {
                 self.status = "OAuth usage limit check failed".into();
             }
         }
-        Ok(())
     }
 }
 

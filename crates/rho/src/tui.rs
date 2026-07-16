@@ -312,6 +312,7 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
+    pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     cumulative_usage: Option<ModelUsage>,
     // SDK usage updates are cumulative within a run. These snapshots let the TUI
     // replace active usage while preserving totals from prior runs and steps.
@@ -695,6 +696,7 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_oauth_login: None,
+            pending_usage_limits: None,
             cumulative_usage: None,
             usage_before_current_run: None,
             usage_before_current_step: None,
@@ -750,11 +752,16 @@ impl App {
                 || self
                     .pending_oauth_login
                     .as_ref()
-                    .is_some_and(|pending| pending.handle.is_finished());
+                    .is_some_and(|pending| pending.handle.is_finished())
+                || self
+                    .pending_usage_limits
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished());
             self.poll_model_metadata_fetch(agent);
             self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
+            needs_redraw |= self.poll_limits_command().await?;
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.running {
                 self.insert_deferred_inline_shell_context(agent)?;
@@ -773,6 +780,7 @@ impl App {
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_oauth_login.is_some()
+                || self.pending_usage_limits.is_some()
                 || !self.pending_inline_shells.is_empty()
             {
                 Duration::from_millis(100)
@@ -2573,9 +2581,12 @@ impl App {
             CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
+            CommandId::Limits => {
+                self.start_limits_command();
+                Ok(())
+            }
             CommandId::New
             | CommandId::Compact
-            | CommandId::Limits
             | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
@@ -3310,7 +3321,7 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
-            CommandId::Limits => self.execute_limits_command(terminal).await,
+            CommandId::Limits => self.execute_limits_command(terminal),
         }
     }
 

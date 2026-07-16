@@ -2,6 +2,23 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
+#[tokio::test]
+async fn running_limits_query_does_not_queue_model_context() {
+    let mut app = super::super::tests::test_app();
+    app.running = true;
+
+    assert!(app.start_limits_command());
+    app.finish_limits_command().await.unwrap();
+
+    assert!(app.steering_prompts.is_empty());
+    assert!(app.queued_prompts.is_empty());
+    assert!(matches!(
+        app.transcript.last(),
+        Some(Entry::Notice(notice))
+            if notice.starts_with("no supported OAuth providers are connected")
+    ));
+}
+
 #[test]
 fn renders_only_available_windows_with_remaining_bar() {
     let lines = usage_limit_lines(
