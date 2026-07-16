@@ -14,7 +14,7 @@ const MAX_NESTING_DEPTH: usize = 6;
 const MAX_DETAILS: usize = 1_024;
 const MAX_RENDERED_LINES: usize = 4_096;
 const MAX_RENDERED_CELLS: usize = 2_000_000;
-const COMPACT_GRAPH_GAPS: (usize, usize) = (1, 0);
+const COMPACT_GRAPH_GAPS: (usize, usize) = (2, 1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MermaidFallback {
@@ -93,8 +93,16 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         max_width: Some(inner_width),
         ascii: false,
         color: false,
+        // Grok Build's terminal renderer uses a compact layered layout rather
+        // than a general-purpose graph layout. The dependency's native backend
+        // follows the same policy and avoids tall routing bands for simple
+        // terminal flowcharts.
+        backend: if compact_graph {
+            mermaid_text::layout::LayoutBackend::Native
+        } else {
+            mermaid_text::layout::LayoutBackend::default()
+        },
         gaps_override: compact_graph.then_some(COMPACT_GRAPH_GAPS),
-        ..Default::default()
     };
     let mut output = match mermaid_text::render_with_options(source, &options) {
         Ok(output) => output,

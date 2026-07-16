@@ -113,6 +113,23 @@ fn keeps_top_to_bottom_flowcharts_vertically_compact() {
 }
 
 #[test]
+fn keeps_branching_flowcharts_compact() {
+    let lines = rendered(
+        "flowchart TD\nA[Boil water] --> B[Place tea in cup]\nB --> C[Pour in hot water]\nC --> D{Add milk or sugar?}\nD -->|Yes| E[Add extras]\nD -->|No| F[Drink tea]\nE --> F",
+        100,
+    );
+
+    assert!(lines.iter().any(|line| line.contains("Add milk or sugar?")));
+    assert!(lines.iter().any(|line| line.contains("Drink tea")));
+    assert!(
+        lines.len() <= 32,
+        "branching flowchart used {} lines:\n{}",
+        lines.len(),
+        lines.join("\n")
+    );
+}
+
+#[test]
 fn renders_unicode_labels_without_mismeasuring_cells() {
     let lines = rendered("flowchart LR\nA[你好] --> B[e\u{301}🙂]", 80);
     assert!(lines.iter().any(|line| line.contains('你')));
