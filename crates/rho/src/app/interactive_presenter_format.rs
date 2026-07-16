@@ -215,7 +215,10 @@ pub(super) fn command_result_lines(
                 |seconds| format!("timeout: {seconds}s"),
             ),
     );
-    if let Some(stdout) = shell_stdout(content) {
+    if let Some((notice, stdout)) = shell_output(content) {
+        if let Some(notice) = notice {
+            lines.push(notice.to_string());
+        }
         if !stdout.trim().is_empty() {
             lines.push(String::new());
             lines.push(stdout.trim_end().to_string());
@@ -227,17 +230,17 @@ pub(super) fn command_result_lines(
     lines
 }
 
-fn shell_stdout(content: &str) -> Option<&str> {
-    let stdout = content.strip_prefix("stdout:\n").or_else(|| {
-        content
-            .split_once("\n\nstdout:\n")
-            .map(|(_, stdout)| stdout)
-    })?;
-    Some(
-        stdout
-            .split_once("\n\nstderr:")
-            .map_or(stdout, |(stdout, _)| stdout),
-    )
+fn shell_output(content: &str) -> Option<(Option<&str>, &str)> {
+    let (notice, output) = if let Some(stdout) = content.strip_prefix("stdout:\n") {
+        (None, stdout)
+    } else {
+        let (notice, stdout) = content.split_once("\n\nstdout:\n")?;
+        (Some(notice), stdout)
+    };
+    let stdout = output
+        .rsplit_once("\n\nstderr:")
+        .map_or(output, |(stdout, _)| stdout);
+    Some((notice, stdout))
 }
 
 pub(super) fn display_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {

@@ -67,6 +67,32 @@ fn command_preview_and_result_preserve_command_summary() {
 }
 
 #[test]
+fn shell_result_preserves_stderr_like_stdout_and_timeout_notice() {
+    let presenter = InteractiveToolPresenter::new("/workspace".into());
+    let call = call(
+        "call-timeout",
+        "bash",
+        serde_json::json!({"command": "slow-command", "timeout_seconds": 5}),
+    );
+    let finished = presenter.historical(
+        &call,
+        /*ok*/ false,
+        "command timed out after 5s\n\nstdout:\na\n\nstderr:\nb\n\nstderr:\nwarning",
+    );
+
+    assert_eq!(
+        finished.display_lines,
+        vec![
+            "$ slow-command",
+            "timeout: 5s",
+            "command timed out after 5s",
+            "",
+            "a\n\nstderr:\nb",
+        ]
+    );
+}
+
+#[test]
 fn file_results_use_structured_paths_and_compact_diff() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     let id = ToolCallId::from_string("call-edit").unwrap();
