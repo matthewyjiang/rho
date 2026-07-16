@@ -216,6 +216,17 @@ fn apply_child_env(cmd: &mut CommandBuilder, env: &[(impl AsRef<str>, impl AsRef
     for marker in crate::env::HOST_TERMINAL_MARKERS {
         cmd.env_remove(marker);
     }
+    // Keep provider credentials out of isolated runs unless a launch plan
+    // explicitly injects them below.
+    for credential_var in [
+        "OPENAI_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "GITHUB_COPILOT_TOKEN",
+        "XAI_ACCESS_TOKEN",
+    ] {
+        cmd.env_remove(credential_var);
+    }
     // Avoid accidental Herdr coupling during automated PTY runs.
     for herdr_var in ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"] {
         cmd.env_remove(herdr_var);

@@ -77,9 +77,9 @@ pub struct CodexUsageLimitsSource {
 }
 
 impl CodexUsageLimitsSource {
-    pub fn new() -> Self {
+    pub fn new(client: reqwest::Client) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client,
             endpoint: CODEX_USAGE_URL.into(),
         }
     }
@@ -206,9 +206,9 @@ pub struct XaiUsageLimitsSource {
 }
 
 impl XaiUsageLimitsSource {
-    pub fn new() -> Self {
+    pub fn new(client: reqwest::Client) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client,
             endpoint: XAI_BILLING_URL.into(),
         }
     }
@@ -343,12 +343,30 @@ impl UsageLimitsSource for XaiUsageLimitsSource {
 
 pub async fn fetch_connected_usage_limits(
     store: &dyn CredentialStore,
+    client: reqwest::Client,
+) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
+    let codex = CodexUsageLimitsSource::new(client.clone());
+    let xai = XaiUsageLimitsSource::new(client);
+    fetch_usage_limits_from_sources(store, &codex, &xai).await
+}
+
+async fn fetch_usage_limits_from_sources(
+    store: &dyn CredentialStore,
+    first: &(dyn UsageLimitsSource + Sync),
+    second: &(dyn UsageLimitsSource + Sync),
+) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
+    let (first, second) = tokio::join!(first.fetch(store), second.fetch(store));
+    aggregate_usage_limits([first, second])
+}
+
+fn aggregate_usage_limits(
+    results: [Result<Option<ProviderUsageLimits>, UsageLimitsError>; 2],
 ) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
     let mut providers = Vec::new();
     let mut errors = Vec::new();
     let mut saw_connected = false;
-    for source in connected_sources() {
-        match source.fetch(store).await {
+    for result in results {
+        match result {
             Ok(None) => {}
             Ok(Some(limits)) => {
                 saw_connected = true;
@@ -367,13 +385,6 @@ pub async fn fetch_connected_usage_limits(
         return Err(errors.into_iter().next().expect("connected provider error"));
     }
     Ok((ProviderLimits { providers }, errors))
-}
-
-fn connected_sources() -> Vec<Box<dyn UsageLimitsSource + Send + Sync>> {
-    vec![
-        Box::new(CodexUsageLimitsSource::new()),
-        Box::new(XaiUsageLimitsSource::new()),
-    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

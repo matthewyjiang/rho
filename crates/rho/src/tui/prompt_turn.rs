@@ -127,6 +127,9 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
+            if self.poll_limits_command().await? {
+                self.draw_running_frame(terminal, &mut frame_scheduler)?;
+            }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             tokio::select! {

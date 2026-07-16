@@ -116,6 +116,12 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
         text: "input flood event 010",
         timeout: STREAM,
     },
+    Step::Phase("query_limits"),
+    Step::SubmitText("/limits"),
+    Step::WaitText {
+        text: "no supported OAuth providers are connected",
+        timeout: STREAM,
+    },
     Step::Phase("type_draft"),
     Step::TypeText("draft while streaming"),
     Step::WaitText {

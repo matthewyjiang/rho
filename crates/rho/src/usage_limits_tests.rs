@@ -1,9 +1,14 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
+    sync::Barrier,
 };
 
 use super::*;
@@ -30,6 +35,60 @@ impl CredentialStore for TestStore {
     fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
         Ok(self.secrets.lock().unwrap().remove(account).is_some())
     }
+}
+
+struct ConcurrentSource {
+    barrier: Arc<Barrier>,
+    limits: ProviderUsageLimits,
+}
+
+impl UsageLimitsSource for ConcurrentSource {
+    fn fetch<'a>(
+        &'a self,
+        _store: &'a dyn CredentialStore,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            self.barrier.wait().await;
+            Ok(Some(self.limits.clone()))
+        })
+    }
+}
+
+#[tokio::test]
+async fn fetches_connected_providers_concurrently_in_stable_order() {
+    let barrier = Arc::new(Barrier::new(2));
+    let first = ConcurrentSource {
+        barrier: barrier.clone(),
+        limits: ProviderUsageLimits {
+            provider: "first".into(),
+            windows: Vec::new(),
+        },
+    };
+    let second = ConcurrentSource {
+        barrier,
+        limits: ProviderUsageLimits {
+            provider: "second".into(),
+            windows: Vec::new(),
+        },
+    };
+
+    let (limits, errors) = tokio::time::timeout(
+        Duration::from_secs(1),
+        fetch_usage_limits_from_sources(&TestStore::default(), &first, &second),
+    )
+    .await
+    .expect("both provider fetches should start before either completes")
+    .unwrap();
+
+    assert_eq!(
+        limits,
+        ProviderLimits {
+            providers: vec![first.limits, second.limits],
+        }
+    );
+    assert!(errors.is_empty());
 }
 
 #[test]
