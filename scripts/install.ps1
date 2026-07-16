@@ -31,26 +31,43 @@ function Invoke-GitHubApi($Uri) {
     }
 }
 
-function Get-ReleaseTag {
+function Get-ReleaseForAsset {
     if ($Version -eq "latest") {
-        $Release = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/latest"
-        if ([string]::IsNullOrWhiteSpace($Release.tag_name)) {
+        $Latest = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/latest"
+        if ([string]::IsNullOrWhiteSpace($Latest.tag_name)) {
             throw "failed to determine latest release tag from GitHub API"
         }
-        return $Release.tag_name
+        if ($Latest.assets.name -contains $Asset) {
+            return $Latest
+        }
+
+        $Fallback = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases?per_page=100" |
+            Where-Object { $_.assets.name -contains $Asset } |
+            Select-Object -First 1
+        if (-not $Fallback) {
+            throw "$($Latest.tag_name) is tagged but asset $Asset is not published yet, and no earlier compatible release was found. Install from source instead: cargo install rho-coding-agent"
+        }
+        Write-Warning "$($Latest.tag_name) is tagged but asset $Asset is not published yet; installing $($Fallback.tag_name) instead"
+        return $Fallback
     }
+
     if ($Version -like "rho-coding-agent-*") {
-        return $Version
+        $ReleaseTag = $Version
+    } elseif ($Version -match "^\d+\.\d+\.\d+([+-].*)?$") {
+        $ReleaseTag = "rho-coding-agent-v$Version"
+    } else {
+        $ReleaseTag = "rho-coding-agent-$Version"
     }
-    if ($Version -match "^\d+\.\d+\.\d+([+-].*)?$") {
-        return "rho-coding-agent-v$Version"
+    $Release = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/tags/$ReleaseTag"
+    if ($Release.assets.name -notcontains $Asset) {
+        throw "release $ReleaseTag does not include asset $Asset. Install from source instead: cargo install rho-coding-agent"
     }
-    return "rho-coding-agent-$Version"
+    return $Release
 }
 
 function Get-AssetUrl {
-    $ReleaseTag = Get-ReleaseTag
-    return "https://github.com/$Repo/releases/download/$ReleaseTag/$Asset"
+    $Release = Get-ReleaseForAsset
+    return ($Release.assets | Where-Object { $_.name -eq $Asset } | Select-Object -First 1).browser_download_url
 }
 
 function Add-ToUserPath($Dir) {
@@ -120,20 +137,13 @@ try {
     Write-Host "downloading rho for $Target..."
     Invoke-Download $Url $Archive $true | Out-Null
 
-    try {
-        if (-not (Invoke-Download "$Url.sha256" $Checksum $false)) {
-            throw "checksum file is unavailable"
-        }
-        $Expected = ((Get-Content $Checksum -Raw) -split "\s+")[0].Trim().ToLowerInvariant()
-        $Actual = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
-        if ($Actual -ne $Expected) {
-            throw "checksum verification failed"
-        }
-    } catch {
-        if ($_.Exception.Message -eq "checksum verification failed") {
-            throw
-        }
-        Write-Warning "checksum file is unavailable, skipping verification"
+    if (-not (Invoke-Download "$Url.sha256" $Checksum $false)) {
+        throw "failed to download required checksum: $Url.sha256"
+    }
+    $Expected = ((Get-Content $Checksum -Raw) -split "\s+")[0].Trim().ToLowerInvariant()
+    $Actual = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($Expected) -or $Actual -ne $Expected) {
+        throw "checksum verification failed for $Url"
     }
 
     Expand-Archive -Path $Archive -DestinationPath $TempDir -Force

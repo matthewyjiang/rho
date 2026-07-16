@@ -164,27 +164,12 @@ jobs:
             args+=(--app)
           fi
           ./scripts/publish_workspace_crates.sh "${args[@]}"
-      - name: Publish draft GitHub releases after crates.io success
+      - name: Publish draft SDK release after crates.io success
+        if: ${{ needs.release.outputs.sdk_release_created == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_TAG: ${{ needs.release.outputs.tag_name }}
           SDK_TAG: ${{ needs.release.outputs.sdk_tag_name }}
-          PUBLISH_APP: ${{ needs.release.outputs.release_created }}
-          PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
-        run: |
-          set -euo pipefail
-          if [[ "$PUBLISH_SDK" == "true" && -n "$SDK_TAG" ]]; then
-            gh release edit "$SDK_TAG" --draft=false
-          fi
-          if [[ "$PUBLISH_APP" == "true" && -n "$APP_TAG" ]]; then
-            gh release edit "$APP_TAG" --draft=false
-          fi
-      - name: Dispatch Arch package workflow
-        if: ${{ needs.release.outputs.release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh workflow run publish-arch-package.yml --ref "$TAG"
+        run: gh release edit "$SDK_TAG" --draft=false
 
   release-binaries:
     needs: [release, publish-crates]
@@ -328,3 +313,19 @@ jobs:
           } else {
             gh pr create --base main --head $Branch --title $Title --body-file $BodyFile
           }
+
+  publish-app-release:
+    needs: [release, publish-crates, release-binaries]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' && needs.release-binaries.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish app release after all platform assets upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: gh release edit "$TAG" --draft=false
+      - name: Dispatch Arch package workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: gh workflow run publish-arch-package.yml --ref "$TAG"

@@ -49,27 +49,82 @@ platform() {
   esac
 }
 
+github_api() {
+  api="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+      -H 'User-Agent: rho-installer' "$api"
+  else
+    wget -q --header='User-Agent: rho-installer' "$api" -O -
+  fi
+}
+
+release_has_asset() {
+  asset="$1"
+  awk -v asset="$asset" '
+    $0 ~ /"name"[[:space:]]*:/ {
+      line=$0
+      sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      if (line == asset) found=1
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 release_tag() {
+  asset="$1"
   case "$VERSION" in
     latest)
-      api="https://api.github.com/repos/$REPO/releases/latest"
-      if command -v curl >/dev/null 2>&1; then
-        curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
-          -H 'User-Agent: rho-installer' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1
-      else
-        wget -q --header='User-Agent: rho-installer' "$api" -O - | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1
+      latest_api="https://api.github.com/repos/$REPO/releases/latest"
+      latest_json="$(github_api "$latest_api")"
+      tag="$(printf '%s\n' "$latest_json" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+      if printf '%s\n' "$latest_json" | release_has_asset "$asset"; then
+        printf '%s' "$tag"
+        return
       fi
+
+      releases_api="https://api.github.com/repos/$REPO/releases?per_page=100"
+      fallback="$(github_api "$releases_api" | awk -v asset="$asset" '
+        /"tag_name"[[:space:]]*:/ {
+          tag=$0
+          sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+          sub(/".*$/, "", tag)
+        }
+        /"name"[[:space:]]*:/ {
+          name=$0
+          sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", name)
+          sub(/".*$/, "", name)
+          if (name == asset && tag != "") { print tag; exit }
+        }
+      ')"
+      if [ -z "$fallback" ]; then
+        echo "error: $tag is tagged but asset $asset is not published yet, and no earlier compatible release was found" >&2
+        echo "       install from source instead: cargo install rho-coding-agent" >&2
+        exit 1
+      fi
+      echo "warning: $tag is tagged but asset $asset is not published yet; installing $fallback instead" >&2
+      printf '%s' "$fallback"
+      return
       ;;
-    rho-coding-agent-*) printf '%s' "$VERSION" ;;
-    [0-9]*.[0-9]*.[0-9]*) printf 'rho-coding-agent-v%s' "$VERSION" ;;
-    *) printf 'rho-coding-agent-%s' "$VERSION" ;;
+    rho-coding-agent-*) tag="$VERSION" ;;
+    [0-9]*.[0-9]*.[0-9]*) tag="rho-coding-agent-v$VERSION" ;;
+    *) tag="rho-coding-agent-$VERSION" ;;
   esac
+
+  release_api="https://api.github.com/repos/$REPO/releases/tags/$tag"
+  if ! github_api "$release_api" | release_has_asset "$asset"; then
+    echo "error: release $tag does not include asset $asset" >&2
+    echo "       install from source instead: cargo install rho-coding-agent" >&2
+    exit 1
+  fi
+  printf '%s' "$tag"
 }
 
 asset_url() {
   target="$1"
   asset="rho-$target.tar.gz"
-  tag="$(release_tag)"
+  tag="$(release_tag "$asset")"
   if [ -z "$tag" ]; then
     echo "error: could not determine latest release tag from GitHub API" >&2
     exit 1
@@ -102,22 +157,22 @@ echo "downloading rho for $target..."
 download "$url" "$archive"
 
 checksum="$tmp/rho.tar.gz.sha256"
-if download "$url.sha256" "$checksum"; then
-  expected="$(awk '{print $1}' "$checksum")"
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "$archive" | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
-  else
-    actual=""
-    echo "warning: could not verify checksum because sha256sum or shasum is not installed" >&2
-  fi
-  if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-    echo "error: checksum verification failed" >&2
-    exit 1
-  fi
+download "$url.sha256" "$checksum" || {
+  echo "error: failed to download required checksum: $url.sha256" >&2
+  exit 1
+}
+expected="$(awk '{print $1}' "$checksum")"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual="$(sha256sum "$archive" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
 else
-  echo "warning: checksum file is unavailable, skipping verification" >&2
+  echo "error: sha256sum or shasum is required to verify the downloaded archive" >&2
+  exit 1
+fi
+if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+  echo "error: checksum verification failed for $url" >&2
+  exit 1
 fi
 
 tar -xzf "$archive" -C "$tmp"
