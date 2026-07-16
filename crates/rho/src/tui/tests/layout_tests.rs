@@ -272,7 +272,8 @@ fn activity_rail_has_a_solid_full_width_background() {
     ));
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
     let rail = layout.activity_rail.unwrap();
-    assert!(layout.history_scrollbar.is_some());
+    let activity = layout.activity.unwrap();
+    let scrollbar = layout.history_scrollbar.unwrap();
     app.reveal_history_scrollbar(Instant::now());
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
 
@@ -288,10 +289,10 @@ fn activity_rail_has_a_solid_full_width_background() {
     for column in rail.x..rail.right() {
         assert_eq!(buffer[(column, rail.y)].bg, rail_background);
     }
-    assert_eq!(
-        buffer[(rail.right().saturating_sub(1), rail.y)].symbol(),
-        "█"
-    );
+    for column in activity.right()..scrollbar.rect.x {
+        assert_eq!(buffer[(column, rail.y)].symbol(), " ");
+    }
+    assert_eq!(buffer[(scrollbar.rect.x, rail.y)].symbol(), "█");
 }
 
 #[test]
