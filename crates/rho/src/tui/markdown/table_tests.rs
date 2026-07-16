@@ -125,3 +125,21 @@ fn table_parser_preserves_pipes_in_multi_backtick_code_spans() {
         vec!["`x".to_string(), "y".to_string()]
     );
 }
+
+#[test]
+fn lone_pipe_line_parses_as_a_single_empty_cell() {
+    assert_eq!(markdown_table_cells("|"), vec![String::new()]);
+}
+
+#[test]
+fn partial_separator_row_is_not_a_table() {
+    assert_eq!(
+        super::table::markdown_table_line_count(&["| a | b |", "|"]),
+        None
+    );
+}
+
+#[test]
+fn lone_pipe_body_row_does_not_panic() {
+    super::table::markdown_table_line_count(&["| a | b |", "| - | - |", "|"]);
+}
