@@ -64,6 +64,7 @@ bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]
 pretty_assertions = "1"
+rho-tui-pty = { path = "../rho-tui-pty" }
 tempfile = "3"
 
 [build-dependencies]

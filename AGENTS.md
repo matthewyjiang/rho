@@ -72,9 +72,16 @@ When asked to create subagents, use Rho unless the user explicitly requests anot
 - Keep parallel tasks ownership-disjoint; sequence work that touches the same large file or module root.
 - Ask agents to run focused tests, create a Conventional Commit, and report the commit hash for integration.
 
-## Rho TUI smoke tests with Herdr
+## Rho TUI testing
 
-When inside Herdr, test Rho from source in a sibling pane with `cargo run`. Control it as a user would: split a pane, launch Rho, wait for output, send text or keys, and inspect rendered output. Use this for focused end-to-end checks of TUI flows, commands, startup, and regressions. Capture only relevant excerpts and close temporary panes. Follow the `rho-tui-herdr-testing` skill for the full workflow.
+Prefer the deterministic PTY harness for automated interactive TUI regressions:
+
+- harness crate: `crates/rho-tui-pty`
+- smoke tests: `cargo test -p rho-coding-agent --test tui_pty`
+- single scenario: `cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho <scenario>`
+- skill: `rho-tui-pty-testing`
+
+Use Herdr sibling-pane smoke tests only for exploratory validation, novel bugs not yet covered by a scenario, or real-terminal parity checks. Follow `rho-tui-herdr-testing` for that workflow.
 
 ## Rho experience tests
 

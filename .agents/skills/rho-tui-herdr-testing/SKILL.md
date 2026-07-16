@@ -1,16 +1,24 @@
 ---
 name: rho-tui-herdr-testing
-description: Test Rho's interactive TUI end to end from inside Herdr. Use when changing or validating TUI rendering, input, keybindings, pickers, scrolling, commands, lifecycle state, startup, shutdown, or terminal restoration. Drive a local Rho build in a sibling pane, inspect rendered output, and clean up afterward.
+description: Exploratory Rho interactive TUI smoke tests from inside Herdr. Use when a PTY scenario cannot cover the behavior yet, when investigating a novel visual bug, or when comparing real-pane rendering to the PTY harness. Prefer rho-tui-pty-testing for automated regressions.
 compatibility: Requires HERDR_ENV=1, the herdr CLI, and a buildable Rho checkout.
 ---
 
 # Test the Rho TUI with Herdr
 
-Use Herdr as a terminal-level test harness. Run Rho in a sibling pane, send real input, and inspect the rendered terminal. This catches integration issues that unit tests miss.
+Use Herdr as an exploratory terminal-level harness. Run Rho in a sibling pane, send real input, and inspect the rendered terminal.
+
+For automated, CI-friendly interactive coverage, prefer the PTY harness and the `rho-tui-pty-testing` skill first.
+
+## Prefer PTY first
+
+1. Check whether `cargo test -p rho-coding-agent --test tui_pty` or a named `rho-pty-scenario` already covers the flow.
+2. If it does, run the PTY path and stop unless you need live visual confirmation.
+3. If it does not, use Herdr to reproduce, then encode a PTY scenario when the behavior is stable.
 
 ## Preconditions
 
-- Confirm `HERDR_ENV=1`; otherwise explain that Herdr is required and stop.
+- Confirm `HERDR_ENV=1`; otherwise explain that Herdr is required and stop, or fall back to `rho-tui-pty-testing`.
 - Run from the Rho repository root and preserve unrelated changes.
 - Use `herdr pane list` to identify the focused pane. Never replace the current agent pane with the test TUI.
 
@@ -136,5 +144,6 @@ Never leave test panes or processes running. Remove `.rho-tui-fixture-output.txt
 - Reproduce bugs through the reported user path before fixing them when practical.
 - Keep smoke tests focused and avoid timing-sensitive animation assertions.
 - Prefer semantic evidence over terminal coordinates; capture ANSI before and after visual interactions.
+- After a successful Herdr reproduction of a stable flow, add or extend a PTY scenario when practical.
 - Never enter secrets into captured panes.
 - Report the flow, assertions, pass/fail/blocked result, focused evidence, and cleanup. Do not dump full logs.

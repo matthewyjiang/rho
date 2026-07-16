@@ -67,7 +67,7 @@ Do not raise architecture line budgets merely to pass. Extract cohesive modules 
 
 Run `cargo check` or `cargo clippy --all-targets --all-features` when requested or when they add meaningful coverage. Never claim a check passed unless it was run.
 
-For interactive TUI behavior, load and follow `rho-tui-herdr-testing`. That skill owns the Herdr workflow, interaction guidance, model-cost policy, assertions, and cleanup. Record its flow and result here.
+For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Fall back to `rho-tui-herdr-testing` only for exploratory validation or when a PTY scenario cannot cover the behavior yet. Record the path used and its result here.
 
 ## 4. Handle failures
 

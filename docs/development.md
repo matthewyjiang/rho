@@ -16,6 +16,58 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+## Interactive TUI PTY harness
+
+Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios.
+
+### Layers
+
+- **PTY controller** - spawn a selected `rho` binary in a pseudo-terminal, inject keys/paste/mouse, resize, drain output, and kill-on-drop
+- **Screen model** - reconstruct the visible terminal with a VT parser and assert user-visible text
+- **Scenarios** - named action/assertion sequences over `RHO_TUI_TEST_MODE=matrix`
+- **Artifacts** - on failure, keep raw PTY bytes, reconstructed screen, action log, and redacted env
+
+Unix PTYs are supported. Windows is skipped with an explicit error rather than a silent pass.
+
+### Run harness self-tests
+
+```bash
+cargo test -p rho-tui-pty
+```
+
+### Run the CI smoke scenarios
+
+```bash
+cargo test -p rho-coding-agent --test tui_pty
+```
+
+Smoke scenarios cover startup/stream/exit, cancel-and-resubmit, resize-during-stream, scroll-during-stream, and terminal restoration.
+
+### Run one scenario locally
+
+```bash
+cargo build -p rho-coding-agent
+cargo run -p rho-tui-pty --bin rho-pty-scenario -- --list
+cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho startup_stream_exit
+cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --smoke
+cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --timing startup_stream_exit
+```
+
+Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successful runs do not retain artifacts.
+
+### Environment isolation
+
+Scenarios launch Rho with:
+
+- temporary `HOME` and `--config`
+- `RHO_TUI_TEST_MODE=matrix` (debug builds only)
+- host terminal markers stripped (`TMUX`, `TERM_PROGRAM`, Herdr vars, editor markers, and related identity env)
+- `check_for_updates = false` and `web_search_provider = "disabled"` in the isolated config
+
+### When to use Herdr instead
+
+Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the `rho-tui-pty-testing` and `rho-tui-herdr-testing` skills.
+
 ## Model integration layers
 
 Model integrations are split into three layers:
