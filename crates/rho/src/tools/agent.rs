@@ -19,14 +19,16 @@ use serde_json::{json, Value};
 use crate::{
     cancellation::RunCancellation,
     subagent::{self, Preset, RunState, RunStatus},
-    tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+    tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+};
+
+use super::agent_output::{
+    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-/// Cap on the result text echoed into notifications and blocking returns.
-const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
 
 type ForceKillRequest = tokio::sync::oneshot::Sender<Result<(), String>>;
 type ForceKillSender = tokio::sync::mpsc::UnboundedSender<ForceKillRequest>;
@@ -503,69 +505,11 @@ fn spawn_headless(
     Ok(command.spawn()?)
 }
 
-fn snapshot_json(snapshot: &SubagentSnapshot) -> Value {
-    let mut value = json!({
-        "id": snapshot.id,
-        "preset": snapshot.preset,
-        "state": snapshot.status.state.as_str(),
-        "background": snapshot.background,
-        "elapsed_s": snapshot.elapsed.as_secs(),
-        "turns": snapshot.status.turns,
-        "input_tokens": snapshot.status.input_tokens,
-        "output_tokens": snapshot.status.output_tokens,
-    });
-    let object = value.as_object_mut().expect("snapshot json object");
-    object.insert(
-        "log_file".into(),
-        json!(snapshot.log_file.to_string_lossy()),
-    );
-    object.insert(
-        "attach_command".into(),
-        json!(format!("rho attach {}", snapshot.id)),
-    );
-    if let Some(activity) = &snapshot.status.last_activity {
-        object.insert("last_activity".into(), json!(activity));
-    }
-    if let Some(text) = &snapshot.status.last_text {
-        object.insert("last_text".into(), json!(text));
-    }
-    if let Some(error) = &snapshot.status.error {
-        object.insert("error".into(), json!(error));
-    }
-    if let Some(error) = &snapshot.status.attachment_error {
-        object.insert("attachment_error".into(), json!(error));
-    }
-    value
-}
-
-fn finished_summary(snapshot: &SubagentSnapshot) -> String {
-    let mut summary = format!(
-        "subagent {} (preset {}) finished: state={}, turns={}, tokens in/out {}/{}",
-        snapshot.id,
-        snapshot.preset,
-        snapshot.status.state.as_str(),
-        snapshot.status.turns,
-        snapshot.status.input_tokens,
-        snapshot.status.output_tokens,
-    );
-    if let Some(error) = &snapshot.status.error {
-        summary.push_str(&format!("\nerror: {error}"));
-    }
-    match &snapshot.status.result {
-        Some(result) if !result.is_empty() => {
-            summary.push_str("\n\n");
-            summary.push_str(&truncate(result.clone(), RESULT_EXCERPT_BYTES));
-        }
-        _ => summary.push_str("\n(no result text)"),
-    }
-    summary
-}
-
 pub fn notification_prompts(notification: &SubagentNotification) -> (String, String) {
     let snapshot = &notification.snapshot;
     let model = format!(
-        "[subagent notification] Background {}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
-        finished_summary(snapshot)
+        "[subagent notification]\n\n{}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
+        format_snapshot(snapshot, SnapshotFormat::Completion)
     );
     let display = format!(
         "subagent {} ({}) finished - {}",
@@ -689,28 +633,21 @@ impl Tool for AgentTool {
         }
         let preset = subagent::find(&ctx.cwd, &args.preset)
             .map_err(|error| ToolError::Message(error.to_string()))?;
-        let (agent_id, log_file) = self
+        let (agent_id, _log_file) = self
             .manager
             .spawn(&preset, &args.prompt, args.background, &ctx.cwd)
             .await
             .map_err(|error| ToolError::Message(format!("failed to spawn subagent: {error}")))?;
 
-        let where_hint = format!(
-            "attach with `rho attach {agent_id}` (diagnostic log: {})",
-            log_file.display()
-        );
         if args.background {
             return Ok(ToolResult {
                 id,
                 ok: true,
-                content: format!(
-                    "started background subagent {agent_id} (preset {}); {where_hint}. If no foreground work remains, end your turn. Do not poll or wait; completion starts a new turn automatically. Use the agents tool only to check status when needed or to stop it. Do not read its log output.",
-                    preset.name
-                ),
+                content: format_background_start(&agent_id, &preset.name),
             });
         }
 
-        on_update(vec![format!("subagent {agent_id} {where_hint}")]);
+        on_update(vec![format_running(&agent_id)]);
         let snapshot = self
             .manager
             .wait_done(&agent_id)
@@ -719,7 +656,7 @@ impl Tool for AgentTool {
         Ok(ToolResult {
             id,
             ok: snapshot.status.state == RunState::Ok,
-            content: format!("{} ({where_hint})", finished_summary(&snapshot)),
+            content: format_snapshot(&snapshot, SnapshotFormat::Completion),
         })
     }
 
@@ -826,10 +763,13 @@ impl Tool for AgentsTool {
             "list" => {
                 let agents = self.manager.list();
                 if agents.is_empty() {
-                    "no subagents have been spawned this session".to_string()
+                    "no subagents".to_string()
                 } else {
-                    let list: Vec<Value> = agents.iter().map(snapshot_json).collect();
-                    serde_json::to_string_pretty(&Value::Array(list))?
+                    agents
+                        .iter()
+                        .map(format_list_entry)
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 }
             }
             "status" => {
@@ -838,16 +778,7 @@ impl Tool for AgentsTool {
                     .manager
                     .status(id)
                     .ok_or_else(|| ToolError::Message(format!("unknown subagent '{id}'")))?;
-                let mut value = snapshot_json(&snapshot);
-                if snapshot.done {
-                    if let Some(result) = &snapshot.status.result {
-                        value.as_object_mut().expect("snapshot json object").insert(
-                            "result".into(),
-                            json!(truncate(result.clone(), RESULT_EXCERPT_BYTES)),
-                        );
-                    }
-                }
-                serde_json::to_string_pretty(&value)?
+                format_snapshot(&snapshot, SnapshotFormat::Status)
             }
             "stop" => {
                 let id = required_id(&args)?;
@@ -856,7 +787,7 @@ impl Tool for AgentsTool {
                     .stop(id)
                     .await
                     .map_err(|error| ToolError::Message(error.to_string()))?;
-                finished_summary(&snapshot)
+                format_snapshot(&snapshot, SnapshotFormat::Completion)
             }
             other => {
                 return Err(ToolError::Message(format!(

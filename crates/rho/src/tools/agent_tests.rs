@@ -366,8 +366,9 @@ async fn agents_tool_lists_and_reports_status() {
         )
         .await
         .unwrap();
-    assert!(list.content.contains("\"id\": \"x9\""));
-    assert!(list.content.contains("\"state\": \"running\""));
+    assert!(list.content.starts_with("x9  explorer  running  "));
+    assert!(list.content.ends_with("  tool: bash"));
+    assert!(!list.content.contains("log_file"));
 
     let status = tool
         .call(
@@ -377,8 +378,13 @@ async fn agents_tool_lists_and_reports_status() {
         )
         .await
         .unwrap();
-    assert!(status.content.contains("\"turns\": 4"));
-    assert!(status.content.contains("tool: bash"));
+    assert!(status
+        .content
+        .starts_with("subagent x9 (explorer): running\n"));
+    assert!(status.content.contains("turns: 4 · tokens: 0 in / 0 out"));
+    assert!(status.content.contains("activity: tool: bash"));
+    assert!(status.content.contains("attach: rho attach x9"));
+    assert!(!status.content.contains("log_file"));
 
     let missing = tool
         .call(

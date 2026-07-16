@@ -77,6 +77,19 @@ The `agents` tool manages running subagents:
 - `stop` - graceful stop (the subagent writes a partial result), escalating
   to a kill after five seconds
 
+Its output is compact and line-oriented. For example:
+
+```text
+abc123  explorer  running  42s  searching files
+```
+
+```text
+subagent abc123 (explorer): running
+elapsed: 42s · turns: 2 · tokens: 800 in / 120 out
+activity: searching files
+attach: rho attach abc123
+```
+
 While subagents are active, the interactive TUI combines its working indicator,
 subagent count, and jump-to-bottom action in one activity rail above the
 composer. Detail rows show each visible agent's preset, ID, latest activity,
