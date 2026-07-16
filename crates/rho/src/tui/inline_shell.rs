@@ -155,23 +155,15 @@ pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> S
     display_lines(output, included_in_context).join("\n")
 }
 
-pub(super) fn display_lines(output: &ShellOutput, included_in_context: bool) -> Vec<String> {
-    let context = if included_in_context {
-        "included in context"
-    } else {
-        "excluded from context"
+pub(super) fn display_lines(output: &ShellOutput, _included_in_context: bool) -> Vec<String> {
+    let prompt = match output.shell.to_ascii_lowercase().as_str() {
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "PS",
+        _ => "$",
     };
-    let mut lines = vec![
-        format!("{} {}", output.shell, output.command),
-        format!("{context}  exit code: {}", output.exit_code),
-    ];
+    let mut lines = vec![format!("{prompt} {}", output.command)];
     if !output.stdout.is_empty() {
         lines.push(String::new());
         lines.push(output.stdout.trim_end().to_string());
-    }
-    if !output.stderr.is_empty() {
-        lines.push(String::new());
-        lines.push(format!("stderr:\n{}", output.stderr.trim_end()));
     }
     lines
 }
