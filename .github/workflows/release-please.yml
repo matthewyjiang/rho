@@ -164,27 +164,12 @@ jobs:
             args+=(--app)
           fi
           ./scripts/publish_workspace_crates.sh "${args[@]}"
-      - name: Publish draft GitHub releases after crates.io success
+      - name: Publish draft SDK release after crates.io success
+        if: ${{ needs.release.outputs.sdk_release_created == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_TAG: ${{ needs.release.outputs.tag_name }}
           SDK_TAG: ${{ needs.release.outputs.sdk_tag_name }}
-          PUBLISH_APP: ${{ needs.release.outputs.release_created }}
-          PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
-        run: |
-          set -euo pipefail
-          if [[ "$PUBLISH_SDK" == "true" && -n "$SDK_TAG" ]]; then
-            gh release edit "$SDK_TAG" --draft=false
-          fi
-          if [[ "$PUBLISH_APP" == "true" && -n "$APP_TAG" ]]; then
-            gh release edit "$APP_TAG" --draft=false
-          fi
-      - name: Dispatch Arch package workflow
-        if: ${{ needs.release.outputs.release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh workflow run publish-arch-package.yml --ref "$TAG"
+        run: gh release edit "$SDK_TAG" --draft=false
 
   release-binaries:
     needs: [release, publish-crates]
@@ -192,7 +177,6 @@ jobs:
     name: release binary ${{ matrix.target }}
     permissions:
       contents: write
-      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -273,27 +257,54 @@ jobs:
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
         run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
+
+  publish-app-release:
+    needs: [release, publish-crates, release-binaries]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' && needs.release-binaries.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish app release after all platform assets upload
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: gh release edit "$TAG" --draft=false
+      - name: Dispatch Arch package workflow
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag_name }}
+        run: gh workflow run publish-arch-package.yml --ref "$TAG"
+
+
+  update-scoop-manifest:
+    needs: [release, publish-app-release]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-app-release.result == 'success' }}
+    runs-on: windows-latest
+    env:
+      TARGET: x86_64-pc-windows-msvc
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
       - name: Checkout main for Scoop manifest update
-        if: runner.os == 'Windows'
         uses: actions/checkout@v4
         with:
           ref: main
       - name: Download Windows checksum
-        if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
-        run: gh release download "$env:TAG" --pattern "rho-${{ matrix.target }}.zip.sha256"
+        run: gh release download "$env:TAG" --pattern "rho-$env:TARGET.zip.sha256"
       - name: Update Scoop manifest
-        if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $Tag = "${{ needs.release.outputs.tag_name }}"
           $Version = $Tag -replace '^rho-coding-agent-v', ''
-          $Asset = "rho-${{ matrix.target }}.zip"
+          $Asset = "rho-$env:TARGET.zip"
           $Hash = ((Get-Content "$Asset.sha256" -Raw) -split '\s+')[0]
           $Url = "https://github.com/${{ github.repository }}/releases/download/$Tag/$Asset"
 
