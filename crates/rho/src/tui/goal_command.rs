@@ -14,10 +14,10 @@ enum GoalLoopAction {
 
 pub(super) fn should_resume_goal_after_turn(
     outcome: TurnOutcomeKind,
-    goal_active: bool,
+    goal_state: Option<goal::GoalLoopState>,
     should_quit: bool,
 ) -> bool {
-    goal_active
+    matches!(goal_state, Some(goal::GoalLoopState::Active))
         && !should_quit
         && matches!(
             outcome,
@@ -44,12 +44,18 @@ impl App {
     ) -> anyhow::Result<()> {
         if invocation.args.trim().is_empty() {
             self.insert_entry(&Entry::Notice(self.goal_status_message()));
-            self.status = if self.goal.is_some() {
-                "goal active"
-            } else {
-                "running"
-            }
-            .into();
+            self.status = self
+                .goal
+                .as_ref()
+                .map(|goal| {
+                    if goal.is_blocked() {
+                        "goal blocked"
+                    } else {
+                        "goal active"
+                    }
+                })
+                .unwrap_or("running")
+                .into();
         } else if is_goal_clear_alias(&invocation.args) {
             self.clear_goal();
         } else {
@@ -64,13 +70,26 @@ impl App {
     pub(super) fn goal_status_message(&self) -> String {
         match &self.goal {
             Some(goal) => {
+                let state = if goal.is_blocked() {
+                    "goal blocked"
+                } else {
+                    "goal active"
+                };
                 let reason = goal
                     .last_reason
                     .as_deref()
                     .map(|reason| format!("\nlast evaluation: {reason}"))
                     .unwrap_or_default();
+                let pending_steps = if goal.is_blocked() {
+                    format!(
+                        "\nremaining steps:\n{}\nuse /goal resume after completing them.",
+                        format_human_steps(goal.pending_steps())
+                    )
+                } else {
+                    String::new()
+                };
                 format!(
-                    "goal active: {}\n{} turn(s), {} elapsed{reason}",
+                    "{state}: {}\n{} turn(s), {} elapsed{reason}{pending_steps}",
                     goal.condition,
                     goal.turns,
                     goal::format_elapsed(goal.elapsed())
@@ -104,16 +123,26 @@ impl App {
         let condition = invocation.args.trim();
         if condition.is_empty() {
             self.insert_entry(&Entry::Notice(self.goal_status_message()));
-            self.status = if self.goal.is_some() {
-                "goal active"
-            } else {
-                "ready"
-            }
-            .into();
+            self.status = self
+                .goal
+                .as_ref()
+                .map(|goal| {
+                    if goal.is_blocked() {
+                        "goal blocked"
+                    } else {
+                        "goal active"
+                    }
+                })
+                .unwrap_or("ready")
+                .into();
             return Ok(());
         }
         if is_goal_clear_alias(condition) {
             self.clear_goal();
+            return Ok(());
+        }
+        if is_goal_resume_alias(condition) {
+            self.resume_goal(terminal, agent).await?;
             return Ok(());
         }
         if condition.chars().count() > goal::MAX_GOAL_CHARS {
@@ -146,10 +175,105 @@ impl App {
                 VecDeque::new()
             }
         };
-        if should_resume_goal_after_turn(outcome_kind, self.goal.is_some(), self.should_quit) {
+        if should_resume_goal_after_turn(
+            outcome_kind,
+            self.goal.as_ref().map(GoalState::loop_state),
+            self.should_quit,
+        ) {
             self.continue_goal(terminal, agent, pending_retries).await?;
         }
         Ok(())
+    }
+
+    async fn resume_goal(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let Some(goal) = self.goal.as_mut() else {
+            self.insert_entry(&Entry::Notice("no active goal to resume".into()));
+            self.status = "ready".into();
+            return Ok(());
+        };
+
+        if goal.is_blocked() {
+            let condition = goal.condition.clone();
+            let pending_steps = goal.pending_steps().to_vec();
+            goal.begin_verification();
+            let prompt = blocked_goal_resumption_prompt(&condition, &pending_steps, None);
+            self.insert_entry(&Entry::Notice(
+                "goal resumed; verifying the previously blocked steps".into(),
+            ));
+            self.status = "goal active".into();
+            let outcome = self
+                .run_prompt_turn(
+                    TurnPrompt::command(prompt, "/goal resume".into()),
+                    Vec::new(),
+                    terminal,
+                    agent,
+                )
+                .await?;
+            let outcome_kind = outcome.kind();
+            self.finish_goal_resumption_turn(outcome_kind);
+            let pending_retries = match outcome {
+                TurnOutcome::Failed(failed_turn) => VecDeque::from([failed_turn]),
+                TurnOutcome::Completed | TurnOutcome::Interrupted | TurnOutcome::Cancelled => {
+                    VecDeque::new()
+                }
+            };
+            if should_resume_goal_after_turn(
+                outcome_kind,
+                self.goal.as_ref().map(GoalState::loop_state),
+                self.should_quit,
+            ) {
+                self.continue_goal(terminal, agent, pending_retries).await?;
+            }
+        } else {
+            self.insert_entry(&Entry::Notice("goal is already active".into()));
+            self.continue_goal(terminal, agent, VecDeque::new()).await?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn prepare_goal_resumption_turn(
+        &mut self,
+        prompt: String,
+        display_prompt: String,
+    ) -> TurnPrompt {
+        let Some(goal) = self.goal.as_mut() else {
+            return TurnPrompt::standard(prompt, display_prompt);
+        };
+        if !goal.is_blocked() {
+            return TurnPrompt::standard(prompt, display_prompt);
+        }
+
+        let condition = goal.condition.clone();
+        let pending_steps = goal.pending_steps().to_vec();
+        goal.begin_verification();
+        self.insert_entry(&Entry::Notice(
+            "goal resumed by user message; verifying the previously blocked steps".into(),
+        ));
+        self.status = "goal active".into();
+        TurnPrompt {
+            model: blocked_goal_resumption_prompt(&condition, &pending_steps, Some(&prompt)),
+            history: prompt,
+            display: display_prompt.clone(),
+            persisted_display: Some(display_prompt),
+        }
+    }
+
+    pub(super) fn finish_goal_resumption_turn(&mut self, outcome: TurnOutcomeKind) {
+        let Some(goal) = self.goal.as_mut() else {
+            return;
+        };
+        match outcome {
+            TurnOutcomeKind::Completed | TurnOutcomeKind::Failed => {
+                goal.complete_verification();
+            }
+            TurnOutcomeKind::Interrupted | TurnOutcomeKind::Cancelled => {
+                goal.interrupt_verification();
+            }
+        }
     }
 
     pub(super) async fn continue_goal(
@@ -158,7 +282,7 @@ impl App {
         agent: &mut InteractiveRuntime,
         mut pending_retries: VecDeque<FailedTurn>,
     ) -> anyhow::Result<()> {
-        while !self.should_quit && self.goal.is_some() {
+        while !self.should_quit && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked()) {
             while let Some(failed_turn) = pending_retries.pop_front() {
                 if !self
                     .retry_failed_goal_turn(failed_turn, terminal, agent)
@@ -250,27 +374,38 @@ impl App {
             let Some(goal) = self.goal.as_mut() else {
                 break;
             };
-            goal.turns += 1;
-            goal.last_reason = Some(evaluation.reason.clone());
-            if evaluation.met {
-                let elapsed = goal::format_elapsed(goal.elapsed());
-                let turns = goal.turns;
-                self.goal = None;
-                self.insert_entry(&Entry::Notice(format!(
-                    "goal achieved after {turns} turn(s) and {elapsed}: {}",
-                    evaluation.reason
-                )));
-                self.status = "goal achieved".into();
-                break;
+            let disposition = goal.record_evaluation(&evaluation);
+            match disposition {
+                goal::GoalDisposition::Complete => {
+                    let elapsed = goal::format_elapsed(goal.elapsed());
+                    let turns = goal.turns;
+                    self.goal = None;
+                    self.insert_entry(&Entry::Notice(format!(
+                        "goal achieved after {turns} turn(s) and {elapsed}: {}",
+                        evaluation.reason()
+                    )));
+                    self.status = "goal achieved".into();
+                    break;
+                }
+                goal::GoalDisposition::Pause => {
+                    self.insert_entry(&Entry::Notice(format!(
+                        "goal blocked: remaining steps need you\n{}\nremaining steps:\n{}\nuse /goal resume or send a message after completing them.",
+                        evaluation.reason(),
+                        format_human_steps(evaluation.pending_steps())
+                    )));
+                    self.status = "goal blocked".into();
+                    break;
+                }
+                goal::GoalDisposition::Continue => {}
             }
 
             self.insert_entry(&Entry::Notice(format!(
                 "goal not yet met: {}",
-                evaluation.reason
+                evaluation.reason()
             )));
             let continuation = format!(
                 "Continue working toward this goal:\n\n{condition}\n\nThe goal evaluator says it is not yet met: {}\n\nMake concrete progress and verify the completion condition before stopping.",
-                evaluation.reason
+                evaluation.reason()
             );
             let outcome = self
                 .run_prompt_turn(
@@ -391,6 +526,28 @@ fn initial_goal_prompt(condition: &str) -> String {
     )
 }
 
+fn blocked_goal_resumption_prompt(
+    condition: &str,
+    pending_steps: &[goal::HumanStep],
+    user_message: Option<&str>,
+) -> String {
+    let user_message = user_message
+        .map(|message| format!("\n\nThe user's new message is:\n{message}"))
+        .unwrap_or_default();
+    format!(
+        "Resume the following goal after it was blocked on steps requiring the user:\n\n{condition}\n\nPreviously blocked steps:\n{}\n\nFirst verify whether each relevant external condition has changed. Do not repeat implementation work unless verification shows that more agent-actionable work is needed.{user_message}",
+        format_human_steps(pending_steps)
+    )
+}
+
+fn format_human_steps(steps: &[goal::HumanStep]) -> String {
+    steps
+        .iter()
+        .map(|step| format!("- {}: {}", step.action, step.reason))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub(super) fn is_goal_clear_alias(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -398,149 +555,10 @@ pub(super) fn is_goal_clear_alias(value: &str) -> bool {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::tests::test_app;
-
-    #[test]
-    fn initial_prompt_identifies_goal_setting_action() {
-        assert_eq!(
-            initial_goal_prompt("all tests pass"),
-            "The user invoked Rho's `/goal` command to set the following completion goal. Treat this as a goal-setting action, not as an ordinary conversational message or a claim that the goal is already complete.\n\nGoal:\nall tests pass\n\nBegin working toward the goal now. Make concrete progress, use tools as needed, and verify the completion condition before stopping."
-        );
-    }
-
-    #[test]
-    fn goal_turn_preserves_command_for_display_history_and_persistence() {
-        let turn = TurnPrompt::command(
-            initial_goal_prompt("all tests pass"),
-            "/goal all tests pass".into(),
-        );
-
-        assert_eq!(turn.display, "/goal all tests pass");
-        assert_eq!(turn.history, "/goal all tests pass");
-        assert_eq!(
-            turn.persisted_display.as_deref(),
-            Some("/goal all tests pass")
-        );
-        assert!(turn
-            .model
-            .starts_with("The user invoked Rho's `/goal` command"));
-    }
-
-    #[test]
-    fn clear_aliases_are_case_insensitive() {
-        for alias in ["clear", "STOP", "off", "reset", "none", "cancel"] {
-            assert!(is_goal_clear_alias(alias), "{alias}");
-        }
-        assert!(!is_goal_clear_alias("finish the work"));
-    }
-
-    #[test]
-    fn clearing_goal_removes_active_indicator() {
-        let mut app = test_app();
-        app.goal = Some(GoalState::new("tests pass".into()));
-
-        app.clear_goal();
-
-        assert!(app.goal.is_none());
-        assert_eq!(app.status, "goal cleared");
-        assert!(matches!(
-            app.transcript.last(),
-            Some(Entry::Notice(message)) if message == "goal cleared"
-        ));
-    }
-
-    #[test]
-    fn status_reports_condition_and_progress() {
-        let mut app = test_app();
-        let mut goal = GoalState::new("tests pass".into());
-        goal.turns = 3;
-        goal.last_reason = Some("one test still fails".into());
-        app.goal = Some(goal);
-
-        let status = app.goal_status_message();
-
-        assert!(status.contains("goal active: tests pass"), "{status}");
-        assert!(status.contains("3 turn(s)"), "{status}");
-        assert!(
-            status.contains("last evaluation: one test still fails"),
-            "{status}"
-        );
-    }
-
-    #[test]
-    fn resumes_goal_after_completed_or_failed_turns() {
-        assert!(should_resume_goal_after_turn(
-            TurnOutcomeKind::Completed,
-            /*goal_active*/ true,
-            /*should_quit*/ false
-        ));
-        assert!(should_resume_goal_after_turn(
-            TurnOutcomeKind::Failed,
-            /*goal_active*/ true,
-            /*should_quit*/ false
-        ));
-        assert!(!should_resume_goal_after_turn(
-            TurnOutcomeKind::Interrupted,
-            /*goal_active*/ true,
-            /*should_quit*/ false
-        ));
-        assert!(!should_resume_goal_after_turn(
-            TurnOutcomeKind::Cancelled,
-            /*goal_active*/ true,
-            /*should_quit*/ false
-        ));
-        assert!(!should_resume_goal_after_turn(
-            TurnOutcomeKind::Failed,
-            /*goal_active*/ false,
-            /*should_quit*/ false
-        ));
-        assert!(!should_resume_goal_after_turn(
-            TurnOutcomeKind::Failed,
-            /*goal_active*/ true,
-            /*should_quit*/ true
-        ));
-    }
-
-    #[test]
-    fn failed_goal_turn_drains_queued_prompts_before_retrying() {
-        assert!(should_drain_queued_prompts(
-            TurnOutcomeKind::Failed,
-            /*resume_goal*/ true
-        ));
-        assert!(!should_drain_queued_prompts(
-            TurnOutcomeKind::Failed,
-            /*resume_goal*/ false
-        ));
-        assert!(should_drain_queued_prompts(
-            TurnOutcomeKind::Completed,
-            /*resume_goal*/ false
-        ));
-        assert!(!should_drain_queued_prompts(
-            TurnOutcomeKind::Cancelled,
-            /*resume_goal*/ false
-        ));
-    }
-
-    #[test]
-    fn goal_loop_retries_failed_turns_and_stops_on_interrupt_or_cancel() {
-        assert_eq!(
-            goal_loop_action_after_turn(TurnOutcomeKind::Completed),
-            GoalLoopAction::Continue
-        );
-        assert_eq!(
-            goal_loop_action_after_turn(TurnOutcomeKind::Failed),
-            GoalLoopAction::RetryAfterFailure
-        );
-        assert_eq!(
-            goal_loop_action_after_turn(TurnOutcomeKind::Interrupted),
-            GoalLoopAction::Stop
-        );
-        assert_eq!(
-            goal_loop_action_after_turn(TurnOutcomeKind::Cancelled),
-            GoalLoopAction::Stop
-        );
-    }
+fn is_goal_resume_alias(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("resume")
 }
+
+#[cfg(test)]
+#[path = "goal_command_tests.rs"]
+mod tests;

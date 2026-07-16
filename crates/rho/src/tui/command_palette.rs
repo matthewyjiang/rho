@@ -8,6 +8,14 @@ const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
+        let argument_choices = commands::argument_choices(&self.input, self.input_cursor);
+        if !argument_choices.is_empty() {
+            return argument_choices
+                .iter()
+                .map(argument_command_choice)
+                .collect();
+        }
+
         let Some(prefix) = commands::command_prefix(&self.input) else {
             return Vec::new();
         };
@@ -15,7 +23,12 @@ impl App {
             .strip_prefix('/')
             .unwrap_or(prefix)
             .to_ascii_lowercase();
-        let mut matches = commands::matching_commands(&prefix)
+        let builtin_matches = commands::matching_commands(&prefix);
+        let exact_builtin = builtin_matches
+            .iter()
+            .find(|command| command.name.eq_ignore_ascii_case(&prefix))
+            .copied();
+        let mut matches = builtin_matches
             .into_iter()
             .map(|command| CommandChoice {
                 name: command.name.to_string(),
@@ -24,6 +37,9 @@ impl App {
                 kind: CommandChoiceKind::Builtin(command),
             })
             .collect::<Vec<_>>();
+        if let Some(command) = exact_builtin {
+            matches.extend(command.argument_choices.iter().map(argument_command_choice));
+        }
         let mut template_matches = self
             .info
             .prompt_templates
@@ -107,6 +123,10 @@ impl App {
                 self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
                 commands::complete_command(&self.input, self.input_cursor, spec)
             }
+            CommandChoiceKind::BuiltinArgument(choice) => {
+                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                commands::complete_argument_choice(choice)
+            }
             CommandChoiceKind::PromptTemplate(template) => {
                 let expanded_input = self.expanded_input();
                 let mut input = crate::prompt_templates::expand(
@@ -126,6 +146,15 @@ impl App {
         };
         self.input = input;
         self.input_cursor = cursor;
+    }
+}
+
+fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> CommandChoice {
+    CommandChoice {
+        name: choice.completion.to_string(),
+        usage: choice.usage.to_string(),
+        description: choice.description.to_string(),
+        kind: CommandChoiceKind::BuiltinArgument(choice),
     }
 }
 

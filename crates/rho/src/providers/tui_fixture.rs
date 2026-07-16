@@ -20,7 +20,9 @@ const TOOL_CALL_ID: &str = "tui-fixture-tool";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
+const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+static GOAL_BLOCKED_EVALUATIONS: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) fn from_env(
     provider: &str,
@@ -241,6 +243,14 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
     if is_compaction_request(request) {
         return completed("deterministic compacted conversation summary");
     }
+    if is_blocked_goal_evaluation(request) {
+        let evaluation = if GOAL_BLOCKED_EVALUATIONS.fetch_add(1, Ordering::SeqCst) == 0 {
+            r#"{"state":"Blocked","reason":"all fixture work is complete; publishing requires user authority","human_steps":[{"action":"publish the fixture release","reason":"requires the user's credentials"}]}"#
+        } else {
+            r#"{"state":"Met","reason":"the fixture release is now published","human_steps":[]}"#
+        };
+        return completed(evaluation);
+    }
     if let Some(result) = tool_result(request, TOOL_CALL_ID) {
         return completed(format!(
             "tool lifecycle complete with one result: {}",
@@ -263,10 +273,24 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         ));
     }
     let prompt = last_user_text(request).unwrap_or_default();
+    if prompt.starts_with("Resume the following goal after it was blocked") {
+        return completed("verified that the fixture release is now published");
+    }
     if prompt == "fixture steer detail" {
         return completed("steering applied exactly once: fixture steer detail");
     }
     completed(format!("fixture response: {prompt}"))
+}
+
+fn is_blocked_goal_evaluation(request: &ModelRequest<'_>) -> bool {
+    request.messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
+        )
+    }) && last_user_text(request).is_some_and(|prompt| {
+        prompt.contains(&format!("Completion condition:\n{GOAL_BLOCKED_CONDITION}"))
+    })
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

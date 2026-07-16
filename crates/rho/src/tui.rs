@@ -146,6 +146,7 @@ const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const MAX_TERMINAL_EVENTS_PER_TICK: usize = 256;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
@@ -471,6 +472,7 @@ enum HistoryScroll {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
+    BuiltinArgument(&'static commands::CommandArgumentChoice),
     PromptTemplate(String),
     Skill,
 }
@@ -1941,7 +1943,8 @@ impl App {
     fn command_palette_visible(&self) -> bool {
         matches!(self.composer, ComposerMode::Input)
             && !self.command_palette_dismissed
-            && self.cursor_in_command_token()
+            && (self.cursor_in_command_token()
+                || !commands::argument_choices(&self.input, self.input_cursor).is_empty())
             && !self.command_matches().is_empty()
     }
 
@@ -2098,20 +2101,15 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        let mut outcome = self
-            .run_prompt_turn(
-                TurnPrompt::standard(prompt, display_prompt),
-                images,
-                terminal,
-                agent,
-            )
-            .await?;
+        let turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
+        let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
+        self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();
         let final_outcome = loop {
             let outcome_kind = outcome.kind();
             let resume_goal = goal_command::should_resume_goal_after_turn(
                 outcome_kind,
-                self.goal.is_some(),
+                self.goal.as_ref().map(GoalState::loop_state),
                 self.should_quit,
             );
             if let TurnOutcome::Failed(failed_turn) = outcome {
@@ -2139,7 +2137,7 @@ impl App {
         };
         if goal_command::should_resume_goal_after_turn(
             final_outcome,
-            self.goal.is_some(),
+            self.goal.as_ref().map(GoalState::loop_state),
             self.should_quit,
         ) {
             self.continue_goal(terminal, agent, pending_goal_retries)
@@ -2149,18 +2147,24 @@ impl App {
     }
 
     async fn report_resting_herdr_state(&self) {
-        let state = if self.info.auth_unavailable.is_some() {
+        let goal_blocked_reason = self
+            .goal
+            .as_ref()
+            .filter(|goal| goal.is_blocked())
+            .and_then(|goal| goal.last_reason.as_deref());
+        let message = self
+            .info
+            .auth_unavailable
+            .as_deref()
+            .or(goal_blocked_reason);
+        let state = if message.is_some() {
             HerdrState::Blocked
         } else {
             HerdrState::Idle
         };
         self.info
             .herdr
-            .report_state(
-                state,
-                self.info.auth_unavailable.as_deref(),
-                self.info.session_id.as_deref(),
-            )
+            .report_state(state, message, self.info.session_id.as_deref())
             .await;
     }
 
@@ -5156,6 +5160,7 @@ impl App {
         self.goal.as_ref().map(|goal| GoalStatus {
             turns: goal.turns,
             elapsed: goal.elapsed(),
+            blocked: goal.is_blocked(),
         })
     }
 
@@ -5226,6 +5231,19 @@ impl App {
                 .saturating_add(1)
                 .saturating_sub(MAX_COMMAND_SUGGESTIONS);
 
+            let usage_width = matches
+                .iter()
+                .skip(start)
+                .take(MAX_COMMAND_SUGGESTIONS)
+                .map(|command| display_width(&command.usage))
+                .max()
+                .unwrap_or(1)
+                .min(
+                    width
+                        .saturating_sub(MIN_COMMAND_DESCRIPTION_WIDTH + 3)
+                        .max(1),
+                );
+
             return matches
                 .into_iter()
                 .enumerate()
@@ -5234,7 +5252,6 @@ impl App {
                 .map(|(index, command)| {
                     let selected = index == selected_index;
                     let marker = if selected { ">" } else { " " };
-                    let usage_width = 16usize.min(width.saturating_sub(5).max(1));
                     let description_width = width.saturating_sub(usage_width + 3).max(1);
                     let usage = truncate_one_line(&command.usage, usage_width);
                     let description = truncate_one_line(&command.description, description_width);

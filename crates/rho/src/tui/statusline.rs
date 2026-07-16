@@ -50,6 +50,7 @@ pub(super) struct StatusLine {
 pub(super) struct GoalStatus {
     pub(super) turns: usize,
     pub(super) elapsed: Duration,
+    pub(super) blocked: bool,
 }
 
 impl Default for StatusLineState {
@@ -196,7 +197,8 @@ fn statusline_lines(
 ) -> Vec<Line<'static>> {
     let goal = goal.map(|goal| {
         format!(
-            "◎ /goal active • {} turn{} • {}",
+            "◎ /goal {} • {} turn{} • {}",
+            if goal.blocked { "blocked" } else { "active" },
             goal.turns,
             if goal.turns == 1 { "" } else { "s" },
             super::goal::format_elapsed(goal.elapsed)
