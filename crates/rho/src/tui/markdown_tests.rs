@@ -87,12 +87,12 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
 #[test]
 fn stream_preview_renderer_can_hide_inactive_copy_buttons() {
     let mut lines = Vec::new();
-    let mut in_code_block = false;
-    push_wrapped_markdown_without_copy_button(
+    let mut code_fence = CodeFenceState::default();
+    push_wrapped_markdown_without_copy_button_from_fence_state(
         &mut lines,
         "```rust\nlet x = 1;",
         40,
-        &mut in_code_block,
+        &mut code_fence,
     );
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
@@ -147,4 +147,202 @@ fn renders_divider_lines() {
     assert_eq!(line_text(&lines[1]), "─".repeat(20));
     assert_eq!(lines[1].spans[0].style, Theme::dim());
     assert_eq!(line_text(&lines[2]), "after");
+}
+
+#[test]
+fn renders_a_realistic_agent_workflow_diagram() {
+    let source = "flowchart TD\n    A[User submits a request] --> B[Agent analyzes the task]\n    B --> C{Is more information needed?}\n    C -->|Yes| D[Ask a clarifying question]\n    D --> A\n    C -->|No| E[Inspect relevant files]\n    E --> F[Plan the change]\n    F --> G[Edit the code]\n    G --> H[Run formatting and tests]\n    H --> I{Did validation pass?}\n    I -->|No| J[Diagnose and fix failures]\n    J --> H\n    I -->|Yes| K[Summarize the result]";
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        &format!("```mermaid\n{source}\n```"),
+        100,
+        &mut in_code_block,
+    );
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(text[0].contains("MERMAID"));
+    assert!(text.iter().any(|line| line.contains("User submits")));
+    assert!(text.iter().any(|line| line.contains("Summarize")));
+    assert!(!text.iter().any(|line| line.contains("flowchart TD")));
+    assert!(text.iter().all(|line| display_width(line) <= 100));
+    assert_eq!(rendered.code_blocks[0].text, source);
+}
+
+#[test]
+fn closed_mermaid_fence_renders_a_titled_diagram_and_preserves_source() {
+    let source = "flowchart LR\n    A[Parse] --> B[Render]";
+    let markdown = format!("before\n```MeRmAiD theme=dark\n{source}\n```\nafter");
+    let mut in_code_block = false;
+    let rendered = render_markdown(&markdown, 80, &mut in_code_block);
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(text.first().map(String::as_str), Some("before"));
+    assert!(text[1].starts_with("╭─ MERMAID "), "{}", text[1]);
+    assert!(text.iter().any(|line| line.contains("Parse")));
+    assert!(text.iter().any(|line| line.contains("Render")));
+    assert_eq!(text.last().map(String::as_str), Some("after"));
+    assert!(!text.iter().any(|line| line.contains("flowchart LR")));
+    assert_eq!(rendered.code_blocks.len(), 1);
+    assert_eq!(rendered.code_blocks[0].top_line, 1);
+    assert_eq!(rendered.code_blocks[0].text, source);
+    assert_eq!(rendered.code_blocks[0].copy_columns, 73..79);
+    assert!(rendered.lines[1]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref() == " COPY "));
+}
+
+#[test]
+fn mermaid_canvas_is_tightly_cropped_and_uniformly_centered_in_full_width_panel() {
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        "```mermaid\nflowchart TD\nA[Tea] --> B{Milk?}\nB --> C[Drink]\n```",
+        80,
+        &mut in_code_block,
+    );
+    let rows = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(rows.iter().all(|row| display_width(row) == 80));
+    let content = &rows[1..rows.len() - 1];
+    let occupied = content
+        .iter()
+        .flat_map(|row| {
+            row.chars()
+                .enumerate()
+                .filter(|(_, character)| !character.is_whitespace() && *character != '│')
+                .map(|(column, _)| column)
+        })
+        .collect::<Vec<_>>();
+    let left = *occupied.iter().min().unwrap();
+    let right = *occupied.iter().max().unwrap();
+    let left_margin = left.saturating_sub(2);
+    let right_margin = 77usize.saturating_sub(right);
+    assert!(
+        left_margin.abs_diff(right_margin) <= 1,
+        "{}",
+        rows.join("\n")
+    );
+    assert!(content.iter().any(|row| row
+        .chars()
+        .nth(left)
+        .is_some_and(|character| character != ' ')));
+    assert!(content.iter().any(|row| row
+        .chars()
+        .nth(right)
+        .is_some_and(|character| character != ' ')));
+}
+
+#[test]
+fn code_fence_closers_match_marker_length_and_allow_only_whitespace() {
+    let opening = parse_opening_fence("   ````mermaid").expect("valid opening fence");
+    assert_eq!(opening.marker, '`');
+    assert_eq!(opening.length, 4);
+    assert!(!is_closing_fence("```", opening));
+    assert!(!is_closing_fence("~~~~", opening));
+    assert!(!is_closing_fence("````not-a-close", opening));
+    assert!(is_closing_fence("  `````   ", opening));
+    assert!(parse_opening_fence("    ```rust").is_none());
+    assert!(parse_opening_fence("```rust`edition").is_none());
+}
+
+#[test]
+fn streamed_code_fence_state_preserves_marker_and_length_across_chunks() {
+    let mut state = CodeFenceState::default();
+    update_code_block_state("````mermaid\nflowchart TD", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("```", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("````", &mut state);
+    assert!(!state.is_open());
+
+    update_code_block_state("~~~~mermaid", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("```", &mut state);
+    assert!(state.is_open());
+    update_code_block_state("~~~~", &mut state);
+    assert!(!state.is_open());
+}
+
+#[test]
+fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        "````mermaid\nflowchart TD\nA[one]\n```not-a-close\nA --> B[two]\n````",
+        80,
+        &mut in_code_block,
+    );
+    let text = rendered
+        .lines
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("MERMAID"), "{text}");
+    assert!(text.contains("one"), "{text}");
+    assert!(text.contains("two"), "{text}");
+}
+
+#[test]
+fn open_mermaid_fence_stays_raw_until_closed() {
+    let mut in_code_block = false;
+    let open = render_markdown("```mermaid\nflowchart LR\nA --> B", 60, &mut in_code_block);
+    let open_text = open.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(in_code_block);
+    assert!(open_text.iter().any(|line| line.contains("flowchart LR")));
+    assert!(!open_text.iter().any(|line| line.contains("MERMAID")));
+
+    let mut in_code_block = false;
+    let closed = render_markdown(
+        "```mermaid\nflowchart LR\nA --> B\n```",
+        60,
+        &mut in_code_block,
+    );
+    assert!(!in_code_block);
+    assert!(line_text(&closed.lines[0]).contains("MERMAID"));
+    assert!(!closed
+        .lines
+        .iter()
+        .map(line_text)
+        .any(|line| line.contains("flowchart LR")));
+}
+
+#[test]
+fn malformed_and_too_wide_mermaid_fences_use_normal_code_blocks() {
+    for (source, width) in [
+        ("not-a-diagram", 60),
+        ("flowchart LR\nA[a label that is much too wide]", 8),
+    ] {
+        let mut in_code_block = false;
+        let markdown = format!("```mermaid\n{source}\n```");
+        let rendered = render_markdown(&markdown, width, &mut in_code_block);
+        let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(!in_code_block);
+        assert!(!text[0].contains("MERMAID"));
+        assert!(text
+            .iter()
+            .any(|line| line.contains("flow") || line.contains("not-")));
+        assert_eq!(rendered.code_blocks[0].text, source);
+    }
+}
+
+#[test]
+fn mermaid_render_reflows_to_the_requested_transcript_width() {
+    let markdown = "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n```";
+    let mut wide_state = false;
+    let wide = markdown_lines(markdown, 80, &mut wide_state);
+    let mut narrow_state = false;
+    let narrow = markdown_lines(markdown, 36, &mut narrow_state);
+
+    assert!(wide
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 80));
+    assert!(narrow
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 36));
+    assert_ne!(
+        wide.iter().map(line_text).collect::<Vec<_>>(),
+        narrow.iter().map(line_text).collect::<Vec<_>>()
+    );
 }

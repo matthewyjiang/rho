@@ -3,6 +3,13 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::tui::render::entry_lines;
 
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
 #[test]
 fn caches_code_block_copy_target_and_raw_contents() {
     let mut cache = HistoryLineCache::default();
@@ -85,6 +92,45 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     assert_eq!(cache.code_blocks(&entries, 32, 10).len(), 1);
     assert!(cache.assistant_caches[0]
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
+}
+
+#[test]
+fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "```mermaid\nflowchart LR\nA[Parse] --> B[Render]".into(),
+    )];
+    let mut cached_lines = Vec::new();
+    cache.extend_visible_lines(&entries, 80, 10, 0, usize::MAX, &mut cached_lines);
+    assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
+    assert!(cached_lines
+        .iter()
+        .any(|line| line_text(line).contains("flowchart LR")));
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("\n```");
+    cache.assistant_appended(0);
+    cached_lines.clear();
+    cache.extend_visible_lines(&entries, 80, 10, 0, usize::MAX, &mut cached_lines);
+
+    assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
+    assert!(cached_lines
+        .iter()
+        .any(|line| line_text(line).contains("MERMAID")));
+    assert!(!cached_lines
+        .iter()
+        .any(|line| line_text(line).contains("flowchart LR")));
+    assert_eq!(
+        cache.code_blocks(&entries, 80, 10)[0].text.as_ref(),
+        "flowchart LR\nA[Parse] --> B[Render]"
+    );
+
+    let mut narrow_lines = Vec::new();
+    cache.extend_visible_lines(&entries, 36, 10, 0, usize::MAX, &mut narrow_lines);
+    assert_eq!(narrow_lines, entry_lines(&entries[0], 36, 10));
+    assert_ne!(cached_lines, narrow_lines);
 }
 
 #[test]

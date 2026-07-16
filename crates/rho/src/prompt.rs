@@ -45,6 +45,8 @@ Web access is available through tool schemas; invoke it only when needed and ret
 Use structured tool calls when available. Do not write tool calls in prose.
 
 Do not invent tool results. When done, answer directly.
+
+Mermaid rendering applies only to closed `mermaid` fenced code blocks containing valid Mermaid source. The interactive transcript also renders CommonMark.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "agent") {
@@ -278,6 +280,18 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.kind == PromptSourceKind::Skills));
+    }
+
+    #[test]
+    fn describes_the_mermaid_fence_requirement_without_encouraging_diagrams() {
+        let project = TempDir::new().unwrap();
+
+        let prompt = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(prompt.contains("closed `mermaid` fenced code blocks"));
+        assert!(prompt.contains("valid Mermaid source"));
+        assert!(!prompt.contains("use Mermaid"));
+        assert!(!prompt.contains("consider a diagram"));
     }
 
     #[test]

@@ -216,6 +216,40 @@ fn dragging_transcript_text_copies_on_mouse_release() {
 }
 
 #[test]
+fn mermaid_copy_button_copies_source_instead_of_rendered_art() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let mut app = test_app();
+    app.clipboard = Box::new(RecordingClipboard {
+        copied: copied.clone(),
+    });
+    let source = "flowchart LR\nA[Parse] --> B[Render]";
+    app.record_inserted_entry(Entry::Assistant(format!("```mermaid\n{source}\n```")));
+    let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+    let now = Instant::now();
+    let history_len = app.history_len(60, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 60, 18), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let target = app.code_block_copy_targets(60).into_iter().next().unwrap();
+    let column = target.columns.start as u16;
+    let row = layout.history.y + target.line.saturating_sub(history_start) as u16;
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let visible = terminal.backend().buffer();
+    assert!(visible.content().iter().any(|cell| cell.symbol() == "M"));
+
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+
+    assert_eq!(*copied.lock().unwrap(), vec![source.to_string()]);
+    assert!(app.text_selection.is_none());
+}
+
+#[test]
 fn code_block_copy_button_hovers_and_copies_raw_contents() {
     let copied = Arc::new(Mutex::new(Vec::new()));
     let mut app = test_app();
