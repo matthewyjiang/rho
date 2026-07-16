@@ -361,18 +361,14 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
 }
 
 fn assert_terminal_restored(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    // After a clean exit, ratatui/crossterm should leave the alternate screen.
+    // After a clean exit, ratatui/crossterm must leave the alternate screen.
+    // Mouse disable alone is not enough: a regression that skips ESC[?1049l
+    // would leave the user stuck in the alternate screen.
     let raw = harness.raw_output();
-    let left = raw.windows(8).any(|window| window == b"\x1b[?1049l");
-    let mouse_off = raw.windows(8).any(|window| window == b"\x1b[?1000l")
-        || raw.windows(8).any(|window| window == b"\x1b[?1006l");
-    if left || mouse_off {
-        return Ok(());
+    let left = raw.windows(8).any(|window| window == b"\x1b[?1049l")
+        || String::from_utf8_lossy(raw).contains("?1049l");
+    if !left {
+        anyhow::bail!("did not observe alternate-screen leave sequence (ESC[?1049l)");
     }
-    if String::from_utf8_lossy(raw).contains("?1049l") {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "did not observe terminal restoration sequences (alt-screen leave / mouse disable)"
-    )
+    Ok(())
 }

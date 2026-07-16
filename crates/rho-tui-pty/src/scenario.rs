@@ -71,6 +71,7 @@ pub struct ScenarioRunner {
 
 impl ScenarioRunner {
     pub fn new(binary: PathBuf) -> Self {
+        let binary = binary.canonicalize().unwrap_or(binary);
         Self {
             binary,
             artifact_root: None,
@@ -158,17 +159,25 @@ fn apply_step(harness: &mut PtyHarness, step: &Step) -> Result<()> {
         Step::AssertText(text) => harness.assert_screen_contains(text),
         Step::AssertRawContains(text) => harness.assert_raw_contains(text.as_bytes()),
         Step::ExitCommand => {
-            harness.quit_with_exit_command()?;
-            Ok(())
+            let code = harness.quit_with_exit_command()?;
+            ensure_clean_exit(code, "ExitCommand")
         }
         Step::CtrlCExit => {
-            harness.quit_with_ctrl_c()?;
-            Ok(())
+            let code = harness.quit_with_ctrl_c()?;
+            ensure_clean_exit(code, "CtrlCExit")
         }
         Step::WaitExit { timeout } => {
-            harness.wait_for_exit(*timeout)?;
-            Ok(())
+            let code = harness.wait_for_exit(*timeout)?;
+            ensure_clean_exit(code, "WaitExit")
         }
         Step::Custom(func) => func(harness),
+    }
+}
+
+fn ensure_clean_exit(code: u32, step: &str) -> Result<()> {
+    if code == 0 {
+        Ok(())
+    } else {
+        anyhow::bail!("{step} expected clean exit code 0, got {code}")
     }
 }

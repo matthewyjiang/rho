@@ -220,6 +220,11 @@ fn apply_child_env(cmd: &mut CommandBuilder, env: &[(impl AsRef<str>, impl AsRef
     for herdr_var in ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"] {
         cmd.env_remove(herdr_var);
     }
+    // Drop leftover debug-injection vars from the parent shell so matrix
+    // scenarios cannot abort at startup with an injected error/panic.
+    for test_var in ["RHO_TUI_TEST_TERMINATION", "RHO_TUI_TEST_MODE"] {
+        cmd.env_remove(test_var);
+    }
     for (key, value) in env {
         cmd.env(key.as_ref(), value.as_ref());
     }

@@ -49,7 +49,13 @@ fn main() -> ExitCode {
     }
 
     let binary = match args.bin {
-        Some(path) => path,
+        Some(path) => match path.canonicalize() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("error: could not resolve --bin {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
         None => match rho_tui_pty::env::resolve_rho_binary() {
             Ok(path) => path,
             Err(error) => {
