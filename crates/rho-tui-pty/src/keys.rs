@@ -53,7 +53,7 @@ pub fn encode_key(key: &Key) -> Vec<u8> {
         Key::End => b"\x1b[F".to_vec(),
         Key::Ctrl(ch) => {
             let lower = ch.to_ascii_lowercase();
-            if ('a'..='z').contains(&lower) {
+            if lower.is_ascii_lowercase() {
                 vec![(lower as u8) & 0x1f]
             } else {
                 encode_key(&Key::Char(*ch))
