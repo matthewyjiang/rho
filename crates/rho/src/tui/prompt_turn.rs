@@ -118,6 +118,7 @@ impl App {
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
         let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
+        let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
@@ -126,43 +127,33 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
-            let stream_sleep_deadline = self.stream_sleep_deadline();
+            let frame_deadline =
+                self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             tokio::select! {
-                event = agent.next_event() => {
-                    let Some(event) = event else {
-                        break;
-                    };
-                    if let Some(context) = agent.take_context_usage() {
-                        self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+                biased;
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                    match self.handle_running_terminal_events(
+                        terminal_event?,
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Turn,
+                    ) {
+                        Ok(StreamControl::Interrupt) => agent.cancel(),
+                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                        Err(error) => {
+                            sdk_failure = Some(error.to_string());
+                            agent.cancel();
+                        }
                     }
-                    match adapter.translate(event) {
-                        ViewEvent::Update(event) => {
-                            self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
+                    while let Some(prompt) = self.steering_prompts.pop_front() {
+                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
+                            self.steering_prompts.push_front(prompt);
+                            sdk_failure = Some(error.to_string());
+                            break;
                         }
-                        ViewEvent::Questionnaire(request) => {
-                            let request_id = request.id().clone();
-                            let (reply_tx, reply_rx) = oneshot::channel();
-                            self.open_questionnaire(
-                                QuestionAnswerRequest {
-                                    request: event_adapter::questionnaire_request(&request),
-                                    response: QuestionnaireResponseChannel::new(reply_tx),
-                                },
-                                terminal,
-                            )?;
-                            pending_questionnaire = Some((request_id, reply_rx));
-                        }
-                        ViewEvent::Notice(notice) => self.insert_entry(&Entry::Notice(notice)),
-                        ViewEvent::Completed => terminal_event = true,
-                        ViewEvent::Cancelled => terminal_event = true,
-                        ViewEvent::Failed(message) => {
-                            sdk_failure = Some(message);
-                            terminal_event = true;
-                        }
-                        ViewEvent::Ignored => {}
                     }
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
                     let Some((request_id, reply)) = reply else {
@@ -190,36 +181,59 @@ impl App {
                         }
                     }
                 }
-                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
-                    match self.handle_running_terminal_events(
-                        terminal_event?,
-                        terminal,
-                        &interrupt_requested,
-                        &tool_call_active,
-                        RunningInputMode::Turn,
-                    ) {
-                        Ok(StreamControl::Interrupt) => agent.cancel(),
-                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
-                        Err(error) => {
-                            sdk_failure = Some(error.to_string());
-                            agent.cancel();
-                        }
-                    }
-                    while let Some(prompt) = self.steering_prompts.pop_front() {
-                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
-                            self.steering_prompts.push_front(prompt);
-                            sdk_failure = Some(error.to_string());
-                            break;
-                        }
-                    }
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
-                }
-                _ = tokio::time::sleep_until(stream_sleep_deadline) => {
+                _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_preview(terminal)?;
                     self.flush_due_paste_burst();
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
+                event = agent.next_event() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    let mut changed = false;
+                    let mut interaction_ready = false;
+                    if let Some(context) = agent.take_context_usage() {
+                        changed |= self.handle_queued_agent_event(
+                            ViewModelEvent::ContextUsage(context),
+                            terminal,
+                        )?;
+                    }
+                    match adapter.translate(event) {
+                        ViewEvent::Update(event) => {
+                            changed |= self.handle_queued_agent_event(event, terminal)?;
+                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
+                        }
+                        ViewEvent::Questionnaire(request) => {
+                            let request_id = request.id().clone();
+                            let (reply_tx, reply_rx) = oneshot::channel();
+                            self.open_questionnaire(
+                                QuestionAnswerRequest {
+                                    request: event_adapter::questionnaire_request(&request),
+                                    response: QuestionnaireResponseChannel::new(reply_tx),
+                                },
+                                terminal,
+                            )?;
+                            pending_questionnaire = Some((request_id, reply_rx));
+                            changed = true;
+                            interaction_ready = true;
+                        }
+                        ViewEvent::Notice(notice) => {
+                            self.insert_entry(&Entry::Notice(notice));
+                            changed = true;
+                        }
+                        ViewEvent::Completed => terminal_event = true,
+                        ViewEvent::Cancelled => terminal_event = true,
+                        ViewEvent::Failed(message) => {
+                            sdk_failure = Some(message);
+                            terminal_event = true;
+                        }
+                        ViewEvent::Ignored => {}
+                    }
+                    let render_now = interaction_ready
+                        || (changed && frame_scheduler.request_background_frame(Instant::now()));
+                    if render_now {
+                        self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                    }
                 }
             }
         }
@@ -289,6 +303,17 @@ impl App {
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(outcome)
+    }
+
+    fn draw_running_frame(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        frame_scheduler: &mut FrameScheduler,
+    ) -> anyhow::Result<()> {
+        self.clamp_history_scroll_for_terminal(terminal)?;
+        terminal.draw(|frame| self.draw(frame))?;
+        frame_scheduler.rendered(Instant::now());
+        Ok(())
     }
 
     fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {
