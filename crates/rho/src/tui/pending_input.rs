@@ -168,9 +168,10 @@ impl App {
                 PendingInputRequest::Accept { prompt, .. },
                 PendingInputCompletion::Accepted(Err(error)),
             ) => {
-                self.steering_prompts.push_front(prompt);
+                self.queued_prompts.push_front(prompt);
                 self.select_pending_recall_target();
-                Some(error.to_string())
+                self.notify_status(format!("steer queued as follow-up: {error}"));
+                None
             }
             (
                 PendingInputRequest::Retract { action, .. },

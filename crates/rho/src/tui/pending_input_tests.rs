@@ -137,6 +137,31 @@ fn focused_panel_can_remove_selected_follow_up() {
 }
 
 #[test]
+fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
+    let mut app = test_app();
+    let queued = prompt("continue after this turn");
+    let request = PendingInputRequest::Accept {
+        prompt: queued.clone(),
+        receipt: Box::pin(std::future::pending()),
+    };
+    let completion = PendingInputCompletion::Accepted(Err(rho_sdk::Error::InvalidHostResponse {
+        message: "run completed before accepting steering input".into(),
+    }));
+
+    let failure = app.finish_pending_input_request(request, completion);
+
+    assert_eq!(failure, None);
+    assert!(app.steering_prompts.is_empty());
+    assert_eq!(app.queued_prompts, VecDeque::from([queued]));
+    assert_eq!(
+        app.last_status_notice.as_deref(),
+        Some(
+            "steer queued as follow-up: invalid host response: run completed before accepting steering input"
+        )
+    );
+}
+
+#[test]
 fn applied_event_removes_only_matching_steering() {
     let mut app = test_app();
     let applied = rho_sdk::SteeringId::new();
