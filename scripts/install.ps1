@@ -31,23 +31,27 @@ function Invoke-GitHubApi($Uri) {
     }
 }
 
+function Test-ReleaseHasAssets($Release) {
+    return $Release.assets.name -contains $Asset -and $Release.assets.name -contains "$Asset.sha256"
+}
+
 function Get-ReleaseForAsset {
     if ($Version -eq "latest") {
         $Latest = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/latest"
         if ([string]::IsNullOrWhiteSpace($Latest.tag_name)) {
             throw "failed to determine latest release tag from GitHub API"
         }
-        if ($Latest.assets.name -contains $Asset) {
+        if (Test-ReleaseHasAssets $Latest) {
             return $Latest
         }
 
         $Fallback = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases?per_page=100" |
-            Where-Object { $_.assets.name -contains $Asset } |
+            Where-Object { Test-ReleaseHasAssets $_ } |
             Select-Object -First 1
         if (-not $Fallback) {
-            throw "$($Latest.tag_name) is tagged but asset $Asset is not published yet, and no earlier compatible release was found. Install from source instead: cargo install rho-coding-agent"
+            throw "$($Latest.tag_name) is tagged but required assets $Asset and $Asset.sha256 are not both published yet, and no earlier compatible release was found. Install from source instead: cargo install rho-coding-agent"
         }
-        Write-Warning "$($Latest.tag_name) is tagged but asset $Asset is not published yet; installing $($Fallback.tag_name) instead"
+        Write-Warning "$($Latest.tag_name) is tagged but required assets are not both published yet; installing $($Fallback.tag_name) instead"
         return $Fallback
     }
 
@@ -59,8 +63,8 @@ function Get-ReleaseForAsset {
         $ReleaseTag = "rho-coding-agent-$Version"
     }
     $Release = Invoke-GitHubApi "https://api.github.com/repos/$Repo/releases/tags/$ReleaseTag"
-    if ($Release.assets.name -notcontains $Asset) {
-        throw "release $ReleaseTag does not include asset $Asset. Install from source instead: cargo install rho-coding-agent"
+    if (-not (Test-ReleaseHasAssets $Release)) {
+        throw "release $ReleaseTag does not include both $Asset and $Asset.sha256. Install from source instead: cargo install rho-coding-agent"
     }
     return $Release
 }

@@ -29,7 +29,6 @@ pub struct UpdateInfo {
     pub latest_tag: String,
     pub latest_version: String,
     pub current_version: String,
-    platform_asset_available: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,18 +71,10 @@ enum ScoopInstallScope {
 #[derive(Deserialize)]
 struct LatestRelease {
     tag_name: String,
-    assets: Vec<ReleaseAsset>,
-}
-
-#[derive(Deserialize)]
-struct ReleaseAsset {
-    name: String,
 }
 
 pub async fn available_update(current_version: &str) -> anyhow::Result<Option<UpdateInfo>> {
-    let release = latest_release().await?;
-    let platform_asset_available = release_has_platform_asset(&release.assets);
-    let latest_tag = release.tag_name;
+    let latest_tag = latest_release_tag().await?;
     let Some(latest_version) = release_tag_to_version(&latest_tag) else {
         anyhow::bail!("latest release tag '{latest_tag}' does not contain a version");
     };
@@ -92,7 +83,6 @@ pub async fn available_update(current_version: &str) -> anyhow::Result<Option<Up
             latest_tag,
             latest_version,
             current_version: current_version.to_string(),
-            platform_asset_available,
         }))
     } else {
         Ok(None)
@@ -106,19 +96,14 @@ pub async fn update_notice(current_version: &str) -> Option<String> {
     )
     .await
     {
-        Ok(Ok(Some(update)))
-            if detect_install_method() != InstallMethod::Script
-                || update.platform_asset_available =>
-        {
-            Some(format!(
-                "update available: v{} (current v{}). run `rho update` to {} via {}.",
-                update.latest_version,
-                update.current_version,
-                update_action_label(),
-                detect_install_method().label()
-            ))
-        }
-        Ok(Ok(Some(_))) | Ok(Ok(None)) | Ok(Err(_)) | Err(_) => None,
+        Ok(Ok(Some(update))) => Some(format!(
+            "update available: v{} (current v{}). run `rho update` to {} via {}.",
+            update.latest_version,
+            update.current_version,
+            update_action_label(),
+            detect_install_method().label()
+        )),
+        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => None,
     }
 }
 
@@ -128,15 +113,6 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
 
     match available_update(current_version).await {
         Ok(Some(update)) => {
-            if method == InstallMethod::Script && !update.platform_asset_available {
-                println!(
-                    "rho v{} is tagged but the {} binary is not published yet; staying on v{}. Try again later or install from source with `cargo install {CRATE_NAME}`.",
-                    update.latest_version,
-                    platform_label(),
-                    update.current_version
-                );
-                return Ok(());
-            }
             println!(
                 "rho v{} is available (current v{}).",
                 update.latest_version, update.current_version
@@ -457,37 +433,7 @@ fn is_scoop_rho_path(lower_path: &str) -> bool {
         || lower_path.ends_with("/scoop/shims/rho.exe")
 }
 
-fn release_has_platform_asset(assets: &[ReleaseAsset]) -> bool {
-    assets
-        .iter()
-        .any(|asset| asset.name == platform_asset_name())
-}
-
-fn platform_asset_name() -> &'static str {
-    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "rho-aarch64-apple-darwin.tar.gz"
-    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        "rho-x86_64-apple-darwin.tar.gz"
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "rho-x86_64-unknown-linux-gnu.tar.gz"
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "rho-x86_64-pc-windows-msvc.zip"
-    } else {
-        ""
-    }
-}
-
-fn platform_label() -> &'static str {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => "macOS arm64",
-        ("macos", "x86_64") => "macOS x86_64",
-        ("linux", "x86_64") => "Linux x86_64",
-        ("windows", "x86_64") => "Windows x86_64",
-        _ => "current platform",
-    }
-}
-
-async fn latest_release() -> anyhow::Result<LatestRelease> {
+async fn latest_release_tag() -> anyhow::Result<String> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("rho-coding-agent"));
     headers.insert(
@@ -505,7 +451,7 @@ async fn latest_release() -> anyhow::Result<LatestRelease> {
         .error_for_status()?
         .json::<LatestRelease>()
         .await?;
-    Ok(release)
+    Ok(release.tag_name)
 }
 
 fn release_tag_to_version(tag: &str) -> Option<String> {
@@ -549,20 +495,9 @@ mod tests {
 
     use super::{
         cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
-        pacman_update_command_display, release_has_platform_asset, release_tag_to_version,
-        scoop_install_scope_for_path, scoop_update_command_display, version_is_newer,
-        InstallMethod, ReleaseAsset, ScoopInstallScope,
+        pacman_update_command_display, release_tag_to_version, scoop_install_scope_for_path,
+        scoop_update_command_display, version_is_newer, InstallMethod, ScoopInstallScope,
     };
-
-    #[test]
-    fn identifies_platform_asset_in_release() {
-        let assets = [ReleaseAsset {
-            name: super::platform_asset_name().to_string(),
-        }];
-
-        assert!(release_has_platform_asset(&assets));
-        assert!(!release_has_platform_asset(&[]));
-    }
 
     #[test]
     fn extracts_release_please_tag_version() {

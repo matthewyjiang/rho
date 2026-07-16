@@ -59,51 +59,66 @@ github_api() {
   fi
 }
 
-release_has_asset() {
-  asset="$1"
-  awk -v asset="$asset" '
+release_has_assets() {
+  archive="$1"
+  checksum="$2"
+  awk -v archive="$archive" -v checksum="$checksum" '
     $0 ~ /"name"[[:space:]]*:/ {
       line=$0
       sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
-      if (line == asset) found=1
+      if (line == archive) have_archive=1
+      if (line == checksum) have_checksum=1
     }
-    END { exit(found ? 0 : 1) }
+    END { exit(have_archive && have_checksum ? 0 : 1) }
   '
 }
 
 release_tag() {
   asset="$1"
+  checksum="$asset.sha256"
   case "$VERSION" in
     latest)
       latest_api="https://api.github.com/repos/$REPO/releases/latest"
       latest_json="$(github_api "$latest_api")"
       tag="$(printf '%s\n' "$latest_json" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
-      if printf '%s\n' "$latest_json" | release_has_asset "$asset"; then
+      if printf '%s\n' "$latest_json" | release_has_assets "$asset" "$checksum"; then
         printf '%s' "$tag"
         return
       fi
 
       releases_api="https://api.github.com/repos/$REPO/releases?per_page=100"
-      fallback="$(github_api "$releases_api" | awk -v asset="$asset" '
+      fallback="$(github_api "$releases_api" | awk -v archive="$asset" -v checksum="$checksum" '
+        function select_release() {
+          if (tag != "" && have_archive && have_checksum) {
+            print tag
+            found=1
+            exit
+          }
+        }
         /"tag_name"[[:space:]]*:/ {
+          select_release()
           tag=$0
           sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
           sub(/".*$/, "", tag)
+          have_archive=0
+          have_checksum=0
         }
         /"name"[[:space:]]*:/ {
           name=$0
           sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", name)
           sub(/".*$/, "", name)
-          if (name == asset && tag != "") { print tag; exit }
+          if (name == archive) have_archive=1
+          if (name == checksum) have_checksum=1
         }
+        END { if (!found) select_release() }
       ')"
       if [ -z "$fallback" ]; then
-        echo "error: $tag is tagged but asset $asset is not published yet, and no earlier compatible release was found" >&2
+        echo "error: $tag is tagged but required assets $asset and $checksum are not both published yet, and no earlier compatible release was found" >&2
         echo "       install from source instead: cargo install rho-coding-agent" >&2
         exit 1
       fi
-      echo "warning: $tag is tagged but asset $asset is not published yet; installing $fallback instead" >&2
+      echo "warning: $tag is tagged but required assets are not both published yet; installing $fallback instead" >&2
       printf '%s' "$fallback"
       return
       ;;
@@ -113,8 +128,8 @@ release_tag() {
   esac
 
   release_api="https://api.github.com/repos/$REPO/releases/tags/$tag"
-  if ! github_api "$release_api" | release_has_asset "$asset"; then
-    echo "error: release $tag does not include asset $asset" >&2
+  if ! github_api "$release_api" | release_has_assets "$asset" "$checksum"; then
+    echo "error: release $tag does not include both $asset and $checksum" >&2
     echo "       install from source instead: cargo install rho-coding-agent" >&2
     exit 1
   fi
