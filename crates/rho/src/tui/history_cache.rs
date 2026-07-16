@@ -80,6 +80,19 @@ impl HistoryLineCache {
         &self.code_blocks
     }
 
+    pub(super) fn entry_index_at_line(
+        &mut self,
+        entries: &[Entry],
+        width: usize,
+        max_tool_output_lines: usize,
+        line: usize,
+    ) -> Option<usize> {
+        self.ensure_current(entries, width, max_tool_output_lines);
+        self.entry_ranges
+            .iter()
+            .position(|range| range.contains(&line))
+    }
+
     pub(super) fn extend_visible_lines(
         &mut self,
         entries: &[Entry],
