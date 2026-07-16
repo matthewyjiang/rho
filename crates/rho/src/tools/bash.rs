@@ -395,13 +395,13 @@ mod tests {
             cwd: dir.path().to_path_buf(),
             max_output_bytes: 12000,
         };
-        let started = ctx.cwd.join("started");
+        let background_process_started = ctx.cwd.join("background-process-started");
         let marker = ctx.cwd.join("background-process-survived");
 
         let bash = Bash::new(false);
         let mut call = Box::pin(bash.call(
             json!({
-                "command": "touch started; sh -c 'sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait"
+                "command": "sh -c 'touch background-process-started; sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait"
             }),
             ctx,
             "call_1".into(),
@@ -409,7 +409,7 @@ mod tests {
         tokio::select! {
             result = &mut call => panic!("command completed unexpectedly: {result:?}"),
             _ = async {
-                while !started.exists() {
+                while !background_process_started.exists() {
                     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 }
             } => {}
