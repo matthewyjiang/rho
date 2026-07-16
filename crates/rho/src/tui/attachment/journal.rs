@@ -107,8 +107,8 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         }),
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
-        // Attachments cannot steer headless subagents, so this interactive-only
-        // acknowledgement has no observer state to persist.
+        // This acknowledgement reconciles the interactive TUI's pending-input
+        // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),

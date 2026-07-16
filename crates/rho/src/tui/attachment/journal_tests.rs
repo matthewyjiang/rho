@@ -36,7 +36,7 @@ fn attachment_stream_round_trips_view_events() {
 }
 
 #[test]
-fn attachment_stream_ignores_interactive_steering_acknowledgements() {
+fn attachment_stream_ignores_pending_input_acknowledgements() {
     assert!(attachment_update(ViewModelEvent::SteeringApplied(Vec::new())).is_none());
 }
 
