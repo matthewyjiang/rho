@@ -58,6 +58,15 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
     };
+    text.push_str("\n## streamed heading\n");
+    cache.assistant_appended(0);
+    cached_lines.clear();
+    cache.extend_visible_lines(&entries, 32, 10, 0, usize::MAX, &mut cached_lines);
+    assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
     text.push_str("\n```rust\nlet answer = 42;\n");
     cache.assistant_appended(0);
     cached_lines.clear();

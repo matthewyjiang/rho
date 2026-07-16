@@ -17,7 +17,7 @@ cd path/to/project
 rho
 ```
 
-Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. Provider streams that deliver no data for two minutes are treated as stale, so Rho can reset or surface an error instead of remaining in the `working` state indefinitely. The interactive UI owns the transcript viewport while it is open, so use the built-in transcript scrolling controls instead of terminal scrollback. When you exit, your previous shell view returns and Rho prints only a short saved-session summary when a session exists.
+Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. Markdown ATX headings from `#` through `######` render without their syntax markers, using distinct terminal colors and stronger emphasis for the top three levels. Provider streams that deliver no data for two minutes are treated as stale, so Rho can reset or surface an error instead of remaining in the `working` state indefinitely. The interactive UI owns the transcript viewport while it is open, so use the built-in transcript scrolling controls instead of terminal scrollback. When you exit, your previous shell view returns and Rho prints only a short saved-session summary when a session exists.
 
 For persisted history and resume behavior, see [sessions](/sessions).
 

@@ -43,6 +43,7 @@ mod doctor;
 mod event_adapter;
 mod file_palette;
 mod file_picker;
+mod frame_scheduler;
 mod goal;
 mod goal_command;
 mod history_cache;
@@ -86,6 +87,7 @@ use config_editor::{
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
 use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_state};
@@ -764,6 +766,7 @@ impl App {
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             tokio::select! {
+                biased;
                 event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
                     self.handle_terminal_event(event?, terminal, agent).await?;
                     needs_redraw = true;
@@ -2846,18 +2849,21 @@ impl App {
         &mut self,
         event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
-    ) -> Result<(), crate::model::ModelError> {
-        self.handle_agent_event(event, terminal)?;
-        Ok(())
+    ) -> Result<bool, crate::model::ModelError> {
+        Ok(self.handle_agent_event(event, terminal)?)
     }
 
-    fn stream_sleep_deadline(&self) -> tokio::time::Instant {
+    fn next_running_frame_deadline(
+        &self,
+        deferred_frame_deadline: Option<Instant>,
+    ) -> tokio::time::Instant {
         let spinner_deadline = Instant::now() + LoadingSpinner::FRAME_INTERVAL;
+        let deadline = deferred_frame_deadline.map_or(spinner_deadline, |deferred_deadline| {
+            deferred_deadline.min(spinner_deadline)
+        });
         let deadline = self
             .stream_preview_deadline
-            .map_or(spinner_deadline, |stream_deadline| {
-                stream_deadline.min(spinner_deadline)
-            });
+            .map_or(deadline, |stream_deadline| stream_deadline.min(deadline));
         let deadline = self
             .paste_burst
             .deadline()

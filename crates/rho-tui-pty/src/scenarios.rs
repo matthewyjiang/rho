@@ -17,12 +17,14 @@ pub enum ScenarioId {
     StartupStreamExit,
     CancelAndResubmit,
     InlineShellDuringTurn,
+    TypeDuringStream,
     ResizeDuringStream,
     ScrollDuringStream,
     TerminalRestoration,
     PasteMultiline,
     Questionnaire,
     ProgressTool,
+    MarkdownHeadings,
     OpenModelPicker,
 }
 
@@ -32,12 +34,14 @@ impl ScenarioId {
             Self::StartupStreamExit => "startup_stream_exit",
             Self::CancelAndResubmit => "cancel_and_resubmit",
             Self::InlineShellDuringTurn => "inline_shell_during_turn",
+            Self::TypeDuringStream => "type_during_stream",
             Self::ResizeDuringStream => "resize_during_stream",
             Self::ScrollDuringStream => "scroll_during_stream",
             Self::TerminalRestoration => "terminal_restoration",
             Self::PasteMultiline => "paste_multiline",
             Self::Questionnaire => "questionnaire",
             Self::ProgressTool => "progress_tool",
+            Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
         }
     }
@@ -47,12 +51,14 @@ impl ScenarioId {
             "startup_stream_exit" => Some(Self::StartupStreamExit),
             "cancel_and_resubmit" => Some(Self::CancelAndResubmit),
             "inline_shell_during_turn" => Some(Self::InlineShellDuringTurn),
+            "type_during_stream" => Some(Self::TypeDuringStream),
             "resize_during_stream" => Some(Self::ResizeDuringStream),
             "scroll_during_stream" => Some(Self::ScrollDuringStream),
             "terminal_restoration" => Some(Self::TerminalRestoration),
             "paste_multiline" => Some(Self::PasteMultiline),
             "questionnaire" => Some(Self::Questionnaire),
             "progress_tool" => Some(Self::ProgressTool),
+            "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
             _ => None,
         }
@@ -92,6 +98,33 @@ const STARTUP_STREAM_EXIT_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(200),
         timeout: SETTLE,
     },
+    Step::ExitCommand,
+];
+
+const TYPE_DURING_STREAM_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_flood"),
+    Step::SubmitText("fixture input flood"),
+    Step::WaitText {
+        text: "input flood event 010",
+        timeout: STREAM,
+    },
+    Step::Phase("type_draft"),
+    Step::TypeText("draft while streaming"),
+    Step::WaitText {
+        text: "draft while streaming",
+        timeout: WaitTimeout::millis(500, "composer input during stream"),
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
     Step::ExitCommand,
 ];
 
@@ -219,28 +252,24 @@ const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("bulk"),
-    Step::SubmitText("fixture bulk one"),
-    // Bulk output is long; the viewport follows the bottom, so assert a late line.
+    Step::Phase("continuous_stream"),
+    Step::SubmitText("fixture input flood"),
     Step::WaitText {
-        text: "fixture bulk one line 180",
+        text: "input flood event 100",
         timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: WaitTimeout::secs(15, "bulk settle"),
     },
     Step::Phase("scroll_up"),
     Step::Key(Key::PageUp),
     Step::Key(Key::PageUp),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
+    Step::WaitText {
+        text: "input flood event 050",
+        timeout: WaitTimeout::millis(500, "scroll during stream"),
     },
     Step::Phase("return_bottom"),
     Step::Key(Key::Ctrl('g')),
+    Step::Key(Key::Esc),
     Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
+        quiet_for: Duration::from_millis(250),
         timeout: SETTLE,
     },
     Step::ExitCommand,
@@ -317,6 +346,25 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture markdown headings"),
+    Step::WaitText {
+        text: "Level six",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(200),
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_markdown_headings_rendered),
+    Step::ExitCommand,
+];
+
 const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -361,6 +409,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "type_during_stream",
+            description: "Keep composer input responsive during continuous model output",
+            size: DEFAULT_SIZE,
+            steps: TYPE_DURING_STREAM_STEPS,
+            smoke: true,
+        },
+        Scenario {
             id: "resize_during_stream",
             description: "Resize repeatedly while a fixture stream is active",
             size: DEFAULT_SIZE,
@@ -403,6 +458,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "markdown_headings",
+            description: "Render streamed Markdown heading levels without syntax markers",
+            size: DEFAULT_SIZE,
+            steps: MARKDOWN_HEADINGS_STEPS,
+            smoke: false,
+        },
+        Scenario {
             id: "open_model_picker",
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
@@ -438,6 +500,29 @@ fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Re
 fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
     if harness.screen().contains_text("idle-stream-end") {
         anyhow::bail!("idle shell output was not rendered until the command completed");
+    }
+    Ok(())
+}
+
+fn assert_markdown_headings_rendered(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    for heading in [
+        "Level one",
+        "Level two",
+        "Level three",
+        "Level four",
+        "Level five",
+        "Level six",
+    ] {
+        if !screen.contains(heading) {
+            anyhow::bail!("rendered heading is missing from the screen: {heading}");
+        }
+    }
+    if screen
+        .lines()
+        .any(|line| line.trim_start().starts_with('#'))
+    {
+        anyhow::bail!("rendered heading retained Markdown syntax markers");
     }
     Ok(())
 }

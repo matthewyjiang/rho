@@ -35,6 +35,11 @@ fn smoke_cancel_and_resubmit() {
 }
 
 #[test]
+fn smoke_type_during_stream() {
+    assert_pass("type_during_stream");
+}
+
+#[test]
 fn smoke_resize_during_stream() {
     assert_pass("resize_during_stream");
 }
@@ -50,6 +55,11 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn renders_markdown_headings() {
+    assert_pass("markdown_headings");
+}
+
+#[test]
 fn smoke_subset_is_registered() {
     let smoke = all_scenarios()
         .iter()
@@ -58,6 +68,7 @@ fn smoke_subset_is_registered() {
         .collect::<Vec<_>>();
     assert!(smoke.contains(&"startup_stream_exit"));
     assert!(smoke.contains(&"cancel_and_resubmit"));
+    assert!(smoke.contains(&"type_during_stream"));
     assert!(smoke.contains(&"resize_during_stream"));
     assert!(smoke.contains(&"scroll_during_stream"));
     assert!(smoke.contains(&"terminal_restoration"));
