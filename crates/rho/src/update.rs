@@ -14,7 +14,7 @@ use tokio::process::Command;
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases/latest";
 const CRATE_NAME: &str = "rho-coding-agent";
-const PACMAN_PACKAGE: &str = "rho-coding-agent";
+const PACMAN_PACKAGE_TARGET: &str = "mjiang-extras/rho-coding-agent";
 const SCOOP_PACKAGE: &str = "rho";
 #[cfg(not(windows))]
 const SCRIPT_INSTALL_SH_COMMAND: &str = "tmp=$(mktemp) || exit; curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh -o \"$tmp\"; status=$?; if [ $status -eq 0 ]; then sh \"$tmp\"; status=$?; fi; rm -f \"$tmp\"; exit $status";
@@ -187,7 +187,7 @@ fn update_command(method: InstallMethod) -> Command {
         }
         InstallMethod::Pacman => {
             let mut command = Command::new("sudo");
-            command.args(["pacman", "-Syu", PACMAN_PACKAGE]);
+            command.args(["pacman", "-Sy", PACMAN_PACKAGE_TARGET]);
             command
         }
         InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
@@ -209,7 +209,7 @@ fn cargo_update_command_display() -> String {
 }
 
 fn pacman_update_command_display() -> String {
-    format!("sudo pacman -Syu {PACMAN_PACKAGE}")
+    format!("sudo pacman -Sy {PACMAN_PACKAGE_TARGET}")
 }
 
 fn scoop_update_command_display(scope: ScoopInstallScope) -> String {
@@ -548,10 +548,10 @@ mod tests {
     }
 
     #[test]
-    fn pacman_update_command_refreshes_sync_database() {
+    fn pacman_update_command_syncs_only_rho_from_mjiang_extras() {
         assert_eq!(
             pacman_update_command_display(),
-            "sudo pacman -Syu rho-coding-agent"
+            "sudo pacman -Sy mjiang-extras/rho-coding-agent"
         );
     }
 

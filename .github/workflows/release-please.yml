@@ -298,6 +298,7 @@ jobs:
         shell: pwsh
         run: gh release download "$env:TAG" --pattern "rho-$env:TARGET.zip.sha256"
       - name: Update Scoop manifest
+        id: scoop-pr
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -339,3 +340,15 @@ jobs:
           } else {
             gh pr create --base main --head $Branch --title $Title --body-file $BodyFile
           }
+          $PrNumber = gh pr list --head $Branch --base main --json number --jq '.[0].number'
+          if (-not $PrNumber) {
+            throw "Could not find the Scoop manifest pull request for $Branch"
+          }
+          "number=$PrNumber" >> $env:GITHUB_OUTPUT
+      - name: Merge Scoop manifest pull request
+        if: ${{ steps.scoop-pr.outputs.number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.SCOOP_MANIFEST_TOKEN }}
+          PR_NUMBER: ${{ steps.scoop-pr.outputs.number }}
+        shell: pwsh
+        run: gh pr merge $env:PR_NUMBER --squash --admin --delete-branch
