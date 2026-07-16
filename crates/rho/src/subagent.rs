@@ -9,8 +9,9 @@
 
 use std::{
     collections::HashSet,
+    fs::{File, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use serde::{Deserialize, Serialize};
@@ -19,36 +20,14 @@ use crate::reasoning::ReasoningLevel;
 
 pub const RESULT_FILE_NAME: &str = "result.json";
 pub const LOG_FILE_NAME: &str = "log.txt";
+pub const ATTACHMENT_FILE_NAME: &str = "events.jsonl";
 pub const CANCEL_FILE_NAME: &str = "cancel.requested";
 
 const BUILTIN_PRESETS: &[(&str, &str)] = &[
     ("explorer", include_str!("builtin_agents/explorer.md")),
+    ("reviewer", include_str!("builtin_agents/reviewer.md")),
     ("worker", include_str!("builtin_agents/worker.md")),
 ];
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OnExit {
-    #[default]
-    Keep,
-    Close,
-    CloseOnSuccess,
-}
-
-impl FromStr for OnExit {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim() {
-            "keep" => Ok(Self::Keep),
-            "close" => Ok(Self::Close),
-            "close-on-success" => Ok(Self::CloseOnSuccess),
-            other => anyhow::bail!(
-                "invalid on_exit '{other}': expected keep, close, or close-on-success"
-            ),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PresetSource {
@@ -65,7 +44,6 @@ pub struct Preset {
     pub reasoning: Option<ReasoningLevel>,
     /// Tool names the subagent may use; `None` grants the full tool set.
     pub tools: Option<Vec<String>>,
-    pub on_exit: OnExit,
     /// Markdown body, appended to the subagent's system prompt.
     pub prompt: String,
     pub source: PresetSource,
@@ -157,10 +135,6 @@ fn parse_preset(name: &str, contents: &str, source: PresetSource) -> anyhow::Res
                 .map_err(|error| anyhow::anyhow!("preset '{name}': {error}"))
         })
         .transpose()?;
-    let on_exit = field("on_exit")
-        .map(|value| value.parse::<OnExit>())
-        .transpose()?
-        .unwrap_or_default();
     let tools = field("tools").map(|value| parse_tool_list(&value));
 
     Ok(Preset {
@@ -170,7 +144,6 @@ fn parse_preset(name: &str, contents: &str, source: PresetSource) -> anyhow::Res
         provider: field("provider").filter(|value| !value.is_empty()),
         reasoning,
         tools,
-        on_exit,
         prompt: body.trim().to_string(),
         source,
     })
@@ -293,8 +266,6 @@ impl RunState {
 pub struct RunStatus {
     pub state: RunState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     #[serde(default)]
     pub turns: u64,
@@ -310,6 +281,8 @@ pub struct RunStatus {
     pub result: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment_error: Option<String>,
 }
 
 /// Writes the status file atomically (temp file + rename) so readers never
@@ -318,15 +291,78 @@ pub fn write_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let contents = serde_json::to_string_pretty(status)?;
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, contents)?;
-    std::fs::rename(&temp, path)
+    let contents = serde_json::to_vec_pretty(status)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(RESULT_FILE_NAME);
+    let temp = path.with_file_name(format!(
+        ".{file_name}.{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let result = (|| {
+        let mut file = create_private_file(&temp)?;
+        file.write_all(&contents)?;
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 pub fn read_status(path: &Path) -> Option<RunStatus> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
+}
+
+pub fn directory(id: &str) -> anyhow::Result<PathBuf> {
+    validate_id(id)?;
+    Ok(crate::paths::rho_dir()?.join("subagents").join(id))
+}
+
+fn validate_id(id: &str) -> anyhow::Result<()> {
+    if id.len() != 6 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("invalid subagent id '{id}': expected 6 hexadecimal characters");
+    }
+    Ok(())
+}
+
+pub(crate) fn create_private_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+pub(crate) fn secure_directory(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a trusted directory", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
 }
 
 /// Returns the cancellation marker associated with a result file.
@@ -340,7 +376,21 @@ pub fn request_cancel(output_file: &Path) -> std::io::Result<()> {
     if let Some(parent) = cancel_file.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(cancel_file, [])
+    match create_private_file(&cancel_file) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(&cancel_file)?;
+            if metadata.is_file() && !metadata.file_type().is_symlink() {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{} is not a regular file", cancel_file.display()),
+                ))
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

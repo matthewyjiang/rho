@@ -21,6 +21,21 @@ Rho streams the assistant response as it works. Tool use appears inline so you c
 
 For persisted history and resume behavior, see [sessions](/sessions).
 
+## Watch a subagent
+
+Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
+
+```bash
+rho attach abc123
+```
+
+Attached mode uses a separate read-only TUI. It renders the delegated prompt,
+reasoning, assistant output, tool activity, usage, and final state, but it has no
+message box and cannot submit prompts or change the subagent environment. Use
+Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C
+to detach without stopping the run. See [subagents](/subagents#watching-a-subagent)
+for lifecycle and Herdr behavior.
+
 ## Send prompts
 
 Type a request and press `enter` to send it.

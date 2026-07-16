@@ -200,6 +200,8 @@ fn cancel_marker_gracefully_stops_output_run() {
     let result: Value =
         serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
     assert_eq!(result["state"], "stopped");
+    let events = std::fs::read_to_string(root.path().join("events.jsonl")).unwrap();
+    assert!(events.contains("wait for cancellation"));
 }
 
 #[test]

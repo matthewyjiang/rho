@@ -1,6 +1,6 @@
 use crate::{
     model::{catalog, ModelError},
-    subagent::{OnExit, Preset, PresetSource},
+    subagent::{Preset, PresetSource},
 };
 
 use super::{apply_preset_overrides, is_interactive_startup_unavailable_error};
@@ -19,7 +19,6 @@ fn provider_only_preset_selects_the_provider_default_model() {
         provider: Some("anthropic".into()),
         reasoning: None,
         tools: None,
-        on_exit: OnExit::Keep,
         prompt: String::new(),
         source: PresetSource::BuiltIn,
     };

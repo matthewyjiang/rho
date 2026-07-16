@@ -1,10 +1,8 @@
 //! Subagent spawn (`agent`) and lifecycle (`agents`) tools.
 //!
-//! A subagent is a child `rho run --preset <name>` process. Inside herdr the
-//! pane is spawned by herdr itself (via the `herdr` CLI) so the user can watch
-//! and scroll it; elsewhere the child runs headless with output teed to a log
-//! file. Results always flow back through the structured status file
-//! (`--output-file`), never by reading pane or log output.
+//! A subagent is a directly owned child `rho run --preset <name>` process.
+//! Its output is teed to a log file and its structured status and display
+//! events are persisted so any terminal can watch it with `rho attach <id>`.
 
 use std::{
     collections::HashMap,
@@ -20,29 +18,23 @@ use serde_json::{json, Value};
 
 use crate::{
     cancellation::RunCancellation,
-    subagent::{self, OnExit, Preset, RunState, RunStatus},
+    subagent::{self, Preset, RunState, RunStatus},
     tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const STOP_GRACE: Duration = Duration::from_secs(5);
-/// How long a spawned subagent may go without writing its status file before
-/// it is presumed dead (relevant to pane spawns, which have no child handle).
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-/// A pane-owned child has no process handle, so a status file that stops
-/// changing is the only portable indication that the child has disappeared.
-const STALE_STATUS_TIMEOUT: Duration = Duration::from_secs(120);
 /// Cap on the result text echoed into notifications and blocking returns.
 const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
 
 type ForceKillRequest = tokio::sync::oneshot::Sender<Result<(), String>>;
+type ForceKillSender = tokio::sync::mpsc::UnboundedSender<ForceKillRequest>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SpawnDisplay {
-    /// Herdr owns the subagent's pane.
-    Pane(String),
-    /// Headless child; output tees to this log file.
-    Log(PathBuf),
+enum StatusWatchOutcome {
+    Continue,
+    Finished,
+    StartupTimedOut(ForceKillSender),
 }
 
 #[derive(Clone, Debug)]
@@ -51,7 +43,7 @@ pub struct SubagentSnapshot {
     pub preset: String,
     pub background: bool,
     pub elapsed: Duration,
-    pub display: SpawnDisplay,
+    pub log_file: PathBuf,
     pub status: RunStatus,
     pub done: bool,
 }
@@ -60,14 +52,13 @@ struct AgentEntry {
     preset: String,
     background: bool,
     started: Instant,
-    display: SpawnDisplay,
-    on_exit: OnExit,
-    pid: Option<u32>,
+    log_file: PathBuf,
     output_file: PathBuf,
-    force_kill: Option<tokio::sync::mpsc::UnboundedSender<ForceKillRequest>>,
+    force_kill: ForceKillSender,
     session_id: Option<String>,
     status: RunStatus,
     done: bool,
+    process_exited: bool,
     notified: bool,
 }
 
@@ -78,10 +69,17 @@ impl AgentEntry {
             preset: self.preset.clone(),
             background: self.background,
             elapsed: self.started.elapsed(),
-            display: self.display.clone(),
+            log_file: self.log_file.clone(),
             status: self.status.clone(),
             done: self.done,
         }
+    }
+
+    fn finish_with_error(&mut self, error: String) {
+        self.status.state = RunState::Error;
+        self.status.error = Some(error);
+        let _ = subagent::write_status(&self.output_file, &self.status);
+        self.done = true;
     }
 }
 
@@ -121,10 +119,8 @@ impl SubagentManager {
         prompt: &str,
         background: bool,
         cwd: &Path,
-    ) -> anyhow::Result<(String, SpawnDisplay)> {
-        let id = new_agent_id();
-        let dir = subagent_dir(&id)?;
-        std::fs::create_dir_all(&dir)?;
+    ) -> anyhow::Result<(String, PathBuf)> {
+        let (id, dir) = create_run_directory()?;
         let output_file = dir.join(subagent::RESULT_FILE_NAME);
         let log_file = dir.join(subagent::LOG_FILE_NAME);
 
@@ -141,22 +137,14 @@ impl SubagentManager {
             .expect("subagent session lock")
             .clone();
 
-        let (display, pid, force_kill) = match spawn_in_herdr_pane(&exe, &args, cwd).await {
-            Ok(pane_id) => (SpawnDisplay::Pane(pane_id), None, None),
-            Err(_) => {
-                let (child_pid, child) = spawn_headless(&exe, &args, cwd, &log_file)?;
-                let force_kill = self.watch_child(&id, child);
-                (SpawnDisplay::Log(log_file), child_pid, Some(force_kill))
-            }
-        };
+        let child = spawn_headless(&exe, &args, cwd, &log_file)?;
+        let force_kill = self.watch_child(&id, child);
 
         let entry = AgentEntry {
             preset: preset.name.clone(),
             background,
             started: Instant::now(),
-            display: display.clone(),
-            on_exit: preset.on_exit,
-            pid,
+            log_file: log_file.clone(),
             output_file: output_file.clone(),
             force_kill,
             session_id,
@@ -165,6 +153,7 @@ impl SubagentManager {
                 ..RunStatus::default()
             },
             done: false,
+            process_exited: false,
             notified: false,
         };
         self.inner
@@ -172,29 +161,20 @@ impl SubagentManager {
             .expect("subagent registry lock")
             .insert(id.clone(), entry);
         self.watch_status_file(&id, output_file);
-        Ok((id, display))
+        Ok((id, log_file))
     }
 
-    /// Polls the status file until it reaches a terminal state. A subagent
-    /// that never writes its status file (e.g. its pane command failed before
-    /// rho started) is marked failed after [`STARTUP_TIMEOUT`] so blocking
-    /// callers cannot wait forever.
+    /// Polls the status file until it reaches a terminal state.
     fn watch_status_file(&self, id: &str, output_file: PathBuf) {
         let manager = self.clone();
         let id = id.to_string();
         tokio::spawn(async move {
             let started = Instant::now();
             let mut seen_status = false;
-            let mut last_modified = None;
-            let mut last_status_write = Instant::now();
             loop {
                 tokio::time::sleep(POLL_INTERVAL).await;
                 let status = subagent::read_status(&output_file);
-                let modified = tokio::fs::metadata(&output_file)
-                    .await
-                    .and_then(|metadata| metadata.modified())
-                    .ok();
-                let finished = {
+                let outcome = {
                     let mut agents = manager.inner.lock().expect("subagent registry lock");
                     let Some(entry) = agents.get_mut(&id) else {
                         return;
@@ -203,39 +183,30 @@ impl SubagentManager {
                         return;
                     }
                     if let Some(status) = status {
-                        if modified.is_some() && modified != last_modified {
-                            last_modified = modified;
-                            last_status_write = Instant::now();
-                        }
                         seen_status = true;
-                        if entry.pid.is_none() {
-                            entry.pid = status.pid;
-                        }
                         entry.status = status;
-                    } else if !seen_status && started.elapsed() > STARTUP_TIMEOUT {
-                        entry.status.state = RunState::Error;
-                        entry.status.error = Some(
+                    }
+                    if !seen_status && started.elapsed() > STARTUP_TIMEOUT {
+                        entry.finish_with_error(
                             "subagent never wrote its status file; it likely failed to start"
                                 .into(),
                         );
-                    }
-                    if seen_status
-                        && matches!(entry.display, SpawnDisplay::Pane(_))
-                        && last_status_write.elapsed() > STALE_STATUS_TIMEOUT
-                    {
-                        entry.status.state = RunState::Error;
-                        entry.status.error = Some(
-                            "subagent status stopped updating; its pane may have closed".into(),
-                        );
-                    }
-                    if entry.status.state.is_terminal() {
+                        StatusWatchOutcome::StartupTimedOut(entry.force_kill.clone())
+                    } else if entry.status.state.is_terminal() {
                         entry.done = true;
+                        StatusWatchOutcome::Finished
+                    } else {
+                        StatusWatchOutcome::Continue
                     }
-                    entry.done.then(|| entry.snapshot(&id))
                 };
-                if let Some(snapshot) = finished {
-                    manager.handle_exit_display(&snapshot).await;
-                    return;
+                match outcome {
+                    StatusWatchOutcome::Continue => {}
+                    StatusWatchOutcome::Finished => return,
+                    StatusWatchOutcome::StartupTimedOut(force_kill) => {
+                        let (ack, _killed) = tokio::sync::oneshot::channel();
+                        let _ = force_kill.send(ack);
+                        return;
+                    }
                 }
             }
         });
@@ -243,11 +214,7 @@ impl SubagentManager {
 
     /// Marks the entry failed if the headless child exits without ever
     /// writing a terminal state.
-    fn watch_child(
-        &self,
-        id: &str,
-        mut child: tokio::process::Child,
-    ) -> tokio::sync::mpsc::UnboundedSender<ForceKillRequest> {
+    fn watch_child(&self, id: &str, mut child: tokio::process::Child) -> ForceKillSender {
         let (force_kill, mut force_kill_requests) =
             tokio::sync::mpsc::unbounded_channel::<ForceKillRequest>();
         let manager = self.clone();
@@ -257,11 +224,7 @@ impl SubagentManager {
                 exit = child.wait() => (exit, None),
                 request = force_kill_requests.recv() => {
                     if let Some(ack) = request {
-                        let exit = match child.kill().await {
-                            Ok(()) => child.wait().await,
-                            Err(error) => Err(error),
-                        };
-                        (exit, Some(ack))
+                        (kill_child_process_group(&mut child).await, Some(ack))
                     } else {
                         (child.wait().await, None)
                     }
@@ -281,38 +244,24 @@ impl SubagentManager {
             let Some(entry) = agents.get_mut(&id) else {
                 return;
             };
+            entry.process_exited = true;
             if entry.done || entry.status.state.is_terminal() {
                 return;
             }
-            entry.status.state = RunState::Error;
-            entry.status.error = Some(match exit {
+            if let Some(status) = subagent::read_status(&entry.output_file) {
+                entry.status = status;
+                if entry.status.state.is_terminal() {
+                    entry.done = true;
+                    return;
+                }
+            }
+            let error = match exit {
                 Ok(status) => format!("subagent exited ({status}) without writing a result"),
                 Err(error) => format!("failed to wait for subagent: {error}"),
-            });
-            entry.done = true;
+            };
+            entry.finish_with_error(error);
         });
         force_kill
-    }
-
-    async fn handle_exit_display(&self, snapshot: &SubagentSnapshot) {
-        let SpawnDisplay::Pane(pane_id) = &snapshot.display else {
-            return;
-        };
-        let entry_on_exit = {
-            let agents = self.inner.lock().expect("subagent registry lock");
-            agents.get(&snapshot.id).map(|entry| entry.on_exit)
-        };
-        let close = match entry_on_exit {
-            Some(OnExit::Close) => true,
-            Some(OnExit::CloseOnSuccess) => snapshot.status.state == RunState::Ok,
-            Some(OnExit::Keep) | None => false,
-        };
-        if close {
-            let _ = tokio::process::Command::new("herdr")
-                .args(["pane", "close", pane_id])
-                .output()
-                .await;
-        }
     }
 
     pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {
@@ -379,50 +328,50 @@ impl SubagentManager {
         let snapshot = self
             .status(id)
             .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?;
-        if snapshot.done {
-            return Ok(snapshot);
-        }
-        let output_file = {
-            let agents = self.inner.lock().expect("subagent registry lock");
-            agents
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?
-                .output_file
-                .clone()
-        };
-        subagent::request_cancel(&output_file)?;
-
-        let deadline = Instant::now() + STOP_GRACE;
-        while Instant::now() < deadline {
-            tokio::time::sleep(POLL_INTERVAL).await;
-            if let Some(snapshot) = self.status(id) {
-                if snapshot.done {
-                    return Ok(snapshot);
-                }
-            }
-        }
-
-        let (force_kill, pid) = {
+        let (output_file, process_exited) = {
             let agents = self.inner.lock().expect("subagent registry lock");
             let entry = agents
                 .get(id)
                 .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?;
-            (entry.force_kill.clone(), entry.pid.or(entry.status.pid))
+            (entry.output_file.clone(), entry.process_exited)
         };
-        if let Some(force_kill) = force_kill {
-            let (ack, killed) = tokio::sync::oneshot::channel();
-            force_kill
-                .send(ack)
-                .map_err(|_| anyhow::anyhow!("subagent '{id}' process watcher stopped"))?;
-            killed
-                .await
-                .map_err(|_| anyhow::anyhow!("subagent '{id}' kill was not acknowledged"))?
-                .map_err(anyhow::Error::msg)?;
-        } else if let Some(pid) = pid {
-            force_kill_process(pid)?;
-        } else {
-            anyhow::bail!("subagent '{id}' did not report a pid and could not be force-killed");
+        if process_exited {
+            return Ok(snapshot);
         }
+        if !snapshot.done {
+            subagent::request_cancel(&output_file)?;
+        }
+
+        let grace = if snapshot.done {
+            POLL_INTERVAL * 2
+        } else {
+            STOP_GRACE
+        };
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            tokio::time::sleep(POLL_INTERVAL).await;
+            let agents = self.inner.lock().expect("subagent registry lock");
+            if let Some(entry) = agents.get(id).filter(|entry| entry.process_exited) {
+                return Ok(entry.snapshot(id));
+            }
+        }
+
+        let force_kill = {
+            let agents = self.inner.lock().expect("subagent registry lock");
+            agents
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?
+                .force_kill
+                .clone()
+        };
+        let (ack, killed) = tokio::sync::oneshot::channel();
+        force_kill
+            .send(ack)
+            .map_err(|_| anyhow::anyhow!("subagent '{id}' process watcher stopped"))?;
+        killed
+            .await
+            .map_err(|_| anyhow::anyhow!("subagent '{id}' kill was not acknowledged"))?
+            .map_err(anyhow::Error::msg)?;
 
         let (snapshot, status) = {
             let mut agents = self.inner.lock().expect("subagent registry lock");
@@ -434,20 +383,22 @@ impl SubagentManager {
                 entry.status.error = Some("killed after stop grace period".into());
                 entry.done = true;
             }
+            entry.process_exited = true;
             (entry.snapshot(id), entry.status.clone())
         };
         let _ = subagent::write_status(&output_file, &status);
         Ok(snapshot)
     }
 
-    /// Gracefully stops still-running headless children on shutdown. Pane
-    /// subagents are user-visible in herdr and are left running.
+    /// Gracefully stops still-running children on shutdown.
     pub async fn shutdown(&self) {
         let ids: Vec<String> = self
-            .list()
-            .into_iter()
-            .filter(|snapshot| !snapshot.done && matches!(snapshot.display, SpawnDisplay::Log(_)))
-            .map(|snapshot| snapshot.id)
+            .inner
+            .lock()
+            .expect("subagent registry lock")
+            .iter()
+            .filter(|(_, entry)| !entry.process_exited)
+            .map(|(id, _)| id.clone())
             .collect();
         let stops = ids.into_iter().map(|id| {
             let manager = self.clone();
@@ -459,18 +410,23 @@ impl SubagentManager {
     }
 }
 
-#[cfg(unix)]
-fn force_kill_process(pid: u32) -> anyhow::Result<()> {
-    let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-    if result != 0 {
-        anyhow::bail!("failed to kill subagent pid {pid}");
+async fn kill_child_process_group(
+    child: &mut tokio::process::Child,
+) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let result = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+        return child.wait().await;
     }
-    Ok(())
-}
 
-#[cfg(not(unix))]
-fn force_kill_process(_pid: u32) -> anyhow::Result<()> {
-    anyhow::bail!("cannot force-kill a pane subagent on this platform")
+    child.kill().await?;
+    child.wait().await
 }
 
 fn new_agent_id() -> String {
@@ -478,8 +434,22 @@ fn new_agent_id() -> String {
     id[..6].to_string()
 }
 
-fn subagent_dir(id: &str) -> anyhow::Result<PathBuf> {
-    Ok(crate::paths::rho_dir()?.join("subagents").join(id))
+fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
+    const MAX_ATTEMPTS: usize = 100;
+    for _ in 0..MAX_ATTEMPTS {
+        let id = new_agent_id();
+        let directory = subagent::directory(&id)?;
+        if let Some(parent) = directory.parent() {
+            std::fs::create_dir_all(parent)?;
+            subagent::secure_directory(parent)?;
+        }
+        match subagent::create_private_directory(&directory) {
+            Ok(()) => return Ok((id, directory)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("could not allocate a unique subagent id")
 }
 
 fn run_args(
@@ -507,81 +477,13 @@ fn run_args(
     args
 }
 
-fn herdr_pane_env() -> Option<String> {
-    if !cfg!(unix) || std::env::var("HERDR_ENV").ok()?.as_str() != "1" {
-        return None;
-    }
-    std::env::var("HERDR_PANE_ID").ok()
-}
-
-/// Asks herdr (over its CLI, which speaks the local socket) to split a pane
-/// next to ours and run the subagent command in it.
-async fn spawn_in_herdr_pane(exe: &Path, args: &[String], cwd: &Path) -> anyhow::Result<String> {
-    let self_pane =
-        herdr_pane_env().ok_or_else(|| anyhow::anyhow!("not running inside a herdr pane"))?;
-    let split = tokio::process::Command::new("herdr")
-        .args([
-            "pane",
-            "split",
-            &self_pane,
-            "--direction",
-            "right",
-            "--no-focus",
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .await?;
-    if !split.status.success() {
-        anyhow::bail!(
-            "herdr pane split failed: {}",
-            String::from_utf8_lossy(&split.stderr).trim()
-        );
-    }
-    let response: Value = serde_json::from_slice(&split.stdout)?;
-    let pane_id = response["result"]["pane"]["pane_id"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("herdr pane split returned no pane id"))?
-        .to_string();
-
-    let command_line = std::iter::once(exe.to_string_lossy().into_owned())
-        .chain(args.iter().cloned())
-        .map(|part| shell_quote(&part))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let command_line = format!(
-        "cd {} && {}",
-        shell_quote(&cwd.to_string_lossy()),
-        command_line
-    );
-    let run = tokio::process::Command::new("herdr")
-        .args(["pane", "run", &pane_id, &command_line])
-        .stdin(Stdio::null())
-        .output()
-        .await?;
-    if !run.status.success() {
-        let _ = tokio::process::Command::new("herdr")
-            .args(["pane", "close", &pane_id])
-            .output()
-            .await;
-        anyhow::bail!(
-            "herdr pane run failed: {}",
-            String::from_utf8_lossy(&run.stderr).trim()
-        );
-    }
-    Ok(pane_id)
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 fn spawn_headless(
     exe: &Path,
     args: &[String],
     cwd: &Path,
     log_file: &Path,
-) -> anyhow::Result<(Option<u32>, tokio::process::Child)> {
-    let log = std::fs::File::create(log_file)?;
+) -> anyhow::Result<tokio::process::Child> {
+    let log = subagent::create_private_file(log_file)?;
     let stderr_log = log.try_clone()?;
     let mut command = tokio::process::Command::new(exe);
     command
@@ -590,13 +492,15 @@ fn spawn_headless(
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(stderr_log)
-        // The child must not report herdr agent state against the parent's
-        // pane, and must itself fall back to headless spawning.
+        // The child is not occupying the parent's terminal, so it must not
+        // report agent state against the parent's Herdr pane.
         .env_remove("HERDR_ENV")
         .env_remove("HERDR_SOCKET_PATH")
-        .env_remove("HERDR_PANE_ID");
-    let child = command.spawn()?;
-    Ok((child.id(), child))
+        .env_remove("HERDR_PANE_ID")
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    Ok(command.spawn()?)
 }
 
 fn snapshot_json(snapshot: &SubagentSnapshot) -> Value {
@@ -611,14 +515,14 @@ fn snapshot_json(snapshot: &SubagentSnapshot) -> Value {
         "output_tokens": snapshot.status.output_tokens,
     });
     let object = value.as_object_mut().expect("snapshot json object");
-    match &snapshot.display {
-        SpawnDisplay::Pane(pane) => {
-            object.insert("pane_id".into(), json!(pane));
-        }
-        SpawnDisplay::Log(path) => {
-            object.insert("log_file".into(), json!(path.to_string_lossy()));
-        }
-    }
+    object.insert(
+        "log_file".into(),
+        json!(snapshot.log_file.to_string_lossy()),
+    );
+    object.insert(
+        "attach_command".into(),
+        json!(format!("rho attach {}", snapshot.id)),
+    );
     if let Some(activity) = &snapshot.status.last_activity {
         object.insert("last_activity".into(), json!(activity));
     }
@@ -627,6 +531,9 @@ fn snapshot_json(snapshot: &SubagentSnapshot) -> Value {
     }
     if let Some(error) = &snapshot.status.error {
         object.insert("error".into(), json!(error));
+    }
+    if let Some(error) = &snapshot.status.attachment_error {
+        object.insert("attachment_error".into(), json!(error));
     }
     value
 }
@@ -661,7 +568,7 @@ pub fn notification_prompts(notification: &SubagentNotification) -> (String, Str
         finished_summary(snapshot)
     );
     let display = format!(
-        "subagent {} ({}) finished — {}",
+        "subagent {} ({}) finished - {}",
         snapshot.id,
         snapshot.preset,
         snapshot.status.state.as_str()
@@ -746,7 +653,7 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Results return automatically.\n\nPresets:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Results return automatically. Use `rho attach <id>` to watch the returned subagent ID.\n\nPresets:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -782,22 +689,22 @@ impl Tool for AgentTool {
         }
         let preset = subagent::find(&ctx.cwd, &args.preset)
             .map_err(|error| ToolError::Message(error.to_string()))?;
-        let (agent_id, display) = self
+        let (agent_id, log_file) = self
             .manager
             .spawn(&preset, &args.prompt, args.background, &ctx.cwd)
             .await
             .map_err(|error| ToolError::Message(format!("failed to spawn subagent: {error}")))?;
 
-        let where_hint = match &display {
-            SpawnDisplay::Pane(pane) => format!("running in herdr pane {pane}"),
-            SpawnDisplay::Log(path) => format!("running headless, log: {}", path.display()),
-        };
+        let where_hint = format!(
+            "attach with `rho attach {agent_id}` (diagnostic log: {})",
+            log_file.display()
+        );
         if args.background {
             return Ok(ToolResult {
                 id,
                 ok: true,
                 content: format!(
-                    "started background subagent {agent_id} (preset {}), {where_hint}. You will be notified when it finishes; use the agents tool to check status or stop it. Do not read its pane or log output.",
+                    "started background subagent {agent_id} (preset {}); {where_hint}. You will be notified when it finishes; use the agents tool to check status or stop it. Do not read its log output.",
                     preset.name
                 ),
             });
@@ -836,9 +743,8 @@ impl Tool for AgentTool {
             result = &mut call => result,
             () = cancellation.cancelled() => {
                 if background {
-                    // Once pane spawning has started, keep polling it to
-                    // completion so dropping this call cannot orphan a pane
-                    // before it is registered with the manager.
+                    // Let an in-flight spawn finish registration so the
+                    // manager retains ownership of the child process.
                     let _ = call.await;
                 } else {
                     loop {
