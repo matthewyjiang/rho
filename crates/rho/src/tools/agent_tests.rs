@@ -205,7 +205,7 @@ async fn child_failure_without_status_is_persisted_for_attach() {
     let directory = TempDir::new().unwrap();
     let output_file = directory.path().join(subagent::RESULT_FILE_NAME);
     let log_file = directory.path().join(subagent::LOG_FILE_NAME);
-    let child = spawn_headless(Path::new("/bin/true"), &[], directory.path(), &log_file).unwrap();
+    let child = spawn_headless(Path::new("true"), &[], directory.path(), &log_file).unwrap();
     let manager = SubagentManager::new();
     let force_kill = manager.watch_child("x5", child);
     let mut entry = test_entry("explorer", true);
