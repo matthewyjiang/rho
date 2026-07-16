@@ -18,6 +18,7 @@ fn discovers_builtin_presets() {
 
     let names: Vec<_> = presets.iter().map(|preset| preset.name.as_str()).collect();
     assert!(names.contains(&"explorer"));
+    assert!(names.contains(&"reviewer"));
     assert!(names.contains(&"worker"));
     let explorer = presets.iter().find(|p| p.name == "explorer").unwrap();
     assert_eq!(explorer.source, PresetSource::BuiltIn);
@@ -29,6 +30,11 @@ fn discovers_builtin_presets() {
     assert!(!explorer.tools.as_ref().unwrap().contains(&"bash".into()));
     assert_eq!(explorer.reasoning, Some(ReasoningLevel::Low));
     assert!(!explorer.prompt.is_empty());
+    let reviewer = presets.iter().find(|p| p.name == "reviewer").unwrap();
+    assert_eq!(reviewer.source, PresetSource::BuiltIn);
+    assert!(reviewer.tools.as_ref().unwrap().contains(&"bash".into()));
+    assert_eq!(reviewer.reasoning, Some(ReasoningLevel::High));
+    assert!(!reviewer.prompt.is_empty());
     let worker = presets.iter().find(|p| p.name == "worker").unwrap();
     assert_eq!(worker.tools, None);
 }

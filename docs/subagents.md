@@ -32,8 +32,9 @@ from, in order of precedence:
 2. `~/.agents/agents/*.md`
 3. `.agents/agents/*.md` in the project (nearest project wins)
 
-Two presets ship built in: `explorer` (a fast read-only scout) and `worker`
-(full tool set). A user file with the same name overrides it.
+Three presets ship built in: `explorer` (a fast read-only scout), `reviewer`
+(a read-only code reviewer), and `worker` (full tool set). A user file with the
+same name overrides it.
 
 ### Frontmatter fields
 

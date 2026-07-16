@@ -25,6 +25,7 @@ pub const CANCEL_FILE_NAME: &str = "cancel.requested";
 
 const BUILTIN_PRESETS: &[(&str, &str)] = &[
     ("explorer", include_str!("builtin_agents/explorer.md")),
+    ("reviewer", include_str!("builtin_agents/reviewer.md")),
     ("worker", include_str!("builtin_agents/worker.md")),
 ];
 

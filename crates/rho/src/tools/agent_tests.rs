@@ -281,6 +281,7 @@ fn agent_tool_spec_lists_presets() {
     assert!(!spec.description.contains("Blocking by default"));
     assert!(spec.description.contains("rho attach <id>"));
     assert!(spec.description.contains("explorer:"));
+    assert!(spec.description.contains("reviewer:"));
     assert!(spec.description.contains("worker:"));
     assert_eq!(
         spec.input_schema["properties"]["preset"]["description"],
@@ -298,6 +299,7 @@ fn agent_tool_spec_lists_presets() {
         .as_array()
         .unwrap();
     assert!(names.iter().any(|name| name == "explorer"));
+    assert!(names.iter().any(|name| name == "reviewer"));
     assert!(names.iter().any(|name| name == "worker"));
 }
 
