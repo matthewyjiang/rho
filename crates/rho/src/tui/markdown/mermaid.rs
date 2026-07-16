@@ -14,6 +14,7 @@ const MAX_NESTING_DEPTH: usize = 6;
 const MAX_DETAILS: usize = 1_024;
 const MAX_RENDERED_LINES: usize = 4_096;
 const MAX_RENDERED_CELLS: usize = 2_000_000;
+const COMPACT_GRAPH_GAPS: (usize, usize) = (1, 0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MermaidFallback {
@@ -87,16 +88,27 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         return MermaidRender::Fallback(MermaidFallback::StructuralLimit);
     }
 
-    let options = mermaid_text::RenderOptions {
+    let compact_graph = matches!(kind, DiagramKind::Flowchart | DiagramKind::State);
+    let mut options = mermaid_text::RenderOptions {
         max_width: Some(inner_width),
         ascii: false,
         color: false,
+        gaps_override: compact_graph.then_some(COMPACT_GRAPH_GAPS),
         ..Default::default()
     };
-    let output = match mermaid_text::render_with_options(source, &options) {
+    let mut output = match mermaid_text::render_with_options(source, &options) {
         Ok(output) => output,
         Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
     };
+    if compact_graph && output.lines().any(|line| display_width(line) > inner_width) {
+        // Explicit gaps bypass the dependency's width compaction. Fall back to
+        // its width-aware pipeline when a compact graph still does not fit.
+        options.gaps_override = None;
+        output = match mermaid_text::render_with_options(source, &options) {
+            Ok(output) => output,
+            Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
+        };
+    }
     if output.contains('\x1b') {
         return MermaidRender::Fallback(MermaidFallback::AnsiOutput);
     }

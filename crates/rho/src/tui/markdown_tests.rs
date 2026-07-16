@@ -150,6 +150,25 @@ fn renders_divider_lines() {
 }
 
 #[test]
+fn renders_a_realistic_agent_workflow_diagram() {
+    let source = "flowchart TD\n    A[User submits a request] --> B[Agent analyzes the task]\n    B --> C{Is more information needed?}\n    C -->|Yes| D[Ask a clarifying question]\n    D --> A\n    C -->|No| E[Inspect relevant files]\n    E --> F[Plan the change]\n    F --> G[Edit the code]\n    G --> H[Run formatting and tests]\n    H --> I{Did validation pass?}\n    I -->|No| J[Diagnose and fix failures]\n    J --> H\n    I -->|Yes| K[Summarize the result]";
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        &format!("```mermaid\n{source}\n```"),
+        100,
+        &mut in_code_block,
+    );
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(text[0].contains("MERMAID"));
+    assert!(text.iter().any(|line| line.contains("User submits")));
+    assert!(text.iter().any(|line| line.contains("Summarize")));
+    assert!(!text.iter().any(|line| line.contains("flowchart TD")));
+    assert!(text.iter().all(|line| display_width(line) <= 100));
+    assert_eq!(rendered.code_blocks[0].text, source);
+}
+
+#[test]
 fn closed_mermaid_fence_renders_a_titled_diagram_and_preserves_source() {
     let source = "flowchart LR\n    A[Parse] --> B[Render]";
     let markdown = format!("before\n```MeRmAiD theme=dark\n{source}\n```\nafter");

@@ -96,6 +96,23 @@ fn rejects_blank_unsupported_unsafe_and_too_wide_sources() {
 }
 
 #[test]
+fn keeps_top_to_bottom_flowcharts_vertically_compact() {
+    let lines = rendered(
+        "flowchart TD\nA[Boil water] --> B[Place tea in cup] --> C[Pour in hot water] --> D[Drink]",
+        100,
+    );
+
+    assert!(lines.iter().any(|line| line.contains("Boil water")));
+    assert!(lines.iter().any(|line| line.contains("Drink")));
+    assert!(
+        lines.len() <= 24,
+        "compact four-step flowchart used {} lines:\n{}",
+        lines.len(),
+        lines.join("\n")
+    );
+}
+
+#[test]
 fn renders_unicode_labels_without_mismeasuring_cells() {
     let lines = rendered("flowchart LR\nA[你好] --> B[e\u{301}🙂]", 80);
     assert!(lines.iter().any(|line| line.contains('你')));
