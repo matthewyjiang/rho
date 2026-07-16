@@ -277,7 +277,7 @@ fn executable_name(shell: &str) -> &str {
 }
 
 impl super::App {
-    pub(super) fn start_inline_shell_during_turn(
+    pub(super) fn start_inline_shell(
         &mut self,
         mode: InlineShellMode,
         command: String,
@@ -410,17 +410,13 @@ impl super::App {
         &mut self,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let inserted = !self.deferred_inline_shell_context.is_empty();
         for deferred in std::mem::take(&mut self.deferred_inline_shell_context) {
             agent.append_user_context_with_display(deferred.context, deferred.persisted_display)?;
         }
-        Ok(())
-    }
-
-    pub(super) fn block_inline_shell_during_turn(&mut self) -> anyhow::Result<()> {
-        self.insert_entry(&super::Entry::Notice(
-            "inline shell is unavailable while a model turn is running".into(),
-        ));
-        self.status = "inline shell unavailable while running".into();
+        if inserted && !self.running {
+            self.status = "shell output included in context".into();
+        }
         Ok(())
     }
 
@@ -446,85 +442,6 @@ impl super::App {
                 if picker.action == super::PickerAction::Config
                     && picker.items.iter().any(|item| item.value.starts_with(super::config_picker::INLINE_SHELL_PREFIX))
         )
-    }
-
-    pub(super) async fn execute_inline_shell(
-        &mut self,
-        mode: InlineShellMode,
-        command: String,
-        terminal: &mut ratatui::DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.running {
-            return self.block_inline_shell_during_turn();
-        }
-        if command.is_empty() {
-            self.status = "enter a shell command after ! or !!".into();
-            return Ok(());
-        }
-        let config = self.info.config_repository.load()?;
-        let shell = if config.inline_shell.trim().is_empty() {
-            default_shell()
-        } else {
-            config.inline_shell
-        };
-        self.push_input_history(&format!(
-            "{}{}",
-            if mode.included_in_context() {
-                "!"
-            } else {
-                "!!"
-            },
-            command
-        ));
-        self.status = format!("running {shell}");
-        terminal.draw(|frame| self.draw(frame))?;
-        let output = match execute(&shell, &command, &self.info.cwd).await {
-            Ok(output) => output,
-            Err(error) => {
-                self.insert_entry(&super::Entry::Error(format!(
-                    "could not run inline shell with {shell}: {error}"
-                )));
-                self.status = "inline shell failed".into();
-                return Ok(());
-            }
-        };
-        let context = crate::tool::truncate(context_text(&output), config.max_output_bytes);
-        let persisted_display = crate::tool::truncate(
-            format!(
-                "!{command}\n\n{}",
-                display_text(&output, /*included_in_context*/ true)
-            ),
-            config.max_output_bytes,
-        );
-        if mode.included_in_context() {
-            self.ensure_session(agent)?;
-            agent.append_user_context_with_display(context, persisted_display)?;
-        }
-        let display_text = crate::tool::truncate(
-            display_text(&output, mode.included_in_context()),
-            config.max_output_bytes,
-        );
-        let display_lines = display_text.lines().map(str::to_string).collect();
-        self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-            state: super::ToolEntryState::Finished {
-                ok: output.ok,
-                display_style: crate::tool::ToolDisplayStyle::file_or_command(),
-            },
-            display_lines,
-            expanded: true,
-        }));
-        self.statusline.refresh_git_branch();
-        self.status = if output.ok {
-            if mode.included_in_context() {
-                "shell output included in context".into()
-            } else {
-                "shell output excluded from context".into()
-            }
-        } else {
-            format!("shell exited with {}", output.exit_code)
-        };
-        Ok(())
     }
 }
 

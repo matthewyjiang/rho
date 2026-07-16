@@ -741,6 +741,11 @@ impl App {
             self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
+            let shell_changed = self.finish_completed_inline_shells().await?;
+            if !self.running {
+                self.insert_deferred_inline_shell_context(agent)?;
+            }
+            needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -750,6 +755,7 @@ impl App {
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_oauth_login.is_some()
+                || !self.pending_inline_shells.is_empty()
             {
                 Duration::from_millis(100)
             } else {
@@ -2025,8 +2031,8 @@ impl App {
             }
             let command = command.to_string();
             self.clear_submitted_input();
-            self.execute_inline_shell(mode, command, terminal, agent)
-                .await?;
+            self.ensure_session(agent)?;
+            self.start_inline_shell(mode, command)?;
             return Ok(());
         }
 
@@ -2343,7 +2349,7 @@ impl App {
             }
             let command = command.to_string();
             self.clear_submitted_input();
-            self.start_inline_shell_during_turn(mode, command)?;
+            self.start_inline_shell(mode, command)?;
             return Ok(());
         }
 

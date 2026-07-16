@@ -128,6 +128,16 @@ const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    Step::SubmitText("!!printf idle-stream-%s start; sleep 2; printf idle-stream-%s end"),
+    Step::WaitText {
+        text: "idle-stream-start",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_idle_shell_still_streaming),
+    Step::WaitText {
+        text: "idle-stream-end",
+        timeout: STREAM,
+    },
     Step::SubmitText("fixture delay"),
     Step::WaitText {
         text: "partial assistant before cancellation",
@@ -401,6 +411,13 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
     runner.run(scenario)
+}
+
+fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    if harness.screen().contains_text("idle-stream-end") {
+        anyhow::bail!("idle shell output was not rendered until the command completed");
+    }
+    Ok(())
 }
 
 fn assert_terminal_restored(harness: &mut crate::harness::PtyHarness) -> Result<()> {
