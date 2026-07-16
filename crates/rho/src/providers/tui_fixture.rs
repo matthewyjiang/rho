@@ -175,6 +175,16 @@ async fn fixture_stream(
             fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
             completed("delay unexpectedly completed")
         }
+        "fixture input flood" => {
+            let mut response = String::new();
+            for index in 1..=400 {
+                let chunk = format!("input flood event {index:03}\n");
+                events.send(ModelEvent::OutputDelta(chunk.clone())).await?;
+                response.push_str(&chunk);
+                fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
+            }
+            completed(response)
+        }
         "fixture stream failure" => {
             events
                 .send(ModelEvent::OutputDelta(

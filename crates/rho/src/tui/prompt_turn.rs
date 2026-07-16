@@ -126,6 +126,7 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
+            let stream_sleep_deadline = self.stream_sleep_deadline();
             tokio::select! {
                 event = agent.next_event() => {
                     let Some(event) = event else {
@@ -189,9 +190,9 @@ impl App {
                         }
                     }
                 }
-                _ = tokio::time::sleep_until(self.stream_sleep_deadline()) => {
-                    self.drain_stream_preview(terminal)?;
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
                     match self.handle_running_terminal_events(
+                        terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
@@ -211,6 +212,12 @@ impl App {
                             break;
                         }
                     }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                _ = tokio::time::sleep_until(stream_sleep_deadline) => {
+                    self.drain_stream_preview(terminal)?;
+                    self.flush_due_paste_burst();
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     terminal.draw(|frame| self.draw(frame))?;
                 }

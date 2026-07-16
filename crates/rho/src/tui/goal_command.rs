@@ -200,8 +200,9 @@ impl App {
                         _ = tokio::time::sleep_until(deadline) => {
                             break Some(Err(anyhow::anyhow!("goal evaluation timed out")));
                         }
-                        _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                        terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
                             let control = self.handle_running_terminal_events(
+                                terminal_event?,
                                 terminal,
                                 &interrupt_requested,
                                 &tool_call_active,
@@ -214,6 +215,10 @@ impl App {
                             if self.goal.is_none() {
                                 break None;
                             }
+                            terminal.draw(|frame| self.draw(frame))?;
+                        }
+                        _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                            self.flush_due_paste_burst();
                             terminal.draw(|frame| self.draw(frame))?;
                         }
                     }
@@ -341,8 +346,9 @@ impl App {
             }
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline) => break true,
-                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
                     let control = self.handle_running_terminal_events(
+                        terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
@@ -355,6 +361,10 @@ impl App {
                     if self.goal.is_none() || self.should_quit {
                         break false;
                     }
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    self.flush_due_paste_burst();
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
