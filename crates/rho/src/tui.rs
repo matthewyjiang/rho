@@ -284,6 +284,8 @@ struct App {
     pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<QueuedPrompt>,
+    pending_inline_shells: Vec<inline_shell::PendingShellTask>,
+    deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
     goal: Option<GoalState>,
     pending_images: Vec<ImageContent>,
     input_history: Vec<String>,
@@ -658,6 +660,8 @@ impl App {
             pending_tool_call: None,
             steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
+            pending_inline_shells: Vec::new(),
+            deferred_inline_shell_context: Vec::new(),
             goal: None,
             pending_images: Vec::new(),
             input_history: Vec::new(),
@@ -739,6 +743,11 @@ impl App {
             self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
+            let shell_changed = self.finish_completed_inline_shells().await?;
+            if !self.running {
+                self.insert_deferred_inline_shell_context(agent)?;
+            }
+            needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -748,6 +757,7 @@ impl App {
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_oauth_login.is_some()
+                || !self.pending_inline_shells.is_empty()
             {
                 Duration::from_millis(100)
             } else {
@@ -1041,6 +1051,7 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
+                self.cancel_inline_shells();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -2024,8 +2035,8 @@ impl App {
             }
             let command = command.to_string();
             self.clear_submitted_input();
-            self.execute_inline_shell(mode, command, terminal, agent)
-                .await?;
+            self.ensure_session(agent)?;
+            self.start_inline_shell(mode, command)?;
             return Ok(());
         }
 
@@ -2334,6 +2345,15 @@ impl App {
             self.paste_segments.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
+            return Ok(());
+        }
+        if let Some((mode, command)) = InlineShellMode::parse(self.input.trim()) {
+            if !self.paste_segments.is_empty() {
+                return self.block_pasted_inline_shell();
+            }
+            let command = command.to_string();
+            self.clear_submitted_input();
+            self.start_inline_shell(mode, command)?;
             return Ok(());
         }
 
@@ -2879,6 +2899,9 @@ impl App {
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.text_selection = None;
+                    if key.code == KeyCode::Esc && self.cancel_inline_shells() {
+                        continue;
+                    }
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
@@ -4877,6 +4900,19 @@ impl App {
 
     fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
+        for pending in self.running_inline_shell_entries() {
+            if !lines.is_empty()
+                || self.last_inserted_was_tool
+                || self.transcript.last().is_some_and(is_tool_entry)
+            {
+                lines.push(Line::raw(""));
+            }
+            lines.extend(tool_entry_lines(
+                &pending,
+                width,
+                self.info.max_tool_output_lines,
+            ));
+        }
         if let Some(pending) = &self.pending_tool_call {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
                 lines.push(Line::raw(""));

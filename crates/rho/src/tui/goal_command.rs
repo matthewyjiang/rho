@@ -222,8 +222,13 @@ impl App {
                             terminal.draw(|frame| self.draw(frame))?;
                         }
                     }
+                    if self.finish_completed_inline_shells().await? {
+                        terminal.draw(|frame| self.draw(frame))?;
+                    }
                 }
             };
+            self.finish_all_inline_shells().await?;
+            self.insert_deferred_inline_shell_context(agent)?;
             self.loading_spinner.stop();
             let Some(evaluation) = evaluation else {
                 break;
@@ -236,7 +241,7 @@ impl App {
                         "goal evaluation failed; retrying while goal remains active: {err}"
                     )));
                     self.status = "goal retrying".into();
-                    if !self.wait_for_goal_retry(terminal).await? {
+                    if !self.wait_for_goal_retry(terminal, agent).await? {
                         break;
                     }
                     continue;
@@ -304,7 +309,7 @@ impl App {
                 "goal still active; retrying after the run stopped before the goal was met".into(),
             ));
             self.status = "goal retrying".into();
-            if !self.wait_for_goal_retry(terminal).await? {
+            if !self.wait_for_goal_retry(terminal, agent).await? {
                 return Ok(false);
             }
 
@@ -327,6 +332,7 @@ impl App {
     async fn wait_for_goal_retry(
         &mut self,
         terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if self.should_quit || self.goal.is_none() {
             return Ok(false);
@@ -368,7 +374,12 @@ impl App {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
+            if self.finish_completed_inline_shells().await? {
+                terminal.draw(|frame| self.draw(frame))?;
+            }
         };
+        self.finish_all_inline_shells().await?;
+        self.insert_deferred_inline_shell_context(agent)?;
         self.loading_spinner.stop();
         Ok(should_retry && self.goal.is_some() && !self.should_quit)
     }

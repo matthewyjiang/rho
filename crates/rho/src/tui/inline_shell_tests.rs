@@ -44,6 +44,33 @@ async fn executes_with_selected_shell() {
     assert_eq!(output.stdout, "inline-shell");
 }
 
+#[tokio::test]
+async fn streams_output_before_command_finishes() {
+    if cfg!(windows) {
+        return;
+    }
+    let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        execute_streaming(
+            "sh",
+            "printf streamed; sleep 1; printf finished",
+            Path::new("."),
+            Some(updates_tx),
+        )
+        .await
+    });
+
+    let update = tokio::time::timeout(std::time::Duration::from_millis(500), updates_rx.recv())
+        .await
+        .expect("first output should stream promptly")
+        .expect("stream should remain connected");
+    assert_eq!(update.text, "streamed");
+    assert!(!task.is_finished());
+
+    let output = task.await.unwrap().unwrap();
+    assert_eq!(output.stdout, "streamedfinished");
+}
+
 #[test]
 fn display_text_preserves_output_and_context_state() {
     let output = ShellOutput {

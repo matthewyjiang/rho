@@ -16,6 +16,7 @@ use crate::{
 pub enum ScenarioId {
     StartupStreamExit,
     CancelAndResubmit,
+    InlineShellDuringTurn,
     TypeDuringStream,
     ResizeDuringStream,
     ScrollDuringStream,
@@ -32,6 +33,7 @@ impl ScenarioId {
         match self {
             Self::StartupStreamExit => "startup_stream_exit",
             Self::CancelAndResubmit => "cancel_and_resubmit",
+            Self::InlineShellDuringTurn => "inline_shell_during_turn",
             Self::TypeDuringStream => "type_during_stream",
             Self::ResizeDuringStream => "resize_during_stream",
             Self::ScrollDuringStream => "scroll_during_stream",
@@ -48,6 +50,7 @@ impl ScenarioId {
         match name {
             "startup_stream_exit" => Some(Self::StartupStreamExit),
             "cancel_and_resubmit" => Some(Self::CancelAndResubmit),
+            "inline_shell_during_turn" => Some(Self::InlineShellDuringTurn),
             "type_during_stream" => Some(Self::TypeDuringStream),
             "resize_during_stream" => Some(Self::ResizeDuringStream),
             "scroll_during_stream" => Some(Self::ScrollDuringStream),
@@ -148,6 +151,64 @@ const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::WaitText {
         text: "fixture response: hello after cancel",
         timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("!!printf idle-stream-%s start; sleep 2; printf idle-stream-%s end"),
+    Step::WaitText {
+        text: "idle-stream-start",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_idle_shell_still_streaming),
+    Step::WaitText {
+        text: "idle-stream-end",
+        timeout: STREAM,
+    },
+    Step::SubmitText("!!printf cancel-%s started; sleep 1; printf cancel-%s escaped-output"),
+    Step::WaitText {
+        text: "cancel-started",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "cancelled",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(1_200),
+        timeout: STREAM,
+    },
+    Step::Custom(assert_inline_shell_cancelled),
+    Step::SubmitText("fixture delay"),
+    Step::WaitText {
+        text: "partial assistant before cancellation",
+        timeout: STREAM,
+    },
+    Step::SubmitText("!!printf streamed-%s start; sleep 1; printf streamed-%s end"),
+    Step::WaitText {
+        text: "streamed-start",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "streamed-end",
+        timeout: STREAM,
+    },
+    Step::SubmitText("!printf context-%s during-turn"),
+    Step::WaitText {
+        text: "context-during-turn",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
     },
     Step::ExitCommand,
 ];
@@ -341,6 +402,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: true,
         },
         Scenario {
+            id: "inline_shell_during_turn",
+            description: "Run local and context shell commands during an active turn",
+            size: DEFAULT_SIZE,
+            steps: INLINE_SHELL_DURING_TURN_STEPS,
+            smoke: false,
+        },
+        Scenario {
             id: "type_during_stream",
             description: "Keep composer input responsive during continuous model output",
             size: DEFAULT_SIZE,
@@ -420,6 +488,20 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
     runner.run(scenario)
+}
+
+fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    if harness.screen().contains_text("cancel-escaped-output") {
+        anyhow::bail!("inline shell produced output after Escape cancelled it");
+    }
+    Ok(())
+}
+
+fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    if harness.screen().contains_text("idle-stream-end") {
+        anyhow::bail!("idle shell output was not rendered until the command completed");
+    }
+    Ok(())
 }
 
 fn assert_markdown_headings_rendered(harness: &mut crate::harness::PtyHarness) -> Result<()> {
