@@ -16,6 +16,7 @@ use crate::{
 pub enum ScenarioId {
     StartupStreamExit,
     CancelAndResubmit,
+    TypeDuringStream,
     ResizeDuringStream,
     ScrollDuringStream,
     TerminalRestoration,
@@ -30,6 +31,7 @@ impl ScenarioId {
         match self {
             Self::StartupStreamExit => "startup_stream_exit",
             Self::CancelAndResubmit => "cancel_and_resubmit",
+            Self::TypeDuringStream => "type_during_stream",
             Self::ResizeDuringStream => "resize_during_stream",
             Self::ScrollDuringStream => "scroll_during_stream",
             Self::TerminalRestoration => "terminal_restoration",
@@ -44,6 +46,7 @@ impl ScenarioId {
         match name {
             "startup_stream_exit" => Some(Self::StartupStreamExit),
             "cancel_and_resubmit" => Some(Self::CancelAndResubmit),
+            "type_during_stream" => Some(Self::TypeDuringStream),
             "resize_during_stream" => Some(Self::ResizeDuringStream),
             "scroll_during_stream" => Some(Self::ScrollDuringStream),
             "terminal_restoration" => Some(Self::TerminalRestoration),
@@ -89,6 +92,33 @@ const STARTUP_STREAM_EXIT_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(200),
         timeout: SETTLE,
     },
+    Step::ExitCommand,
+];
+
+const TYPE_DURING_STREAM_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_flood"),
+    Step::SubmitText("fixture input flood"),
+    Step::WaitText {
+        text: "input flood event 010",
+        timeout: STREAM,
+    },
+    Step::Phase("type_draft"),
+    Step::TypeText("draft while streaming"),
+    Step::WaitText {
+        text: "draft while streaming",
+        timeout: WaitTimeout::millis(500, "composer input during stream"),
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
     Step::ExitCommand,
 ];
 
@@ -158,28 +188,24 @@ const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("bulk"),
-    Step::SubmitText("fixture bulk one"),
-    // Bulk output is long; the viewport follows the bottom, so assert a late line.
+    Step::Phase("continuous_stream"),
+    Step::SubmitText("fixture input flood"),
     Step::WaitText {
-        text: "fixture bulk one line 180",
+        text: "input flood event 100",
         timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: WaitTimeout::secs(15, "bulk settle"),
     },
     Step::Phase("scroll_up"),
     Step::Key(Key::PageUp),
     Step::Key(Key::PageUp),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
+    Step::WaitText {
+        text: "input flood event 050",
+        timeout: WaitTimeout::millis(500, "scroll during stream"),
     },
     Step::Phase("return_bottom"),
     Step::Key(Key::Ctrl('g')),
+    Step::Key(Key::Esc),
     Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
+        quiet_for: Duration::from_millis(250),
         timeout: SETTLE,
     },
     Step::ExitCommand,
@@ -290,6 +316,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Cancel a long fixture stream and submit another prompt",
             size: DEFAULT_SIZE,
             steps: CANCEL_AND_RESUBMIT_STEPS,
+            smoke: true,
+        },
+        Scenario {
+            id: "type_during_stream",
+            description: "Keep composer input responsive during continuous model output",
+            size: DEFAULT_SIZE,
+            steps: TYPE_DURING_STREAM_STEPS,
             smoke: true,
         },
         Scenario {
