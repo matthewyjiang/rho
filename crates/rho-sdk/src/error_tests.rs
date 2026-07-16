@@ -1,4 +1,4 @@
-use super::{Error, ProviderError, ProviderErrorKind, Retryability};
+use super::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 
 #[test]
 fn provider_retryability_propagates_to_top_level_error() {
@@ -28,6 +28,32 @@ fn provider_debug_and_display_contain_only_sanitized_fields() {
     assert_eq!(error.to_string(), "provider failed: service unavailable");
     assert_eq!(
         format!("{error:?}"),
-        "ProviderError { kind: Unavailable, message: \"service unavailable\", retryability: Retryable }"
+        "ProviderError { kind: Unavailable, message: \"service unavailable\", retryability: Retryable, diagnostic_available: false }"
     );
+}
+
+#[test]
+fn provider_diagnostic_is_explicit_and_not_in_display_or_debug() {
+    let error = ProviderError::new(
+        ProviderErrorKind::InvalidResponse,
+        "invalid response",
+        Retryability::Permanent,
+    )
+    .with_diagnostic("secret response body");
+
+    assert_eq!(error.diagnostic(), Some("secret response body"));
+    assert!(!error.to_string().contains("secret response body"));
+    assert!(!format!("{error:?}").contains("secret response body"));
+}
+
+#[test]
+fn provider_diagnostics_are_bounded_and_debug_redacted() {
+    let diagnostic = ProviderDiagnostic::new("secret".repeat(4_000));
+
+    assert!(diagnostic.as_str().len() <= 16 * 1024);
+    assert!(diagnostic.as_str().ends_with("[diagnostic truncated]"));
+    assert_eq!(format!("{diagnostic:?}"), "ProviderDiagnostic([redacted])");
+
+    let event = crate::RunEvent::ProviderDiagnostic { detail: diagnostic };
+    assert!(!format!("{event:?}").contains("secret"));
 }

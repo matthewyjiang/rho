@@ -163,9 +163,7 @@ impl GitHubCopilotProvider {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
-        if !response.status().is_success() {
-            return Err(http_status_error(response).await);
-        }
+        let response = error_for_status(response).await?;
         let response: ChatResponse = response.json().await?;
         convert_openai_response(response)
     }
@@ -195,9 +193,7 @@ impl GitHubCopilotProvider {
         let body = self.chat_request(request, true)?;
         let auth = self.auth.auth_material(&self.client).await?;
         let response = self.send_chat_with_retry(body, auth).await?;
-        if !response.status().is_success() {
-            return Err(http_status_error(response).await);
-        }
+        let response = error_for_status(response).await?;
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -223,14 +219,11 @@ impl GitHubCopilotProvider {
     }
 }
 
-async fn http_status_error(response: reqwest::Response) -> ModelError {
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if status == StatusCode::UNAUTHORIZED {
-        ModelError::MissingGithubCopilotAuth
-    } else {
-        ModelError::HttpStatus { status, body }
+async fn error_for_status(response: reqwest::Response) -> Result<reqwest::Response, ModelError> {
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(ModelError::MissingGithubCopilotAuth);
     }
+    crate::provider_backend::http_error::error_for_status(response).await
 }
 
 #[cfg(test)]

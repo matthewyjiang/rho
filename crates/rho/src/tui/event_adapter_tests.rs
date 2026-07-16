@@ -41,6 +41,20 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
 }
 
 #[test]
+fn provider_diagnostics_are_shown_in_interactive_failures() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let event = adapter.translate(RunEvent::ProviderDiagnostic {
+        detail: rho_sdk::ProviderDiagnostic::new("{\"error\":\"bad request\"}"),
+    });
+
+    let ViewEvent::Notice(message) = event else {
+        panic!("expected diagnostic notice");
+    };
+    assert_eq!(message, "provider diagnostic:\n{\"error\":\"bad request\"}");
+}
+
+#[test]
 fn malformed_response_retry_resets_the_current_provider_stream() {
     let mut adapter = SdkEventAdapter::default();
 

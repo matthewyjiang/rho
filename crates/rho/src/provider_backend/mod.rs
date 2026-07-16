@@ -1,3 +1,4 @@
+pub(crate) mod http_error;
 pub(crate) mod line_decoder;
 pub(crate) mod stream_timeout;
 

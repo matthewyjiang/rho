@@ -279,6 +279,8 @@ fn http_error_messages_include_status_without_bodies() {
     assert_eq!(converted.message(), "HTTP 403");
     assert_eq!(converted.is_retryable(), false);
     assert!(!converted.message().contains("super-secret"));
+    assert!(!converted.to_string().contains("super-secret"));
+    assert_eq!(converted.diagnostic(), Some("authorization=super-secret"));
 }
 
 #[tokio::test]

@@ -132,7 +132,7 @@ impl AnthropicProvider {
             .json(&body)
             .send()
             .await?;
-        let response = error_for_status_with_body(response).await?;
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
     }
@@ -151,7 +151,7 @@ impl AnthropicProvider {
             .json(&body)
             .send()
             .await?;
-        let response = error_for_status_with_body(response).await?;
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }
 
@@ -308,17 +308,6 @@ fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
             return;
         }
     }
-}
-
-async fn error_for_status_with_body(
-    response: reqwest::Response,
-) -> Result<reqwest::Response, ModelError> {
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
-    }
-    let body = response.text().await.unwrap_or_default();
-    Err(ModelError::HttpStatus { status, body })
 }
 
 crate::impl_sdk_model_provider!(AnthropicProvider);

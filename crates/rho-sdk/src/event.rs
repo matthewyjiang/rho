@@ -180,4 +180,9 @@ pub enum RunEvent {
     SteeringApplied {
         ids: Vec<SteeringId>,
     },
+    /// Provider details for direct user diagnostics only. This may contain
+    /// provider-returned data and must not be added to model context.
+    ProviderDiagnostic {
+        detail: crate::ProviderDiagnostic,
+    },
 }

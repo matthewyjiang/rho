@@ -135,6 +135,9 @@ impl SdkEventAdapter {
                 }
             }
             RunEvent::ProviderContextUpdated { .. } => ViewEvent::Ignored,
+            RunEvent::ProviderDiagnostic { detail } => {
+                ViewEvent::Notice(format!("provider diagnostic:\n{}", detail.as_str()))
+            }
             RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire(request),
             RunEvent::CompactionStarted { .. } => {
                 ViewEvent::Notice("compacting conversation context".into())

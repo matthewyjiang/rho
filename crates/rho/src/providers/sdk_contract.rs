@@ -48,16 +48,18 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             ),
             Retryability::Retryable,
         ),
-        ModelError::StreamFailedAfterOutput { message: _ } => ProviderError::new(
+        ModelError::StreamFailedAfterOutput { message } => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
             "provider stream failed after emitting output",
             Retryability::Permanent,
-        ),
-        ModelError::InvalidResponse(_) => ProviderError::new(
+        )
+        .with_diagnostic(sanitize_diagnostic(&message)),
+        ModelError::InvalidResponse(details) => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
             "provider returned an invalid response",
             Retryability::Permanent,
-        ),
+        )
+        .with_diagnostic(sanitize_diagnostic(&details)),
         ModelError::UnsupportedReasoning {
             provider,
             model,
@@ -74,7 +76,7 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             format!("unsupported provider '{provider}'"),
             Retryability::Permanent,
         ),
-        ModelError::HttpStatus { status, body: _ } => {
+        ModelError::HttpStatus { status, body } => {
             let status_code = status.as_u16();
             let (kind, retryability) = match status_code {
                 401 | 403 => (ProviderErrorKind::Authentication, Retryability::Permanent),
@@ -83,7 +85,12 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 500..=599 => (ProviderErrorKind::Unavailable, Retryability::Retryable),
                 _ => (ProviderErrorKind::Other, Retryability::Permanent),
             };
-            ProviderError::new(kind, format!("HTTP {status_code}"), retryability)
+            let error = ProviderError::new(kind, format!("HTTP {status_code}"), retryability);
+            if body.is_empty() {
+                error
+            } else {
+                error.with_diagnostic(sanitize_diagnostic(&body))
+            }
         }
         ModelError::Request(_) => ProviderError::new(
             ProviderErrorKind::Unavailable,
@@ -96,6 +103,29 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             Retryability::Retryable,
         ),
     }
+}
+
+fn sanitize_diagnostic(value: &str) -> String {
+    const MAX_BYTES: usize = crate::provider_backend::http_error::MAX_ERROR_BODY_BYTES;
+
+    let mut diagnostic = String::new();
+    let mut truncated = false;
+    for character in value.chars() {
+        let escaped = match character {
+            '\n' | '\t' => character.to_string(),
+            character if character.is_control() => character.escape_default().to_string(),
+            character => character.to_string(),
+        };
+        if diagnostic.len() + escaped.len() > MAX_BYTES {
+            truncated = true;
+            break;
+        }
+        diagnostic.push_str(&escaped);
+    }
+    if truncated {
+        diagnostic.push_str("\n[diagnostic truncated]");
+    }
+    diagnostic
 }
 
 /// Shared queue used by [`callback_event_sink`] and [`drive_callback_stream`].

@@ -148,7 +148,7 @@ pub use compaction::{
     CompactionState, CompactionThreshold, CompactionTrigger, Compactor, ScriptedCompactor,
 };
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
-pub use error::{Error, ProviderError, ProviderErrorKind, Retryability};
+pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{
     RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure,
     PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,

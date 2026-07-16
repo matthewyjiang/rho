@@ -199,16 +199,15 @@ impl OpenAiProvider {
     ) -> Result<ModelResponse, ModelError> {
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
         let body = self.chat_completions_request(request, /*stream*/ false)?;
-        let response: ChatResponse = self
+        let response = self
             .client
             .post(url)
             .bearer_auth(key)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
+        let response: ChatResponse = response.json().await?;
         convert_openai_response(response)
     }
 
@@ -226,8 +225,8 @@ impl OpenAiProvider {
             .bearer_auth(key)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = crate::provider_backend::http_error::error_for_status(response).await?;
 
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -320,9 +319,7 @@ impl OpenAiProvider {
                 };
                 if !response.status().is_success() {
                     self.codex_ws.reset().await;
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(ModelError::HttpStatus { status, body });
+                    return Err(crate::provider_backend::http_error::from_response(response).await);
                 }
                 return self
                     .collect_codex_sse_response_silent(response, &body)
@@ -331,9 +328,7 @@ impl OpenAiProvider {
         }
         if !response.status().is_success() {
             self.codex_ws.reset().await;
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::HttpStatus { status, body });
+            return Err(crate::provider_backend::http_error::from_response(response).await);
         }
         self.collect_codex_sse_response_silent(response, &body)
             .await
@@ -427,9 +422,7 @@ impl OpenAiProvider {
                 };
                 if !response.status().is_success() {
                     self.codex_ws.reset().await;
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(ModelError::HttpStatus { status, body });
+                    return Err(crate::provider_backend::http_error::from_response(response).await);
                 }
                 return self
                     .collect_codex_sse_response(response, &mut on_event, &body)
@@ -438,9 +431,7 @@ impl OpenAiProvider {
         }
         if !response.status().is_success() {
             self.codex_ws.reset().await;
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::HttpStatus { status, body });
+            return Err(crate::provider_backend::http_error::from_response(response).await);
         }
         self.collect_codex_sse_response(response, &mut on_event, &body)
             .await
