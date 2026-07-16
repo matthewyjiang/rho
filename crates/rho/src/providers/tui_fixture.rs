@@ -99,6 +99,20 @@ async fn fixture_stream(
                 .await?;
             completed("assistant stream part one part two")
         }
+        "fixture markdown headings" => {
+            let mut response = String::new();
+            for delta in [
+                "# Level one\n## Lev",
+                "el two\n### Level three\n",
+                "#### Level four\n##### Lev",
+                "el five\n###### Level six",
+            ] {
+                events.send(ModelEvent::OutputDelta(delta.into())).await?;
+                response.push_str(delta);
+                fixture_sleep(&request.cancellation, Duration::from_millis(40)).await?;
+            }
+            completed(response)
+        }
         "fixture tool" if tool_result(&request, TOOL_CALL_ID).is_none() => {
             let arguments = serde_json::json!({
                 "path": ".rho-tui-fixture-output.txt",

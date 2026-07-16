@@ -50,6 +50,11 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn renders_markdown_headings() {
+    assert_pass("markdown_headings");
+}
+
+#[test]
 fn smoke_subset_is_registered() {
     let smoke = all_scenarios()
         .iter()
