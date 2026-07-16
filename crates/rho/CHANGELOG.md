@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.1.0...rho-coding-agent-v1.2.0) (2026-07-16)
+
+
+### Features
+
+* **goal:** pause goals blocked on user action ([#317](https://github.com/matthewyjiang/rho/issues/317)) ([31fc341](https://github.com/matthewyjiang/rho/commit/31fc341d02c6918a73cc517003ac9e1a160976d5))
+* **subagents:** configurable subagent presets with herdr pane integration ([#323](https://github.com/matthewyjiang/rho/issues/323)) ([b19edd6](https://github.com/matthewyjiang/rho/commit/b19edd684486a6c25e26ba76fa76ce0927a7f95f))
+
+
+### Bug Fixes
+
+* **tui:** correct cumulative token tracking ([#318](https://github.com/matthewyjiang/rho/issues/318)) ([db092a3](https://github.com/matthewyjiang/rho/commit/db092a3960de3f863b6554215d528560388190f3))
+* **tui:** toggle tool output on click ([#325](https://github.com/matthewyjiang/rho/issues/325)) ([564592c](https://github.com/matthewyjiang/rho/commit/564592c128c1dd49a91a374f983d0914997a3f95))
+
 ## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.5...rho-coding-agent-v1.1.0) (2026-07-16)
 
 
