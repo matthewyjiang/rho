@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.4...rho-coding-agent-v1.0.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* **models:** restore GPT-5.6 context limits ([#300](https://github.com/matthewyjiang/rho/issues/300)) ([71f2785](https://github.com/matthewyjiang/rho/commit/71f278592a187aaaf143b02ccd56c4682b21c211))
+
 ## [1.0.4](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.3...rho-coding-agent-v1.0.4) (2026-07-15)
 
 
