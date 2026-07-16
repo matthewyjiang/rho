@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.2.0...rho-coding-agent-v1.3.0) (2026-07-16)
+
+
+### Features
+
+* **subagents:** add read-only attachment ([#333](https://github.com/matthewyjiang/rho/issues/333)) ([e63340c](https://github.com/matthewyjiang/rho/commit/e63340ccb81dc501e483f3036871e688c63b3595))
+* **tui:** add retractable pending input ([#334](https://github.com/matthewyjiang/rho/issues/334)) ([5f293a2](https://github.com/matthewyjiang/rho/commit/5f293a2221e0dcd5457eccbc8675eed2463d878e))
+* **tui:** show running subagents ([#340](https://github.com/matthewyjiang/rho/issues/340)) ([5523a90](https://github.com/matthewyjiang/rho/commit/5523a907e2a8b87e910baea8a03c75a0173af9e2))
+
+
+### Bug Fixes
+
+* **providers:** show bounded error diagnostics ([#344](https://github.com/matthewyjiang/rho/issues/344)) ([e3fc489](https://github.com/matthewyjiang/rho/commit/e3fc48984590d34e19238e157e2479fa3c9d0d20))
+* **release:** auto-merge Scoop manifest updates ([#329](https://github.com/matthewyjiang/rho/issues/329)) ([1aaf368](https://github.com/matthewyjiang/rho/commit/1aaf36827323856d96295aba958e02e5239937d4))
+* **subagents:** discourage unnecessary delegation ([#332](https://github.com/matthewyjiang/rho/issues/332)) ([489a43f](https://github.com/matthewyjiang/rho/commit/489a43f9cbfa67f60d9f6125e447e42ffb6d05b4))
+* **tui:** allow limits during model turns ([#331](https://github.com/matthewyjiang/rho/issues/331)) ([2f1c63a](https://github.com/matthewyjiang/rho/commit/2f1c63ae31bc823845221c2d4e45bcb0cb87d494))
+* **tui:** make pending discard accessible ([#335](https://github.com/matthewyjiang/rho/issues/335)) ([c3e18ff](https://github.com/matthewyjiang/rho/commit/c3e18ffe6098337c1fa9f099bd6d307acac13cee))
+* **tui:** prevent markdown table parser panic on lone pipe lines ([#338](https://github.com/matthewyjiang/rho/issues/338)) ([e54fd50](https://github.com/matthewyjiang/rho/commit/e54fd507b53b36a2791aa9861d7fc7e60e6bdf09)), closes [#336](https://github.com/matthewyjiang/rho/issues/336)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.0.2 to 1.1.0
+
 ## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.1.0...rho-coding-agent-v1.2.0) (2026-07-16)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.2...rho-sdk-v1.1.0) (2026-07-16)
+
+
+### Features
+
+* **tui:** add retractable pending input ([#334](https://github.com/matthewyjiang/rho/issues/334)) ([5f293a2](https://github.com/matthewyjiang/rho/commit/5f293a2221e0dcd5457eccbc8675eed2463d878e))
+
+
+### Bug Fixes
+
+* **providers:** show bounded error diagnostics ([#344](https://github.com/matthewyjiang/rho/issues/344)) ([e3fc489](https://github.com/matthewyjiang/rho/commit/e3fc48984590d34e19238e157e2479fa3c9d0d20))
+
 ## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.1...rho-sdk-v1.0.2) (2026-07-15)
 
 
