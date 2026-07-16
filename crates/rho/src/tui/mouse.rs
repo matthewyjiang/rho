@@ -5,8 +5,10 @@ use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
+    expandable_tool_entry, is_tool_entry,
+    render::tool_entry_lines,
     text_selection::{CopyNotice, TextSelection},
-    App,
+    tool_display_line_count, App,
 };
 
 impl App {
@@ -115,9 +117,9 @@ impl App {
                 if was_scrollbar_drag {
                     self.text_selection = None;
                 } else if let Some(mut selection) = self.text_selection.take() {
-                    if let Some(position) =
-                        selection_position_clamped(layout.history, history_start, column, row)
-                    {
+                    let release_position =
+                        selection_position_clamped(layout.history, history_start, column, row);
+                    if let Some(position) = release_position {
                         selection.update(position);
                     }
                     if selection.has_moved() {
@@ -131,6 +133,10 @@ impl App {
                             self.copy_text(&text, now);
                             self.text_selection = Some(selection);
                         }
+                    } else if release_position.is_some() {
+                        let line = history_start
+                            .saturating_add(row.saturating_sub(layout.history.y) as usize);
+                        self.toggle_tool_output_at_history_line(line, width, terminal)?;
                     }
                 }
             }
@@ -162,6 +168,71 @@ impl App {
             | MouseEventKind::ScrollRight => {}
         }
         Ok(())
+    }
+
+    fn toggle_tool_output_at_history_line<B: Backend>(
+        &mut self,
+        line: usize,
+        width: usize,
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        let header_len = self.session_header_lines(width).len();
+        if let Some(transcript_line) = line.checked_sub(header_len) {
+            let index = self.history_lines.entry_index_at_line(
+                &self.transcript,
+                width,
+                self.info.max_tool_output_lines,
+                transcript_line,
+            );
+            if let Some(index) = index.filter(|&index| {
+                self.transcript.get(index).is_some_and(|entry| {
+                    expandable_tool_entry(entry, self.info.max_tool_output_lines)
+                })
+            }) {
+                self.toggle_transcript_tool_output(index);
+                self.clamp_history_scroll_for_terminal(terminal)?;
+                return Ok(true);
+            }
+        }
+
+        let static_len = self.history_static_len(width);
+        let mut pending_start = static_len;
+        let transcript_ends_with_tool =
+            self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry);
+        for (shell_index, shell) in self.running_inline_shell_entries().enumerate() {
+            if shell_index > 0 || transcript_ends_with_tool {
+                pending_start = pending_start.saturating_add(1);
+            }
+            pending_start = pending_start.saturating_add(
+                tool_entry_lines(&shell, width, self.info.max_tool_output_lines).len(),
+            );
+        }
+        if let Some(pending) = self.pending_tool_call.as_ref() {
+            if transcript_ends_with_tool {
+                pending_start = pending_start.saturating_add(1);
+            }
+            let pending_end = pending_start.saturating_add(
+                tool_entry_lines(pending, width, self.info.max_tool_output_lines).len(),
+            );
+            if (pending_start..pending_end).contains(&line)
+                && tool_display_line_count(&pending.display_lines) > self.info.max_tool_output_lines
+            {
+                let pending = self
+                    .pending_tool_call
+                    .as_mut()
+                    .expect("pending tool exists");
+                pending.expanded = !pending.expanded;
+                self.status = if pending.expanded {
+                    "tool output expanded".into()
+                } else {
+                    "tool output collapsed".into()
+                };
+                self.clamp_history_scroll_for_terminal(terminal)?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn copy_text(&mut self, text: &str, now: Instant) {

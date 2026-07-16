@@ -13,6 +13,118 @@ impl ClipboardWriter for RecordingClipboard {
 }
 
 #[test]
+fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
+    let mut app = test_app();
+    app.info.max_tool_output_lines = 1;
+    app.record_inserted_entry(test_tool_entry(
+        true,
+        &["write_file", "first\nsecond\nthird"],
+    ));
+    app.record_inserted_entry(test_tool_entry(true, &["bash", "alpha\nbeta\ngamma"]));
+    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+
+    let now = Instant::now();
+    let history_len = app.history_len(60, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 60, 24), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let prompt_line = app
+        .history_lines(60, now)
+        .iter()
+        .position(|line| line_text(line).contains("ctrl+o to expand"))
+        .unwrap();
+    let row = layout.history.y + prompt_line.saturating_sub(history_start) as u16;
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        2,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), 2, row, &mut terminal)
+        .unwrap();
+
+    assert!(matches!(
+        app.transcript.first(),
+        Some(Entry::Tool(ToolEntry { expanded: true, .. }))
+    ));
+    assert!(matches!(
+        app.transcript.last(),
+        Some(Entry::Tool(ToolEntry {
+            expanded: false,
+            ..
+        }))
+    ));
+    assert_eq!(app.status, "tool output expanded");
+
+    let now = Instant::now();
+    let history_len = app.history_len(60, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 60, 24), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let prompt_line = app
+        .history_lines(60, now)
+        .iter()
+        .position(|line| line_text(line).contains("ctrl+o to collapse"))
+        .unwrap();
+    let row = layout.history.y + prompt_line.saturating_sub(history_start) as u16;
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        2,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), 2, row, &mut terminal)
+        .unwrap();
+
+    assert!(matches!(
+        app.transcript.first(),
+        Some(Entry::Tool(ToolEntry {
+            expanded: false,
+            ..
+        }))
+    ));
+    assert_eq!(app.status, "tool output collapsed");
+}
+
+#[test]
+fn clicking_expandable_pending_tool_output_toggles_it() {
+    let mut app = test_app();
+    app.info.max_tool_output_lines = 1;
+    app.pending_tool_call = Some(ToolEntry {
+        state: ToolEntryState::Running,
+        display_lines: vec!["bash".into(), "first\nsecond\nthird".into()],
+        expanded: false,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    let now = Instant::now();
+    let history_len = app.history_len(60, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 60, 24), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let prompt_line = app
+        .history_lines(60, now)
+        .iter()
+        .position(|line| line_text(line).contains("ctrl+o to expand"))
+        .unwrap();
+    let row = layout.history.y + prompt_line.saturating_sub(history_start) as u16;
+
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        2,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), 2, row, &mut terminal)
+        .unwrap();
+
+    assert!(matches!(
+        app.pending_tool_call,
+        Some(ToolEntry { expanded: true, .. })
+    ));
+    assert_eq!(app.status, "tool output expanded");
+}
+
+#[test]
 fn dragging_transcript_text_copies_on_mouse_release() {
     let copied = Arc::new(Mutex::new(Vec::new()));
     let mut app = test_app();

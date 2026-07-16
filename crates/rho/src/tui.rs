@@ -4372,6 +4372,11 @@ impl App {
             return Ok(());
         };
 
+        self.toggle_transcript_tool_output(index);
+        self.clamp_history_scroll_for_terminal(terminal)
+    }
+
+    fn toggle_transcript_tool_output(&mut self, index: usize) {
         let expand =
             !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
         for entry in &mut self.transcript {
@@ -4388,7 +4393,6 @@ impl App {
         } else {
             "tool output collapsed".into()
         };
-        self.clamp_history_scroll_for_terminal(terminal)
     }
 
     fn reset_usage(&mut self) {
