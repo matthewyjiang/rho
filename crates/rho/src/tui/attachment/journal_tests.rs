@@ -36,6 +36,11 @@ fn attachment_stream_round_trips_view_events() {
 }
 
 #[test]
+fn attachment_stream_ignores_interactive_steering_acknowledgements() {
+    assert!(attachment_update(ViewModelEvent::SteeringApplied(Vec::new())).is_none());
+}
+
+#[test]
 fn attachment_stream_skips_malformed_events() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join(subagent::ATTACHMENT_FILE_NAME);

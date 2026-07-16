@@ -107,6 +107,9 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         }),
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
+        // Attachments cannot steer headless subagents, so this interactive-only
+        // acknowledgement has no observer state to persist.
+        ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
