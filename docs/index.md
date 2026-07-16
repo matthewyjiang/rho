@@ -38,6 +38,7 @@ features:
   - [GitHub Copilot](/providers/github-copilot)
   - [xAI](/providers/xai)
 - [Interactive TUI](/interactive-tui)
+- [Inline shell](/inline-shell)
 - [Automation and CLI](/automation-cli)
 - [Configuration](/configuration)
 - [Tools and workspace](/tools-workspace)
