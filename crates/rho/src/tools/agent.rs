@@ -726,32 +726,27 @@ impl Tool for AgentTool {
             .map(|(name, description)| format!("{name}: {description}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let background_help = if self.background_subagents.is_enabled() {
-            " Blocking by default; set background=true to keep working and get notified when it finishes (check or stop it with the agents tool)."
-        } else {
-            " This run waits for the subagent to finish before continuing."
-        };
         let mut properties = json!({
             "preset": {
                 "type": "string",
                 "enum": names,
-                "description": "Configured subagent preset to run"
+                "description": "Agent preset"
             },
             "prompt": {
                 "type": "string",
-                "description": "Task for the subagent. Include all needed context; it starts fresh."
+                "description": "Self-contained task and all context the agent needs"
             }
         });
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Return immediately with an id instead of waiting for the result"
+                "description": "Run concurrently and return an id immediately"
             });
         }
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Spawn a subagent from a configured preset to work on a task in a separate rho process. Inside herdr the subagent runs in a visible pane; results always return here, so never read its pane or log output yourself.{background_help}\n\nPresets:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Results return automatically.\n\nPresets:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -894,7 +889,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Manage running subagents spawned with the agent tool: list them, check one's status and activity, or stop one (graceful cancel, then kill after a few seconds).".into(),
+            description: "Check or stop background subagents.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

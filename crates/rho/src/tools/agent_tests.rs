@@ -191,13 +191,37 @@ fn agent_tool_spec_lists_presets() {
     let spec = tool.spec();
 
     assert_eq!(spec.name, "agent");
+    assert!(spec
+        .description
+        .starts_with("Delegate a substantial, self-contained task to a fresh agent."));
+    assert!(!spec.description.contains("herdr"));
+    assert!(!spec.description.contains("Blocking by default"));
     assert!(spec.description.contains("explorer:"));
     assert!(spec.description.contains("worker:"));
+    assert_eq!(
+        spec.input_schema["properties"]["preset"]["description"],
+        "Agent preset"
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["prompt"]["description"],
+        "Self-contained task and all context the agent needs"
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["background"]["description"],
+        "Run concurrently and return an id immediately"
+    );
     let names = spec.input_schema["properties"]["preset"]["enum"]
         .as_array()
         .unwrap();
     assert!(names.iter().any(|name| name == "explorer"));
     assert!(names.iter().any(|name| name == "worker"));
+}
+
+#[test]
+fn agents_tool_spec_is_concise() {
+    let spec = AgentsTool::new(SubagentManager::new()).spec();
+
+    assert_eq!(spec.description, "Check or stop background subagents.");
 }
 
 #[test]
