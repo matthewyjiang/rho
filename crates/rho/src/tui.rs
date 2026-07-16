@@ -4884,6 +4884,19 @@ impl App {
 
     fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
+        for pending in self.running_inline_shell_entries() {
+            if !lines.is_empty()
+                || self.last_inserted_was_tool
+                || self.transcript.last().is_some_and(is_tool_entry)
+            {
+                lines.push(Line::raw(""));
+            }
+            lines.extend(tool_entry_lines(
+                &pending,
+                width,
+                self.info.max_tool_output_lines,
+            ));
+        }
         if let Some(pending) = &self.pending_tool_call {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
                 lines.push(Line::raw(""));

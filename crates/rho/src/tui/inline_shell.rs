@@ -6,7 +6,11 @@ use std::{
     process::Stdio,
 };
 
-use tokio::process::Command;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::Command,
+    sync::mpsc,
+};
 
 const INLINE_SHELL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -63,7 +67,23 @@ pub(super) fn mode_hint(input: &str) -> Option<(&'static str, ratatui::style::St
 pub(super) struct PendingShellTask {
     mode: InlineShellMode,
     max_output_bytes: usize,
+    shell: String,
+    command: String,
+    stdout: String,
+    stderr: String,
+    updates: mpsc::UnboundedReceiver<ShellStreamUpdate>,
     handle: tokio::task::JoinHandle<std::io::Result<ShellOutput>>,
+}
+
+#[derive(Clone, Copy)]
+enum ShellStreamKind {
+    Stdout,
+    Stderr,
+}
+
+struct ShellStreamUpdate {
+    kind: ShellStreamKind,
+    text: String,
 }
 
 pub(super) struct DeferredShellContext {
@@ -103,6 +123,15 @@ pub(super) async fn execute(
     command: &str,
     cwd: &Path,
 ) -> std::io::Result<ShellOutput> {
+    execute_streaming(shell, command, cwd, None).await
+}
+
+async fn execute_streaming(
+    shell: &str,
+    command: &str,
+    cwd: &Path,
+    updates: Option<mpsc::UnboundedSender<ShellStreamUpdate>>,
+) -> std::io::Result<ShellOutput> {
     let mut process = Command::new(shell);
     match executable_name(shell).to_ascii_lowercase().as_str() {
         "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => {
@@ -118,37 +147,69 @@ pub(super) async fn execute(
             process.args(["-lc", command]);
         }
     }
-    let output = tokio::time::timeout(
-        INLINE_SHELL_TIMEOUT,
-        process
-            .current_dir(cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            format!(
-                "inline shell command timed out after {} seconds",
-                INLINE_SHELL_TIMEOUT.as_secs()
-            ),
-        )
-    })??;
+    let mut child = process
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let stdout = child.stdout.take().expect("stdout configured as piped");
+    let stderr = child.stderr.take().expect("stderr configured as piped");
+    let stdout_updates = updates.clone();
+    let stdout_reader = read_stream(stdout, ShellStreamKind::Stdout, stdout_updates);
+    let stderr_reader = read_stream(stderr, ShellStreamKind::Stderr, updates);
+    let wait = async {
+        match tokio::time::timeout(INLINE_SHELL_TIMEOUT, child.wait()).await {
+            Ok(status) => status,
+            Err(_) => {
+                child.kill().await?;
+                let _ = child.wait().await;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "inline shell command timed out after {} seconds",
+                        INLINE_SHELL_TIMEOUT.as_secs()
+                    ),
+                ))
+            }
+        }
+    };
+    let (stdout, stderr, status) = tokio::join!(stdout_reader, stderr_reader, wait);
+    let status = status?;
     Ok(ShellOutput {
         shell: shell.to_string(),
         command: command.to_string(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        exit_code: output
-            .status
+        stdout: stdout?,
+        stderr: stderr?,
+        exit_code: status
             .code()
             .map_or_else(|| "signal".into(), |code| code.to_string()),
-        ok: output.status.success(),
+        ok: status.success(),
     })
+}
+
+async fn read_stream(
+    mut stream: impl AsyncRead + Unpin,
+    kind: ShellStreamKind,
+    updates: Option<mpsc::UnboundedSender<ShellStreamUpdate>>,
+) -> std::io::Result<String> {
+    let mut output = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let read = stream.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        output.extend_from_slice(&buffer[..read]);
+        if let Some(updates) = &updates {
+            let _ = updates.send(ShellStreamUpdate {
+                kind,
+                text: String::from_utf8_lossy(&buffer[..read]).into_owned(),
+            });
+        }
+    }
+    Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 pub(super) fn context_text(output: &ShellOutput) -> String {
@@ -243,28 +304,40 @@ impl super::App {
         let cwd = self.info.cwd.clone();
         let task_shell = shell.clone();
         let task_command = command.clone();
+        let (updates_tx, updates_rx) = mpsc::unbounded_channel();
         self.pending_inline_shells.push(PendingShellTask {
             mode,
             max_output_bytes: config.max_output_bytes,
-            handle: tokio::spawn(async move { execute(&task_shell, &task_command, &cwd).await }),
+            shell: shell.clone(),
+            command: command.clone(),
+            stdout: String::new(),
+            stderr: String::new(),
+            updates: updates_rx,
+            handle: tokio::spawn(async move {
+                execute_streaming(&task_shell, &task_command, &cwd, Some(updates_tx)).await
+            }),
         });
         self.status = format!("running {shell}");
         Ok(())
     }
 
     pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {
-        let mut finished = false;
+        let mut changed = false;
+        for task in &mut self.pending_inline_shells {
+            changed |= task.drain_updates();
+        }
         let mut index = 0;
         while index < self.pending_inline_shells.len() {
             if !self.pending_inline_shells[index].handle.is_finished() {
                 index += 1;
                 continue;
             }
-            let task = self.pending_inline_shells.remove(index);
+            let mut task = self.pending_inline_shells.remove(index);
+            task.drain_updates();
             self.finish_inline_shell_task(task).await?;
-            finished = true;
+            changed = true;
         }
-        Ok(finished)
+        Ok(changed)
     }
 
     pub(super) async fn finish_all_inline_shells(&mut self) -> anyhow::Result<()> {
@@ -323,6 +396,14 @@ impl super::App {
             format!("shell exited with {}", output.exit_code)
         };
         Ok(())
+    }
+
+    pub(super) fn running_inline_shell_entries(
+        &self,
+    ) -> impl Iterator<Item = super::ToolEntry> + '_ {
+        self.pending_inline_shells
+            .iter()
+            .map(PendingShellTask::tool_entry)
     }
 
     pub(super) fn insert_deferred_inline_shell_context(
@@ -444,6 +525,36 @@ impl super::App {
             format!("shell exited with {}", output.exit_code)
         };
         Ok(())
+    }
+}
+
+impl PendingShellTask {
+    fn drain_updates(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(update) = self.updates.try_recv() {
+            match update.kind {
+                ShellStreamKind::Stdout => self.stdout.push_str(&update.text),
+                ShellStreamKind::Stderr => self.stderr.push_str(&update.text),
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    fn tool_entry(&self) -> super::ToolEntry {
+        let output = ShellOutput {
+            shell: self.shell.clone(),
+            command: self.command.clone(),
+            stdout: self.stdout.clone(),
+            stderr: self.stderr.clone(),
+            exit_code: "running".into(),
+            ok: true,
+        };
+        super::ToolEntry {
+            state: super::ToolEntryState::Running,
+            display_lines: display_lines(&output, self.mode.included_in_context()),
+            expanded: true,
+        }
     }
 }
 

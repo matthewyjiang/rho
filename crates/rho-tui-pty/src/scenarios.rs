@@ -133,9 +133,13 @@ const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
         text: "partial assistant before cancellation",
         timeout: STREAM,
     },
-    Step::SubmitText("!!printf local-during-turn"),
+    Step::SubmitText("!!printf streamed-start; sleep 1; printf streamed-end"),
     Step::WaitText {
-        text: "local-during-turn",
+        text: "streamed-start",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "streamed-end",
         timeout: STREAM,
     },
     Step::SubmitText("!printf context-during-turn"),
