@@ -16,6 +16,14 @@ rho login openai-codex --device-auth
 
 Credentials are stored in the native OS credential store, not in config or transcripts.
 
+### Device-code authorization
+
+Device-code access is managed by OpenAI. See [Codex authentication](https://learn.chatgpt.com/docs/auth) for current setup and troubleshooting guidance. If device-code login is unavailable for the account or managed workspace, use the regular browser callback instead:
+
+```bash
+rho login openai-codex
+```
+
 ## Sign out
 
 ```text
