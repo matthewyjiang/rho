@@ -38,6 +38,18 @@ fn editor_cursor_navigation_is_unicode_safe() {
 }
 
 #[test]
+fn subagent_toggle_persists_for_the_next_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let repository = ConfigRepository::new(Some(path));
+
+    let mutation = toggle(&repository, ConfigToggle::EnableSubagents).unwrap();
+
+    assert_eq!(mutation, ConfigMutation::EnableSubagents(false));
+    assert!(!repository.load().unwrap().enable_subagents);
+}
+
+#[test]
 fn editor_uses_legacy_web_search_key_when_store_has_no_entry() {
     let (value, error) = resolve_web_search_editor_value(Ok(None), Some("legacy-key"));
 

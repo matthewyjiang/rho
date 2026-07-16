@@ -2793,6 +2793,9 @@ impl App {
             config_picker::CHECK_FOR_UPDATES_VALUE => {
                 self.toggle_check_for_updates()?;
             }
+            config_picker::ENABLE_SUBAGENTS_VALUE => {
+                self.toggle_enable_subagents()?;
+            }
             config_picker::AUTO_COMPACT_VALUE => {
                 self.toggle_auto_compact()?;
             }
@@ -3651,6 +3654,7 @@ impl App {
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
+            config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.config_repository.load()?;
@@ -4003,7 +4007,8 @@ impl App {
                 self.status = "config save failed".into();
             }
             Ok(
-                ConfigMutation::AutoCompact(_)
+                ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -4013,6 +4018,37 @@ impl App {
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
+        }
+        Ok(())
+    }
+
+    fn toggle_enable_subagents(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(&self.info.config_repository, ConfigToggle::EnableSubagents) {
+            Ok(ConfigMutation::EnableSubagents(enable_subagents)) => {
+                self.status = if enable_subagents {
+                    "subagents: on next session".into()
+                } else {
+                    "subagents: off next session".into()
+                };
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save subagent setting: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
+        }
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
         }
         Ok(())
     }
@@ -4034,6 +4070,7 @@ impl App {
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -4068,6 +4105,7 @@ impl App {
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),

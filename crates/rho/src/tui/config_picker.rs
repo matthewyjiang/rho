@@ -8,6 +8,7 @@ use crate::{
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
+pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -77,6 +78,22 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: CHECK_FOR_UPDATES_VALUE.into(),
+            },
+            PickerItem {
+                label: "Enable subagents".into(),
+                detail: Some(
+                    "Controls whether agent tools are available. Applies next session.".into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: if config.enable_subagents {
+                        "on".into()
+                    } else {
+                        "off".into()
+                    },
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: ENABLE_SUBAGENTS_VALUE.into(),
             },
             PickerItem {
                 label: "Auto compact".into(),
