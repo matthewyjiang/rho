@@ -53,6 +53,12 @@ pub enum Command {
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
     },
+    /// Watch a subagent in a read-only TUI.
+    Attach {
+        /// Subagent ID shown when the agent was started.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
     /// Log in to a provider from a browser or device-code flow.
     Login {
         /// Provider to authenticate, for example openai-codex or github-copilot.
@@ -65,3 +71,7 @@ pub enum Command {
     /// Update rho using the detected installation method.
     Update,
 }
+
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;

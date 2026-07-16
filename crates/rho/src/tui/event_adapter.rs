@@ -1,13 +1,12 @@
-use rho_sdk::{
-    model::{ContextUsage, ModelUsage},
-    HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH,
-};
-
 use crate::{
     app::interactive_presenter::InteractiveToolPresenter,
     questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
     tool::ToolDisplayStyle,
+};
+use rho_sdk::{
+    model::{ContextUsage, ModelUsage},
+    HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
+    PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 
 use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest};

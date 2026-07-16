@@ -35,6 +35,7 @@ use ratatui::{
     DefaultTerminal, Frame, Terminal,
 };
 mod activity;
+mod attachment;
 mod command_palette;
 mod config_editor;
 mod config_picker;
@@ -180,6 +181,8 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
+pub(crate) use attachment::{run as run_attachment, AttachmentWriter};
+
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiInfo) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();

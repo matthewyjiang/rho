@@ -1,12 +1,14 @@
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::cancellation::RunCancellation;
 pub use crate::provider_backend::{ToolCall, ToolResult, ToolSpec};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolDisplayStyle {
     DefaultTool,
     FileOrCommand,

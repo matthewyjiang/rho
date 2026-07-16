@@ -19,6 +19,9 @@ use super::{
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
+    if let Some(Command::Attach { id }) = &cli.command {
+        return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;
+    }
     if matches!(cli.command, Some(Command::Update)) {
         return update::run_update(env!("CARGO_PKG_VERSION")).await;
     }

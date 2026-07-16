@@ -20,6 +20,7 @@ use crate::{
     providers::build_automation_provider,
     subagent::{self, Preset, RunState, RunStatus},
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    tui::AttachmentWriter,
 };
 
 use super::{
@@ -99,7 +100,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
         Some(Command::Run { prompt, stdin, .. }) => {
             prompt_from_stdin(prompt.clone(), *stdin).map(Some)
         }
-        Some(Command::Login { .. }) | Some(Command::Update) | None => Ok(None),
+        Some(Command::Attach { .. } | Command::Login { .. } | Command::Update) | None => Ok(None),
     }
 }
 
@@ -114,6 +115,8 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             RunReporter::new(
                 path.clone(),
                 startup.preset.as_ref().map(|preset| preset.name.clone()),
+                startup.cwd.clone(),
+                &prompt_text,
             )
         })
         .transpose()?;
@@ -293,6 +296,7 @@ struct RunReporter {
     path: PathBuf,
     cancel_file: PathBuf,
     status: RunStatus,
+    attachment: Option<AttachmentWriter>,
     last_write: std::time::Instant,
 }
 
@@ -303,7 +307,12 @@ const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10)
 const LAST_TEXT_BYTES: usize = 400;
 
 impl RunReporter {
-    fn new(path: PathBuf, preset: Option<String>) -> anyhow::Result<Self> {
+    fn new(
+        path: PathBuf,
+        preset: Option<String>,
+        cwd: PathBuf,
+        prompt: &str,
+    ) -> anyhow::Result<Self> {
         let cancel_file = subagent::cancel_file_for(&path);
         match std::fs::remove_file(&cancel_file) {
             Ok(()) => {}
@@ -312,15 +321,30 @@ impl RunReporter {
         }
         let status = RunStatus {
             state: RunState::Starting,
-            pid: Some(std::process::id()),
             preset,
             ..RunStatus::default()
         };
         subagent::write_status(&path, &status)?;
+        let attachment = match AttachmentWriter::new(&path, cwd, prompt) {
+            Ok(attachment) => Some(attachment),
+            Err(error) => {
+                let mut status = status;
+                status.attachment_error = Some(format!("could not record attach output: {error}"));
+                subagent::write_status(&path, &status)?;
+                return Ok(Self {
+                    path,
+                    cancel_file,
+                    status,
+                    attachment: None,
+                    last_write: std::time::Instant::now(),
+                });
+            }
+        };
         Ok(Self {
             path,
             cancel_file,
             status,
+            attachment,
             last_write: std::time::Instant::now(),
         })
     }
@@ -328,6 +352,14 @@ impl RunReporter {
     fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 
+        if let Some(attachment) = self.attachment.as_mut() {
+            if let Err(error) = attachment.on_event(event) {
+                self.status.attachment_error =
+                    Some(format!("could not record attach output: {error}"));
+                self.attachment = None;
+                self.write();
+            }
+        }
         match event {
             RunEvent::StepStarted { step } => {
                 self.status.state = RunState::Running;

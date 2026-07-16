@@ -6,18 +6,18 @@ use super::*;
 use crate::subagent::{self, write_status};
 
 fn test_entry(preset: &str, background: bool) -> AgentEntry {
+    let (force_kill, _requests) = tokio::sync::mpsc::unbounded_channel();
     AgentEntry {
         preset: preset.into(),
         background,
         started: Instant::now(),
-        display: SpawnDisplay::Log(PathBuf::from("/tmp/log.txt")),
-        on_exit: OnExit::Keep,
-        pid: None,
+        log_file: PathBuf::from("/tmp/log.txt"),
         output_file: PathBuf::from("result.json"),
-        force_kill: None,
+        force_kill,
         session_id: Some("session-a".into()),
         status: RunStatus::default(),
         done: false,
+        process_exited: false,
         notified: false,
     }
 }
@@ -45,7 +45,6 @@ async fn watcher_detects_terminal_status_and_notifies() {
         &output_file,
         &RunStatus {
             state: RunState::Ok,
-            pid: Some(123),
             result: Some("all done".into()),
             ..RunStatus::default()
         },
@@ -102,7 +101,7 @@ async fn stop_unknown_subagent_errors() {
 }
 
 #[tokio::test]
-async fn stop_requests_cancellation_without_waiting_for_a_pid() {
+async fn stop_waits_for_graceful_process_exit() {
     let dir = TempDir::new().unwrap();
     let output_file = dir.path().join(subagent::RESULT_FILE_NAME);
     let cancel_file = subagent::cancel_file_for(&output_file);
@@ -112,6 +111,7 @@ async fn stop_requests_cancellation_without_waiting_for_a_pid() {
     insert_entry(&manager, "x3", entry);
     manager.watch_status_file("x3", output_file.clone());
 
+    let completion_manager = manager.clone();
     let completion = tokio::spawn(async move {
         tokio::time::timeout(Duration::from_secs(2), async {
             while !cancel_file.exists() {
@@ -129,6 +129,15 @@ async fn stop_requests_cancellation_without_waiting_for_a_pid() {
             },
         )
         .unwrap();
+        let status = subagent::read_status(&output_file).expect("terminal status");
+        let mut agents = completion_manager
+            .inner
+            .lock()
+            .expect("subagent registry lock");
+        let entry = agents.get_mut("x3").expect("subagent entry");
+        entry.status = status;
+        entry.done = true;
+        entry.process_exited = true;
     });
 
     let snapshot = manager.stop("x3").await.unwrap();
@@ -136,6 +145,58 @@ async fn stop_requests_cancellation_without_waiting_for_a_pid() {
 
     assert_eq!(snapshot.status.state, RunState::Stopped);
     assert_eq!(snapshot.status.result.as_deref(), Some("partial result"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn spawned_child_uses_a_distinct_process_group() {
+    let directory = TempDir::new().unwrap();
+    let log_file = directory.path().join("log.txt");
+    let mut child = spawn_headless(
+        Path::new("/bin/sleep"),
+        &["30".into()],
+        directory.path(),
+        &log_file,
+    )
+    .unwrap();
+    let pid = child.id().expect("spawned child") as libc::pid_t;
+
+    assert_ne!(unsafe { libc::getpgid(pid) }, unsafe { libc::getpgrp() });
+
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_kills_a_child_that_reported_completion_before_exiting() {
+    let directory = TempDir::new().unwrap();
+    let output_file = directory.path().join(subagent::RESULT_FILE_NAME);
+    let log_file = directory.path().join(subagent::LOG_FILE_NAME);
+    let child = spawn_headless(
+        Path::new("/bin/sleep"),
+        &["30".into()],
+        directory.path(),
+        &log_file,
+    )
+    .unwrap();
+    let pid = child.id().expect("spawned child") as libc::pid_t;
+    let manager = SubagentManager::new();
+    let force_kill = manager.watch_child("x4", child);
+    let mut entry = test_entry("explorer", true);
+    entry.output_file = output_file;
+    entry.force_kill = force_kill;
+    entry.status.state = RunState::Ok;
+    entry.done = true;
+    insert_entry(&manager, "x4", entry);
+
+    tokio::time::timeout(Duration::from_secs(5), manager.shutdown())
+        .await
+        .expect("shutdown should reap the completed child");
+
+    let entry = manager.inner.lock().unwrap();
+    assert!(entry["x4"].process_exited);
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
 }
 
 #[test]
@@ -165,12 +226,6 @@ fn run_args_shape() {
 }
 
 #[test]
-fn shell_quote_escapes_single_quotes() {
-    assert_eq!(shell_quote("plain"), "'plain'");
-    assert_eq!(shell_quote("it's"), "'it'\\''s'");
-}
-
-#[test]
 fn agent_ids_are_short_and_unique() {
     let a = new_agent_id();
     let b = new_agent_id();
@@ -196,6 +251,7 @@ fn agent_tool_spec_lists_presets() {
         .starts_with("Delegate a substantial, self-contained task to a fresh agent."));
     assert!(!spec.description.contains("herdr"));
     assert!(!spec.description.contains("Blocking by default"));
+    assert!(spec.description.contains("rho attach <id>"));
     assert!(spec.description.contains("explorer:"));
     assert!(spec.description.contains("worker:"));
     assert_eq!(
@@ -312,7 +368,7 @@ fn notification_prompts_summarize_result() {
         preset: "explorer".into(),
         background: true,
         elapsed: Duration::from_secs(90),
-        display: SpawnDisplay::Pane("1-3".into()),
+        log_file: PathBuf::from("/tmp/log.txt"),
         status: RunStatus {
             state: RunState::Ok,
             turns: 6,
@@ -327,5 +383,5 @@ fn notification_prompts_summarize_result() {
     assert!(model.contains("subagent x7"));
     assert!(model.contains("the answer"));
     assert!(model.contains("automated notification"));
-    assert_eq!(display, "subagent x7 (explorer) finished — ok");
+    assert_eq!(display, "subagent x7 (explorer) finished - ok");
 }

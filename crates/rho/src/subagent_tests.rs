@@ -39,7 +39,7 @@ fn parses_full_frontmatter() {
     write_preset(
         root.path(),
         ".rho/agents/reviewer.md",
-        "---\ndescription: Reviews diffs\nmodel: some-model\nprovider: anthropic\nreasoning: high\ntools: [read_file, bash]\non_exit: close-on-success\n---\nReview carefully.\n",
+        "---\ndescription: Reviews diffs\nmodel: some-model\nprovider: anthropic\nreasoning: high\ntools: [read_file, bash]\n---\nReview carefully.\n",
     );
 
     let presets = discover_with_home(root.path(), Some(root.path()));
@@ -53,7 +53,6 @@ fn parses_full_frontmatter() {
         reviewer.tools,
         Some(vec!["read_file".to_string(), "bash".to_string()])
     );
-    assert_eq!(reviewer.on_exit, OnExit::CloseOnSuccess);
     assert_eq!(reviewer.prompt, "Review carefully.");
 }
 
@@ -141,17 +140,12 @@ fn rejects_preset_without_description() {
 }
 
 #[test]
-fn rejects_invalid_names_and_on_exit() {
+fn rejects_invalid_names() {
     let root = TempDir::new().unwrap();
     write_preset(
         root.path(),
         ".rho/agents/Bad--Name.md",
         "---\ndescription: d\n---\n",
-    );
-    write_preset(
-        root.path(),
-        ".rho/agents/badexit.md",
-        "---\ndescription: d\non_exit: explode\n---\n",
     );
 
     let presets = discover_with_home(root.path(), Some(root.path()));
@@ -159,7 +153,6 @@ fn rejects_invalid_names_and_on_exit() {
     assert!(!presets
         .iter()
         .any(|p| p.name.eq_ignore_ascii_case("bad--name")));
-    assert!(!presets.iter().any(|p| p.name == "badexit"));
 }
 
 #[test]
@@ -190,7 +183,6 @@ fn status_file_roundtrip() {
     let path = dir.path().join("nested").join("result.json");
     let status = RunStatus {
         state: RunState::Running,
-        pid: Some(42),
         preset: Some("explorer".into()),
         turns: 3,
         input_tokens: 1000,
@@ -199,12 +191,18 @@ fn status_file_roundtrip() {
         last_text: Some("found it".into()),
         result: None,
         error: None,
+        attachment_error: None,
     };
 
     write_status(&path, &status).unwrap();
 
     assert_eq!(read_status(&path), Some(status));
-    assert!(!path.with_extension("json.tmp").exists());
+    let temp_files = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(temp_files, 0);
 }
 
 #[test]
@@ -216,6 +214,38 @@ fn read_status_tolerates_missing_and_invalid_files() {
 
     std::fs::write(&path, "not json").unwrap();
     assert_eq!(read_status(&path), None);
+}
+
+#[test]
+fn subagent_directory_rejects_invalid_ids() {
+    for id in ["", "abc12", "abc1234", "../../x", "xyzxyz"] {
+        assert!(directory(id).is_err(), "accepted invalid id {id:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn subagent_artifacts_are_owner_only_and_reject_symlink_directories() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let root = TempDir::new().unwrap();
+    let directory = root.path().join("run");
+    create_private_directory(&directory).unwrap();
+    assert_eq!(
+        std::fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+
+    let file = directory.join("events.jsonl");
+    create_private_file(&file).unwrap();
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let link = root.path().join("linked-run");
+    symlink(&directory, &link).unwrap();
+    assert!(secure_directory(&link).is_err());
 }
 
 #[test]
