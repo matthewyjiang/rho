@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 
@@ -11,7 +11,6 @@ fn snapshot(done: bool) -> SubagentSnapshot {
         preset: "explorer".into(),
         background: true,
         elapsed: Duration::from_secs(90),
-        log_file: PathBuf::from("/tmp/log.txt"),
         status: RunStatus {
             state: if done {
                 RunState::Ok

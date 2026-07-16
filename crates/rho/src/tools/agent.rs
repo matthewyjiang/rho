@@ -45,7 +45,6 @@ pub struct SubagentSnapshot {
     pub preset: String,
     pub background: bool,
     pub elapsed: Duration,
-    pub log_file: PathBuf,
     pub status: RunStatus,
     pub done: bool,
 }
@@ -54,7 +53,6 @@ struct AgentEntry {
     preset: String,
     background: bool,
     started: Instant,
-    log_file: PathBuf,
     output_file: PathBuf,
     force_kill: ForceKillSender,
     session_id: Option<String>,
@@ -71,7 +69,6 @@ impl AgentEntry {
             preset: self.preset.clone(),
             background: self.background,
             elapsed: self.started.elapsed(),
-            log_file: self.log_file.clone(),
             status: self.status.clone(),
             done: self.done,
         }
@@ -146,7 +143,6 @@ impl SubagentManager {
             preset: preset.name.clone(),
             background,
             started: Instant::now(),
-            log_file: log_file.clone(),
             output_file: output_file.clone(),
             force_kill,
             session_id,

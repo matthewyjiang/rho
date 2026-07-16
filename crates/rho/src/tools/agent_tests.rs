@@ -11,7 +11,6 @@ fn test_entry(preset: &str, background: bool) -> AgentEntry {
         preset: preset.into(),
         background,
         started: Instant::now(),
-        log_file: PathBuf::from("/tmp/log.txt"),
         output_file: PathBuf::from("result.json"),
         force_kill,
         session_id: Some("session-a".into()),
@@ -410,7 +409,6 @@ fn notification_prompts_summarize_result() {
         preset: "explorer".into(),
         background: true,
         elapsed: Duration::from_secs(90),
-        log_file: PathBuf::from("/tmp/log.txt"),
         status: RunStatus {
             state: RunState::Ok,
             turns: 6,
