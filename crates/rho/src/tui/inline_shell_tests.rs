@@ -57,6 +57,23 @@ fn display_text_preserves_output_and_context_state() {
 
     assert_eq!(
         display_text(&output, /*included_in_context*/ true),
-        "bash printf hello\nincluded in context  exit code: 0\n\nhello"
+        "$ printf hello\n\nhello"
+    );
+}
+
+#[test]
+fn inline_powershell_uses_ps_prompt_and_hides_diagnostics() {
+    let output = ShellOutput {
+        shell: "powershell".into(),
+        command: "Write-Output hello".into(),
+        stdout: "hello\n".into(),
+        stderr: "warning\n".into(),
+        exit_code: "1".into(),
+        ok: false,
+    };
+
+    assert_eq!(
+        display_text(&output, /*included_in_context*/ false),
+        "PS Write-Output hello\n\nhello"
     );
 }

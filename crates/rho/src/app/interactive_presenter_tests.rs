@@ -21,14 +21,14 @@ fn step_boundary_resets_streamed_previews_for_reused_indexes() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     assert_eq!(
         presenter.preview(0, Some("bash".into()), r#"{"command":"cargo test"}"#),
-        Some(vec!["bash cargo test".into()])
+        Some(vec!["$ cargo test".into()])
     );
 
     presenter.step_started();
 
     assert_eq!(
         presenter.preview(0, Some("bash".into()), r#"{"command":"cargo build"}"#),
-        Some(vec!["bash cargo build".into()])
+        Some(vec!["$ cargo build".into()])
     );
 }
 
@@ -41,7 +41,7 @@ fn command_preview_and_result_preserve_command_summary() {
             Some("bash".into()),
             r#"{"command":"cargo test","timeout_seconds":30}"#,
         ),
-        Some(vec!["bash cargo test".into()])
+        Some(vec!["$ cargo test".into()])
     );
     let id = ToolCallId::from_string("call-1").unwrap();
     presenter.proposed(call(
@@ -55,12 +55,14 @@ fn command_preview_and_result_preserve_command_summary() {
 
     let (ok, finished) = presenter.finished(
         &id,
-        ToolCompletion::Success(ToolOutput::text("tests passed")),
+        ToolCompletion::Success(ToolOutput::text(
+            "stdout:\ntests passed\n\nstderr:\nwarning\n\ntime: 0.1s  exit code: 0",
+        )),
     );
     assert!(ok);
     assert_eq!(
         finished.display_lines,
-        vec!["bash cargo test", "timeout: 30s", "", "tests passed"]
+        vec!["$ cargo test", "timeout: 30s", "", "tests passed"]
     );
 }
 

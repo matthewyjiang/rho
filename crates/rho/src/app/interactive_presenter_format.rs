@@ -41,8 +41,8 @@ pub(super) fn preview_lines(
         return vec![name.to_string()];
     };
     match kind {
-        ToolKind::Bash => vec![command_line("bash", arguments)],
-        ToolKind::PowerShell => vec![command_line("powershell", arguments)],
+        ToolKind::Bash => vec![command_line("$", arguments)],
+        ToolKind::PowerShell => vec![command_line("PS", arguments)],
         ToolKind::Process => {
             let mut lines = vec!["process".into()];
             if arguments.get("action").and_then(|value| value.as_str()) == Some("start") {
@@ -84,8 +84,8 @@ pub(super) fn finished_lines(
     cwd: &std::path::Path,
 ) -> Vec<String> {
     match view.kind {
-        ToolKind::Bash => command_result_lines("bash", &view.arguments, content),
-        ToolKind::PowerShell => command_result_lines("powershell", &view.arguments, content),
+        ToolKind::Bash => command_result_lines("$", &view.arguments, content),
+        ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
         ToolKind::Process => process_result_lines(content),
         ToolKind::ListDir => vec![format!("list_dir {}", metadata_path(view, cwd))],
         ToolKind::ReadFile => vec![format!("read_file {}", metadata_read_path(view, cwd))],
@@ -103,6 +103,15 @@ pub(super) fn progress_lines(
     view: Option<(&ToolView, &std::path::Path)>,
     progress: &ToolProgress,
 ) -> Vec<String> {
+    if view.is_some_and(|(view, _)| matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell)) {
+        let (view, _) = view.expect("shell view checked above");
+        let prompt = if view.kind == ToolKind::Bash {
+            "$"
+        } else {
+            "PS"
+        };
+        return command_result_lines(prompt, &view.arguments, progress.text());
+    }
     let mut lines = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
     if !progress.text().trim().is_empty() {
         lines.push(progress.text().to_string());
@@ -206,11 +215,29 @@ pub(super) fn command_result_lines(
                 |seconds| format!("timeout: {seconds}s"),
             ),
     );
-    if !content.trim().is_empty() {
+    if let Some(stdout) = shell_stdout(content) {
+        if !stdout.trim().is_empty() {
+            lines.push(String::new());
+            lines.push(stdout.trim_end().to_string());
+        }
+    } else if !content.trim().is_empty() {
         lines.push(String::new());
         lines.push(content.to_string());
     }
     lines
+}
+
+fn shell_stdout(content: &str) -> Option<&str> {
+    let stdout = content.strip_prefix("stdout:\n").or_else(|| {
+        content
+            .split_once("\n\nstdout:\n")
+            .map(|(_, stdout)| stdout)
+    })?;
+    Some(
+        stdout
+            .split_once("\n\nstderr:")
+            .map_or(stdout, |(stdout, _)| stdout),
+    )
 }
 
 pub(super) fn display_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
