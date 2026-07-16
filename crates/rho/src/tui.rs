@@ -4379,14 +4379,18 @@ impl App {
     fn toggle_transcript_tool_output(&mut self, index: usize) {
         let expand =
             !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
-        for entry in &mut self.transcript {
+        let mut dirty_from = index;
+        for (entry_index, entry) in self.transcript.iter_mut().enumerate() {
             if let Entry::Tool(tool) = entry {
+                if tool.expanded {
+                    dirty_from = dirty_from.min(entry_index);
+                }
                 tool.expanded = false;
             }
         }
         if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
             tool.expanded = expand;
-            self.history_lines.invalidate_from(index);
+            self.history_lines.invalidate_from(dirty_from);
         }
         self.status = if expand {
             "tool output expanded".into()

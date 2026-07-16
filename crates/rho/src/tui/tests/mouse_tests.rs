@@ -63,6 +63,45 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
     let prompt_line = app
         .history_lines(60, now)
         .iter()
+        .position(|line| line_text(line).contains("ctrl+o to expand"))
+        .unwrap();
+    let row = layout.history.y + prompt_line.saturating_sub(history_start) as u16;
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        2,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), 2, row, &mut terminal)
+        .unwrap();
+
+    assert!(matches!(
+        app.transcript.first(),
+        Some(Entry::Tool(ToolEntry {
+            expanded: false,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        app.transcript.last(),
+        Some(Entry::Tool(ToolEntry { expanded: true, .. }))
+    ));
+    assert_eq!(
+        app.history_lines(60, Instant::now())
+            .iter()
+            .filter(|line| line_text(line).contains("ctrl+o to collapse"))
+            .count(),
+        1
+    );
+
+    let now = Instant::now();
+    let history_len = app.history_len(60, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 60, 24), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let prompt_line = app
+        .history_lines(60, now)
+        .iter()
         .position(|line| line_text(line).contains("ctrl+o to collapse"))
         .unwrap();
     let row = layout.history.y + prompt_line.saturating_sub(history_start) as u16;
@@ -78,6 +117,13 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
 
     assert!(matches!(
         app.transcript.first(),
+        Some(Entry::Tool(ToolEntry {
+            expanded: false,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        app.transcript.last(),
         Some(Entry::Tool(ToolEntry {
             expanded: false,
             ..
