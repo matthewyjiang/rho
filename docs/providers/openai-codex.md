@@ -16,6 +16,42 @@ rho login openai-codex --device-auth
 
 Credentials are stored in the native OS credential store, not in config or transcripts.
 
+### Device-code authorization
+
+For remote or headless sessions, enable Codex device authorization before entering the code:
+
+1. Open ChatGPT and go to **Settings → Security and login**.
+2. Enable **Device code authorization for Codex**.
+3. Return to the terminal and run `rho login openai-codex --device-auth` again.
+4. Open `https://auth.openai.com/codex/device`.
+5. Enter the fresh device code printed by Rho, then approve the authorization.
+
+Always rerun the login command after enabling the setting. A code issued before the setting changed
+may have expired or may no longer be accepted.
+
+If **Device code authorization for Codex** is unavailable for the account or managed workspace, use
+the regular browser callback instead:
+
+```bash
+rho login openai-codex
+```
+
+### macOS Keychain
+
+On macOS, Rho stores Codex OAuth credentials in the login Keychain. A Keychain dialog asking for
+access to the item named `rho` expects the Mac login password, not an OpenAI, GitHub, API-key, or
+passkey credential.
+
+- Choose **Allow** to approve one Keychain operation.
+- Choose **Always Allow** only when you trust the installed Rho executable and want to avoid a
+  second prompt when Rho reads or updates the credential.
+- Choose **Deny** when the request is unexpected or the executable is not trusted.
+
+If Rho reports `provider failed: credential store operation failed`, quit any existing Rho
+sessions, unlock the login Keychain, and repeat `rho login openai-codex`. Complete the browser flow
+before retrying the provider. A failed device-code login does not test the provider or any proposed
+shell command because execution stops while Rho is acquiring credentials.
+
 ## Sign out
 
 ```text
