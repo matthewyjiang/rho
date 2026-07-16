@@ -316,6 +316,7 @@ struct App {
     // replace active usage while preserving totals from prior runs and steps.
     usage_before_current_run: Option<ModelUsage>,
     usage_before_current_step: Option<ModelUsage>,
+    usage_before_current_attempt: Option<ModelUsage>,
     current_run_usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
     current_context: Option<ContextUsage>,
@@ -695,6 +696,7 @@ impl App {
             cumulative_usage: None,
             usage_before_current_run: None,
             usage_before_current_step: None,
+            usage_before_current_attempt: None,
             current_run_usage: None,
             latest_usage: None,
             current_context: None,
@@ -4389,6 +4391,7 @@ impl App {
         self.cumulative_usage = None;
         self.usage_before_current_run = None;
         self.usage_before_current_step = None;
+        self.usage_before_current_attempt = None;
         self.current_run_usage = None;
         self.latest_usage = None;
     }
@@ -4398,11 +4401,13 @@ impl App {
             ViewModelEvent::RunStarted => {
                 self.usage_before_current_run = self.cumulative_usage.clone();
                 self.usage_before_current_step = None;
+                self.usage_before_current_attempt = None;
                 self.current_run_usage = None;
                 None
             }
             ViewModelEvent::StepStarted(step) => {
                 self.usage_before_current_step = self.current_run_usage.clone();
+                self.usage_before_current_attempt = None;
                 self.reset_streams();
                 self.provider_attempt_start = Some(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
@@ -4443,7 +4448,10 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
-            ViewModelEvent::ProviderStreamReset => None,
+            ViewModelEvent::ProviderStreamReset => {
+                self.usage_before_current_attempt = self.current_run_usage.clone();
+                None
+            }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());
@@ -4451,13 +4459,24 @@ impl App {
                 None
             }
             ViewModelEvent::Usage(usage) => {
-                let latest_usage =
-                    usage_difference(&usage, self.usage_before_current_step.as_ref());
-                let latest_usage =
-                    usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
                 let mut current_run_usage = usage;
+                if let Some(attempt_baseline) = &self.usage_before_current_attempt {
+                    current_run_usage =
+                        usage_with_estimated_cost(current_run_usage, self.model_metadata.as_ref());
+                    let mut combined = None;
+                    merge_usage(&mut combined, attempt_baseline.clone());
+                    merge_usage(&mut combined, current_run_usage);
+                    current_run_usage = combined.expect("attempt baseline is present");
+                }
+                let step_baseline = self
+                    .usage_before_current_step
+                    .clone()
+                    .map(|usage| usage_with_estimated_cost(usage, self.model_metadata.as_ref()));
+                let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
+                latest_usage =
+                    usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
                 current_run_usage.cost_usd_micros = add_optional(
-                    self.usage_before_current_step
+                    step_baseline
                         .as_ref()
                         .and_then(|usage| usage.cost_usd_micros),
                     latest_usage.cost_usd_micros,
@@ -5922,6 +5941,8 @@ mod tests {
     mod mouse_tests;
     #[path = "questionnaire_interaction_tests.rs"]
     mod questionnaire_interaction_tests;
+    #[path = "usage_tests.rs"]
+    mod usage_tests;
 
     #[derive(Debug)]
     struct FailingCredentialStore;
@@ -6092,86 +6113,6 @@ mod tests {
                 .as_ref()
                 .and_then(|usage| usage.input_tokens),
             Some(1_000)
-        );
-    }
-
-    #[test]
-    fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
-        let mut app = test_app();
-        app.model_metadata = Some(ModelMetadata {
-            cost_default: Some(crate::model::models_dev::ModelCost {
-                input_micros_per_m: Some(1_000_000),
-                output_micros_per_m: Some(2_000_000),
-                cache_read_micros_per_m: Some(100_000),
-                cache_write_micros_per_m: None,
-            }),
-            long_context_threshold: Some(200_000),
-            cost_long_context: Some(crate::model::models_dev::ModelCost {
-                input_micros_per_m: Some(4_000_000),
-                output_micros_per_m: Some(8_000_000),
-                cache_read_micros_per_m: Some(400_000),
-                cache_write_micros_per_m: None,
-            }),
-            ..ModelMetadata::default()
-        });
-
-        app.record_agent_event(ViewModelEvent::RunStarted);
-        app.record_agent_event(ViewModelEvent::StepStarted(1));
-        app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
-            input_tokens: Some(100_000),
-            output_tokens: Some(20_000),
-            cache_read_tokens: Some(50_000),
-            ..ModelUsage::default()
-        }));
-        app.record_agent_event(ViewModelEvent::StepStarted(2));
-        app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
-            input_tokens: Some(200_000),
-            output_tokens: Some(60_000),
-            cache_read_tokens: Some(150_000),
-            ..ModelUsage::default()
-        }));
-
-        assert_eq!(
-            app.latest_usage,
-            Some(ModelUsage {
-                input_tokens: Some(100_000),
-                output_tokens: Some(40_000),
-                cache_read_tokens: Some(100_000),
-                cost_usd_micros: Some(190_000),
-                ..ModelUsage::default()
-            })
-        );
-        assert_eq!(
-            app.cumulative_usage,
-            Some(ModelUsage {
-                input_tokens: Some(200_000),
-                output_tokens: Some(60_000),
-                cache_read_tokens: Some(150_000),
-                total_tokens: Some(410_000),
-                cost_usd_micros: Some(335_000),
-                ..ModelUsage::default()
-            })
-        );
-
-        app.record_agent_event(ViewModelEvent::RunStarted);
-        app.record_agent_event(ViewModelEvent::StepStarted(1));
-        app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
-            input_tokens: Some(10_000),
-            output_tokens: Some(5_000),
-            cache_read_tokens: Some(90_000),
-            ..ModelUsage::default()
-        }));
-
-        assert_eq!(
-            app.cumulative_usage,
-            Some(ModelUsage {
-                input_tokens: Some(210_000),
-                output_tokens: Some(65_000),
-                cache_read_tokens: Some(240_000),
-                total_tokens: Some(515_000),
-                cost_usd_micros: Some(364_000),
-                ..ModelUsage::default()
-            })
         );
     }
 
