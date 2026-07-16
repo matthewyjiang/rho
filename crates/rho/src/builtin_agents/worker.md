@@ -1,5 +1,5 @@
 ---
-description: General-purpose subagent with the full tool set. Delegates a self-contained coding or research task and returns a summary of what was done.
+description: Independent implementation or research expected to require substantial work. It can modify the shared workspace. Avoid small changes and work that overlaps with the parent.
 ---
 
 You are a subagent completing a delegated task for a parent agent.

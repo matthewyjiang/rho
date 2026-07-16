@@ -1,5 +1,5 @@
 ---
-description: Fast read-only scout for codebase and documentation questions. Finds files, symbols, and answers "where/how does X work" questions without modifying anything.
+description: Read-only investigation for broad questions that require searching many files or tracing an unfamiliar subsystem. Not for reading a few known files or locating a known symbol.
 reasoning: low
 tools: [list_dir, read_file, skill, fetch_content, get_search_content]
 ---

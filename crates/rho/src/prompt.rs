@@ -47,6 +47,15 @@ Use structured tool calls when available. Do not write tool calls in prose.
 Do not invent tool results. When done, answer directly.
 "#,
     );
+    if tools.iter().any(|tool| tool.name == "agent") {
+        text.push_str(
+            r#"
+Work directly by default. A subagent starts with fresh context and adds latency, token use, and coordination overhead. Delegate only a substantial, self-contained task when the saved work is likely to exceed that cost.
+
+Do not delegate simple questions, routine codebase inspection, or small/local changes. Use background subagents only for independent work you can run while making useful progress elsewhere. Subagents share the workspace, so avoid overlapping edits.
+"#,
+        );
+    }
     let mut sources = vec![PromptSource {
         kind: PromptSourceKind::Base,
         path: None,
@@ -280,6 +289,24 @@ mod tests {
         assert!(prompt.contains("Web access is available through tool schemas"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
         assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
+    }
+
+    #[test]
+    fn includes_subagent_cost_guidance_only_when_agent_tool_is_available() {
+        let project = TempDir::new().unwrap();
+        let agent_tool = ToolSpec {
+            name: "agent".into(),
+            description: "delegate work".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let enabled = system_prompt_with_home(&[agent_tool], project.path(), None).text;
+        let disabled = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(enabled.contains("Work directly by default"));
+        assert!(enabled.contains("adds latency, token use, and coordination overhead"));
+        assert!(enabled.contains("avoid overlapping edits"));
+        assert!(!disabled.contains("Work directly by default"));
     }
 
     #[test]

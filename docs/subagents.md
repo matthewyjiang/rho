@@ -53,6 +53,13 @@ never registered, so the subagent cannot call them.
 
 ## The agent and agents tools
 
+The model is instructed to work directly by default because each subagent adds
+latency, token use, and coordination overhead. It should delegate only
+substantial, self-contained work whose benefit exceeds that cost, and avoid
+simple questions, routine inspection, small changes, and overlapping edits.
+Subagents share the parent's workspace but start with fresh conversation
+context.
+
 The model spawns subagents with the `agent` tool:
 
 - **Blocking** (default): the tool call resolves when the subagent finishes,
