@@ -187,7 +187,8 @@ pub(super) fn route_forward(
     }
 
     if let Some(label) = &edge.label {
-        place_label(canvas, label, head_row, tx + 1);
+        let label_row = head_row.saturating_sub(1);
+        place_label(canvas, label, label_row, tx + 2);
     }
 }
 
