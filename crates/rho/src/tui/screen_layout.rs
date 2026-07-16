@@ -10,6 +10,7 @@ use super::{
 pub(super) struct ScreenLayout {
     pub(super) history: Rect,
     pub(super) history_scrollbar: Option<HistoryScrollbar>,
+    pub(super) activity_rail: Option<Rect>,
     pub(super) activity: Option<Rect>,
     pub(super) jump_to_bottom: Option<Rect>,
     pub(super) pending_input: Rect,
@@ -109,6 +110,7 @@ impl App {
             .unwrap_or(0) as u16;
         let activity = (activity_width > 0 && history.height > 0)
             .then(|| Rect::new(history.x, activity_y, activity_width, 1));
+        let activity_rail = activity.map(|_| Rect::new(history.x, activity_y, history.width, 1));
         let pending_input = Rect::new(area.x, y, area.width, pending_input_height as u16);
         y = y.saturating_add(pending_input.height);
         let subagents = Rect::new(area.x, y, area.width, subagent_height as u16);
@@ -135,6 +137,7 @@ impl App {
                 history_len,
                 self.visible_history_start(history_len, history_height),
             ),
+            activity_rail,
             activity,
             jump_to_bottom,
             pending_input,

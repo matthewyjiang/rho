@@ -250,6 +250,41 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
 }
 
 #[test]
+fn activity_rail_has_a_solid_full_width_background() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    app.running = true;
+    app.push_transcript_entry(test_tool_entry(
+        true,
+        &[
+            "tool line 0",
+            "tool line 1",
+            "tool line 2",
+            "tool line 3",
+            "tool line 4",
+            "tool line 5",
+            "tool line 6",
+            "tool line 7",
+            "tool line 8",
+            "tool line 9",
+        ],
+    ));
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let rail = layout.activity_rail.unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    assert_eq!(rail, Rect::new(0, rail.y, width, 1));
+    let buffer = terminal.backend().buffer();
+    assert_ne!(buffer[(rail.x, rail.y.saturating_sub(1))].bg, Color::Reset);
+    for column in rail.x..rail.right() {
+        assert_eq!(buffer[(column, rail.y)].bg, Color::Reset);
+    }
+}
+
+#[test]
 fn jump_button_resets_tool_output_background() {
     let mut app = test_app();
     let width = 40;
