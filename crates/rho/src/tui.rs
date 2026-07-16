@@ -62,6 +62,7 @@ mod mouse_capture;
 mod paste_burst;
 mod picker;
 mod prompt_turn;
+mod provider_attempt;
 mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
@@ -95,6 +96,7 @@ use markdown::{push_wrapped_markdown_without_copy_button, update_code_block_stat
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use prompt_turn::FailedTurn;
+use provider_attempt::ProviderAttempt;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
     QuestionAnswerRequest, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
@@ -279,7 +281,7 @@ struct App {
     stream_preview_deadline: Option<Instant>,
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
-    provider_attempt_start: Option<usize>,
+    provider_attempt: ProviderAttempt,
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     running: bool,
@@ -671,7 +673,7 @@ impl App {
             stream_preview_deadline: None,
             live_stream_preview: None,
             current_turn_start: None,
-            provider_attempt_start: None,
+            provider_attempt: ProviderAttempt::default(),
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             running: false,
@@ -2911,20 +2913,9 @@ impl App {
 
     fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
-        let Some(start) = self.provider_attempt_start else {
-            return;
-        };
-        let mut index = 0;
-        let original_len = self.transcript.len();
-        self.transcript.retain(|entry| {
-            let keep = index < start || !matches!(entry, Entry::Assistant(_) | Entry::Reasoning(_));
-            index += 1;
-            keep
-        });
-        if self.transcript.len() != original_len {
+        if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
             self.history_lines.invalidate_from(start);
         }
-        self.provider_attempt_start = Some(self.transcript.len());
         self.status = "retrying provider response".into();
     }
 
@@ -4529,7 +4520,7 @@ impl App {
                 self.usage_before_current_step = self.current_run_usage.clone();
                 self.usage_before_current_attempt = None;
                 self.reset_streams();
-                self.provider_attempt_start = Some(self.transcript.len());
+                self.provider_attempt.begin(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
                 self.active_tool_call = false;

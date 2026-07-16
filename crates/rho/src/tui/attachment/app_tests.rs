@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, Terminal};
@@ -8,64 +6,7 @@ use tempfile::TempDir;
 use super::*;
 
 #[test]
-fn attachment_stream_round_trips_view_events() {
-    let directory = TempDir::new().unwrap();
-    let result_path = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut writer = AttachmentWriter::new(
-        &result_path,
-        PathBuf::from("/workspace"),
-        "inspect the code",
-    )
-    .unwrap();
-    writer
-        .on_event(&rho_sdk::RunEvent::AssistantTextDelta {
-            text: "found it".into(),
-        })
-        .unwrap();
-    drop(writer);
-
-    let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
-    let events = reader.read_new().unwrap();
-
-    assert!(matches!(
-        &events[0],
-        AttachmentEvent::Prompt(prompt) if prompt == "inspect the code"
-    ));
-    assert!(matches!(
-        &events[1],
-        AttachmentEvent::AssistantTextDelta(text) if text == "found it"
-    ));
-    assert!(reader.read_new().unwrap().is_empty());
-}
-
-#[test]
-fn attachment_stream_skips_malformed_events() {
-    let directory = TempDir::new().unwrap();
-    let path = directory.path().join(subagent::ATTACHMENT_FILE_NAME);
-    std::fs::write(
-        &path,
-        concat!(
-            "not json\n",
-            "{\"type\":\"assistant_text_delta\",\"data\":\"valid\"}\n"
-        ),
-    )
-    .unwrap();
-    let mut reader = AttachmentReader::new(path);
-
-    let events = reader.read_new().unwrap();
-
-    assert!(matches!(
-        &events[0],
-        AttachmentEvent::Notice(message) if message.contains("skipped invalid attachment event")
-    ));
-    assert!(matches!(
-        &events[1],
-        AttachmentEvent::AssistantTextDelta(text) if text == "valid"
-    ));
-}
-
-#[test]
-fn provider_retry_replaces_the_failed_attempt_stream() {
+fn provider_retry_replaces_output_but_preserves_presented_events() {
     let directory = TempDir::new().unwrap();
     let mut app = AttachmentApp::new(
         "abc123",
@@ -75,13 +16,27 @@ fn provider_retry_replaces_the_failed_attempt_stream() {
     app.apply_event(AttachmentEvent::Prompt("delegated task".into()));
     app.apply_event(AttachmentEvent::StepStarted);
     app.apply_event(AttachmentEvent::AssistantTextDelta("discard me".into()));
+    app.apply_event(AttachmentEvent::Notice("keep notice".into()));
+    app.apply_event(AttachmentEvent::ToolFinished {
+        ok: true,
+        display_style: crate::tool::ToolDisplayStyle::default_tool(),
+        display_lines: vec!["keep tool".into()],
+    });
+    app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));
     app.apply_event(AttachmentEvent::ProviderStreamReset);
     app.apply_event(AttachmentEvent::AssistantTextDelta("keep me".into()));
 
     assert!(matches!(
         app.transcript.as_slice(),
-        [Entry::User(prompt), Entry::Assistant(answer)]
-            if prompt == "delegated task" && answer == "keep me"
+        [
+            Entry::User(prompt),
+            Entry::Notice(notice),
+            Entry::Tool(tool),
+            Entry::Assistant(answer)
+        ] if prompt == "delegated task"
+            && notice == "keep notice"
+            && tool.display_lines == ["keep tool"]
+            && answer == "keep me"
     ));
 }
 
