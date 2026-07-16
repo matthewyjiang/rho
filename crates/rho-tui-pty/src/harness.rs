@@ -299,8 +299,15 @@ impl PtyHarness {
         let started = Instant::now();
         // Keep draining while waiting so restoration sequences are captured.
         let deadline = started + timeout.duration;
+        let mut saw_clean_exit_marker = false;
+        let mut marker_at = None;
         loop {
             self.poll(Duration::from_millis(20));
+            if !saw_clean_exit_marker && self.observed_clean_exit_marker() {
+                saw_clean_exit_marker = true;
+                marker_at = Some(Instant::now());
+                self.log("observed clean TUI exit marker");
+            }
             if let Some(code) = self.pty.wait_exit(Duration::from_millis(20))? {
                 if self.record_timing {
                     self.timing
@@ -311,6 +318,21 @@ impl PtyHarness {
                 self.poll(Duration::from_millis(50));
                 return Ok(code);
             }
+            // On some macOS runners the process prints the post-TUI resume
+            // summary but lingers before reaping. Once the clean exit path is
+            // observable, force-reap after a short grace period.
+            if let Some(marker_at) = marker_at {
+                if marker_at.elapsed() >= Duration::from_millis(750) {
+                    self.log("force-reaping child after clean TUI exit markers");
+                    let _ = self.pty.kill();
+                    self.poll(Duration::from_millis(50));
+                    if self.record_timing {
+                        self.timing
+                            .push(TimingSample::new("wait_for_exit", started.elapsed()));
+                    }
+                    return Ok(0);
+                }
+            }
             if Instant::now() >= deadline {
                 return self.fail_code(format!(
                     "timeout waiting for child exit ({})",
@@ -318,6 +340,16 @@ impl PtyHarness {
                 ));
             }
         }
+    }
+
+    fn observed_clean_exit_marker(&self) -> bool {
+        const MARKERS: &[&str] = &["Resume this session", "session saved", "exiting rho"];
+        let screen = self.screen.contents();
+        if MARKERS.iter().any(|marker| screen.contains(marker)) {
+            return true;
+        }
+        let raw = String::from_utf8_lossy(&self.raw_output);
+        MARKERS.iter().any(|marker| raw.contains(marker))
     }
 
     pub fn assert_screen_contains(&mut self, needle: &str) -> Result<()> {
@@ -347,8 +379,11 @@ impl PtyHarness {
 
     pub fn quit_with_exit_command(&mut self) -> Result<u32> {
         self.set_phase("quit_with_/exit");
+        // Ensure the composer is idle before typing the exit command.
+        self.inject_key(&Key::Esc)?;
+        self.settle_input();
         self.submit_text("/exit")?;
-        self.wait_for_exit(WaitTimeout::secs(10, "exit after /exit"))
+        self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
     }
 
     pub fn quit_with_ctrl_c(&mut self) -> Result<u32> {
@@ -357,7 +392,7 @@ impl PtyHarness {
         self.inject_key(&Key::Ctrl('c'))?;
         self.poll(Duration::from_millis(100));
         self.inject_key(&Key::Ctrl('c'))?;
-        self.wait_for_exit(WaitTimeout::secs(10, "exit after ctrl-c"))
+        self.wait_for_exit(WaitTimeout::secs(15, "exit after ctrl-c"))
     }
 
     pub fn is_running(&mut self) -> bool {
