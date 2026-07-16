@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
 use rho_sdk::{
     model::Message, provider::ModelProvider, CapabilityRequest, Error, HostInputId,
@@ -20,6 +20,11 @@ use crate::{
 use super::runtime_builder::{
     build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
 };
+
+pub(crate) type SteeringAcceptanceFuture =
+    Pin<Box<dyn Future<Output = Result<rho_sdk::SteeringId, Error>> + Send>>;
+pub(crate) type SteeringRetractionFuture =
+    Pin<Box<dyn Future<Output = Result<rho_sdk::SteeringRetraction, Error>> + Send>>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum InteractiveState {
@@ -333,16 +338,33 @@ impl InteractiveRuntime {
         }
     }
 
-    pub(crate) async fn steer(&mut self, input: UserInput) -> Result<(), Error> {
-        self.active_run
+    pub(crate) fn request_steer(
+        &mut self,
+        input: UserInput,
+    ) -> Result<SteeringAcceptanceFuture, Error> {
+        let receipt = self
+            .active_run
             .as_ref()
             .ok_or(Error::InvalidHostResponse {
                 message: "no active run accepts steering input".into(),
             })?
-            .steer(input)
-            .await?;
+            .request_steer_retractable(input)?;
         self.state = InteractiveState::Running(RunPhase::Steering);
-        Ok(())
+        Ok(Box::pin(receipt))
+    }
+
+    pub(crate) fn request_steering_retraction(
+        &self,
+        id: rho_sdk::SteeringId,
+    ) -> Result<SteeringRetractionFuture, Error> {
+        let receipt = self
+            .active_run
+            .as_ref()
+            .ok_or(Error::InvalidHostResponse {
+                message: "no active run accepts steering retractions".into(),
+            })?
+            .request_steering_retraction(id)?;
+        Ok(Box::pin(receipt))
     }
 
     pub(crate) async fn respond(

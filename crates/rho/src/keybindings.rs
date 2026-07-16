@@ -12,6 +12,8 @@ pub struct Keybindings {
     pub toggle_tool_output: KeyBinding,
     pub insert_newline: KeyBinding,
     pub paste_image: KeyBinding,
+    pub edit_pending_input: KeyBinding,
+    pub manage_pending_input: KeyBinding,
 }
 
 impl Default for Keybindings {
@@ -22,6 +24,8 @@ impl Default for Keybindings {
             toggle_tool_output: KeyBinding::control('o'),
             insert_newline: KeyBinding::control('j'),
             paste_image: KeyBinding::control('v'),
+            edit_pending_input: KeyBinding::alt(KeyCode::Up),
+            manage_pending_input: KeyBinding::alt(KeyCode::Char('q')),
         }
     }
 }
@@ -37,6 +41,13 @@ impl KeyBinding {
         Self {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char(ch),
+        }
+    }
+
+    const fn alt(code: KeyCode) -> Self {
+        Self {
+            modifiers: KeyModifiers::ALT,
+            code,
         }
     }
 

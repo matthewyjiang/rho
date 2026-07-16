@@ -12,6 +12,7 @@ use crate::{
     provider::{provider_event_channel, ModelProvider},
     run::RunCommand,
     session::{HistoryMetrics, SessionCore, SessionState, UserInput},
+    steering::SteeringQueue,
     CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
 };
 
@@ -59,12 +60,19 @@ pub(crate) async fn execute_run(
     }
 
     let mut accumulated_usage = ModelUsage::default();
-    let mut steering = Vec::new();
+    let mut steering = SteeringQueue::new();
     // The tool set is immutable for the duration of a run, so build the specs
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
     for step in 1..=runtime.max_steps.get() {
-        drain_steering(&mut commands, &mut history);
+        drain_commands(&mut commands, &mut steering);
+        match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => return Err(error),
+        }
         match maybe_compact(
             &core,
             &runtime,
@@ -139,8 +147,8 @@ pub(crate) async fn execute_run(
             provider_context: capture.provider_context,
         };
         history.push(Message::assistant(assistant));
-        drain_steering(control.commands, control.steering);
-        let was_steered = !control.steering.is_empty();
+        drain_commands(control.commands, control.steering);
+        let was_steered = control.steering.has_staged();
 
         if tool_calls.is_empty() && !was_steered {
             let content = final_assistant_content(&history);
@@ -192,7 +200,20 @@ pub(crate) async fn execute_run(
                 }
             }
         }
-        history.append(control.steering);
+        match apply_staged_steering(
+            control.steering,
+            &mut history,
+            control.events,
+            control.cancellation,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     let last_content = final_assistant_content(&history);
@@ -282,7 +303,7 @@ struct RunControl<'a> {
     cancellation: &'a CancellationToken,
     events: &'a mpsc::Sender<RunEvent>,
     commands: &'a mut mpsc::Receiver<RunCommand>,
-    steering: &'a mut Vec<Message>,
+    steering: &'a mut SteeringQueue,
 }
 
 async fn request_valid_response(
@@ -419,25 +440,39 @@ async fn provider_turn(
     }
 }
 
-fn accept_non_tool_command(command: RunCommand, steering: &mut Vec<Message>) {
+async fn apply_staged_steering(
+    steering: &mut SteeringQueue,
+    history: &mut Vec<Message>,
+    events: &mpsc::Sender<RunEvent>,
+    cancellation: &CancellationToken,
+) -> Result<(), Error> {
+    let ids = steering.staged_ids();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // Publish before mutating history so cancellation cannot hide applied IDs from hosts.
+    // There is deliberately no await between successful publication and the mutation.
+    emit(events, cancellation, RunEvent::SteeringApplied { ids }).await?;
+    steering.apply(history);
+    Ok(())
+}
+
+fn accept_non_tool_command(command: RunCommand, steering: &mut SteeringQueue) {
     match command {
-        RunCommand::Steer { input, accepted } => accept_steering(input, accepted, steering),
+        RunCommand::Steer { input, accepted } => {
+            let id = steering.accept(input);
+            let _ = accepted.send(id);
+        }
+        RunCommand::RetractSteering { id, completed } => {
+            let _ = completed.send(steering.retract(&id));
+        }
         RunCommand::Respond { accepted, .. } => {
             let _ = accepted.send(Err("no host input request is awaiting a response".into()));
         }
     }
 }
 
-fn accept_steering(
-    input: UserInput,
-    accepted: tokio::sync::oneshot::Sender<()>,
-    steering: &mut Vec<Message>,
-) {
-    steering.push(Message::User(input.into_blocks()));
-    let _ = accepted.send(());
-}
-
-fn drain_steering(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut Vec<Message>) {
+fn drain_commands(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut SteeringQueue) {
     while let Ok(command) = commands.try_recv() {
         accept_non_tool_command(command, steering);
     }

@@ -20,6 +20,7 @@ use crate::{
     },
     provider::{ModelProvider, ProviderFuture},
     session::SessionCore,
+    steering::SteeringQueue,
     tool::{
         Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata,
         ToolOutput, ToolProgress,
@@ -29,7 +30,7 @@ use crate::{
     SelectionMode, Session, SessionId, SessionOptions, SessionState, UserInput,
 };
 
-use super::{execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
+use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -296,6 +297,26 @@ async fn cancel_and_continue(session: &Session, run: &mut Run, expected_results:
         .expect("strict continuation timed out")
         .expect("strict provider rejected replay history");
     assert_eq!(outcome.text(), "continued");
+}
+
+#[tokio::test]
+async fn cancelled_applied_event_keeps_steering_out_of_history() {
+    let cancellation = CancellationToken::new();
+    let (events, _receiver) = mpsc::channel(1);
+    events
+        .send(RunEvent::StepStarted { step: 1 })
+        .await
+        .unwrap();
+    let mut steering = SteeringQueue::new();
+    let id = steering.accept(UserInput::text("pending"));
+    let mut history = Vec::new();
+    cancellation.cancel();
+
+    let result = apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await;
+
+    assert!(matches!(result, Err(Error::Cancelled)));
+    assert!(history.is_empty());
+    assert_eq!(steering.staged_ids(), vec![id]);
 }
 
 #[tokio::test]

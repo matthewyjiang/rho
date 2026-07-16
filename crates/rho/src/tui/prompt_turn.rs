@@ -123,6 +123,7 @@ impl App {
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
         )> = None;
+        let mut pending_input_request = None;
         let mut terminal_event = false;
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
@@ -149,13 +150,25 @@ impl App {
                             agent.cancel();
                         }
                     }
-                    while let Some(prompt) = self.steering_prompts.pop_front() {
-                        if let Err(error) = agent.steer(rho_sdk::UserInput::text(prompt.clone())).await {
-                            self.steering_prompts.push_front(prompt);
-                            sdk_failure = Some(error.to_string());
-                            break;
-                        }
+                    if pending_input_request.is_none() && sdk_failure.is_none() {
+                        pending_input_request = self.start_pending_input_request(agent);
                     }
+                    self.pending_input_changed();
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
+                completion = pending_input::pending_input_completion(&mut pending_input_request), if pending_input_request.is_some() => {
+                    let completion = completion.expect("pending request checked above");
+                    let request = pending_input_request
+                        .take()
+                        .expect("completed pending request exists");
+                    if let Some(error) = self.finish_pending_input_request(request, completion) {
+                        sdk_failure = Some(error);
+                        agent.cancel();
+                    }
+                    if pending_input_request.is_none() && sdk_failure.is_none() {
+                        pending_input_request = self.start_pending_input_request(agent);
+                    }
+                    self.pending_input_changed();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
@@ -239,9 +252,28 @@ impl App {
                     }
                 }
             }
+            if pending_input_request.is_none()
+                && sdk_failure.is_none()
+                && !self.steering_prompts.is_empty()
+            {
+                pending_input_request = self.start_pending_input_request(agent);
+                self.pending_input_changed();
+            }
             if self.finish_completed_inline_shells().await? {
                 self.clamp_history_scroll_for_terminal(terminal)?;
                 terminal.draw(|frame| self.draw(frame))?;
+            }
+        }
+
+        if pending_input_request.is_some() {
+            let completion = pending_input::pending_input_completion(&mut pending_input_request)
+                .await
+                .expect("pending request checked above");
+            let request = pending_input_request
+                .take()
+                .expect("completed pending request exists");
+            if let Some(error) = self.finish_pending_input_request(request, completion) {
+                sdk_failure = Some(error);
             }
         }
 
@@ -298,7 +330,7 @@ impl App {
                     Some(rho_sdk::Error::Cancelled | rho_sdk::Error::Interrupted { .. })
                 ) =>
             {
-                self.restore_pending_work_to_input(&Arc::default());
+                self.restore_pending_work_to_input();
                 self.running = false;
                 self.loading_spinner.stop();
                 self.finish_streams();
@@ -316,6 +348,10 @@ impl App {
                 self.finalize_failed_turn(message, failed_turn)
             }
         };
+        if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
+            self.preserve_unapplied_steering_as_follow_ups();
+        }
+        self.clear_accepted_steering();
         self.apply_pending_model_selection(agent)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;

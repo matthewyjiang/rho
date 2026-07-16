@@ -93,6 +93,40 @@ assert_eq!(outcome.text(), "hi");
 # }
 ```
 
+### Retractable steering
+
+`Run::steer_retractable` returns a stable opaque `SteeringId` once the runtime accepts the
+input. Accepted input stays staged while provider output streams or a tool is
+running. A host can ask the same run to retract it before it is appended to
+conversation history:
+
+```rust,no_run
+# use rho_sdk::{Run, SteeringRetraction, UserInput};
+# async fn steer(run: &Run) -> Result<(), rho_sdk::Error> {
+let id = run
+    .steer_retractable(UserInput::text("focus on the tests"))
+    .await?;
+match run.retract_steering(id).await? {
+    SteeringRetraction::Retracted => {}
+    SteeringRetraction::AlreadyApplied => {
+        // The runtime had already atomically appended it to history.
+    }
+    SteeringRetraction::NotFound => {
+        // The ID belongs to another run or was not accepted by this run.
+    }
+}
+# Ok(())
+# }
+```
+
+Steering and retraction commands preserve command-channel order. The runtime,
+not the caller, decides a race between applying and retracting input. A
+`RunEvent::SteeringApplied` event reports the IDs that crossed into history so
+interactive clients can remove them from pending-input controls immediately.
+Event loops with bounded channels can use `Run::request_steer_retractable` and
+`Run::request_steering_retraction`, then poll the returned receipt alongside
+`Run::next_event` instead of blocking event consumption on an acknowledgement.
+
 ## Custom providers and tools
 
 Implement `ModelProvider` and `Tool`. Both return explicit `Send` futures and

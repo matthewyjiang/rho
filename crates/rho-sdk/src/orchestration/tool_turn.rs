@@ -304,10 +304,16 @@ fn handle_tool_command(
         crate::HostInputId,
         crate::host_input::HostInputEnvelope,
     >,
-    steering: &mut Vec<Message>,
+    steering: &mut crate::steering::SteeringQueue,
 ) {
     match command {
-        RunCommand::Steer { input, accepted } => super::accept_steering(input, accepted, steering),
+        RunCommand::Steer { input, accepted } => {
+            let id = steering.accept(input);
+            let _ = accepted.send(id);
+        }
+        RunCommand::RetractSteering { id, completed } => {
+            let _ = completed.send(steering.retract(&id));
+        }
         RunCommand::Respond {
             request_id,
             response,

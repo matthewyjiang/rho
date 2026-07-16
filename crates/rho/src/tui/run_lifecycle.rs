@@ -1,24 +1,28 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
-
 use super::{App, InputSubmissionMode};
 
-#[cfg(test)]
-use super::QueuedPrompt;
-
 impl App {
-    pub(super) fn restore_pending_work_to_input(
-        &mut self,
-        active_steering: &Arc<Mutex<VecDeque<String>>>,
-    ) {
-        let mut messages = active_steering
-            .lock()
-            .unwrap()
+    pub(super) fn preserve_unapplied_steering_as_follow_ups(&mut self) {
+        let mut pending = self
+            .accepted_steering
             .drain(..)
+            .map(|entry| entry.prompt)
+            .chain(self.steering_prompts.drain(..))
+            .collect::<std::collections::VecDeque<_>>();
+        pending.append(&mut self.queued_prompts);
+        self.queued_prompts = pending;
+        self.retracting_steering = None;
+        self.pending_input_action = None;
+        self.pending_input_changed();
+        self.select_pending_recall_target();
+    }
+
+    pub(super) fn restore_pending_work_to_input(&mut self) {
+        let mut messages = self
+            .accepted_steering
+            .drain(..)
+            .map(|entry| entry.prompt.prompt)
             .collect::<Vec<_>>();
-        messages.extend(self.steering_prompts.drain(..));
+        messages.extend(self.steering_prompts.drain(..).map(|prompt| prompt.prompt));
         messages.extend(self.queued_prompts.drain(..).map(|prompt| prompt.prompt));
         if messages.is_empty() {
             return;
@@ -32,48 +36,10 @@ impl App {
         self.input_submission_mode = InputSubmissionMode::ParseCommands;
         self.reset_input_history_navigation();
         self.input_changed();
+        self.pending_input_changed();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::tests::test_app;
-
-    #[test]
-    fn interrupt_restores_all_pending_work_to_input() {
-        let mut app = test_app();
-        app.input = "draft".into();
-        app.input_cursor = app.input_char_len();
-        app.steering_prompts.push_back("local steer".into());
-        app.queued_prompts.push_back(QueuedPrompt {
-            prompt: "expanded next turn".into(),
-            display_prompt: "next turn".into(),
-            paste_segments: Vec::new(),
-        });
-        let active = Arc::new(Mutex::new(VecDeque::from(["active steer".into()])));
-
-        app.restore_pending_work_to_input(&active);
-
-        assert_eq!(
-            app.input,
-            "active steer\n\nlocal steer\n\nexpanded next turn\n\ndraft"
-        );
-        assert!(active.lock().unwrap().is_empty());
-        assert!(app.steering_prompts.is_empty());
-        assert!(app.queued_prompts.is_empty());
-        assert_eq!(app.input_cursor, app.input_char_len());
-    }
-
-    #[test]
-    fn interrupt_expands_pasted_draft_before_restoring_it() {
-        let mut app = test_app();
-        app.insert_pasted_input_text("alpha\nbeta");
-        app.steering_prompts.push_back("steer".into());
-
-        app.restore_pending_work_to_input(&Arc::default());
-
-        assert_eq!(app.input, "steer\n\nalpha\nbeta");
-        assert!(app.paste_segments.is_empty());
-    }
-}
+#[path = "run_lifecycle_tests.rs"]
+mod tests;

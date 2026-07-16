@@ -1,7 +1,7 @@
 use crate::{
     model::{ContentBlock, ModelUsage, ToolCall},
     tool::{ToolErrorKind, ToolMetadata, ToolOutput, ToolProgress},
-    Revision, RunId, ToolCallId,
+    Revision, RunId, SteeringId, ToolCallId,
 };
 
 /// Provider activity kind emitted when a malformed response is retried.
@@ -175,5 +175,9 @@ pub enum RunEvent {
     Failed {
         message: String,
         retryability: crate::Retryability,
+    },
+    /// Accepted steering crossed into conversation history for the next model step.
+    SteeringApplied {
+        ids: Vec<SteeringId>,
     },
 }

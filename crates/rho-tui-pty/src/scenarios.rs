@@ -24,6 +24,7 @@ pub enum ScenarioId {
     PasteMultiline,
     Questionnaire,
     ProgressTool,
+    RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
     GoalBlockedAndResumed,
@@ -42,6 +43,7 @@ impl ScenarioId {
             Self::PasteMultiline => "paste_multiline",
             Self::Questionnaire => "questionnaire",
             Self::ProgressTool => "progress_tool",
+            Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
@@ -60,6 +62,7 @@ impl ScenarioId {
             "paste_multiline" => Some(Self::PasteMultiline),
             "questionnaire" => Some(Self::Questionnaire),
             "progress_tool" => Some(Self::ProgressTool),
+            "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
@@ -355,6 +358,46 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_tool"),
+    Step::SubmitText("fixture progress tool"),
+    Step::WaitText {
+        text: "deterministic progress update one",
+        timeout: STREAM,
+    },
+    Step::Phase("steer"),
+    Step::SubmitText("keep the public API unchanged"),
+    Step::WaitText {
+        text: "pending input",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "STEER",
+        timeout: STREAM,
+    },
+    Step::Phase("retract"),
+    Step::Key(Key::AltUp),
+    Step::WaitText {
+        text: "editing retracted steer",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::WaitText {
+        text: "input cleared",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "progress tool lifecycle complete",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -520,6 +563,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             size: DEFAULT_SIZE,
             steps: PROGRESS_TOOL_STEPS,
             smoke: false,
+        },
+        Scenario {
+            id: "retract_steering_during_tool",
+            description: "Inspect and retract steering while a tool is running",
+            size: DEFAULT_SIZE,
+            steps: RETRACT_STEERING_DURING_TOOL_STEPS,
+            smoke: true,
         },
         Scenario {
             id: "markdown_headings",
