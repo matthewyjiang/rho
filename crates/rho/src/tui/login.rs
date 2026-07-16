@@ -90,6 +90,7 @@ impl App {
             self.status = "login failed".into();
             return Ok(());
         }
+        self.cancel_limits_command().await;
         let saved = save_provider_api_key(self.credential_store.as_ref(), &target.provider, &key);
         match saved {
             Ok(()) => self.finish_login(target, terminal, agent).await,
@@ -302,6 +303,7 @@ impl App {
         let target = pending.target;
         match pending.handle.await {
             Ok(Ok(result)) => {
+                self.cancel_limits_command().await;
                 let saved = match result {
                     PendingOAuthResult::Codex(tokens) => {
                         save_codex_tokens(self.credential_store.as_ref(), &tokens)
@@ -506,6 +508,7 @@ impl App {
             return Ok(());
         };
 
+        self.cancel_limits_command().await;
         let deleted = delete_provider_credentials(self.credential_store.as_ref(), &target.provider);
 
         match deleted {

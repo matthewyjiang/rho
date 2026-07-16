@@ -443,13 +443,13 @@ fn max_secret_chunk_utf16_units() -> usize {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug, Default)]
 pub struct MemoryCredentialStore {
     secrets: Mutex<HashMap<String, String>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl CredentialStore for MemoryCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
         Ok(self.secrets.lock().unwrap().get(account).cloned())

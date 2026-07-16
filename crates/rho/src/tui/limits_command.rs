@@ -44,6 +44,13 @@ impl App {
         true
     }
 
+    pub(super) async fn cancel_limits_command(&mut self) {
+        if let Some(handle) = self.pending_usage_limits.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+
     pub(super) async fn poll_limits_command(&mut self) -> anyhow::Result<bool> {
         if !self
             .pending_usage_limits

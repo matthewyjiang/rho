@@ -629,6 +629,13 @@ impl SecretInput {
 
 impl App {
     fn new(info: TuiInfo) -> Self {
+        #[cfg(debug_assertions)]
+        if smoke_injection::matrix_enabled() {
+            return Self::new_with_credentials(
+                info,
+                Arc::new(crate::credentials::MemoryCredentialStore::default()),
+            );
+        }
         Self::new_with_credentials(info, Arc::new(OsCredentialStore))
     }
 
@@ -820,6 +827,7 @@ impl App {
                 }
             }
         }
+        self.cancel_limits_command().await;
         Ok(TuiResult {
             resume_session_id: self.info.session_id.clone(),
             exit_summary: self.exit_summary(),

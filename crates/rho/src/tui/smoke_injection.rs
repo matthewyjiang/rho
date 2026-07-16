@@ -4,13 +4,17 @@ enum Termination {
     Panic,
 }
 
+pub(super) fn matrix_enabled() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix"))
+}
+
 pub(super) fn after_terminal_init() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     {
         // Allow injection from Herdr smoke tests or the matrix fixture / PTY harness.
         let herdr = std::env::var_os("HERDR_ENV").is_some();
-        let matrix = std::env::var_os("RHO_TUI_TEST_MODE").as_deref()
-            == Some(std::ffi::OsStr::new("matrix"));
+        let matrix = matrix_enabled();
         if !herdr && !matrix {
             return Ok(());
         }

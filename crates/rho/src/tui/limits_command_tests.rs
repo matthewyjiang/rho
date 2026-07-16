@@ -2,13 +2,17 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-#[tokio::test]
-async fn running_limits_query_does_not_queue_model_context() {
+#[test]
+fn running_limits_query_does_not_queue_model_context() {
     let mut app = super::super::tests::test_app();
     app.running = true;
 
-    assert!(app.start_limits_command());
-    app.finish_limits_command().await.unwrap();
+    app.render_limits_result(Ok((
+        ProviderLimits {
+            providers: Vec::new(),
+        },
+        Vec::new(),
+    )));
 
     assert!(app.steering_prompts.is_empty());
     assert!(app.queued_prompts.is_empty());
@@ -17,6 +21,22 @@ async fn running_limits_query_does_not_queue_model_context() {
         Some(Entry::Notice(notice))
             if notice.starts_with("no supported OAuth providers are connected")
     ));
+}
+
+#[tokio::test]
+async fn cancelling_limits_query_waits_for_background_task_to_stop() {
+    let mut app = super::super::tests::test_app();
+    let task_marker = std::sync::Arc::new(());
+    let captured_marker = task_marker.clone();
+    app.pending_usage_limits = Some(tokio::spawn(async move {
+        let _marker = captured_marker;
+        std::future::pending::<LimitsFetchResult>().await
+    }));
+
+    app.cancel_limits_command().await;
+
+    assert!(app.pending_usage_limits.is_none());
+    assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
 }
 
 #[test]

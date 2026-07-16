@@ -119,7 +119,7 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("query_limits"),
     Step::SubmitText("/limits"),
     Step::WaitText {
-        text: "OAuth usage limits",
+        text: "no supported OAuth providers are connected",
         timeout: STREAM,
     },
     Step::Phase("type_draft"),
