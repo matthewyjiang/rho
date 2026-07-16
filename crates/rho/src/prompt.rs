@@ -53,8 +53,6 @@ Do not invent tool results. When done, answer directly.
 Work directly by default. A subagent starts with fresh context and adds latency, token use, and coordination overhead. Delegate only a substantial, self-contained task when the saved work is likely to exceed that cost.
 
 Do not delegate simple questions, routine codebase inspection, or small/local changes. Use background subagents only for independent work you can run while making useful progress elsewhere. Subagents share the workspace, so avoid overlapping edits.
-
-After starting background subagents, do useful foreground work or end your turn. Do not poll, sleep, or wait. Completion automatically starts a new turn.
 "#,
         );
     }
@@ -308,10 +306,7 @@ mod tests {
         assert!(enabled.contains("Work directly by default"));
         assert!(enabled.contains("adds latency, token use, and coordination overhead"));
         assert!(enabled.contains("avoid overlapping edits"));
-        assert!(enabled.contains("Do not poll, sleep, or wait"));
-        assert!(enabled.contains("Completion automatically starts a new turn"));
         assert!(!disabled.contains("Work directly by default"));
-        assert!(!disabled.contains("Completion automatically starts a new turn"));
     }
 
     #[test]

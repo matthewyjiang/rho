@@ -12,9 +12,7 @@ pub(super) enum SnapshotFormat {
 }
 
 pub(super) fn format_background_start(id: &str, preset: &str) -> String {
-    format!(
-        "subagent {id} ({preset}) started in background\nattach: rho attach {id}\n\nIf no foreground work remains, end your turn. Do not poll or wait."
-    )
+    format!("subagent {id} ({preset}) started in background\nattach: rho attach {id}")
 }
 
 pub(super) fn format_running(id: &str) -> String {

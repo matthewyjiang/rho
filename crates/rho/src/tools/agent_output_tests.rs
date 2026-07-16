@@ -30,13 +30,11 @@ fn snapshot(done: bool) -> SubagentSnapshot {
 }
 
 #[test]
-fn formats_background_start_guidance() {
+fn formats_agent_start_output() {
     assert_eq!(
         format_background_start("abc123", "explorer"),
         "subagent abc123 (explorer) started in background\n\
-         attach: rho attach abc123\n\
-         \n\
-         If no foreground work remains, end your turn. Do not poll or wait."
+         attach: rho attach abc123"
     );
     assert_eq!(
         format_running("abc123"),

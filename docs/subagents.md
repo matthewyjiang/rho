@@ -65,9 +65,9 @@ The model spawns subagents with the `agent` tool:
 - **Blocking** (default): the tool call resolves when the subagent finishes,
   returning its final answer, turn count, and token usage.
 - **Background** (`background: true`): the call returns immediately with a
-  short ID and the exact `rho attach <id>` command. If no foreground work
-  remains, the parent should end its turn instead of polling or waiting.
-  Completion automatically starts a new turn with the result.
+  short ID and the exact `rho attach <id>` command. When the subagent finishes,
+  the parent is notified at its next turn boundary. An idle interactive session
+  is woken with the result.
 
 The `agents` tool manages running subagents:
 
@@ -76,19 +76,6 @@ The `agents` tool manages running subagents:
   command for one subagent
 - `stop` - graceful stop (the subagent writes a partial result), escalating
   to a kill after five seconds
-
-Its output is compact and line-oriented. For example:
-
-```text
-abc123  explorer  running  42s  searching files
-```
-
-```text
-subagent abc123 (explorer): running
-elapsed: 42s · turns: 2 · tokens: 800 in / 120 out
-activity: searching files
-attach: rho attach abc123
-```
 
 While subagents are active, the interactive TUI combines its working indicator,
 subagent count, and jump-to-bottom action in one activity rail above the
