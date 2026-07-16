@@ -93,7 +93,9 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));
     let session = runtime.session(SessionOptions::default()).await.unwrap();
 
-    let outcome = complete_run(&session, "continue".into()).await.unwrap();
+    let outcome = complete_run(&session, "continue".into(), None)
+        .await
+        .unwrap();
 
     assert_eq!(outcome.text(), "done");
     let requests = provider.recorded_requests();

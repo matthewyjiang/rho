@@ -36,6 +36,7 @@ export default defineConfig({
           { text: 'Automation and CLI', link: '/automation-cli' },
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
+          { text: 'Subagents', link: '/subagents' },
           { text: 'Sessions', link: '/sessions' },
           { text: 'Development', link: '/development' },
           { text: 'App changelog', link: '/changelog' }

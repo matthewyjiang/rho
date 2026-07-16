@@ -761,10 +761,14 @@ impl App {
             }
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
+            needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
             }
+            let subagents_active = agent
+                .subagents()
+                .is_some_and(|manager| manager.has_active());
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
@@ -772,6 +776,8 @@ impl App {
                 || !self.pending_inline_shells.is_empty()
             {
                 Duration::from_millis(100)
+            } else if subagents_active {
+                Duration::from_millis(500)
             } else {
                 Duration::from_secs(3600)
             };
@@ -1164,6 +1170,46 @@ impl App {
         if let Ok(Some(notice)) = result {
             self.info.update_notice = Some(notice);
         }
+    }
+
+    /// Delivers finished background subagents at the next turn boundary:
+    /// idle sessions get woken with a notification turn, while goal loops and
+    /// queued work receive the notification through the prompt queue.
+    async fn poll_subagent_completions(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        if self.running {
+            return Ok(false);
+        }
+        let Some(manager) = agent.subagents().cloned() else {
+            return Ok(false);
+        };
+        let notifications = manager.take_notifications();
+        if notifications.is_empty() {
+            return Ok(false);
+        }
+        for notification in notifications {
+            let (model_prompt, display_prompt) =
+                crate::tools::agent::notification_prompts(&notification);
+            if self.goal.is_some() || !self.queued_prompts.is_empty() {
+                self.queued_prompts.push_back(QueuedPrompt {
+                    prompt: model_prompt,
+                    display_prompt,
+                    paste_segments: Vec::new(),
+                });
+            } else {
+                self.run_prompt_turn(
+                    TurnPrompt::standard(model_prompt, display_prompt),
+                    Vec::new(),
+                    terminal,
+                    agent,
+                )
+                .await?;
+            }
+        }
+        Ok(true)
     }
 
     fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {

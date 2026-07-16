@@ -49,9 +49,33 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
     let cwd = std::env::current_dir()?;
-    let diagnostics = RuntimeDiagnostics::new(&config);
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
+        let (preset_name, output_file) = match &cli.command {
+            Some(Command::Run {
+                preset,
+                output_file,
+                ..
+            }) => (preset.clone(), output_file.clone()),
+            _ => (None, None),
+        };
+        let preset = preset_name
+            .as_deref()
+            .map(|name| crate::subagent::find(&cwd, name))
+            .transpose()?;
+        if let Some(preset) = &preset {
+            // Preset overrides apply to this run only; never persist them.
+            if let Some(model) = &preset.model {
+                config.model = model.clone();
+            }
+            if let Some(provider) = &preset.provider {
+                config.provider = provider.clone();
+            }
+            if let Some(reasoning) = preset.reasoning {
+                config.reasoning = reasoning;
+            }
+        }
+        let diagnostics = RuntimeDiagnostics::new(&config);
         return automation::run(
             prompt,
             automation::Startup {
@@ -59,12 +83,16 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 cwd,
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
+                no_subagents: cli.no_subagents,
+                preset,
+                output_file,
                 diagnostics,
                 herdr,
             },
         )
         .await;
     }
+    let diagnostics = RuntimeDiagnostics::new(&config);
 
     let pending_update_notice = config
         .check_for_updates

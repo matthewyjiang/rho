@@ -59,6 +59,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         cwd: cwd.clone(),
         no_system_prompt: cli.no_system_prompt,
         no_tools: cli.no_tools,
+        no_subagents: cli.no_subagents,
         questionnaire_enabled: !cli.no_tools,
         history,
         session_id: session_id.clone(),

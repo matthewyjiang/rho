@@ -21,6 +21,9 @@ pub struct Cli {
     /// Do not expose any tools to the model.
     #[arg(long)]
     pub no_tools: bool,
+    /// Do not expose the subagent tools (agent/agents) to the model.
+    #[arg(long, global = true)]
+    pub no_subagents: bool,
     /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
@@ -38,6 +41,14 @@ pub enum Command {
         /// Read additional prompt text from stdin.
         #[arg(long)]
         stdin: bool,
+        /// Run as a subagent preset: apply its model/reasoning/tool
+        /// restrictions and append its instructions to the system prompt.
+        #[arg(long, value_name = "NAME")]
+        preset: Option<String>,
+        /// Stream progress to stdout and write a structured status/result
+        /// file (JSON) that is updated during the run and finalized on exit.
+        #[arg(long, value_name = "PATH")]
+        output_file: Option<PathBuf>,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

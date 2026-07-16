@@ -68,6 +68,7 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) cwd: PathBuf,
     pub(crate) no_system_prompt: bool,
     pub(crate) no_tools: bool,
+    pub(crate) no_subagents: bool,
     pub(crate) questionnaire_enabled: bool,
     pub(crate) history: Vec<Message>,
     pub(crate) session_id: Option<String>,
@@ -117,6 +118,7 @@ impl InteractiveRuntime {
             cwd,
             no_system_prompt,
             no_tools,
+            no_subagents,
             questionnaire_enabled,
             history,
             session_id,
@@ -138,10 +140,13 @@ impl InteractiveRuntime {
         let tools = if no_tools {
             AppToolSet::disabled()
         } else {
+            let subagents = (!no_subagents).then(|| cwd.clone());
             AppToolSet::new(
                 config,
                 diagnostics.clone(),
-                ToolSetOptions::new().questionnaire(questionnaire_enabled),
+                ToolSetOptions::new()
+                    .questionnaire(questionnaire_enabled)
+                    .subagents(subagents),
             )
         };
         let specs = tools.specs();
@@ -494,6 +499,10 @@ impl InteractiveRuntime {
         }
         self.runtime.shutdown();
         self.tools.shutdown().await;
+    }
+
+    pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
+        self.tools.subagents()
     }
 
     fn observe_event(&mut self, event: &RunEvent) {
