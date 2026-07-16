@@ -16,6 +16,7 @@ use crate::{
 pub enum ScenarioId {
     StartupStreamExit,
     CancelAndResubmit,
+    InlineShellDuringTurn,
     ResizeDuringStream,
     ScrollDuringStream,
     TerminalRestoration,
@@ -30,6 +31,7 @@ impl ScenarioId {
         match self {
             Self::StartupStreamExit => "startup_stream_exit",
             Self::CancelAndResubmit => "cancel_and_resubmit",
+            Self::InlineShellDuringTurn => "inline_shell_during_turn",
             Self::ResizeDuringStream => "resize_during_stream",
             Self::ScrollDuringStream => "scroll_during_stream",
             Self::TerminalRestoration => "terminal_restoration",
@@ -44,6 +46,7 @@ impl ScenarioId {
         match name {
             "startup_stream_exit" => Some(Self::StartupStreamExit),
             "cancel_and_resubmit" => Some(Self::CancelAndResubmit),
+            "inline_shell_during_turn" => Some(Self::InlineShellDuringTurn),
             "resize_during_stream" => Some(Self::ResizeDuringStream),
             "scroll_during_stream" => Some(Self::ScrollDuringStream),
             "terminal_restoration" => Some(Self::TerminalRestoration),
@@ -115,6 +118,35 @@ const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::WaitText {
         text: "fixture response: hello after cancel",
         timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture delay"),
+    Step::WaitText {
+        text: "partial assistant before cancellation",
+        timeout: STREAM,
+    },
+    Step::SubmitText("!!printf local-during-turn"),
+    Step::WaitText {
+        text: "local-during-turn",
+        timeout: STREAM,
+    },
+    Step::SubmitText("!printf context-during-turn"),
+    Step::WaitText {
+        text: "context-during-turn",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
     },
     Step::ExitCommand,
 ];
@@ -291,6 +323,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             size: DEFAULT_SIZE,
             steps: CANCEL_AND_RESUBMIT_STEPS,
             smoke: true,
+        },
+        Scenario {
+            id: "inline_shell_during_turn",
+            description: "Run local and context shell commands during an active turn",
+            size: DEFAULT_SIZE,
+            steps: INLINE_SHELL_DURING_TURN_STEPS,
+            smoke: false,
         },
         Scenario {
             id: "resize_during_stream",

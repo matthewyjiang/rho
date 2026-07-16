@@ -222,12 +222,18 @@ impl App {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }
+            if self.finish_completed_inline_shells().await? {
+                self.clamp_history_scroll_for_terminal(terminal)?;
+                terminal.draw(|frame| self.draw(frame))?;
+            }
         }
 
         self.active_tool_call = false;
         self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
+        self.finish_all_inline_shells().await?;
+        self.insert_deferred_inline_shell_context(agent)?;
         let outcome = match result {
             Ok(outcome) if sdk_failure.is_none() => {
                 self.running = false;

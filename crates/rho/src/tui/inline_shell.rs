@@ -36,15 +36,15 @@ pub(super) fn mode(input: &str) -> Option<InlineShellMode> {
     InlineShellMode::parse(input).map(|(mode, _)| mode)
 }
 
-pub(super) fn mode_when_idle(running: bool, input: &str) -> Option<InlineShellMode> {
-    (!running).then(|| mode(input)).flatten()
+pub(super) fn mode_when_idle(_running: bool, input: &str) -> Option<InlineShellMode> {
+    mode(input)
 }
 
 pub(super) fn mode_hint_when_idle(
-    running: bool,
+    _running: bool,
     input: &str,
 ) -> Option<(&'static str, ratatui::style::Style)> {
-    (!running).then(|| mode_hint(input)).flatten()
+    mode_hint(input)
 }
 
 pub(super) fn mode_hint(input: &str) -> Option<(&'static str, ratatui::style::Style)> {
@@ -58,6 +58,17 @@ pub(super) fn mode_hint(input: &str) -> Option<(&'static str, ratatui::style::St
             super::Theme::shell_local(),
         )),
     }
+}
+
+pub(super) struct PendingShellTask {
+    mode: InlineShellMode,
+    max_output_bytes: usize,
+    handle: tokio::task::JoinHandle<std::io::Result<ShellOutput>>,
+}
+
+pub(super) struct DeferredShellContext {
+    context: String,
+    persisted_display: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,6 +216,125 @@ fn executable_name(shell: &str) -> &str {
 }
 
 impl super::App {
+    pub(super) fn start_inline_shell_during_turn(
+        &mut self,
+        mode: InlineShellMode,
+        command: String,
+    ) -> anyhow::Result<()> {
+        if command.is_empty() {
+            self.status = "enter a shell command after ! or !!".into();
+            return Ok(());
+        }
+        let config = self.info.config_repository.load()?;
+        let shell = if config.inline_shell.trim().is_empty() {
+            default_shell()
+        } else {
+            config.inline_shell
+        };
+        self.push_input_history(&format!(
+            "{}{}",
+            if mode.included_in_context() {
+                "!"
+            } else {
+                "!!"
+            },
+            command
+        ));
+        let cwd = self.info.cwd.clone();
+        let task_shell = shell.clone();
+        let task_command = command.clone();
+        self.pending_inline_shells.push(PendingShellTask {
+            mode,
+            max_output_bytes: config.max_output_bytes,
+            handle: tokio::spawn(async move { execute(&task_shell, &task_command, &cwd).await }),
+        });
+        self.status = format!("running {shell}");
+        Ok(())
+    }
+
+    pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {
+        let mut finished = false;
+        let mut index = 0;
+        while index < self.pending_inline_shells.len() {
+            if !self.pending_inline_shells[index].handle.is_finished() {
+                index += 1;
+                continue;
+            }
+            let task = self.pending_inline_shells.remove(index);
+            self.finish_inline_shell_task(task).await?;
+            finished = true;
+        }
+        Ok(finished)
+    }
+
+    pub(super) async fn finish_all_inline_shells(&mut self) -> anyhow::Result<()> {
+        while !self.pending_inline_shells.is_empty() {
+            let task = self.pending_inline_shells.remove(0);
+            self.finish_inline_shell_task(task).await?;
+        }
+        Ok(())
+    }
+
+    async fn finish_inline_shell_task(&mut self, task: PendingShellTask) -> anyhow::Result<()> {
+        let output = match task.handle.await? {
+            Ok(output) => output,
+            Err(error) => {
+                self.insert_entry(&super::Entry::Error(format!(
+                    "could not run inline shell: {error}"
+                )));
+                self.status = "inline shell failed".into();
+                return Ok(());
+            }
+        };
+        if task.mode.included_in_context() {
+            self.deferred_inline_shell_context
+                .push(DeferredShellContext {
+                    context: crate::tool::truncate(context_text(&output), task.max_output_bytes),
+                    persisted_display: crate::tool::truncate(
+                        format!(
+                            "!{}\n\n{}",
+                            output.command,
+                            display_text(&output, /*included_in_context*/ true)
+                        ),
+                        task.max_output_bytes,
+                    ),
+                });
+        }
+        let display_text = crate::tool::truncate(
+            display_text(&output, task.mode.included_in_context()),
+            task.max_output_bytes,
+        );
+        self.insert_entry(&super::Entry::Tool(super::ToolEntry {
+            state: super::ToolEntryState::Finished {
+                ok: output.ok,
+                display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+            },
+            display_lines: display_text.lines().map(str::to_string).collect(),
+            expanded: true,
+        }));
+        self.statusline.refresh_git_branch();
+        self.status = if output.ok {
+            if task.mode.included_in_context() {
+                "shell output pending context insertion".into()
+            } else {
+                "shell output excluded from context".into()
+            }
+        } else {
+            format!("shell exited with {}", output.exit_code)
+        };
+        Ok(())
+    }
+
+    pub(super) fn insert_deferred_inline_shell_context(
+        &mut self,
+        agent: &mut super::InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        for deferred in std::mem::take(&mut self.deferred_inline_shell_context) {
+            agent.append_user_context_with_display(deferred.context, deferred.persisted_display)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn block_inline_shell_during_turn(&mut self) -> anyhow::Result<()> {
         self.insert_entry(&super::Entry::Notice(
             "inline shell is unavailable while a model turn is running".into(),

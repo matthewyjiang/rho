@@ -282,6 +282,8 @@ struct App {
     pending_tool_call: Option<ToolEntry>,
     steering_prompts: VecDeque<String>,
     queued_prompts: VecDeque<QueuedPrompt>,
+    pending_inline_shells: Vec<inline_shell::PendingShellTask>,
+    deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
     goal: Option<GoalState>,
     pending_images: Vec<ImageContent>,
     input_history: Vec<String>,
@@ -656,6 +658,8 @@ impl App {
             pending_tool_call: None,
             steering_prompts: VecDeque::new(),
             queued_prompts: VecDeque::new(),
+            pending_inline_shells: Vec::new(),
+            deferred_inline_shell_context: Vec::new(),
             goal: None,
             pending_images: Vec::new(),
             input_history: Vec::new(),
@@ -2331,6 +2335,15 @@ impl App {
             self.paste_segments.clear();
             self.input_cursor = 0;
             self.clamp_command_selection();
+            return Ok(());
+        }
+        if let Some((mode, command)) = InlineShellMode::parse(self.input.trim()) {
+            if !self.paste_segments.is_empty() {
+                return self.block_pasted_inline_shell();
+            }
+            let command = command.to_string();
+            self.clear_submitted_input();
+            self.start_inline_shell_during_turn(mode, command)?;
             return Ok(());
         }
 
