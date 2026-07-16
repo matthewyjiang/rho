@@ -1048,6 +1048,7 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
+                self.cancel_inline_shells();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -2892,6 +2893,9 @@ impl App {
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.text_selection = None;
+                    if key.code == KeyCode::Esc && self.cancel_inline_shells() {
+                        continue;
+                    }
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)

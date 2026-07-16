@@ -138,12 +138,27 @@ const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
         text: "idle-stream-end",
         timeout: STREAM,
     },
+    Step::SubmitText("!!printf cancel-%s started; sleep 1; printf cancel-%s escaped-output"),
+    Step::WaitText {
+        text: "cancel-started",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "cancelled",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(1_200),
+        timeout: STREAM,
+    },
+    Step::Custom(assert_inline_shell_cancelled),
     Step::SubmitText("fixture delay"),
     Step::WaitText {
         text: "partial assistant before cancellation",
         timeout: STREAM,
     },
-    Step::SubmitText("!!printf streamed-start; sleep 1; printf streamed-end"),
+    Step::SubmitText("!!printf streamed-%s start; sleep 1; printf streamed-%s end"),
     Step::WaitText {
         text: "streamed-start",
         timeout: STREAM,
@@ -152,7 +167,7 @@ const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
         text: "streamed-end",
         timeout: STREAM,
     },
-    Step::SubmitText("!printf context-during-turn"),
+    Step::SubmitText("!printf context-%s during-turn"),
     Step::WaitText {
         text: "context-during-turn",
         timeout: STREAM,
@@ -411,6 +426,13 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
     runner.run(scenario)
+}
+
+fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    if harness.screen().contains_text("cancel-escaped-output") {
+        anyhow::bail!("inline shell produced output after Escape cancelled it");
+    }
+    Ok(())
 }
 
 fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {

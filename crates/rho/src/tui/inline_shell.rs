@@ -321,6 +321,34 @@ impl super::App {
         Ok(())
     }
 
+    pub(super) fn cancel_inline_shells(&mut self) -> bool {
+        if self.pending_inline_shells.is_empty() {
+            return false;
+        }
+        for mut task in std::mem::take(&mut self.pending_inline_shells) {
+            task.drain_updates();
+            task.handle.abort();
+            let output = ShellOutput {
+                shell: task.shell,
+                command: task.command,
+                stdout: task.stdout,
+                stderr: task.stderr,
+                exit_code: "cancelled".into(),
+                ok: false,
+            };
+            self.insert_entry(&super::Entry::Tool(super::ToolEntry {
+                state: super::ToolEntryState::Finished {
+                    ok: false,
+                    display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+                },
+                display_lines: display_lines(&output, task.mode.included_in_context()),
+                expanded: true,
+            }));
+        }
+        self.status = "inline shell cancelled".into();
+        true
+    }
+
     pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {
         let mut changed = false;
         for task in &mut self.pending_inline_shells {
