@@ -25,10 +25,19 @@ pub(super) struct HumanStep {
     pub(super) reason: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockedVerification {
+    Waiting,
+    InProgress,
+}
+
 #[derive(Clone, Debug)]
 enum GoalPhase {
     Active,
-    Blocked { pending_steps: Vec<HumanStep> },
+    Blocked {
+        pending_steps: Vec<HumanStep>,
+        verification: BlockedVerification,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -69,16 +78,34 @@ impl GoalState {
     pub(super) fn pending_steps(&self) -> &[HumanStep] {
         match &self.phase {
             GoalPhase::Active => &[],
-            GoalPhase::Blocked { pending_steps } => pending_steps,
+            GoalPhase::Blocked { pending_steps, .. } => pending_steps,
         }
     }
 
-    pub(super) fn resume(&mut self) -> bool {
-        if !self.is_blocked() {
+    pub(super) fn begin_verification(&mut self) -> bool {
+        let GoalPhase::Blocked { verification, .. } = &mut self.phase else {
             return false;
-        }
-        self.phase = GoalPhase::Active;
+        };
+        *verification = BlockedVerification::InProgress;
         true
+    }
+
+    pub(super) fn complete_verification(&mut self) {
+        if matches!(
+            self.phase,
+            GoalPhase::Blocked {
+                verification: BlockedVerification::InProgress,
+                ..
+            }
+        ) {
+            self.phase = GoalPhase::Active;
+        }
+    }
+
+    pub(super) fn interrupt_verification(&mut self) {
+        if let GoalPhase::Blocked { verification, .. } = &mut self.phase {
+            *verification = BlockedVerification::Waiting;
+        }
     }
 
     pub(super) fn record_evaluation(&mut self, evaluation: &GoalEvaluation) -> GoalDisposition {
@@ -93,6 +120,7 @@ impl GoalState {
             GoalEvaluation::Blocked { pending_steps, .. } => {
                 self.phase = GoalPhase::Blocked {
                     pending_steps: pending_steps.clone(),
+                    verification: BlockedVerification::Waiting,
                 };
                 GoalDisposition::Pause
             }

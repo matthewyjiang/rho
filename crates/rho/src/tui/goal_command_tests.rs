@@ -152,13 +152,35 @@ fn user_message_resumes_blocked_goal_with_verification_first() {
 
     assert_eq!(
         app.goal.as_ref().map(GoalState::loop_state),
-        Some(goal::GoalLoopState::Active)
+        Some(goal::GoalLoopState::Blocked)
     );
     assert!(turn.model.contains("First verify"), "{}", turn.model);
     assert!(turn.model.contains("push tag v1.0.0"), "{}", turn.model);
     assert!(turn.model.contains("I pushed it"), "{}", turn.model);
     assert_eq!(turn.history, "I pushed it");
     assert_eq!(turn.persisted_display.as_deref(), Some("I pushed it"));
+
+    app.finish_goal_resumption_turn(TurnOutcomeKind::Interrupted);
+
+    let goal = app.goal.as_ref().expect("goal remains armed");
+    assert_eq!(goal.loop_state(), goal::GoalLoopState::Blocked);
+    assert_eq!(goal.pending_steps()[0].action, "push tag v1.0.0");
+}
+
+#[test]
+fn completed_resumption_turn_activates_goal_loop() {
+    let mut app = test_app();
+    let mut goal = GoalState::new("release is public".into());
+    block_goal(&mut goal);
+    app.goal = Some(goal);
+    app.prepare_goal_resumption_turn("I pushed it".into(), "I pushed it".into());
+
+    app.finish_goal_resumption_turn(TurnOutcomeKind::Completed);
+
+    assert_eq!(
+        app.goal.as_ref().map(GoalState::loop_state),
+        Some(goal::GoalLoopState::Active)
+    );
 }
 
 #[test]

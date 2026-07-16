@@ -2103,6 +2103,7 @@ impl App {
         self.clamp_command_selection();
         let turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
         let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
+        self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();
         let final_outcome = loop {
             let outcome_kind = outcome.kind();

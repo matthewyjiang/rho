@@ -65,7 +65,10 @@ fn blocked_goal_pauses_then_can_resume_and_complete() {
     assert_eq!(goal.loop_state(), GoalLoopState::Blocked);
     assert_eq!(goal.pending_steps(), blocked_evaluation().pending_steps());
 
-    assert!(goal.resume());
+    assert!(goal.begin_verification());
+    assert_eq!(goal.loop_state(), GoalLoopState::Blocked);
+    assert_eq!(goal.pending_steps(), blocked_evaluation().pending_steps());
+    goal.complete_verification();
     assert_eq!(goal.loop_state(), GoalLoopState::Active);
     assert_eq!(
         goal.record_evaluation(&GoalEvaluation::Met {

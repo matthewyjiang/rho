@@ -199,7 +199,7 @@ impl App {
         if goal.is_blocked() {
             let condition = goal.condition.clone();
             let pending_steps = goal.pending_steps().to_vec();
-            goal.resume();
+            goal.begin_verification();
             let prompt = blocked_goal_resumption_prompt(&condition, &pending_steps, None);
             self.insert_entry(&Entry::Notice(
                 "goal resumed; verifying the previously blocked steps".into(),
@@ -214,6 +214,7 @@ impl App {
                 )
                 .await?;
             let outcome_kind = outcome.kind();
+            self.finish_goal_resumption_turn(outcome_kind);
             let pending_retries = match outcome {
                 TurnOutcome::Failed(failed_turn) => VecDeque::from([failed_turn]),
                 TurnOutcome::Completed | TurnOutcome::Interrupted | TurnOutcome::Cancelled => {
@@ -248,7 +249,7 @@ impl App {
 
         let condition = goal.condition.clone();
         let pending_steps = goal.pending_steps().to_vec();
-        goal.resume();
+        goal.begin_verification();
         self.insert_entry(&Entry::Notice(
             "goal resumed by user message; verifying the previously blocked steps".into(),
         ));
@@ -258,6 +259,20 @@ impl App {
             history: prompt,
             display: display_prompt.clone(),
             persisted_display: Some(display_prompt),
+        }
+    }
+
+    pub(super) fn finish_goal_resumption_turn(&mut self, outcome: TurnOutcomeKind) {
+        let Some(goal) = self.goal.as_mut() else {
+            return;
+        };
+        match outcome {
+            TurnOutcomeKind::Completed | TurnOutcomeKind::Failed => {
+                goal.complete_verification();
+            }
+            TurnOutcomeKind::Interrupted | TurnOutcomeKind::Cancelled => {
+                goal.interrupt_verification();
+            }
         }
     }
 
