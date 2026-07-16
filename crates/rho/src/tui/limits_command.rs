@@ -36,8 +36,9 @@ impl App {
         }
 
         let credential_store = self.credential_store.clone();
+        let client = self.usage_limits_client.clone();
         self.pending_usage_limits = Some(tokio::spawn(async move {
-            fetch_connected_usage_limits(credential_store.as_ref()).await
+            fetch_connected_usage_limits(credential_store.as_ref(), client).await
         }));
         self.status = "checking OAuth usage limits".into();
         true

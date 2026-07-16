@@ -313,6 +313,7 @@ struct App {
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
+    usage_limits_client: reqwest::Client,
     cumulative_usage: Option<ModelUsage>,
     // SDK usage updates are cumulative within a run. These snapshots let the TUI
     // replace active usage while preserving totals from prior runs and steps.
@@ -697,6 +698,7 @@ impl App {
             using_unavailable_provider,
             pending_oauth_login: None,
             pending_usage_limits: None,
+            usage_limits_client: reqwest::Client::new(),
             cumulative_usage: None,
             usage_before_current_run: None,
             usage_before_current_step: None,
