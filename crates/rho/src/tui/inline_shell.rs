@@ -118,6 +118,7 @@ pub(super) fn available_shells(selected: &str) -> Vec<String> {
     shells
 }
 
+#[cfg(test)]
 pub(super) async fn execute(
     shell: &str,
     command: &str,
@@ -354,13 +355,12 @@ impl super::App {
         for task in &mut self.pending_inline_shells {
             changed |= task.drain_updates();
         }
-        let mut index = 0;
-        while index < self.pending_inline_shells.len() {
-            if !self.pending_inline_shells[index].handle.is_finished() {
-                index += 1;
-                continue;
-            }
-            let mut task = self.pending_inline_shells.remove(index);
+        while self
+            .pending_inline_shells
+            .first()
+            .is_some_and(|task| task.handle.is_finished())
+        {
+            let mut task = self.pending_inline_shells.remove(0);
             task.drain_updates();
             self.finish_inline_shell_task(task).await?;
             changed = true;
@@ -405,6 +405,7 @@ impl super::App {
             display_text(&output, task.mode.included_in_context()),
             task.max_output_bytes,
         );
+        self.finish_streams();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
             state: super::ToolEntryState::Finished {
                 ok: output.ok,

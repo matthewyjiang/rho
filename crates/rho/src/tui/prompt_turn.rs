@@ -232,9 +232,17 @@ impl App {
         self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
-        self.finish_all_inline_shells().await?;
-        self.insert_deferred_inline_shell_context(agent)?;
+        let inline_shell_error = match self.finish_all_inline_shells().await {
+            Ok(()) => self.insert_deferred_inline_shell_context(agent).err(),
+            Err(error) => Some(error),
+        };
         let outcome = match result {
+            _ if inline_shell_error.is_some() => self.finalize_failed_turn(
+                inline_shell_error
+                    .expect("inline shell error checked above")
+                    .to_string(),
+                failed_turn,
+            ),
             Ok(outcome) if sdk_failure.is_none() => {
                 self.running = false;
                 self.loading_spinner.stop();
