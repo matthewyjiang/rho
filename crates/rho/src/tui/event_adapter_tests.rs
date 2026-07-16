@@ -45,7 +45,7 @@ fn provider_diagnostics_are_shown_in_interactive_failures() {
     let mut adapter = SdkEventAdapter::default();
 
     let event = adapter.translate(RunEvent::ProviderDiagnostic {
-        detail: "{\"error\":\"bad request\"}".into(),
+        detail: rho_sdk::ProviderDiagnostic::new("{\"error\":\"bad request\"}"),
     });
 
     let ViewEvent::Notice(message) = event else {

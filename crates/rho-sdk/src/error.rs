@@ -103,6 +103,46 @@ pub enum Retryability {
     Permanent,
 }
 
+/// Provider-returned details intended only for direct display to the user.
+///
+/// Values are bounded to 16 KiB and their `Debug` output is redacted because
+/// they may contain user data or secrets.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderDiagnostic(String);
+
+impl ProviderDiagnostic {
+    const MAX_BYTES: usize = 16 * 1024;
+    const TRUNCATION_MARKER: &'static str = "\n[diagnostic truncated]";
+
+    pub fn new(diagnostic: impl Into<String>) -> Self {
+        let diagnostic = diagnostic.into();
+        if diagnostic.len() <= Self::MAX_BYTES {
+            return Self(diagnostic);
+        }
+
+        let content_bytes = Self::MAX_BYTES - Self::TRUNCATION_MARKER.len();
+        let boundary = diagnostic
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|index| *index <= content_bytes)
+            .last()
+            .unwrap_or(0);
+        let mut bounded = diagnostic[..boundary].to_owned();
+        bounded.push_str(Self::TRUNCATION_MARKER);
+        Self(bounded)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ProviderDiagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ProviderDiagnostic([redacted])")
+    }
+}
+
 /// Sanitized provider failure exposed to SDK hosts.
 ///
 /// The message and `Debug` output must not include credentials, authorization
@@ -113,7 +153,7 @@ pub struct ProviderError {
     kind: ProviderErrorKind,
     message: String,
     retryability: Retryability,
-    diagnostic: Option<String>,
+    diagnostic: Option<ProviderDiagnostic>,
 }
 
 impl ProviderError {
@@ -135,7 +175,7 @@ impl ProviderError {
     /// Diagnostics may contain provider-returned data. Hosts must not add them
     /// to model context, automated reports, or telemetry.
     pub fn with_diagnostic(mut self, diagnostic: impl Into<String>) -> Self {
-        self.diagnostic = Some(diagnostic.into());
+        self.diagnostic = Some(ProviderDiagnostic::new(diagnostic));
         self
     }
 
@@ -149,7 +189,7 @@ impl ProviderError {
 
     /// Returns provider details for direct user diagnostics only.
     pub fn diagnostic(&self) -> Option<&str> {
-        self.diagnostic.as_deref()
+        self.diagnostic.as_ref().map(ProviderDiagnostic::as_str)
     }
 
     pub fn is_retryable(&self) -> bool {

@@ -152,11 +152,6 @@ pub enum RunEvent {
         kind: String,
         detail: String,
     },
-    /// Provider details for direct user diagnostics only. This may contain
-    /// provider-returned data and must not be added to model context.
-    ProviderDiagnostic {
-        detail: String,
-    },
     ProviderContextUpdated {
         kind: String,
     },
@@ -184,5 +179,10 @@ pub enum RunEvent {
     /// Accepted steering crossed into conversation history for the next model step.
     SteeringApplied {
         ids: Vec<SteeringId>,
+    },
+    /// Provider details for direct user diagnostics only. This may contain
+    /// provider-returned data and must not be added to model context.
+    ProviderDiagnostic {
+        detail: crate::ProviderDiagnostic,
     },
 }

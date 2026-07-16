@@ -38,3 +38,29 @@ async fn captures_and_truncates_error_response_bodies() {
     assert_eq!(body.matches('x').count(), MAX_ERROR_BODY_BYTES);
     assert!(body.ends_with("[response body truncated]"));
 }
+
+#[tokio::test]
+async fn preserves_status_when_reading_the_error_body_fails() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 100\r\n\r\npartial")
+            .await
+            .unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{address}")).await.unwrap();
+    let error = error_for_status(response).await.unwrap_err();
+    server.await.unwrap();
+
+    let ModelError::HttpStatus { status, body } = error else {
+        panic!("expected HTTP status error");
+    };
+    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    assert!(body.starts_with("partial"));
+    assert!(body.ends_with("[response body read failed]"));
+}

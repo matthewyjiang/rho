@@ -629,7 +629,7 @@ async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
         send_terminal(
             events,
             RunEvent::ProviderDiagnostic {
-                detail: detail.to_owned(),
+                detail: crate::ProviderDiagnostic::new(detail),
             },
         )
         .await;
