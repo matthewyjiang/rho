@@ -26,6 +26,7 @@ fn discovers_builtin_presets() {
         .as_ref()
         .unwrap()
         .contains(&"read_file".into()));
+    assert!(!explorer.tools.as_ref().unwrap().contains(&"bash".into()));
     assert_eq!(explorer.reasoning, Some(ReasoningLevel::Low));
     assert!(!explorer.prompt.is_empty());
     let worker = presets.iter().find(|p| p.name == "worker").unwrap();
@@ -54,6 +55,24 @@ fn parses_full_frontmatter() {
     );
     assert_eq!(reviewer.on_exit, OnExit::CloseOnSuccess);
     assert_eq!(reviewer.prompt, "Review carefully.");
+}
+
+#[test]
+fn parses_yaml_tool_sequence() {
+    let root = TempDir::new().unwrap();
+    write_preset(
+        root.path(),
+        ".rho/agents/reviewer.md",
+        "---\ndescription: Reviews diffs\ntools:\n  - read_file\n  - bash\n---\nReview carefully.\n",
+    );
+
+    let presets = discover_with_home(root.path(), Some(root.path()));
+    let reviewer = presets.iter().find(|p| p.name == "reviewer").unwrap();
+
+    assert_eq!(
+        reviewer.tools,
+        Some(vec!["read_file".to_string(), "bash".to_string()])
+    );
 }
 
 #[test]

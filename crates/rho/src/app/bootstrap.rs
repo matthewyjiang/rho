@@ -64,22 +64,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             .map(|name| crate::subagent::find(&cwd, name))
             .transpose()?;
         if let Some(preset) = &preset {
-            // Preset overrides apply to this run only; never persist them.
-            if let Some(model) = &preset.model {
-                config.model = model.clone();
-            }
-            if let Some(provider) = &preset.provider {
-                config.provider = provider.clone();
-            }
-            if let Some(reasoning) = preset.reasoning {
-                config.reasoning = reasoning;
-            }
+            apply_preset_overrides(&mut config, preset)?;
         }
         let diagnostics = RuntimeDiagnostics::new(&config);
         return automation::run(
             prompt,
             automation::Startup {
                 config: &config,
+                config_path: absolute_config_path(&config_repository)?,
                 cwd,
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
@@ -114,6 +106,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let result = interactive::run(interactive::Startup {
         cli: &cli,
         config,
+        config_path: absolute_config_path(&config_repository)?,
         config_repository,
         cwd,
         missing_auth_error,
@@ -124,6 +117,32 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     })
     .await;
     result
+}
+
+fn apply_preset_overrides(
+    config: &mut crate::config::Config,
+    preset: &crate::subagent::Preset,
+) -> anyhow::Result<()> {
+    // Preset overrides apply to this run only; never persist them.
+    if let Some(provider) = &preset.provider {
+        cli_config::apply_provider_override(config, provider, preset.model.is_some())?;
+    }
+    if let Some(model) = &preset.model {
+        config.model = model.clone();
+    }
+    if let Some(reasoning) = preset.reasoning {
+        config.reasoning = reasoning;
+    }
+    Ok(())
+}
+
+fn absolute_config_path(repository: &ConfigRepository) -> anyhow::Result<std::path::PathBuf> {
+    let path = repository.configured_path()?;
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {

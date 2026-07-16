@@ -75,8 +75,11 @@ with `--no-subagents`, so they cannot spawn further subagents.
 ## Where things live
 
 Each spawn gets a directory under `~/.rho/subagents/<id>/` containing
-`result.json` (the live status/result contract) and, for headless spawns,
-`log.txt`. Inside herdr the subagent's output is visible in its pane instead.
+`result.json` (the live status/result contract), `cancel.requested` when a stop
+has been requested, and, for headless spawns, `log.txt`. The cancellation marker
+is cross-platform; after requesting it, the parent allows five seconds for a
+partial result before force-killing the process. Inside herdr the subagent's
+output is visible in its pane instead.
 
 ## Running a subagent by hand
 

@@ -766,9 +766,9 @@ impl App {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
             }
-            let subagents_active = agent
-                .subagents()
-                .is_some_and(|manager| manager.has_active());
+            let subagents_active = agent.subagents().is_some_and(|manager| {
+                manager.has_active_or_pending_notification(agent.session_id().as_str())
+            });
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
@@ -1186,7 +1186,7 @@ impl App {
         let Some(manager) = agent.subagents().cloned() else {
             return Ok(false);
         };
-        let notifications = manager.take_notifications();
+        let notifications = manager.take_notifications(agent.session_id().as_str());
         if notifications.is_empty() {
             return Ok(false);
         }

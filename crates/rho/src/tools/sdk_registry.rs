@@ -25,7 +25,7 @@ use crate::{
 };
 
 use super::{
-    agent::SubagentManager,
+    agent::{BackgroundSubagents, SubagentManager},
     process::{Process, ProcessLimits, ProcessManager},
     sdk_adapter::{coding_tools, CodingToolOptions},
     sdk_security::{authorize_builtin, authorize_request, security_for},
@@ -38,6 +38,8 @@ pub struct ToolSetOptions {
     /// Working directory to discover subagent presets from; `None` disables
     /// the agent/agents tools.
     subagents: Option<std::path::PathBuf>,
+    subagent_config_path: Option<std::path::PathBuf>,
+    background_subagents: bool,
 }
 
 impl ToolSetOptions {
@@ -52,6 +54,16 @@ impl ToolSetOptions {
 
     pub fn subagents(mut self, cwd: Option<std::path::PathBuf>) -> Self {
         self.subagents = cwd;
+        self
+    }
+
+    pub fn subagent_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.subagent_config_path = Some(path);
+        self
+    }
+
+    pub fn background_subagents(mut self, enabled: bool) -> Self {
+        self.background_subagents = enabled;
         self
     }
 }
@@ -118,9 +130,17 @@ impl AppToolSet {
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
         let subagents = options.subagents.as_deref().map(|cwd| {
-            let manager = SubagentManager::new();
+            let manager = SubagentManager::with_config_path(options.subagent_config_path.clone());
             tools.push(adapt(
-                super::agent::AgentTool::new(manager.clone(), cwd),
+                super::agent::AgentTool::new(
+                    manager.clone(),
+                    cwd,
+                    if options.background_subagents {
+                        BackgroundSubagents::Enabled
+                    } else {
+                        BackgroundSubagents::Disabled
+                    },
+                ),
                 config.max_output_bytes,
             ));
             tools.push(adapt(
@@ -160,7 +180,7 @@ impl AppToolSet {
             processes.shutdown().await;
         }
         if let Some(subagents) = &self.subagents {
-            subagents.shutdown();
+            subagents.shutdown().await;
         }
     }
 }

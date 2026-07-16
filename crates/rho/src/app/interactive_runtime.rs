@@ -65,6 +65,7 @@ pub(crate) const fn active_run_disposition(command: ActiveRunCommand) -> ActiveR
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) config: &'a Config,
+    pub(crate) config_path: PathBuf,
     pub(crate) cwd: PathBuf,
     pub(crate) no_system_prompt: bool,
     pub(crate) no_tools: bool,
@@ -115,6 +116,7 @@ impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
         let InteractiveRuntimeOptions {
             config,
+            config_path,
             cwd,
             no_system_prompt,
             no_tools,
@@ -146,7 +148,9 @@ impl InteractiveRuntime {
                 diagnostics.clone(),
                 ToolSetOptions::new()
                     .questionnaire(questionnaire_enabled)
-                    .subagents(subagents),
+                    .subagents(subagents)
+                    .subagent_config_path(config_path)
+                    .background_subagents(true),
             )
         };
         let specs = tools.specs();
@@ -205,6 +209,9 @@ impl InteractiveRuntime {
                 .prompt_cache_key(prompt_cache_key(id.as_str()))
         };
         let session = runtime.session(options).await?;
+        if let Some(manager) = tools.subagents() {
+            manager.set_session(session.id().to_string());
+        }
         Ok(Self {
             runtime,
             session,
@@ -385,7 +392,11 @@ impl InteractiveRuntime {
         }
         self.session.reset()?;
         self.storage = None;
-        self.pending_session_id = Some(SessionId::new());
+        let session_id = SessionId::new();
+        if let Some(manager) = self.tools.subagents() {
+            manager.set_session(session_id.to_string());
+        }
+        self.pending_session_id = Some(session_id);
         self.state = InteractiveState::Idle;
         Ok(())
     }
@@ -408,6 +419,9 @@ impl InteractiveRuntime {
             id,
         })
         .await?;
+        if let Some(manager) = self.tools.subagents() {
+            manager.set_session(self.session.id().to_string());
+        }
         self.storage = Some(storage);
         Ok(())
     }

@@ -16,6 +16,7 @@ use super::{
 pub(super) struct Startup<'a> {
     pub(super) cli: &'a Cli,
     pub(super) config: Config,
+    pub(super) config_path: PathBuf,
     pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
@@ -29,6 +30,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
         cli,
         config,
+        config_path,
         config_repository,
         cwd,
         missing_auth_error,
@@ -56,6 +58,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let mut runtime = InteractiveRuntime::new(InteractiveRuntimeOptions {
         config: &config,
+        config_path,
         cwd: cwd.clone(),
         no_system_prompt: cli.no_system_prompt,
         no_tools: cli.no_tools,

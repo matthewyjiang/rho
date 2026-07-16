@@ -70,8 +70,20 @@ impl fmt::Display for ShutdownSignal {
     }
 }
 
+#[derive(Debug)]
+struct SubagentCancelled;
+
+impl fmt::Display for SubagentCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("subagent cancellation requested")
+    }
+}
+
+impl std::error::Error for SubagentCancelled {}
+
 pub(super) struct Startup<'a> {
     pub config: &'a Config,
+    pub config_path: PathBuf,
     pub cwd: PathBuf,
     pub no_system_prompt: bool,
     pub no_tools: bool,
@@ -138,7 +150,9 @@ async fn run_session(
         AppToolSet::new(
             startup.config,
             startup.diagnostics.clone(),
-            ToolSetOptions::default().subagents(subagents),
+            ToolSetOptions::default()
+                .subagents(subagents)
+                .subagent_config_path(startup.config_path.clone()),
         )
     };
     if let Some(allowed) = startup
@@ -210,6 +224,9 @@ async fn complete_run(
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
+    let cancel_file = reporter
+        .as_ref()
+        .map(|reporter| reporter.cancel_file.clone());
     tokio::select! {
         outcome = drive_headless_run(&mut run, reporter) => outcome,
         signal = shutdown_signal() => {
@@ -217,6 +234,12 @@ async fn complete_run(
             cancellation.cancel();
             let _ = run.outcome().await;
             Err(AutomationInterrupted::new(signal).into())
+        }
+        cancelled = wait_for_cancel_request(cancel_file) => {
+            cancelled?;
+            cancellation.cancel();
+            let _ = run.outcome().await;
+            Err(SubagentCancelled.into())
         }
     }
 }
@@ -229,7 +252,21 @@ async fn drive_headless_run(
     run: &mut rho_sdk::Run,
     mut reporter: Option<&mut RunReporter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
-    while let Some(event) = run.next_event().await {
+    let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let event = tokio::select! {
+            event = run.next_event() => event,
+            _ = heartbeat.tick(), if reporter.is_some() => {
+                if let Some(reporter) = reporter.as_deref_mut() {
+                    reporter.write();
+                }
+                continue;
+            }
+        };
+        let Some(event) = event else {
+            break;
+        };
         if let Some(reporter) = reporter.as_deref_mut() {
             reporter.on_event(&event);
         }
@@ -250,16 +287,20 @@ async fn drive_headless_run(
 /// streams progress to stdout so a watching pane shows live activity.
 struct RunReporter {
     path: PathBuf,
+    cancel_file: PathBuf,
     status: RunStatus,
     last_write: std::time::Instant,
 }
 
 /// Longest a status-file write is deferred while text streams.
 const REPORT_THROTTLE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Keeps the status file fresh while a provider or tool call emits no events.
+const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
 const LAST_TEXT_BYTES: usize = 400;
 
 impl RunReporter {
     fn new(path: PathBuf, preset: Option<String>) -> anyhow::Result<Self> {
+        let cancel_file = subagent::cancel_file_for(&path);
         let status = RunStatus {
             state: RunState::Starting,
             pid: Some(std::process::id()),
@@ -269,6 +310,7 @@ impl RunReporter {
         subagent::write_status(&path, &status)?;
         Ok(Self {
             path,
+            cancel_file,
             status,
             last_write: std::time::Instant::now(),
         })
@@ -315,7 +357,9 @@ impl RunReporter {
                 self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
                 self.status.output_tokens = usage.output_tokens.unwrap_or(0);
             }
-            Err(error) if error.is::<AutomationInterrupted>() => {
+            Err(error)
+                if error.is::<AutomationInterrupted>() || error.is::<SubagentCancelled>() =>
+            {
                 self.status.state = RunState::Stopped;
                 self.status.result = self
                     .status
@@ -346,6 +390,22 @@ impl RunReporter {
     fn write(&mut self) {
         self.last_write = std::time::Instant::now();
         let _ = subagent::write_status(&self.path, &self.status);
+    }
+}
+
+const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+async fn wait_for_cancel_request(cancel_file: Option<PathBuf>) -> io::Result<()> {
+    let Some(cancel_file) = cancel_file else {
+        return std::future::pending().await;
+    };
+    loop {
+        match tokio::fs::metadata(&cancel_file).await {
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
     }
 }
 

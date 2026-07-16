@@ -55,7 +55,7 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
     Ok(save_config)
 }
 
-fn apply_provider_override(
+pub(super) fn apply_provider_override(
     config: &mut Config,
     provider: &str,
     has_model_override: bool,

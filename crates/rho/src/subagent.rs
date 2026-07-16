@@ -19,6 +19,7 @@ use crate::reasoning::ReasoningLevel;
 
 pub const RESULT_FILE_NAME: &str = "result.json";
 pub const LOG_FILE_NAME: &str = "log.txt";
+pub const CANCEL_FILE_NAME: &str = "cancel.requested";
 
 const BUILTIN_PRESETS: &[(&str, &str)] = &[
     ("explorer", include_str!("builtin_agents/explorer.md")),
@@ -192,17 +193,37 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<(Vec<(String, String)>, S
     if lines.next() != Some("---") {
         anyhow::bail!("preset file must start with YAML frontmatter");
     }
-    let mut fields = Vec::new();
+    let mut fields: Vec<(String, String)> = Vec::new();
+    let mut sequence_field = None;
     for line in lines.by_ref() {
         if line == "---" {
             let body: String = lines.collect::<Vec<_>>().join("\n");
             return Ok((fields, body));
         }
-        if line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty() {
+        if line.trim().is_empty() {
             continue;
         }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let (Some(key), Some(item)) =
+                (sequence_field.as_deref(), line.trim().strip_prefix("- "))
+            {
+                if let Some((_, value)) = fields.iter_mut().find(|(field, _)| field == key) {
+                    if !value.is_empty() {
+                        value.push(',');
+                    }
+                    value.push_str(&unquote(item.trim()));
+                }
+            }
+            continue;
+        }
+        sequence_field = None;
         if let Some((key, value)) = line.split_once(':') {
-            fields.push((key.trim().to_string(), unquote(value.trim())));
+            let key = key.trim().to_string();
+            let value = unquote(value.trim());
+            if value.is_empty() {
+                sequence_field = Some(key.clone());
+            }
+            fields.push((key, value));
         }
     }
     anyhow::bail!("unterminated YAML frontmatter")
@@ -306,6 +327,20 @@ pub fn write_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
 pub fn read_status(path: &Path) -> Option<RunStatus> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
+}
+
+/// Returns the cancellation marker associated with a result file.
+pub fn cancel_file_for(output_file: &Path) -> PathBuf {
+    output_file.with_file_name(CANCEL_FILE_NAME)
+}
+
+/// Requests graceful cancellation of the run writing `output_file`.
+pub fn request_cancel(output_file: &Path) -> std::io::Result<()> {
+    let cancel_file = cancel_file_for(output_file);
+    if let Some(parent) = cancel_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(cancel_file, [])
 }
 
 #[cfg(test)]
