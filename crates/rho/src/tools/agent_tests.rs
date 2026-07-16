@@ -11,7 +11,6 @@ fn test_entry(preset: &str, background: bool) -> AgentEntry {
         preset: preset.into(),
         background,
         started: Instant::now(),
-        log_file: PathBuf::from("/tmp/log.txt"),
         output_file: PathBuf::from("result.json"),
         force_kill,
         session_id: Some("session-a".into()),
@@ -279,6 +278,12 @@ fn agent_tool_spec_lists_presets() {
         .starts_with("Delegate a substantial, self-contained task to a fresh agent."));
     assert!(!spec.description.contains("herdr"));
     assert!(!spec.description.contains("Blocking by default"));
+    assert!(spec
+        .description
+        .contains("Background results start a new turn automatically"));
+    assert!(spec
+        .description
+        .contains("Do not poll or wait when no foreground work remains"));
     assert!(spec.description.contains("rho attach <id>"));
     assert!(spec.description.contains("explorer:"));
     assert!(spec.description.contains("reviewer:"));
@@ -360,8 +365,9 @@ async fn agents_tool_lists_and_reports_status() {
         )
         .await
         .unwrap();
-    assert!(list.content.contains("\"id\": \"x9\""));
-    assert!(list.content.contains("\"state\": \"running\""));
+    assert!(list.content.starts_with("x9  explorer  running  "));
+    assert!(list.content.ends_with("  tool: bash"));
+    assert!(!list.content.contains("log_file"));
 
     let status = tool
         .call(
@@ -371,8 +377,13 @@ async fn agents_tool_lists_and_reports_status() {
         )
         .await
         .unwrap();
-    assert!(status.content.contains("\"turns\": 4"));
-    assert!(status.content.contains("tool: bash"));
+    assert!(status
+        .content
+        .starts_with("subagent x9 (explorer): running\n"));
+    assert!(status.content.contains("turns: 4 · tokens: 0 in / 0 out"));
+    assert!(status.content.contains("activity: tool: bash"));
+    assert!(status.content.contains("attach: rho attach x9"));
+    assert!(!status.content.contains("log_file"));
 
     let missing = tool
         .call(
@@ -398,7 +409,6 @@ fn notification_prompts_summarize_result() {
         preset: "explorer".into(),
         background: true,
         elapsed: Duration::from_secs(90),
-        log_file: PathBuf::from("/tmp/log.txt"),
         status: RunStatus {
             state: RunState::Ok,
             turns: 6,
