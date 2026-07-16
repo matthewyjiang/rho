@@ -45,8 +45,16 @@ impl SubagentPanel {
         true
     }
 
+    pub(super) fn count(&self) -> usize {
+        self.agents.len()
+    }
+
+    pub(super) fn is_active(&self) -> bool {
+        !self.agents.is_empty()
+    }
+
     pub(super) fn desired_height(&self) -> usize {
-        usize::from(!self.agents.is_empty()) + self.agents.len().min(MAX_VISIBLE_AGENTS)
+        self.agents.len().min(MAX_VISIBLE_AGENTS)
     }
 
     pub(super) fn lines(&self, width: usize, height: usize) -> Vec<Line<'static>> {
@@ -54,32 +62,8 @@ impl SubagentPanel {
             return Vec::new();
         }
 
-        let hidden = self.agents.len().saturating_sub(MAX_VISIBLE_AGENTS);
-        let noun = if self.agents.len() == 1 {
-            "subagent"
-        } else {
-            "subagents"
-        };
-        let mut header = vec![
-            Span::styled("● ", Theme::success()),
-            Span::styled(
-                format!("{} {noun} running", self.agents.len()),
-                Theme::text_strong(),
-            ),
-        ];
-        if hidden > 0 {
-            header.push(Span::styled(format!("  +{hidden} more"), Theme::dim()));
-        }
-        let mut lines = vec![Line::from(header)];
-
-        if height == 1 {
-            return lines;
-        }
-        let visible_count = self
-            .agents
-            .len()
-            .min(MAX_VISIBLE_AGENTS)
-            .min(height.saturating_sub(1));
+        let visible_count = self.agents.len().min(MAX_VISIBLE_AGENTS).min(height);
+        let mut lines = Vec::with_capacity(visible_count);
         for (index, agent) in self.agents.iter().take(visible_count).enumerate() {
             let activity = match agent.state {
                 RunState::Starting => "starting",

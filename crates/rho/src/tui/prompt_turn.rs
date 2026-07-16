@@ -128,7 +128,7 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
-            if self.subagent_panel.update(agent.subagents()) {
+            if self.update_subagent_panel(agent) {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
             if self.poll_limits_command().await? {

@@ -28,15 +28,39 @@ fn loading_spinner_line_separates_frame_from_text() {
         started_at: Some(started_at),
     };
 
-    assert_eq!(line_text(&spinner.line(started_at, 40)), "⠋ working");
+    assert_eq!(
+        line_text(&spinner.line(started_at, 40, ActivityStatus::Working)),
+        "⠋ working"
+    );
+}
+
+#[test]
+fn activity_line_combines_parent_and_subagent_work() {
+    let spinner = LoadingSpinner::default();
+
+    assert_eq!(
+        line_text(&spinner.line(Instant::now(), 40, ActivityStatus::WorkingWithSubagents(2),)),
+        "⠋ working  ·  2 subagents"
+    );
+    assert_eq!(
+        line_text(&spinner.line(Instant::now(), 40, ActivityStatus::Subagents(2))),
+        "⠋ 2 subagents working"
+    );
 }
 
 #[test]
 fn spinner_line_compacts_to_available_width() {
     let spinner = LoadingSpinner::default();
-    let rendered = line_text(&spinner.line(Instant::now(), 1));
+    let rendered =
+        line_text(&spinner.line(Instant::now(), 1, ActivityStatus::WorkingWithSubagents(2)));
 
     assert_eq!(rendered, "⠋");
-    assert_eq!(spinner_width(1), 1);
-    assert_eq!(spinner_width(40), display_width(SPINNER_LABEL));
+    assert_eq!(
+        activity_width(1, ActivityStatus::WorkingWithSubagents(2)),
+        1
+    );
+    assert_eq!(
+        activity_width(40, ActivityStatus::WorkingWithSubagents(2)),
+        display_width("⠋ working  ·  2 subagents")
+    );
 }
