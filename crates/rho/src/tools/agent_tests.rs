@@ -199,6 +199,34 @@ async fn shutdown_kills_a_child_that_reported_completion_before_exiting() {
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn child_failure_without_status_is_persisted_for_attach() {
+    let directory = TempDir::new().unwrap();
+    let output_file = directory.path().join(subagent::RESULT_FILE_NAME);
+    let log_file = directory.path().join(subagent::LOG_FILE_NAME);
+    let child = spawn_headless(Path::new("/bin/true"), &[], directory.path(), &log_file).unwrap();
+    let manager = SubagentManager::new();
+    let force_kill = manager.watch_child("x5", child);
+    let mut entry = test_entry("explorer", true);
+    entry.output_file = output_file.clone();
+    entry.force_kill = force_kill;
+    insert_entry(&manager, "x5", entry);
+
+    let snapshot = tokio::time::timeout(Duration::from_secs(5), manager.wait_done("x5"))
+        .await
+        .expect("child watcher should finish")
+        .expect("subagent entry");
+    let persisted = subagent::read_status(&output_file).expect("persisted terminal status");
+
+    assert_eq!(persisted, snapshot.status);
+    assert_eq!(persisted.state, RunState::Error);
+    assert!(persisted
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("without writing a result")));
+}
+
 #[test]
 fn run_args_shape() {
     let args = run_args(

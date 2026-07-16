@@ -74,6 +74,13 @@ impl AgentEntry {
             done: self.done,
         }
     }
+
+    fn finish_with_error(&mut self, error: String) {
+        self.status.state = RunState::Error;
+        self.status.error = Some(error);
+        let _ = subagent::write_status(&self.output_file, &self.status);
+        self.done = true;
+    }
 }
 
 /// Notification delivered to the host when a background subagent finishes.
@@ -180,12 +187,10 @@ impl SubagentManager {
                         entry.status = status;
                     }
                     if !seen_status && started.elapsed() > STARTUP_TIMEOUT {
-                        entry.status.state = RunState::Error;
-                        entry.status.error = Some(
+                        entry.finish_with_error(
                             "subagent never wrote its status file; it likely failed to start"
                                 .into(),
                         );
-                        entry.done = true;
                         StatusWatchOutcome::StartupTimedOut(entry.force_kill.clone())
                     } else if entry.status.state.is_terminal() {
                         entry.done = true;
@@ -250,12 +255,11 @@ impl SubagentManager {
                     return;
                 }
             }
-            entry.status.state = RunState::Error;
-            entry.status.error = Some(match exit {
+            let error = match exit {
                 Ok(status) => format!("subagent exited ({status}) without writing a result"),
                 Err(error) => format!("failed to wait for subagent: {error}"),
-            });
-            entry.done = true;
+            };
+            entry.finish_with_error(error);
         });
         force_kill
     }
