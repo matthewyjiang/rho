@@ -214,7 +214,10 @@ impl Theme {
     }
 
     pub(super) fn activity_rail() -> Style {
-        Self::dim_block(Palette::current().neutral_tool_background)
+        let background = Palette::current().neutral_tool_background;
+        Style::reset()
+            .fg(block_foreground(background.rgb))
+            .bg(background.color)
     }
 
     pub(super) fn jump_to_bottom() -> Style {

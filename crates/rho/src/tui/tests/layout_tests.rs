@@ -296,6 +296,30 @@ fn activity_rail_has_a_solid_full_width_background() {
 }
 
 #[test]
+fn activity_rail_clears_inherited_text_modifiers() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::Notice(format!("italic status {index}")));
+    }
+    app.running = true;
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let rail = layout.activity_rail.unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    let buffer = terminal.backend().buffer();
+    assert!(buffer[(rail.x, rail.y.saturating_sub(1))]
+        .modifier
+        .contains(Modifier::ITALIC));
+    for column in rail.x..rail.right() {
+        assert!(!buffer[(column, rail.y)].modifier.contains(Modifier::ITALIC));
+    }
+}
+
+#[test]
 fn jump_button_uses_activity_rail_background() {
     let mut app = test_app();
     let width = 40;
