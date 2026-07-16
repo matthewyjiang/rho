@@ -77,6 +77,15 @@ The `agents` tool manages running subagents:
 - `stop` - graceful stop (the subagent writes a partial result), escalating
   to a kill after five seconds
 
+While subagents are active, the interactive TUI combines its working indicator,
+subagent count, and jump-to-bottom action in one activity rail above the
+composer. Detail rows show each visible agent's preset, ID, latest activity,
+and elapsed time. The panel displays two agent details at once and summarizes
+all active agents in the rail's count. It disappears automatically when all
+subagents finish.
+
+![Rho TUI showing two running subagents](./assets/subagent-panel.png)
+
 Pass `--no-subagents` to hide both tools. Subagents themselves always run
 with `--no-subagents`, so they cannot spawn further subagents.
 

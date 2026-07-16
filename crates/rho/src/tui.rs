@@ -77,13 +77,14 @@ mod skill_picker;
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod subagent_panel;
 mod terminal_events;
 mod text_selection;
 mod theme;
 mod tool_diff;
 mod turn_prompt;
 
-use activity::LoadingSpinner;
+use activity::{ActivityStatus, LoadingSpinner};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
@@ -112,6 +113,7 @@ use render::{
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
+use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
 use text_selection::{
     highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
@@ -258,6 +260,7 @@ struct App {
     info: TuiInfo,
     terminal_events: Option<TerminalEvents>,
     statusline: StatusLine,
+    subagent_panel: SubagentPanel,
     input: String,
     input_cursor: usize,
     status: String,
@@ -654,6 +657,7 @@ impl App {
             info,
             terminal_events: None,
             statusline,
+            subagent_panel: SubagentPanel::default(),
             input: String::new(),
             input_cursor: 0,
             status,
@@ -779,6 +783,7 @@ impl App {
             }
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
+            needs_redraw |= self.update_subagent_panel(agent);
             needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -892,6 +897,7 @@ impl App {
 
     fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
+            || self.subagent_panel.is_active()
             || self
                 .copy_notice
                 .as_ref()
@@ -2909,6 +2915,23 @@ impl App {
         self.status = "retrying provider response".into();
     }
 
+    fn activity_status(&self) -> Option<ActivityStatus> {
+        match (self.loading_active(), self.subagent_panel.count()) {
+            (true, 0) => Some(ActivityStatus::Working),
+            (true, count) => Some(ActivityStatus::WorkingWithSubagents(count)),
+            (false, 0) => None,
+            (false, count) => Some(ActivityStatus::Subagents(count)),
+        }
+    }
+
+    fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
+        let changed = self.subagent_panel.update(agent.subagents());
+        if self.subagent_panel.is_active() {
+            self.loading_spinner.start_if_needed();
+        }
+        changed
+    }
+
     fn loading_active(&self) -> bool {
         self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
     }
@@ -4679,18 +4702,21 @@ impl App {
         }
         if let Some(activity) = layout.activity {
             frame.render_widget(
-                Paragraph::new(self.loading_spinner.line(now, activity.width as usize))
-                    .style(Style::default()),
+                Paragraph::new(
+                    self.loading_spinner.line(
+                        now,
+                        activity.width as usize,
+                        self.activity_status()
+                            .expect("activity layout requires active status"),
+                    ),
+                )
+                .style(Style::default()),
                 activity,
             );
         }
         if let Some(button) = layout.jump_to_bottom {
             frame.render_widget(
-                Paragraph::new(Line::styled(
-                    self.jump_to_bottom_text(width),
-                    Theme::jump_to_bottom(),
-                ))
-                .style(Style::default()),
+                Paragraph::new(self.jump_to_bottom_line(width)).style(Style::default()),
                 button,
             );
         }
@@ -4704,6 +4730,16 @@ impl App {
                 )
                 .style(Style::default()),
                 layout.pending_input,
+            );
+        }
+        if layout.subagents.height > 0 {
+            frame.render_widget(
+                Paragraph::new(
+                    self.subagent_panel
+                        .lines(width, layout.subagents.height as usize),
+                )
+                .style(Style::default()),
+                layout.subagents,
             );
         }
         if layout.top_divider.height > 0 {
@@ -4821,7 +4857,12 @@ impl App {
         lines.resize(layout.history.height as usize, Line::default());
         if let Some(activity) = layout.activity {
             lines[activity.y.saturating_sub(layout.history.y) as usize] =
-                self.loading_spinner.line(now, activity.width as usize);
+                self.loading_spinner.line(
+                    now,
+                    activity.width as usize,
+                    self.activity_status()
+                        .expect("activity layout requires active status"),
+                );
         }
         if let Some(button) = layout.jump_to_bottom {
             lines[button.y.saturating_sub(layout.history.y) as usize] =
@@ -4832,6 +4873,12 @@ impl App {
                 self.pending_input_lines(width)
                     .into_iter()
                     .take(layout.pending_input.height as usize),
+            );
+        }
+        if layout.subagents.height > 0 {
+            lines.extend(
+                self.subagent_panel
+                    .lines(width, layout.subagents.height as usize),
             );
         }
         if layout.top_divider.height > 0 {
@@ -5138,16 +5185,23 @@ impl App {
         Ok(())
     }
 
-    #[cfg(test)]
     fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        Line::styled(self.jump_to_bottom_text(width), Theme::jump_to_bottom())
+        let text = self.jump_to_bottom_text(width);
+        let binding = self.info.keybindings.jump_to_bottom.to_string();
+        let Some(action) = text.strip_suffix(&binding) else {
+            return Line::styled(text, Theme::jump_to_bottom());
+        };
+        Line::from(vec![
+            Span::styled(action.to_string(), Theme::jump_to_bottom()),
+            Span::styled(binding, Theme::jump_to_bottom_shortcut()),
+        ])
     }
 
     fn jump_to_bottom_text(&self, width: usize) -> String {
         activity::jump_to_bottom_text(
             width,
             &self.info.keybindings.jump_to_bottom.to_string(),
-            /*alongside_spinner*/ self.loading_active(),
+            /*alongside_activity*/ self.activity_status().is_some(),
         )
     }
 

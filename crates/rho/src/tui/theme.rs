@@ -217,6 +217,10 @@ impl Theme {
         Self::accent().bg(Color::Reset)
     }
 
+    pub(super) fn jump_to_bottom_shortcut() -> Style {
+        Self::dim().bg(Color::Reset)
+    }
+
     pub(super) fn success() -> Style {
         Style::default()
             .fg(Palette::current().success)
