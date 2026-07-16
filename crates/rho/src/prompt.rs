@@ -45,6 +45,8 @@ Web access is available through tool schemas; invoke it only when needed and ret
 Use structured tool calls when available. Do not write tool calls in prose.
 
 Do not invent tool results. When done, answer directly.
+
+This harness renders CommonMark and closed Mermaid fences in the interactive transcript.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "agent") {

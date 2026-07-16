@@ -191,8 +191,9 @@ After 1.0:
 ## Minimum supported Rust version
 
 The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
-`rho-coding-agent` application MSRV is **1.88** because its terminal and
-credential dependencies require a newer compiler. Both values are declared as
+`rho-coding-agent` application MSRV is **1.92** because its terminal,
+credential, and terminal-native Mermaid rendering dependencies require a newer
+compiler. Both values are declared as
 `package.rust-version` in Cargo metadata and tested in CI.
 
 An MSRV increase must not ship as a patch release. It must update Cargo

@@ -132,6 +132,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "ascii-dag"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd898d2dcffeeb51015c511a2849a8637c894b833afc946936d48b1e5c8aa6ec"
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1660,6 +1666,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mermaid-text"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a111628078bc477f4905572cada48499eec5e8429dfee63546986975473fb548"
+dependencies = [
+ "ascii-dag",
+ "chrono",
+ "unicode-width",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2431,6 +2448,7 @@ dependencies = [
  "katex-rs",
  "keyring",
  "libc",
+ "mermaid-text",
  "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.6",

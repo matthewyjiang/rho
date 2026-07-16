@@ -148,3 +148,92 @@ fn renders_divider_lines() {
     assert_eq!(lines[1].spans[0].style, Theme::dim());
     assert_eq!(line_text(&lines[2]), "after");
 }
+
+#[test]
+fn closed_mermaid_fence_renders_a_titled_diagram_and_preserves_source() {
+    let source = "flowchart LR\n    A[Parse] --> B[Render]";
+    let markdown = format!("before\n```MeRmAiD theme=dark\n{source}\n```\nafter");
+    let mut in_code_block = false;
+    let rendered = render_markdown(&markdown, 80, &mut in_code_block);
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(text.first().map(String::as_str), Some("before"));
+    assert!(text[1].starts_with("╭─ MERMAID "), "{}", text[1]);
+    assert!(text.iter().any(|line| line.contains("Parse")));
+    assert!(text.iter().any(|line| line.contains("Render")));
+    assert_eq!(text.last().map(String::as_str), Some("after"));
+    assert!(!text.iter().any(|line| line.contains("flowchart LR")));
+    assert_eq!(rendered.code_blocks.len(), 1);
+    assert_eq!(rendered.code_blocks[0].top_line, 1);
+    assert_eq!(rendered.code_blocks[0].text, source);
+    assert_eq!(rendered.code_blocks[0].copy_columns, 73..79);
+    assert!(rendered.lines[1]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref() == " COPY "));
+}
+
+#[test]
+fn open_mermaid_fence_stays_raw_until_closed() {
+    let mut in_code_block = false;
+    let open = render_markdown("```mermaid\nflowchart LR\nA --> B", 60, &mut in_code_block);
+    let open_text = open.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(in_code_block);
+    assert!(open_text.iter().any(|line| line.contains("flowchart LR")));
+    assert!(!open_text.iter().any(|line| line.contains("MERMAID")));
+
+    let mut in_code_block = false;
+    let closed = render_markdown(
+        "```mermaid\nflowchart LR\nA --> B\n```",
+        60,
+        &mut in_code_block,
+    );
+    assert!(!in_code_block);
+    assert!(line_text(&closed.lines[0]).contains("MERMAID"));
+    assert!(!closed
+        .lines
+        .iter()
+        .map(line_text)
+        .any(|line| line.contains("flowchart LR")));
+}
+
+#[test]
+fn malformed_and_too_wide_mermaid_fences_use_normal_code_blocks() {
+    for (source, width) in [
+        ("not-a-diagram", 60),
+        ("flowchart LR\nA[a label that is much too wide]", 8),
+    ] {
+        let mut in_code_block = false;
+        let markdown = format!("```mermaid\n{source}\n```");
+        let rendered = render_markdown(&markdown, width, &mut in_code_block);
+        let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(!in_code_block);
+        assert!(!text[0].contains("MERMAID"));
+        assert!(text
+            .iter()
+            .any(|line| line.contains("flow") || line.contains("not-")));
+        assert_eq!(rendered.code_blocks[0].text, source);
+    }
+}
+
+#[test]
+fn mermaid_render_reflows_to_the_requested_transcript_width() {
+    let markdown = "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n```";
+    let mut wide_state = false;
+    let wide = markdown_lines(markdown, 80, &mut wide_state);
+    let mut narrow_state = false;
+    let narrow = markdown_lines(markdown, 36, &mut narrow_state);
+
+    assert!(wide
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 80));
+    assert!(narrow
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 36));
+    assert_ne!(
+        wide.iter().map(line_text).collect::<Vec<_>>(),
+        narrow.iter().map(line_text).collect::<Vec<_>>()
+    );
+}
