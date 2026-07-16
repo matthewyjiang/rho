@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.5...rho-coding-agent-v1.1.0) (2026-07-16)
+
+
+### Features
+
+* **tui:** add deterministic PTY test harness ([#303](https://github.com/matthewyjiang/rho/issues/303)) ([272615d](https://github.com/matthewyjiang/rho/commit/272615d21298b66bdb52455c5c6a807b4aebad57))
+* **tui:** colorize markdown heading hierarchy ([#308](https://github.com/matthewyjiang/rho/issues/308)) ([312b06f](https://github.com/matthewyjiang/rho/commit/312b06f7bf62101cb7da71a23cb18bc77e469c22))
+
+
+### Bug Fixes
+
+* **tui:** prevent agent output from starving input ([#304](https://github.com/matthewyjiang/rho/issues/304)) ([7bdcc3d](https://github.com/matthewyjiang/rho/commit/7bdcc3d4fea82f9fddba5cc0bc07bf976b228575))
+* **tui:** prioritize interaction rendering ([#311](https://github.com/matthewyjiang/rho/issues/311)) ([0f2c0a8](https://github.com/matthewyjiang/rho/commit/0f2c0a8f84804767cb31185953307f7fa4a31524))
+* **tui:** run inline shell commands during turns ([#309](https://github.com/matthewyjiang/rho/issues/309)) ([890a848](https://github.com/matthewyjiang/rho/commit/890a84826e42e6f01377ddc17268fdadce5dba69))
+* **tui:** simplify shell output presentation ([#307](https://github.com/matthewyjiang/rho/issues/307)) ([f98e49f](https://github.com/matthewyjiang/rho/commit/f98e49fc51a1efcdcf02c2b461b9c77e0ee977fd))
+
 ## [1.0.5](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.0.4...rho-coding-agent-v1.0.5) (2026-07-16)
 
 
