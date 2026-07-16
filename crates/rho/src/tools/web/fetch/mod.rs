@@ -79,7 +79,7 @@ async fn fetch_url_text_with_auth(
         }
     }
     String::from_utf8(bytes).or_else(|error| {
-        if error.utf8_error().error_len().is_none() {
+        if error.as_bytes().len() >= MAX_FETCH_BYTES && error.utf8_error().error_len().is_none() {
             let valid_len = error.utf8_error().valid_up_to();
             let mut bytes = error.into_bytes();
             bytes.truncate(valid_len);
