@@ -393,8 +393,24 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    Step::Phase("discover_goal_actions"),
+    Step::TypeText("/goal"),
+    Step::WaitText {
+        text: "/goal [condition|resume|clear]",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "/goal resume",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "/goal clear",
+        timeout: STREAM,
+    },
     Step::Phase("block_goal"),
-    Step::SubmitText("/goal fixture goal blocked"),
+    Step::TypeText("fixture goal blocked"),
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "goal blocked: remaining steps need you",
         timeout: STREAM,

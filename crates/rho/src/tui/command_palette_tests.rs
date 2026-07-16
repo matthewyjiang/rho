@@ -1,5 +1,77 @@
 use super::super::{tests::test_app, InputSubmissionMode};
 
+fn line_text(line: &ratatui::text::Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+#[test]
+fn goal_usage_is_not_truncated_when_space_is_available() {
+    let mut app = test_app();
+    app.input = "/goal".into();
+    app.input_cursor = app.input.chars().count();
+    app.clamp_command_selection();
+
+    let rendered = app
+        .command_suggestion_lines(80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered.contains("/goal [condition|resume|clear]"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("show status or work until a condition is met"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn completing_goal_command_reveals_lifecycle_actions() {
+    let mut app = test_app();
+    app.input = "/goal".into();
+    app.input_cursor = app.input.chars().count();
+    app.clamp_command_selection();
+
+    let goal = app.selected_command().unwrap();
+    app.complete_command_choice(&goal);
+
+    assert_eq!(app.input, "/goal ");
+    assert!(app.command_palette_visible());
+    let matches = app.command_matches();
+    assert_eq!(
+        matches
+            .iter()
+            .map(|choice| choice.usage.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/goal resume", "/goal clear"]
+    );
+}
+
+#[test]
+fn goal_lifecycle_action_completion_replaces_placeholder() {
+    let mut app = test_app();
+    app.input = "/goal ".into();
+    app.input_cursor = app.input.chars().count();
+    app.clamp_command_selection();
+    app.command_selection = 1;
+
+    let clear = app.selected_command().unwrap();
+    app.complete_command_choice(&clear);
+
+    assert_eq!(app.input, "/goal clear");
+    assert_eq!(app.input_cursor, "/goal clear".chars().count());
+    assert_eq!(
+        app.input_submission_mode,
+        InputSubmissionMode::ParseCommands
+    );
+}
+
 #[test]
 fn exact_template_match_precedes_builtin_prefix_match() {
     let mut app = test_app();

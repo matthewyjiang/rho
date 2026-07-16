@@ -29,6 +29,13 @@ pub struct CommandSpec {
     pub description: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CommandArgumentChoice {
+    pub(crate) completion: &'static str,
+    pub(crate) usage: &'static str,
+    pub(crate) description: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandInvocation {
     pub id: CommandId,
@@ -42,6 +49,19 @@ pub enum CommandParseError {
     #[error("unknown command '/{0}'")]
     Unknown(String),
 }
+
+const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/goal resume",
+        usage: "/goal resume",
+        description: "verify and continue a blocked goal",
+    },
+    CommandArgumentChoice {
+        completion: "/goal clear",
+        usage: "/goal clear",
+        description: "stop and clear the current goal",
+    },
+];
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
@@ -108,7 +128,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Goal,
         name: "goal",
         usage: "/goal [condition|resume|clear]",
-        description: "work until a completion condition is met",
+        description: "show status or work until a condition is met",
     },
     CommandSpec {
         id: CommandId::Skills,
@@ -147,6 +167,50 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "quit rho",
     },
 ];
+
+pub(crate) fn command_argument_choices(
+    command: CommandId,
+) -> &'static [CommandArgumentChoice] {
+    match command {
+        CommandId::Goal => GOAL_ARGUMENT_CHOICES,
+        CommandId::New
+        | CommandId::Login
+        | CommandId::Logout
+        | CommandId::Model
+        | CommandId::TitleModel
+        | CommandId::RefreshModelList
+        | CommandId::Resume
+        | CommandId::Config
+        | CommandId::Info
+        | CommandId::Compact
+        | CommandId::Skills
+        | CommandId::Diff
+        | CommandId::Doctor
+        | CommandId::Limits
+        | CommandId::Export
+        | CommandId::Exit => &[],
+    }
+}
+
+pub(crate) fn argument_choices(input: &str, cursor: usize) -> &'static [CommandArgumentChoice] {
+    let cursor_byte = input
+        .char_indices()
+        .nth(cursor)
+        .map(|(index, _)| index)
+        .unwrap_or(input.len());
+    let (before_cursor, after_cursor) = input.split_at(cursor_byte);
+    if !after_cursor.is_empty() {
+        return &[];
+    }
+    let Some((command, args)) = before_cursor.split_once(char::is_whitespace) else {
+        return &[];
+    };
+    if command.eq_ignore_ascii_case("/goal") && args.trim().is_empty() {
+        command_argument_choices(CommandId::Goal)
+    } else {
+        &[]
+    }
+}
 
 pub fn command_prefix(input: &str) -> Option<&str> {
     let token_end = input
@@ -228,6 +292,12 @@ pub fn complete_command(input: &str, cursor: usize, spec: &CommandSpec) -> (Stri
     };
 
     (completed, new_cursor)
+}
+
+pub(crate) fn complete_argument_choice(choice: &CommandArgumentChoice) -> (String, usize) {
+    let input = choice.completion.to_string();
+    let cursor = input.chars().count();
+    (input, cursor)
 }
 
 fn first_token_end_byte(input: &str) -> usize {

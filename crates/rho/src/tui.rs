@@ -146,6 +146,7 @@ const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
+const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const MAX_TERMINAL_EVENTS_PER_TICK: usize = 256;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
@@ -471,6 +472,7 @@ enum HistoryScroll {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
+    BuiltinArgument(&'static commands::CommandArgumentChoice),
     PromptTemplate(String),
     Skill,
 }
@@ -1941,7 +1943,8 @@ impl App {
     fn command_palette_visible(&self) -> bool {
         matches!(self.composer, ComposerMode::Input)
             && !self.command_palette_dismissed
-            && self.cursor_in_command_token()
+            && (self.cursor_in_command_token()
+                || !commands::argument_choices(&self.input, self.input_cursor).is_empty())
             && !self.command_matches().is_empty()
     }
 
@@ -5227,6 +5230,19 @@ impl App {
                 .saturating_add(1)
                 .saturating_sub(MAX_COMMAND_SUGGESTIONS);
 
+            let usage_width = matches
+                .iter()
+                .skip(start)
+                .take(MAX_COMMAND_SUGGESTIONS)
+                .map(|command| display_width(&command.usage))
+                .max()
+                .unwrap_or(1)
+                .min(
+                    width
+                        .saturating_sub(MIN_COMMAND_DESCRIPTION_WIDTH + 3)
+                        .max(1),
+                );
+
             return matches
                 .into_iter()
                 .enumerate()
@@ -5235,7 +5251,6 @@ impl App {
                 .map(|(index, command)| {
                     let selected = index == selected_index;
                     let marker = if selected { ">" } else { " " };
-                    let usage_width = 16usize.min(width.saturating_sub(5).max(1));
                     let description_width = width.saturating_sub(usage_width + 3).max(1);
                     let usage = truncate_one_line(&command.usage, usage_width);
                     let description = truncate_one_line(&command.description, description_width);

@@ -8,6 +8,19 @@ const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
+        let argument_choices = commands::argument_choices(&self.input, self.input_cursor);
+        if !argument_choices.is_empty() {
+            return argument_choices
+                .iter()
+                .map(|choice| CommandChoice {
+                    name: choice.completion.to_string(),
+                    usage: choice.usage.to_string(),
+                    description: choice.description.to_string(),
+                    kind: CommandChoiceKind::BuiltinArgument(choice),
+                })
+                .collect();
+        }
+
         let Some(prefix) = commands::command_prefix(&self.input) else {
             return Vec::new();
         };
@@ -106,6 +119,10 @@ impl App {
             CommandChoiceKind::Builtin(spec) => {
                 self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
                 commands::complete_command(&self.input, self.input_cursor, spec)
+            }
+            CommandChoiceKind::BuiltinArgument(choice) => {
+                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                commands::complete_argument_choice(choice)
             }
             CommandChoiceKind::PromptTemplate(template) => {
                 let expanded_input = self.expanded_input();
