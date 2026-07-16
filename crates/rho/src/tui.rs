@@ -2098,20 +2098,14 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        let mut outcome = self
-            .run_prompt_turn(
-                TurnPrompt::standard(prompt, display_prompt),
-                images,
-                terminal,
-                agent,
-            )
-            .await?;
+        let turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
+        let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
         let mut pending_goal_retries = VecDeque::new();
         let final_outcome = loop {
             let outcome_kind = outcome.kind();
             let resume_goal = goal_command::should_resume_goal_after_turn(
                 outcome_kind,
-                self.goal.is_some(),
+                self.goal.as_ref().map(GoalState::loop_state),
                 self.should_quit,
             );
             if let TurnOutcome::Failed(failed_turn) = outcome {
@@ -2139,7 +2133,7 @@ impl App {
         };
         if goal_command::should_resume_goal_after_turn(
             final_outcome,
-            self.goal.is_some(),
+            self.goal.as_ref().map(GoalState::loop_state),
             self.should_quit,
         ) {
             self.continue_goal(terminal, agent, pending_goal_retries)
@@ -2149,18 +2143,24 @@ impl App {
     }
 
     async fn report_resting_herdr_state(&self) {
-        let state = if self.info.auth_unavailable.is_some() {
+        let goal_blocked_reason = self
+            .goal
+            .as_ref()
+            .filter(|goal| goal.is_blocked())
+            .and_then(|goal| goal.last_reason.as_deref());
+        let message = self
+            .info
+            .auth_unavailable
+            .as_deref()
+            .or(goal_blocked_reason);
+        let state = if message.is_some() {
             HerdrState::Blocked
         } else {
             HerdrState::Idle
         };
         self.info
             .herdr
-            .report_state(
-                state,
-                self.info.auth_unavailable.as_deref(),
-                self.info.session_id.as_deref(),
-            )
+            .report_state(state, message, self.info.session_id.as_deref())
             .await;
     }
 
@@ -5156,6 +5156,7 @@ impl App {
         self.goal.as_ref().map(|goal| GoalStatus {
             turns: goal.turns,
             elapsed: goal.elapsed(),
+            blocked: goal.is_blocked(),
         })
     }
 

@@ -107,7 +107,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Goal,
         name: "goal",
-        usage: "/goal [condition|clear]",
+        usage: "/goal [condition|resume|clear]",
         description: "work until a completion condition is met",
     },
     CommandSpec {

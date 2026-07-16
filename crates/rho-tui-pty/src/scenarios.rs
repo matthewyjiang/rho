@@ -26,6 +26,7 @@ pub enum ScenarioId {
     ProgressTool,
     MarkdownHeadings,
     OpenModelPicker,
+    GoalBlockedAndResumed,
 }
 
 impl ScenarioId {
@@ -43,6 +44,7 @@ impl ScenarioId {
             Self::ProgressTool => "progress_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
+            Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
         }
     }
 
@@ -60,6 +62,7 @@ impl ScenarioId {
             "progress_tool" => Some(Self::ProgressTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
+            "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
             _ => None,
         }
     }
@@ -384,6 +387,45 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("block_goal"),
+    Step::SubmitText("/goal fixture goal blocked"),
+    Step::WaitText {
+        text: "goal blocked: remaining steps need you",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "publish the fixture release",
+        timeout: STREAM,
+    },
+    Step::Phase("inspect_blocked_goal"),
+    Step::SubmitText("/goal"),
+    Step::WaitText {
+        text: "goal blocked: fixture goal blocked",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "use /goal resume",
+        timeout: STREAM,
+    },
+    Step::Phase("resume_goal"),
+    Step::SubmitText("/goal resume"),
+    Step::WaitText {
+        text: "verified that the fixture release is now published",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "goal achieved",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 /// All registered scenarios.
 pub fn all_scenarios() -> &'static [Scenario] {
     &[
@@ -469,6 +511,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
             steps: OPEN_MODEL_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "goal_blocked_and_resumed",
+            description: "Pause a goal for user action, inspect it, then resume it",
+            size: DEFAULT_SIZE,
+            steps: GOAL_BLOCKED_AND_RESUMED_STEPS,
             smoke: false,
         },
     ]

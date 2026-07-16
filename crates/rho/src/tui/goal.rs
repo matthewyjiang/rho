@@ -13,11 +13,30 @@ pub(super) const MAX_GOAL_CHARS: usize = 4_000;
 pub(super) const EVALUATION_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_EVALUATION_TRANSCRIPT_CHARS: usize = 64_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GoalLoopState {
+    Active,
+    Blocked,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct HumanStep {
+    pub(super) action: String,
+    pub(super) reason: String,
+}
+
+#[derive(Clone, Debug)]
+enum GoalPhase {
+    Active,
+    Blocked { pending_steps: Vec<HumanStep> },
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct GoalState {
     pub(super) condition: String,
     pub(super) turns: usize,
     pub(super) last_reason: Option<String>,
+    phase: GoalPhase,
     started_at: std::time::Instant,
 }
 
@@ -27,6 +46,7 @@ impl GoalState {
             condition,
             turns: 0,
             last_reason: None,
+            phase: GoalPhase::Active,
             started_at: std::time::Instant::now(),
         }
     }
@@ -34,12 +54,86 @@ impl GoalState {
     pub(super) fn elapsed(&self) -> Duration {
         self.started_at.elapsed()
     }
+
+    pub(super) fn loop_state(&self) -> GoalLoopState {
+        match self.phase {
+            GoalPhase::Active => GoalLoopState::Active,
+            GoalPhase::Blocked { .. } => GoalLoopState::Blocked,
+        }
+    }
+
+    pub(super) fn is_blocked(&self) -> bool {
+        matches!(self.phase, GoalPhase::Blocked { .. })
+    }
+
+    pub(super) fn pending_steps(&self) -> &[HumanStep] {
+        match &self.phase {
+            GoalPhase::Active => &[],
+            GoalPhase::Blocked { pending_steps } => pending_steps,
+        }
+    }
+
+    pub(super) fn resume(&mut self) -> bool {
+        if !self.is_blocked() {
+            return false;
+        }
+        self.phase = GoalPhase::Active;
+        true
+    }
+
+    pub(super) fn record_evaluation(&mut self, evaluation: &GoalEvaluation) -> GoalDisposition {
+        self.turns += 1;
+        self.last_reason = Some(evaluation.reason().to_string());
+        match evaluation {
+            GoalEvaluation::Met { .. } => GoalDisposition::Complete,
+            GoalEvaluation::Unmet { .. } => {
+                self.phase = GoalPhase::Active;
+                GoalDisposition::Continue
+            }
+            GoalEvaluation::Blocked { pending_steps, .. } => {
+                self.phase = GoalPhase::Blocked {
+                    pending_steps: pending_steps.clone(),
+                };
+                GoalDisposition::Pause
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GoalDisposition {
+    Complete,
+    Continue,
+    Pause,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct GoalEvaluation {
-    pub(super) met: bool,
-    pub(super) reason: String,
+pub(super) enum GoalEvaluation {
+    Met {
+        reason: String,
+    },
+    Unmet {
+        reason: String,
+    },
+    Blocked {
+        reason: String,
+        pending_steps: Vec<HumanStep>,
+    },
+}
+
+impl GoalEvaluation {
+    pub(super) fn reason(&self) -> &str {
+        match self {
+            Self::Met { reason } | Self::Unmet { reason } | Self::Blocked { reason, .. } => reason,
+        }
+    }
+
+    pub(super) fn pending_steps(&self) -> &[HumanStep] {
+        match self {
+            Self::Blocked { pending_steps, .. } => pending_steps,
+            Self::Met { .. } | Self::Unmet { .. } => &[],
+        }
+    }
 }
 
 pub(super) async fn evaluate(
@@ -51,14 +145,14 @@ pub(super) async fn evaluate(
     let provider = build_sdk_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
     let request_messages = vec![
-                Message::System(
-                    "You are a conservative goal-completion evaluator. Decide whether the completion condition is fully satisfied using only evidence in the conversation transcript. Do not assume unreported work succeeded. Return only JSON in this exact shape: {\"met\":true|false,\"reason\":\"short explanation\"}."
-                        .into(),
-                ),
-                Message::user_text(format!(
-                    "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
-                )),
-            ];
+        Message::System(
+            "You are a conservative goal-completion evaluator. Classify the goal using only evidence in the conversation transcript. Do not assume unreported work succeeded. Return only JSON in this exact shape: {\"state\":\"Met\"|\"Unmet\"|\"Blocked\",\"reason\":\"evidence-based explanation\",\"human_steps\":[{\"action\":\"specific action\",\"reason\":\"why it is outside this session's authority or capabilities\"}]}. Use Met only when the completion condition is fully satisfied. Use Unmet whenever meaningful work remains that the current agent can attempt, including work around missing dependencies, unavailable local tools, or transient network failures. Use Blocked only when no meaningful agent-actionable work remains and every remaining step requires user authority or capabilities unavailable in the current session. For Blocked, use reason to summarize what was completed and verified and why nothing agent-actionable remains, and list every remaining human-only step. Return an empty human_steps array for Met or Unmet."
+                .into(),
+        ),
+        Message::user_text(format!(
+            "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
+        )),
+    ];
     let response = provider
         .send_turn(ModelRequest {
             messages: &request_messages,
@@ -117,7 +211,22 @@ fn tail_chars(text: &str, max_chars: usize) -> String {
 
 #[derive(Deserialize)]
 struct RawEvaluation {
-    met: bool,
+    state: RawEvaluationState,
+    reason: String,
+    #[serde(default)]
+    human_steps: Vec<RawHumanStep>,
+}
+
+#[derive(Deserialize)]
+enum RawEvaluationState {
+    Met,
+    Unmet,
+    Blocked,
+}
+
+#[derive(Deserialize)]
+struct RawHumanStep {
+    action: String,
     reason: String,
 }
 
@@ -135,14 +244,38 @@ fn parse_evaluation(text: &str) -> anyhow::Result<GoalEvaluation> {
         &trimmed[start..=end]
     };
     let parsed: RawEvaluation = serde_json::from_str(json)?;
-    let reason = parsed.reason.trim().to_string();
-    if reason.is_empty() {
-        anyhow::bail!("evaluation reason is empty");
+    let reason = nonempty_field(parsed.reason, "evaluation reason")?;
+    match parsed.state {
+        RawEvaluationState::Met => Ok(GoalEvaluation::Met { reason }),
+        RawEvaluationState::Unmet => Ok(GoalEvaluation::Unmet { reason }),
+        RawEvaluationState::Blocked => {
+            let pending_steps = parsed
+                .human_steps
+                .into_iter()
+                .map(|step| {
+                    Ok(HumanStep {
+                        action: nonempty_field(step.action, "human step action")?,
+                        reason: nonempty_field(step.reason, "human step reason")?,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            if pending_steps.is_empty() {
+                anyhow::bail!("blocked evaluation has no human steps");
+            }
+            Ok(GoalEvaluation::Blocked {
+                reason,
+                pending_steps,
+            })
+        }
     }
-    Ok(GoalEvaluation {
-        met: parsed.met,
-        reason,
-    })
+}
+
+fn nonempty_field(value: String, name: &str) -> anyhow::Result<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        anyhow::bail!("{name} is empty");
+    }
+    Ok(value)
 }
 
 pub(super) fn format_elapsed(elapsed: Duration) -> String {
@@ -157,68 +290,5 @@ pub(super) fn format_elapsed(elapsed: Duration) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_plain_and_fenced_evaluations() {
-        assert_eq!(
-            parse_evaluation(r#"{"met":true,"reason":"tests pass"}"#).unwrap(),
-            GoalEvaluation {
-                met: true,
-                reason: "tests pass".into(),
-            }
-        );
-        assert_eq!(
-            parse_evaluation("```json\n{\"met\":false,\"reason\":\"lint still fails\"}\n```")
-                .unwrap(),
-            GoalEvaluation {
-                met: false,
-                reason: "lint still fails".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn rejects_evaluation_without_a_reason() {
-        assert!(parse_evaluation(r#"{"met":false,"reason":"  "}"#).is_err());
-    }
-
-    #[test]
-    fn transcript_omits_opaque_provider_context() {
-        let identity =
-            crate::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
-        let transcript =
-            evaluation_transcript(&[Message::assistant(crate::model::AssistantMessage {
-                content: vec![ContentBlock::Text("answer".into())],
-                provenance: Some(identity.clone()),
-                reasoning_summary: Some("safe summary".into()),
-                provider_context: vec![crate::model::ProviderContextBlock {
-                    identity,
-                    kind: "anthropic_content_block".into(),
-                    position: Some(0),
-                    data: serde_json::json!({"signature": "secret-signature"}),
-                }],
-            })]);
-
-        assert!(transcript.contains("answer"));
-        assert!(transcript.contains("safe summary"));
-        assert!(!transcript.contains("secret-signature"));
-        assert!(!transcript.contains("provider_context"));
-    }
-
-    #[test]
-    fn transcript_tail_is_unicode_safe() {
-        assert_eq!(
-            tail_chars("a项目bc", 3),
-            "[earlier transcript omitted]\n目bc"
-        );
-    }
-
-    #[test]
-    fn formats_elapsed_time() {
-        assert_eq!(format_elapsed(Duration::from_secs(9)), "9s");
-        assert_eq!(format_elapsed(Duration::from_secs(125)), "2m 5s");
-        assert_eq!(format_elapsed(Duration::from_secs(3_720)), "1h 2m");
-    }
-}
+#[path = "goal_tests.rs"]
+mod tests;

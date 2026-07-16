@@ -50,12 +50,28 @@ fn statusline_shows_active_goal_indicator() {
     let goal = GoalStatus {
         turns: 2,
         elapsed: Duration::from_secs(65),
+        blocked: false,
     };
 
     let lines = statusline_lines(&state, 80, Some(&goal));
     let text = line_text(&lines[0]);
 
     assert!(text.contains("◎ /goal active • 2 turns • 1m 5s"), "{text}");
+}
+
+#[test]
+fn statusline_shows_blocked_goal_indicator() {
+    let state = test_state(ModelUsage::default());
+    let goal = GoalStatus {
+        turns: 1,
+        elapsed: Duration::from_secs(9),
+        blocked: true,
+    };
+
+    let lines = statusline_lines(&state, 80, Some(&goal));
+    let text = line_text(&lines[0]);
+
+    assert!(text.contains("◎ /goal blocked • 1 turn • 9s"), "{text}");
 }
 
 #[test]
