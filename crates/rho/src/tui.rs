@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
         KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
@@ -72,6 +72,7 @@ mod skill_picker;
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod terminal_events;
 mod text_selection;
 mod theme;
 mod tool_diff;
@@ -103,6 +104,7 @@ use render::{
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
+use terminal_events::TerminalEvents;
 use text_selection::{
     highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
     TextSelection,
@@ -142,7 +144,7 @@ const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
-const MAX_TERMINAL_EVENTS_PER_TICK: usize = 4096;
+const MAX_TERMINAL_EVENTS_PER_TICK: usize = 256;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
@@ -257,6 +259,7 @@ struct SessionHeaderCache {
 
 struct App {
     info: TuiInfo,
+    terminal_events: Option<TerminalEvents>,
     statusline: StatusLine,
     input: String,
     input_cursor: usize,
@@ -630,6 +633,7 @@ impl App {
         let statusline = StatusLine::new(&info);
         Self {
             info,
+            terminal_events: None,
             statusline,
             input: String::new(),
             input_cursor: 0,
@@ -703,6 +707,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
+        self.terminal_events = Some(TerminalEvents::new());
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
@@ -733,9 +738,6 @@ impl App {
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             needs_redraw |= background_ready;
-            if !event::poll(Duration::from_millis(0))? {
-                needs_redraw |= self.flush_due_paste_burst();
-            }
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
@@ -750,23 +752,31 @@ impl App {
                 Duration::from_secs(3600)
             };
             let redraw_on_timeout = self.animation_active(Instant::now());
-            if event::poll(self.event_poll_timeout(idle_timeout))? {
-                let mut event_count = 0;
-                loop {
-                    let event = event::read()?;
-                    self.handle_terminal_event(event, terminal, agent).await?;
+            let timeout = self.event_poll_timeout(idle_timeout);
+            tokio::select! {
+                event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                    self.handle_terminal_event(event?, terminal, agent).await?;
                     needs_redraw = true;
-                    event_count += 1;
-                    if self.should_quit
-                        || event_count >= MAX_TERMINAL_EVENTS_PER_TICK
-                        || !event::poll(Duration::from_millis(0))?
-                    {
-                        break;
+                    for _ in 1..MAX_TERMINAL_EVENTS_PER_TICK {
+                        let event = self
+                            .terminal_events
+                            .as_mut()
+                            .expect("terminal events initialized")
+                            .try_next();
+                        let Some(event) = event else {
+                            break;
+                        };
+                        self.handle_terminal_event(event?, terminal, agent).await?;
+                        if self.should_quit {
+                            break;
+                        }
                     }
+                    needs_redraw |= self.flush_due_paste_burst();
                 }
-            } else {
-                needs_redraw |= self.flush_due_paste_burst();
-                needs_redraw |= redraw_on_timeout;
+                _ = tokio::time::sleep(timeout) => {
+                    needs_redraw |= self.flush_due_paste_burst();
+                    needs_redraw |= redraw_on_timeout;
+                }
             }
         }
         Ok(TuiResult {
@@ -2837,14 +2847,30 @@ impl App {
 
     fn handle_running_terminal_events(
         &mut self,
+        first_event: Event,
         terminal: &mut DefaultTerminal,
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
         input_mode: RunningInputMode,
     ) -> Result<StreamControl, crate::model::ModelError> {
         let mut control = StreamControl::Continue;
-        while event::poll(Duration::from_millis(0))? {
-            match event::read()? {
+        let mut next_event = Some(first_event);
+        for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
+            let event = match next_event.take() {
+                Some(event) => event,
+                None => {
+                    let event = self
+                        .terminal_events
+                        .as_mut()
+                        .expect("terminal events initialized")
+                        .try_next();
+                    let Some(event) = event else {
+                        break;
+                    };
+                    event?
+                }
+            };
+            match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.text_selection = None;
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
@@ -3213,8 +3239,9 @@ impl App {
         let compacted = loop {
             tokio::select! {
                 result = &mut compact_future => break result,
-                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
                     match self.handle_running_terminal_events(
+                        terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
@@ -3226,6 +3253,9 @@ impl App {
                         StreamControl::Continue | StreamControl::Resize => {}
                     }
                     self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }

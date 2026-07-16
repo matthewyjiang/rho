@@ -597,6 +597,7 @@ dependencies = [
  "bitflags",
  "crossterm_winapi",
  "derive_more",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix",

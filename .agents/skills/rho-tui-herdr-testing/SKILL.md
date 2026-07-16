@@ -55,6 +55,7 @@ The fixture is available only in debug builds. Use these exact prompts:
 | `fixture steering` | Keeps a turn open for two seconds so queued input or steering can be exercised. |
 | `fixture steer detail` | Returns a fixed steering acknowledgement. |
 | `fixture delay` | Emits partial output and waits 30 seconds for cancellation testing. |
+| `fixture input flood` | Emits renderable output events every 5 ms for two seconds to test input fairness under continuous output. |
 | `fixture stream failure` | Emits partial output and then returns a permanent provider failure. |
 | `fixture bulk one` or `fixture bulk two` | Produces 180 deterministic transcript lines for scrolling tests. |
 | `/goal fixture goal retry` | Fails retryably once and then succeeds with the original goal. |
