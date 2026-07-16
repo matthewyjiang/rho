@@ -2,6 +2,8 @@ use std::{collections::HashMap, sync::OnceLock};
 
 use ratatui::style::{Color, Modifier, Style};
 
+use super::markdown::HeadingLevel;
+
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
 
@@ -266,6 +268,26 @@ impl Theme {
             crate::reasoning::ReasoningLevel::Max => AnsiColor::Red.color(),
         };
         Style::default().fg(color)
+    }
+
+    pub(super) fn markdown_heading(level: HeadingLevel) -> Style {
+        let color = match level {
+            HeadingLevel::H1 => AnsiColor::Magenta.color(),
+            HeadingLevel::H2 => AnsiColor::Blue.color(),
+            HeadingLevel::H3 => AnsiColor::Cyan.color(),
+            HeadingLevel::H4 => AnsiColor::Green.color(),
+            HeadingLevel::H5 => AnsiColor::Yellow.color(),
+            HeadingLevel::H6 => AnsiColor::Gray.color(),
+        };
+        let style = Style::default()
+            .fg(color)
+            .remove_modifier(Modifier::UNDERLINED);
+        match level {
+            HeadingLevel::H1 | HeadingLevel::H2 | HeadingLevel::H3 => {
+                style.add_modifier(Modifier::BOLD)
+            }
+            HeadingLevel::H4 | HeadingLevel::H5 | HeadingLevel::H6 => style,
+        }
     }
 
     pub(super) fn markdown_inline_code() -> Style {

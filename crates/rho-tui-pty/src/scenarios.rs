@@ -22,6 +22,7 @@ pub enum ScenarioId {
     PasteMultiline,
     Questionnaire,
     ProgressTool,
+    MarkdownHeadings,
     OpenModelPicker,
 }
 
@@ -36,6 +37,7 @@ impl ScenarioId {
             Self::PasteMultiline => "paste_multiline",
             Self::Questionnaire => "questionnaire",
             Self::ProgressTool => "progress_tool",
+            Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
         }
     }
@@ -50,6 +52,7 @@ impl ScenarioId {
             "paste_multiline" => Some(Self::PasteMultiline),
             "questionnaire" => Some(Self::Questionnaire),
             "progress_tool" => Some(Self::ProgressTool),
+            "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
             _ => None,
         }
@@ -256,6 +259,25 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture markdown headings"),
+    Step::WaitText {
+        text: "Level six",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(200),
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_markdown_headings_rendered),
+    Step::ExitCommand,
+];
+
 const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -335,6 +357,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "markdown_headings",
+            description: "Render streamed Markdown heading levels without syntax markers",
+            size: DEFAULT_SIZE,
+            steps: MARKDOWN_HEADINGS_STEPS,
+            smoke: false,
+        },
+        Scenario {
             id: "open_model_picker",
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
@@ -358,6 +387,29 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
     runner.run(scenario)
+}
+
+fn assert_markdown_headings_rendered(harness: &mut crate::harness::PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    for heading in [
+        "Level one",
+        "Level two",
+        "Level three",
+        "Level four",
+        "Level five",
+        "Level six",
+    ] {
+        if !screen.contains(heading) {
+            anyhow::bail!("rendered heading is missing from the screen: {heading}");
+        }
+    }
+    if screen
+        .lines()
+        .any(|line| line.trim_start().starts_with('#'))
+    {
+        anyhow::bail!("rendered heading retained Markdown syntax markers");
+    }
+    Ok(())
 }
 
 fn assert_terminal_restored(harness: &mut crate::harness::PtyHarness) -> Result<()> {

@@ -3,7 +3,11 @@ use ratatui::{
     text::{Line, Span},
 };
 
+mod heading;
 mod table;
+
+pub(in crate::tui) use heading::HeadingLevel;
+use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -168,6 +172,12 @@ fn render_markdown_with_copy_button(
             continue;
         }
 
+        if let Some(heading) = parse_atx_heading(raw_line) {
+            lines.extend(markdown_heading_lines(heading, width));
+            line_index += 1;
+            continue;
+        }
+
         if is_markdown_divider(raw_line) {
             lines.push(markdown_divider(width));
             line_index += 1;
@@ -263,6 +273,13 @@ pub(super) fn markdown_stream_prefix(
             prefix.byte_index = current_line_start + complete.byte_index;
             prefix.ends_with_wrap = complete.ends_with_wrap;
         }
+        return prefix;
+    }
+
+    if !matches!(
+        heading_stream_state(current_line),
+        HeadingStreamState::NotHeading
+    ) {
         return prefix;
     }
 
@@ -495,6 +512,19 @@ fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
             Line::from(Span::styled(format!("│ {chunk}{padding} │"), style))
         })
         .collect()
+}
+
+fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec<Line<'static>> {
+    let heading_style = Theme::markdown_heading(heading.level);
+    if heading.content.is_empty() {
+        return vec![Line::from(Span::styled(String::new(), heading_style))];
+    }
+
+    let segments = markdown_inline_segments(heading.content)
+        .into_iter()
+        .map(|segment| StyledSegment::new(segment.text, heading_style.patch(segment.style)))
+        .collect::<Vec<_>>();
+    wrap_styled_segments(&segments, width)
 }
 
 fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {

@@ -187,6 +187,42 @@ fn markdown_drain_waits_for_complete_inline_code_before_wrapping() {
 }
 
 #[test]
+fn markdown_drain_keeps_streamed_heading_atomic_across_narrow_wraps() {
+    let mut stream = AppendOnlyStream::default();
+    let source = "## **streamed heading with unicode 你🙂**";
+
+    for ch in source.chars() {
+        stream.push_delta(&ch.to_string());
+        assert_eq!(stream.drain_renderable_markdown(9, false), None);
+    }
+    assert_eq!(stream.emitted_text(), "");
+
+    stream.push_delta("\n");
+    let fragment = stream.drain_renderable_markdown(9, false).unwrap();
+    assert_eq!(fragment.text.as_str(), format!("{source}\n"));
+
+    let mut fragment_code_block = false;
+    let fragment_lines = markdown_lines(fragment.render_text(), 9, &mut fragment_code_block);
+    let mut final_code_block = false;
+    let final_lines = markdown_lines(source, 9, &mut final_code_block);
+    assert_eq!(fragment_lines, final_lines);
+}
+
+#[test]
+fn markdown_drain_resumes_wrapping_once_hash_prefix_is_not_a_heading() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("#hashtag text ");
+    let fragment = stream.drain_renderable_markdown(8, false).unwrap();
+
+    assert_eq!(fragment.text.as_str(), "#hashtag");
+    assert_eq!(
+        rendered_markdown_text(fragment.render_text(), 8, false),
+        vec!["#hashtag"]
+    );
+}
+
+#[test]
 fn markdown_drain_waits_for_complete_code_fence_line() {
     let mut stream = AppendOnlyStream::default();
 
