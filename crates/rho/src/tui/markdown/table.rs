@@ -73,12 +73,13 @@ pub(super) fn markdown_table_cells(line: &str) -> Vec<String> {
     let trimmed = line.trim();
     let delimiters = markdown_table_delimiters(trimmed);
     let start = usize::from(delimiters.first().is_some_and(|delimiter| *delimiter == 0));
-    let end = trimmed.len()
+    let end = (trimmed.len()
         - usize::from(
             delimiters
                 .last()
                 .is_some_and(|delimiter| *delimiter + '|'.len_utf8() == trimmed.len()),
-        );
+        ))
+    .max(start);
     let delimiters = delimiters
         .into_iter()
         .filter(|delimiter| *delimiter >= start && *delimiter < end);
