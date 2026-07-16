@@ -44,6 +44,7 @@ pub struct SanitizedConfig {
     pub compact_target_percent: u8,
     pub web_search_provider: String,
     pub check_for_updates: bool,
+    pub enable_subagents: bool,
     pub rtk: bool,
     pub source: String,
 }
@@ -58,6 +59,7 @@ impl From<&Config> for SanitizedConfig {
             compact_target_percent: config.compact_target_percent,
             web_search_provider: config.web_search_provider.as_str().into(),
             check_for_updates: config.check_for_updates,
+            enable_subagents: config.enable_subagents,
             rtk: config.rtk,
             source: "live values used by this process; restart-only settings may differ from saved config"
                 .into(),

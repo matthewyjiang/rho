@@ -159,6 +159,50 @@ fn provider_and_tool_failures_stay_off_stdout() {
 }
 
 #[test]
+fn cancel_marker_gracefully_stops_output_run() {
+    let root = TempDir::new().unwrap();
+    let output_file = root.path().join("result.json");
+    let mut command = command(&root, "delay");
+    command.args([
+        "--no-subagents",
+        "run",
+        "--preset",
+        "worker",
+        "--output-file",
+        output_file.to_str().unwrap(),
+        "wait for cancellation",
+    ]);
+    let mut child = command.spawn().unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !output_file.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        output_file.exists(),
+        "subagent did not create its result file"
+    );
+    std::fs::write(root.path().join("cancel.requested"), []).unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "subagent did not stop after cancellation"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(!status.success());
+
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
+    assert_eq!(result["state"], "stopped");
+}
+
+#[test]
 fn final_answer_is_the_only_stdout_content() {
     let root = TempDir::new().unwrap();
     let mut command = command(&root, "fixed");

@@ -46,6 +46,7 @@ pub(super) enum ConfigTextKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigToggle {
     CheckForUpdates,
+    EnableSubagents,
     AutoCompact,
     ShowReasoningOutput,
 }
@@ -53,6 +54,7 @@ pub(super) enum ConfigToggle {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ConfigMutation {
     CheckForUpdates(bool),
+    EnableSubagents(bool),
     AutoCompact(bool),
     ShowReasoningOutput(bool),
     WebSearchProvider(String),
@@ -77,6 +79,10 @@ pub(super) fn toggle(
         ConfigToggle::CheckForUpdates => {
             config.check_for_updates = !config.check_for_updates;
             ConfigMutation::CheckForUpdates(config.check_for_updates)
+        }
+        ConfigToggle::EnableSubagents => {
+            config.enable_subagents = !config.enable_subagents;
+            ConfigMutation::EnableSubagents(config.enable_subagents)
         }
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;

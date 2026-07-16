@@ -18,6 +18,7 @@ use crate::{
     herdr::{HerdrReporter, HerdrState},
     prompt,
     providers::build_automation_provider,
+    subagent::{self, Preset, RunState, RunStatus},
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
@@ -69,37 +70,101 @@ impl fmt::Display for ShutdownSignal {
     }
 }
 
+#[derive(Debug)]
+struct SubagentCancelled;
+
+impl fmt::Display for SubagentCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("subagent cancellation requested")
+    }
+}
+
+impl std::error::Error for SubagentCancelled {}
+
 pub(super) struct Startup<'a> {
     pub config: &'a Config,
+    pub config_path: PathBuf,
     pub cwd: PathBuf,
     pub no_system_prompt: bool,
     pub no_tools: bool,
+    pub no_subagents: bool,
+    pub preset: Option<Preset>,
+    pub output_file: Option<PathBuf>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
     match command {
-        Some(Command::Run { prompt, stdin }) => prompt_from_stdin(prompt.clone(), *stdin).map(Some),
+        Some(Command::Run { prompt, stdin, .. }) => {
+            prompt_from_stdin(prompt.clone(), *stdin).map(Some)
+        }
         Some(Command::Login { .. }) | Some(Command::Update) | None => Ok(None),
     }
 }
 
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
+    // The reporter exists before anything that can fail, so a parent process
+    // watching the output file always sees a terminal state — even when the
+    // run dies during startup (bad auth, broken workspace, ...).
+    let mut reporter = startup
+        .output_file
+        .as_ref()
+        .map(|path| {
+            RunReporter::new(
+                path.clone(),
+                startup.preset.as_ref().map(|preset| preset.name.clone()),
+            )
+        })
+        .transpose()?;
+    let result = run_session(prompt_text, &startup, reporter.as_mut()).await;
+    if let Some(reporter) = reporter.as_mut() {
+        reporter.finish(&result);
+    }
+    let answer = result?;
+    let mut stdout = io::stdout().lock();
+    if reporter.is_some() {
+        // The answer already streamed above and is in the result file.
+        writeln!(stdout, "\n[subagent run complete]")?;
+    } else {
+        writeln!(stdout, "{}", answer.text())?;
+    }
+    stdout.flush()?;
+    Ok(())
+}
+
+async fn run_session(
+    prompt_text: String,
+    startup: &Startup<'_>,
+    reporter: Option<&mut RunReporter>,
+) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
     let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let tool_set = if startup.no_tools {
+    let subagents_enabled = startup.config.enable_subagents && !startup.no_subagents;
+    let mut tool_set = if startup.no_tools {
         AppToolSet::disabled()
     } else {
+        let subagents = subagents_enabled.then(|| startup.cwd.clone());
         AppToolSet::new(
             startup.config,
             startup.diagnostics.clone(),
-            ToolSetOptions::default(),
+            ToolSetOptions::default()
+                .subagents(subagents)
+                .subagent_config_path(startup.config_path.clone()),
         )
     };
+    if let Some(allowed) = startup
+        .preset
+        .as_ref()
+        .and_then(|preset| preset.tools.as_ref())
+    {
+        // The preset's tool list is the subagent's permission boundary:
+        // anything not listed is never registered, so it cannot run.
+        tool_set.retain_named(allowed);
+    }
     let tool_specs = tool_set.specs();
     let system_prompt = if startup.no_system_prompt {
         startup.diagnostics.update_prompt_sources(Vec::new());
@@ -109,7 +174,17 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         startup
             .diagnostics
             .update_prompt_sources(system_prompt.sources);
-        SystemPrompt::Custom(system_prompt.text)
+        let mut text = system_prompt.text;
+        if !subagents_enabled {
+            prompt::append_subagents_disabled_instruction(&mut text);
+        }
+        if let Some(preset) = &startup.preset {
+            if !preset.prompt.is_empty() {
+                text.push_str("\n\n# Subagent instructions\n\n");
+                text.push_str(&preset.prompt);
+            }
+        }
+        SystemPrompt::Custom(text)
     };
     startup.diagnostics.update_tools(&tool_specs);
 
@@ -133,7 +208,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
-    let result = complete_run(&session, prompt_text).await;
+    let result = complete_run(&session, prompt_text, reporter).await;
 
     runtime.shutdown();
     tool_set.shutdown().await;
@@ -143,26 +218,32 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .await;
     startup.herdr.release().await;
 
-    let answer = result?;
-    let mut stdout = io::stdout().lock();
-    writeln!(stdout, "{}", answer.text())?;
-    stdout.flush()?;
-    Ok(())
+    result
 }
 
 async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
+    reporter: Option<&mut RunReporter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
+    let cancel_file = reporter
+        .as_ref()
+        .map(|reporter| reporter.cancel_file.clone());
     tokio::select! {
-        outcome = drive_headless_run(&mut run) => outcome,
+        outcome = drive_headless_run(&mut run, reporter) => outcome,
         signal = shutdown_signal() => {
             let signal = signal?;
             cancellation.cancel();
             let _ = run.outcome().await;
             Err(AutomationInterrupted::new(signal).into())
+        }
+        cancelled = wait_for_cancel_request(cancel_file) => {
+            cancelled?;
+            cancellation.cancel();
+            let _ = run.outcome().await;
+            Err(SubagentCancelled.into())
         }
     }
 }
@@ -171,8 +252,28 @@ async fn complete_run(
 ///
 /// Host input requests cannot be answered headlessly; cancel instead of
 /// leaving the requesting tool suspended until a signal arrives.
-async fn drive_headless_run(run: &mut rho_sdk::Run) -> anyhow::Result<rho_sdk::RunOutcome> {
-    while let Some(event) = run.next_event().await {
+async fn drive_headless_run(
+    run: &mut rho_sdk::Run,
+    mut reporter: Option<&mut RunReporter>,
+) -> anyhow::Result<rho_sdk::RunOutcome> {
+    let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let event = tokio::select! {
+            event = run.next_event() => event,
+            _ = heartbeat.tick(), if reporter.is_some() => {
+                if let Some(reporter) = reporter.as_deref_mut() {
+                    reporter.write();
+                }
+                continue;
+            }
+        };
+        let Some(event) = event else {
+            break;
+        };
+        if let Some(reporter) = reporter.as_deref_mut() {
+            reporter.on_event(&event);
+        }
         if let rho_sdk::RunEvent::HostInputRequested { request } = event {
             run.cancel();
             let _ = run.outcome().await;
@@ -184,6 +285,149 @@ async fn drive_headless_run(run: &mut rho_sdk::Run) -> anyhow::Result<rho_sdk::R
         }
     }
     Ok(run.outcome().await?)
+}
+
+/// Maintains the `--output-file` status contract for subagent runs and
+/// streams progress to stdout so a watching pane shows live activity.
+struct RunReporter {
+    path: PathBuf,
+    cancel_file: PathBuf,
+    status: RunStatus,
+    last_write: std::time::Instant,
+}
+
+/// Longest a status-file write is deferred while text streams.
+const REPORT_THROTTLE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Keeps the status file fresh while a provider or tool call emits no events.
+const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
+const LAST_TEXT_BYTES: usize = 400;
+
+impl RunReporter {
+    fn new(path: PathBuf, preset: Option<String>) -> anyhow::Result<Self> {
+        let cancel_file = subagent::cancel_file_for(&path);
+        match std::fs::remove_file(&cancel_file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let status = RunStatus {
+            state: RunState::Starting,
+            pid: Some(std::process::id()),
+            preset,
+            ..RunStatus::default()
+        };
+        subagent::write_status(&path, &status)?;
+        Ok(Self {
+            path,
+            cancel_file,
+            status,
+            last_write: std::time::Instant::now(),
+        })
+    }
+
+    fn on_event(&mut self, event: &rho_sdk::RunEvent) {
+        use rho_sdk::RunEvent;
+
+        match event {
+            RunEvent::StepStarted { step } => {
+                self.status.state = RunState::Running;
+                self.status.turns = *step as u64;
+                self.write();
+            }
+            RunEvent::ToolStarted { name, .. } => {
+                self.status.last_activity = Some(format!("tool: {name}"));
+                self.stream(&format!("\n[tool] {name}\n"));
+                self.write();
+            }
+            RunEvent::AssistantTextDelta { text } => {
+                self.status.last_activity = Some("assistant text".into());
+                append_tail(
+                    self.status.last_text.get_or_insert_with(String::new),
+                    text,
+                    LAST_TEXT_BYTES,
+                );
+                self.stream(text);
+                self.write_throttled();
+            }
+            RunEvent::UsageUpdated { usage } => {
+                self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
+                self.status.output_tokens = usage.output_tokens.unwrap_or(0);
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
+        match result {
+            Ok(outcome) => {
+                self.status.state = RunState::Ok;
+                self.status.result = Some(outcome.text().to_string());
+                let usage = outcome.usage();
+                self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
+                self.status.output_tokens = usage.output_tokens.unwrap_or(0);
+            }
+            Err(error)
+                if error.is::<AutomationInterrupted>() || error.is::<SubagentCancelled>() =>
+            {
+                self.status.state = RunState::Stopped;
+                self.status.result = self
+                    .status
+                    .last_text
+                    .as_ref()
+                    .map(|text| format!("(partial, stopped before finishing)\n{text}"));
+            }
+            Err(error) => {
+                self.status.state = RunState::Error;
+                self.status.error = Some(format!("{error:#}"));
+            }
+        }
+        self.write();
+    }
+
+    fn stream(&self, text: &str) {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(text.as_bytes());
+        let _ = stdout.flush();
+    }
+
+    fn write_throttled(&mut self) {
+        if self.last_write.elapsed() >= REPORT_THROTTLE {
+            self.write();
+        }
+    }
+
+    fn write(&mut self) {
+        self.last_write = std::time::Instant::now();
+        let _ = subagent::write_status(&self.path, &self.status);
+    }
+}
+
+const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+async fn wait_for_cancel_request(cancel_file: Option<PathBuf>) -> io::Result<()> {
+    let Some(cancel_file) = cancel_file else {
+        return std::future::pending().await;
+    };
+    loop {
+        match tokio::fs::metadata(&cancel_file).await {
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
+    }
+}
+
+/// Appends to a rolling tail buffer capped at `max` bytes.
+fn append_tail(buffer: &mut String, text: &str, max: usize) {
+    buffer.push_str(text);
+    if buffer.len() > max {
+        let cut = buffer.len() - max;
+        let boundary = (cut..buffer.len())
+            .find(|index| buffer.is_char_boundary(*index))
+            .unwrap_or(buffer.len());
+        buffer.drain(..boundary);
+    }
 }
 
 #[cfg(unix)]

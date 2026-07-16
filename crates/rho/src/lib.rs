@@ -24,6 +24,7 @@ mod questionnaire;
 mod reasoning;
 mod session;
 mod skills;
+mod subagent;
 mod tool;
 mod tools;
 mod transcript;

@@ -13,6 +13,26 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn disabled_subagents_are_not_registered() {
+    let config = Config {
+        enable_subagents: false,
+        ..Config::default()
+    };
+    let root = tempfile::tempdir().unwrap();
+
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default().subagents(Some(root.path().to_path_buf())),
+    );
+    let names: Vec<_> = tool_set.specs().into_iter().map(|spec| spec.name).collect();
+
+    assert!(!names.contains(&"agent".to_string()));
+    assert!(!names.contains(&"agents".to_string()));
+    assert!(tool_set.subagents().is_none());
+}
+
 #[derive(Debug)]
 struct RecordingApprovals {
     requests: Mutex<Vec<ApprovalRequest>>,

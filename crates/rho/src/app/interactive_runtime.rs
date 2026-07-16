@@ -65,9 +65,11 @@ pub(crate) const fn active_run_disposition(command: ActiveRunCommand) -> ActiveR
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) config: &'a Config,
+    pub(crate) config_path: PathBuf,
     pub(crate) cwd: PathBuf,
     pub(crate) no_system_prompt: bool,
     pub(crate) no_tools: bool,
+    pub(crate) no_subagents: bool,
     pub(crate) questionnaire_enabled: bool,
     pub(crate) history: Vec<Message>,
     pub(crate) session_id: Option<String>,
@@ -114,9 +116,11 @@ impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
         let InteractiveRuntimeOptions {
             config,
+            config_path,
             cwd,
             no_system_prompt,
             no_tools,
+            no_subagents,
             questionnaire_enabled,
             history,
             session_id,
@@ -135,13 +139,19 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
+        let subagents_enabled = config.enable_subagents && !no_subagents;
         let tools = if no_tools {
             AppToolSet::disabled()
         } else {
+            let subagents = subagents_enabled.then(|| cwd.clone());
             AppToolSet::new(
                 config,
                 diagnostics.clone(),
-                ToolSetOptions::new().questionnaire(questionnaire_enabled),
+                ToolSetOptions::new()
+                    .questionnaire(questionnaire_enabled)
+                    .subagents(subagents)
+                    .subagent_config_path(config_path)
+                    .background_subagents(true),
             )
         };
         let specs = tools.specs();
@@ -149,7 +159,10 @@ impl InteractiveRuntime {
             diagnostics.update_prompt_sources(Vec::new());
             SystemPrompt::None
         } else {
-            let built = prompt::system_prompt(&specs, &cwd);
+            let mut built = prompt::system_prompt(&specs, &cwd);
+            if !subagents_enabled {
+                prompt::append_subagents_disabled_instruction(&mut built.text);
+            }
             diagnostics.update_prompt_sources(built.sources);
             SystemPrompt::Custom(built.text)
         };
@@ -200,6 +213,9 @@ impl InteractiveRuntime {
                 .prompt_cache_key(prompt_cache_key(id.as_str()))
         };
         let session = runtime.session(options).await?;
+        if let Some(manager) = tools.subagents() {
+            manager.set_session(session.id().to_string());
+        }
         Ok(Self {
             runtime,
             session,
@@ -380,7 +396,11 @@ impl InteractiveRuntime {
         }
         self.session.reset()?;
         self.storage = None;
-        self.pending_session_id = Some(SessionId::new());
+        let session_id = SessionId::new();
+        if let Some(manager) = self.tools.subagents() {
+            manager.set_session(session_id.to_string());
+        }
+        self.pending_session_id = Some(session_id);
         self.state = InteractiveState::Idle;
         Ok(())
     }
@@ -403,6 +423,9 @@ impl InteractiveRuntime {
             id,
         })
         .await?;
+        if let Some(manager) = self.tools.subagents() {
+            manager.set_session(self.session.id().to_string());
+        }
         self.storage = Some(storage);
         Ok(())
     }
@@ -494,6 +517,10 @@ impl InteractiveRuntime {
         }
         self.runtime.shutdown();
         self.tools.shutdown().await;
+    }
+
+    pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
+        self.tools.subagents()
     }
 
     fn observe_event(&mut self, event: &RunEvent) {

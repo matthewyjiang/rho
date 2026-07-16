@@ -25,15 +25,21 @@ use crate::{
 };
 
 use super::{
+    agent::{BackgroundSubagents, SubagentManager},
     process::{Process, ProcessLimits, ProcessManager},
     sdk_adapter::{coding_tools, CodingToolOptions},
     sdk_security::{authorize_builtin, authorize_request, security_for},
     sdk_support::{check_cancelled, required_string, workspace, workspace_root},
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolSetOptions {
     questionnaire: bool,
+    /// Working directory to discover subagent presets from; `None` disables
+    /// the agent/agents tools.
+    subagents: Option<std::path::PathBuf>,
+    subagent_config_path: Option<std::path::PathBuf>,
+    background_subagents: bool,
 }
 
 impl ToolSetOptions {
@@ -45,11 +51,27 @@ impl ToolSetOptions {
         self.questionnaire = enabled;
         self
     }
+
+    pub fn subagents(mut self, cwd: Option<std::path::PathBuf>) -> Self {
+        self.subagents = cwd;
+        self
+    }
+
+    pub fn subagent_config_path(mut self, path: std::path::PathBuf) -> Self {
+        self.subagent_config_path = Some(path);
+        self
+    }
+
+    pub fn background_subagents(mut self, enabled: bool) -> Self {
+        self.background_subagents = enabled;
+        self
+    }
 }
 
 pub struct AppToolSet {
     tools: Vec<Arc<dyn SdkTool>>,
     processes: Option<ProcessManager>,
+    subagents: Option<SubagentManager>,
 }
 
 impl AppToolSet {
@@ -57,6 +79,7 @@ impl AppToolSet {
         Self {
             tools: Vec::new(),
             processes: None,
+            subagents: None,
         }
     }
 
@@ -106,9 +129,36 @@ impl AppToolSet {
         )));
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
+        let subagents = options
+            .subagents
+            .filter(|_| config.enable_subagents)
+            .as_deref()
+            .map(|cwd| {
+                let manager =
+                    SubagentManager::with_config_path(options.subagent_config_path.clone());
+                tools.push(adapt(
+                    super::agent::AgentTool::new(
+                        manager.clone(),
+                        cwd,
+                        if options.background_subagents {
+                            BackgroundSubagents::Enabled
+                        } else {
+                            BackgroundSubagents::Disabled
+                        },
+                    ),
+                    config.max_output_bytes,
+                ));
+                tools.push(adapt(
+                    super::agent::AgentsTool::new(manager.clone()),
+                    config.max_output_bytes,
+                ));
+                manager
+            });
+
         Self {
             tools,
             processes: Some(processes),
+            subagents,
         }
     }
 
@@ -120,9 +170,22 @@ impl AppToolSet {
         self.tools.iter().map(|tool| tool.spec()).collect()
     }
 
+    pub fn subagents(&self) -> Option<&SubagentManager> {
+        self.subagents.as_ref()
+    }
+
+    /// Restricts the set to the named tools (a subagent preset's allowlist).
+    pub fn retain_named(&mut self, names: &[String]) {
+        self.tools
+            .retain(|tool| names.iter().any(|name| name == &tool.spec().name));
+    }
+
     pub async fn shutdown(&self) {
         if let Some(processes) = &self.processes {
             processes.shutdown().await;
+        }
+        if let Some(subagents) = &self.subagents {
+            subagents.shutdown().await;
         }
     }
 }

@@ -32,6 +32,7 @@ provider = "auto" # auto, openai, exa, brave, or disabled
 
 [behavior]
 check_for_updates = true
+enable_subagents = true
 rtk = true
 
 [prompt_templates]
@@ -92,7 +93,7 @@ You can load and save a specific config file with:
 rho --config ~/.rho/config.toml
 ```
 
-`--no-system-prompt` and `--no-tools` are only available on the command line and apply only to the current run.
+`--no-system-prompt`, `--no-tools`, and `--no-subagents` are only available on the command line and apply only to the current run. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
 
 ## Title model
 
@@ -110,9 +111,11 @@ If no title model settings are present, Rho falls back to the active provider, m
 
 Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the OS credential store when loaded. Empty strings are ignored. Set `provider = "disabled"` under `[web_search]` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
 
+`enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
+
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `enable_subagents` row controls whether agent tools are available in the next session. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
 [`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 

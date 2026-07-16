@@ -61,17 +61,6 @@ For PRs:
 - Do not test static constants or add negative tests solely for removed behavior.
 - Avoid mutating process environment; pass environment-derived values or dependencies explicitly when possible.
 
-## Rho subagents with Herdr
-
-When asked to create subagents, use Rho unless the user explicitly requests another agent.
-
-- Give each subagent its own Git worktree so agents never edit the same checkout concurrently.
-- Launch `rho` in the target pane and wait for Herdr to report `agent_status: idle` before assigning work.
-- Submit with `herdr pane run <pane> "<prompt>"`, which sends text and a real Enter. Do not use separate `send-text` and `send-keys Enter` calls for multiline prompts because they can remain unsubmitted in the composer.
-- Confirm `agent_status: working` and inspect the pane for a response or tool call. A rendered prompt alone does not prove submission. If the pane stays idle, inspect it and retry before reporting that the agent is running.
-- Keep parallel tasks ownership-disjoint; sequence work that touches the same large file or module root.
-- Ask agents to run focused tests, create a Conventional Commit, and report the commit hash for integration.
-
 ## Rho TUI testing
 
 Prefer the deterministic PTY harness for automated interactive TUI regressions:

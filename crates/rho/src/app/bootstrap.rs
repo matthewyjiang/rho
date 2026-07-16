@@ -33,14 +33,39 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let config_path = cli.config.clone();
     let config_repository = ConfigRepository::new(config_path.clone());
     let mut config = config_repository.load()?;
+    let cwd = std::env::current_dir()?;
+    let automation_prompt = automation::prompt_for_command(&cli.command)?;
+    let (preset, output_file) = match &cli.command {
+        Some(Command::Run {
+            preset,
+            output_file,
+            ..
+        }) => (
+            preset
+                .as_deref()
+                .map(|name| crate::subagent::find(&cwd, name))
+                .transpose()?,
+            output_file.clone(),
+        ),
+        _ => (None, None),
+    };
+
     let store = OsCredentialStore;
     cli_config::refresh_model_cache(&cli, &store).await?;
+    if let Some(provider) = preset
+        .as_ref()
+        .and_then(|preset| preset.provider.as_deref())
+    {
+        cli_config::refresh_model_cache_for_provider(provider, &store).await?;
+    }
     if cli_config::apply_overrides(&mut config, &cli)? {
         config_repository.save(&config)?;
     }
+    if let Some(preset) = &preset {
+        apply_preset_overrides(&mut config, preset)?;
+    }
 
     validate_terminal_mode(&cli)?;
-    let automation_prompt = automation::prompt_for_command(&cli.command)?;
     if automation_prompt.is_some()
         && config.provider == "anthropic"
         && cached_model_metadata(&config.provider, &config.model).is_none()
@@ -48,23 +73,30 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         let _ =
             crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
     }
-    let cwd = std::env::current_dir()?;
-    let diagnostics = RuntimeDiagnostics::new(&config);
+    if preset.is_some() {
+        cli_config::normalize_reasoning(&mut config);
+    }
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
+        let diagnostics = RuntimeDiagnostics::new(&config);
         return automation::run(
             prompt,
             automation::Startup {
                 config: &config,
+                config_path: absolute_config_path(&config_repository)?,
                 cwd,
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
+                no_subagents: cli.no_subagents,
+                preset,
+                output_file,
                 diagnostics,
                 herdr,
             },
         )
         .await;
     }
+    let diagnostics = RuntimeDiagnostics::new(&config);
 
     let pending_update_notice = config
         .check_for_updates
@@ -86,6 +118,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let result = interactive::run(interactive::Startup {
         cli: &cli,
         config,
+        config_path: absolute_config_path(&config_repository)?,
         config_repository,
         cwd,
         missing_auth_error,
@@ -96,6 +129,32 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     })
     .await;
     result
+}
+
+fn apply_preset_overrides(
+    config: &mut crate::config::Config,
+    preset: &crate::subagent::Preset,
+) -> anyhow::Result<()> {
+    // Preset overrides apply to this run only; never persist them.
+    if let Some(provider) = &preset.provider {
+        cli_config::apply_provider_override(config, provider, preset.model.is_some())?;
+    }
+    if let Some(model) = &preset.model {
+        config.model = model.clone();
+    }
+    if let Some(reasoning) = preset.reasoning {
+        config.reasoning = reasoning;
+    }
+    Ok(())
+}
+
+fn absolute_config_path(repository: &ConfigRepository) -> anyhow::Result<std::path::PathBuf> {
+    let path = repository.configured_path()?;
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {
