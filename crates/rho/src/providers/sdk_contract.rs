@@ -64,6 +64,37 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             Retryability::Permanent,
         )
         .with_diagnostic(sanitize_diagnostic(&details)),
+        ModelError::ProviderReported {
+            kind,
+            error_type,
+            message,
+        } => {
+            let (provider_kind, public_message, retryability) = match kind {
+                crate::model::ProviderReportedErrorKind::Timeout => (
+                    ProviderErrorKind::Timeout,
+                    "provider reported a timeout",
+                    Retryability::Retryable,
+                ),
+                crate::model::ProviderReportedErrorKind::RateLimit => (
+                    ProviderErrorKind::RateLimit,
+                    "provider reported a rate limit",
+                    Retryability::Retryable,
+                ),
+                crate::model::ProviderReportedErrorKind::Unavailable => (
+                    ProviderErrorKind::Unavailable,
+                    "provider reported a temporary failure",
+                    Retryability::Retryable,
+                ),
+                crate::model::ProviderReportedErrorKind::InvalidResponse => (
+                    ProviderErrorKind::InvalidResponse,
+                    "provider reported an invalid response",
+                    Retryability::Permanent,
+                ),
+            };
+            ProviderError::new(provider_kind, public_message, retryability).with_diagnostic(
+                sanitize_diagnostic(&format!("{error_type}: {message}")),
+            )
+        }
         ModelError::UnsupportedReasoning {
             provider,
             model,

@@ -15,7 +15,7 @@ use rho_sdk::{
 };
 
 use super::provider_error_from_model_error;
-use crate::model::ModelError;
+use crate::model::{ModelError, ProviderReportedErrorKind};
 
 #[derive(Clone)]
 struct FakeProvider {
@@ -534,4 +534,43 @@ async fn concrete_openai_provider_implements_sdk_model_provider() {
         sdk.identity(),
         ModelIdentity::new("openai", "openai-chat-completions", "gpt-4.1")
     );
+}
+
+#[test]
+fn provider_reported_errors_map_by_semantic_kind() {
+    let cases = [
+        (
+            ProviderReportedErrorKind::Unavailable,
+            ProviderErrorKind::Unavailable,
+            true,
+        ),
+        (
+            ProviderReportedErrorKind::RateLimit,
+            ProviderErrorKind::RateLimit,
+            true,
+        ),
+        (
+            ProviderReportedErrorKind::Timeout,
+            ProviderErrorKind::Timeout,
+            true,
+        ),
+        (
+            ProviderReportedErrorKind::InvalidResponse,
+            ProviderErrorKind::InvalidResponse,
+            false,
+        ),
+    ];
+
+    for (reported_kind, kind, retryable) in cases {
+        let error = provider_error_from_model_error(ModelError::ProviderReported {
+            kind: reported_kind,
+            error_type: "wire_error_type".into(),
+            message: "details".into(),
+        });
+        assert_eq!(error.kind(), kind, "{reported_kind:?}");
+        assert_eq!(error.is_retryable(), retryable, "{reported_kind:?}");
+        assert_eq!(error.diagnostic(), Some("wire_error_type: details"));
+        assert!(!error.message().contains("wire_error_type"));
+        assert!(!format!("{error:?}").contains("details"));
+    }
 }

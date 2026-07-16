@@ -14,8 +14,8 @@ pub use context::{ContextUsage, ContextUsageSource};
 pub use contract::AbortedAssistant;
 pub use contract::{
     AssistantMessage, ContentBlock, ImageContent, Message, ModelError, ModelEvent, ModelIdentity,
-    ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall,
-    ToolResult, ToolSpec,
+    ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
+    ProviderReportedErrorKind, ToolCall, ToolResult, ToolSpec,
 };
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
