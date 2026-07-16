@@ -168,3 +168,41 @@ fn tool_specs_and_fetch_security_preserve_public_contract() {
     );
     assert_eq!(GetSearchContent.spec().name, "get_search_content");
 }
+
+#[tokio::test]
+async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let body = "あ".repeat(700_000);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.write_all(body.as_bytes());
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/big");
+    let result = super::fetch::fetch_url_text(&client, &url).await;
+    server.join().unwrap();
+
+    let content = result.expect("truncated fetch of valid UTF-8 must not fail");
+    assert!(content.chars().all(|c| c == 'あ'));
+}
