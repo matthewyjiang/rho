@@ -82,6 +82,7 @@ macro_rules! opaque_id {
 
 opaque_id!(SessionId, "Stable identity for an SDK session.");
 opaque_id!(RunId, "Stable identity for one run within a session.");
+opaque_id!(SteeringId, "Stable identity for accepted steering input.");
 opaque_id!(HostInputId, "Stable identity for one host input request.");
 opaque_id!(
     ToolCallId,
