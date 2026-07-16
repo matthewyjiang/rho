@@ -129,26 +129,31 @@ impl AppToolSet {
         )));
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
-        let subagents = options.subagents.as_deref().map(|cwd| {
-            let manager = SubagentManager::with_config_path(options.subagent_config_path.clone());
-            tools.push(adapt(
-                super::agent::AgentTool::new(
-                    manager.clone(),
-                    cwd,
-                    if options.background_subagents {
-                        BackgroundSubagents::Enabled
-                    } else {
-                        BackgroundSubagents::Disabled
-                    },
-                ),
-                config.max_output_bytes,
-            ));
-            tools.push(adapt(
-                super::agent::AgentsTool::new(manager.clone()),
-                config.max_output_bytes,
-            ));
-            manager
-        });
+        let subagents = options
+            .subagents
+            .filter(|_| config.enable_subagents)
+            .as_deref()
+            .map(|cwd| {
+                let manager =
+                    SubagentManager::with_config_path(options.subagent_config_path.clone());
+                tools.push(adapt(
+                    super::agent::AgentTool::new(
+                        manager.clone(),
+                        cwd,
+                        if options.background_subagents {
+                            BackgroundSubagents::Enabled
+                        } else {
+                            BackgroundSubagents::Disabled
+                        },
+                    ),
+                    config.max_output_bytes,
+                ));
+                tools.push(adapt(
+                    super::agent::AgentsTool::new(manager.clone()),
+                    config.max_output_bytes,
+                ));
+                manager
+            });
 
         Self {
             tools,

@@ -105,6 +105,10 @@ Do not invent tool results. When done, answer directly.
     SystemPrompt { text, sources }
 }
 
+pub fn append_subagents_disabled_instruction(text: &mut String) {
+    text.push_str("\n\nSubagents are disabled. Do not attempt to spawn or use subagents.\n");
+}
+
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push('\n');
     out.push('<');
@@ -294,6 +298,16 @@ mod tests {
 
         assert!(!prompt.contains("<available_skills>"));
         assert!(!prompt.contains("rho-skill"));
+    }
+
+    #[test]
+    fn appends_disabled_subagent_instruction() {
+        let mut text = "base".to_string();
+
+        append_subagents_disabled_instruction(&mut text);
+
+        assert!(text.contains("Subagents are disabled"));
+        assert!(text.contains("Do not attempt to spawn or use subagents"));
     }
 
     fn skill_tool_spec() -> ToolSpec {

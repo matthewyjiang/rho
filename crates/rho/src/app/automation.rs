@@ -143,10 +143,11 @@ async fn run_session(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
+    let subagents_enabled = startup.config.enable_subagents && !startup.no_subagents;
     let mut tool_set = if startup.no_tools {
         AppToolSet::disabled()
     } else {
-        let subagents = (!startup.no_subagents).then(|| startup.cwd.clone());
+        let subagents = subagents_enabled.then(|| startup.cwd.clone());
         AppToolSet::new(
             startup.config,
             startup.diagnostics.clone(),
@@ -174,6 +175,9 @@ async fn run_session(
             .diagnostics
             .update_prompt_sources(system_prompt.sources);
         let mut text = system_prompt.text;
+        if !subagents_enabled {
+            prompt::append_subagents_disabled_instruction(&mut text);
+        }
         if let Some(preset) = &startup.preset {
             if !preset.prompt.is_empty() {
                 text.push_str("\n\n# Subagent instructions\n\n");

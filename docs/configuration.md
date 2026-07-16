@@ -32,6 +32,7 @@ provider = "auto" # auto, openai, exa, brave, or disabled
 
 [behavior]
 check_for_updates = true
+enable_subagents = true
 rtk = true
 
 [prompt_templates]
@@ -92,7 +93,7 @@ You can load and save a specific config file with:
 rho --config ~/.rho/config.toml
 ```
 
-`--no-system-prompt` and `--no-tools` are only available on the command line and apply only to the current run.
+`--no-system-prompt`, `--no-tools`, and `--no-subagents` are only available on the command line and apply only to the current run. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
 
 ## Title model
 
@@ -109,6 +110,8 @@ If no title model settings are present, Rho falls back to the active provider, m
 `provider` under `[web_search]` controls the built-in [web search tool](/tools-workspace#built-in-tools). Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded.
 
 Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the OS credential store when loaded. Empty strings are ignored. Set `provider = "disabled"` under `[web_search]` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
+
+`enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
 
 ## TUI updates
 

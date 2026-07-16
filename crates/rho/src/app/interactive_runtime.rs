@@ -139,10 +139,11 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
+        let subagents_enabled = config.enable_subagents && !no_subagents;
         let tools = if no_tools {
             AppToolSet::disabled()
         } else {
-            let subagents = (!no_subagents).then(|| cwd.clone());
+            let subagents = subagents_enabled.then(|| cwd.clone());
             AppToolSet::new(
                 config,
                 diagnostics.clone(),
@@ -158,7 +159,10 @@ impl InteractiveRuntime {
             diagnostics.update_prompt_sources(Vec::new());
             SystemPrompt::None
         } else {
-            let built = prompt::system_prompt(&specs, &cwd);
+            let mut built = prompt::system_prompt(&specs, &cwd);
+            if !subagents_enabled {
+                prompt::append_subagents_disabled_instruction(&mut built.text);
+            }
             diagnostics.update_prompt_sources(built.sources);
             SystemPrompt::Custom(built.text)
         };

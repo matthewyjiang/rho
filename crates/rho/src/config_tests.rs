@@ -100,6 +100,22 @@ fn loads_check_for_updates() {
 }
 
 #[test]
+fn subagents_are_enabled_by_default() {
+    assert!(Config::default().enable_subagents);
+}
+
+#[test]
+fn loads_grouped_subagent_setting() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[behavior]\nenable_subagents = false\n").unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert!(!config.enable_subagents);
+}
+
+#[test]
 fn loads_and_normalizes_compaction_percentages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
