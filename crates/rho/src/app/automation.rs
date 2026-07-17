@@ -5,10 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use rho_sdk::{
-    CapabilityRequest, PolicyDecision, SessionOptions, SystemPrompt, UserInput, Workspace,
-    WorkspacePolicy,
-};
+use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
 use crate::{
     agent::PromptPolicy,
@@ -26,6 +23,7 @@ use crate::{
 
 use super::{
     agent_binding::BoundAgent,
+    policy::AppPolicy,
     runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions},
     sdk_config::SdkBootstrapOptions,
 };
@@ -210,7 +208,8 @@ pub(crate) async fn run_session(
         provider,
         tools: tool_set.tools(),
         workspace,
-        workspace_policy: AutomationWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+        approval_handler: None,
         system_prompt,
         reasoning: sdk_options.runtime.reasoning,
         compaction,
@@ -486,15 +485,6 @@ async fn shutdown_signal() -> io::Result<ShutdownSignal> {
 async fn shutdown_signal() -> io::Result<ShutdownSignal> {
     tokio::signal::ctrl_c().await?;
     Ok(ShutdownSignal::Interrupt)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct AutomationWorkspacePolicy;
-
-impl WorkspacePolicy for AutomationWorkspacePolicy {
-    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
-        PolicyDecision::Allow
-    }
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {

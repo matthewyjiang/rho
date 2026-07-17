@@ -1,6 +1,73 @@
 use super::*;
 use crate::{model::registry, provider, providers::build_sdk_provider};
 
+#[derive(Clone, Debug)]
+pub(super) struct SecretInput {
+    pub(super) target: LoginTarget,
+    pub(super) value: String,
+    pub(super) cursor: usize,
+}
+
+impl SecretInput {
+    pub(super) fn new(target: LoginTarget) -> Self {
+        Self {
+            target,
+            value: String::new(),
+            cursor: 0,
+        }
+    }
+
+    pub(super) fn char_len(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    pub(super) fn insert_char(&mut self, ch: char) {
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    pub(super) fn insert_text(&mut self, text: &str) {
+        let sanitized = text.replace('\n', "");
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert_str(byte_index, &sanitized);
+        self.cursor += sanitized.chars().count();
+    }
+
+    pub(super) fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    pub(super) fn delete(&mut self) {
+        if self.cursor >= self.char_len() {
+            return;
+        }
+        let start = self.byte_index(self.cursor);
+        let end = self.byte_index(self.cursor + 1);
+        self.value.replace_range(start..end, "");
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct PendingOAuthLogin {
+    pub(super) target: LoginTarget,
+    pub(super) handle: tokio::task::JoinHandle<Result<PendingOAuthResult, String>>,
+}
+
 impl App {
     pub(super) async fn execute_login_command(
         &mut self,

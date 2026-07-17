@@ -13,6 +13,7 @@ use super::{
 };
 use crate::{
     model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
+    permission::PermissionMode,
     reasoning::ReasoningLevel,
 };
 
@@ -26,6 +27,7 @@ pub(super) struct StatusLineState {
     provider: String,
     model: String,
     reasoning: ReasoningLevel,
+    permission_mode: PermissionMode,
     billing: BillingInfo,
     model_metadata: Option<ModelMetadata>,
     model_metadata_loading: bool,
@@ -64,6 +66,7 @@ impl Default for StatusLineState {
             provider: String::new(),
             model: String::new(),
             reasoning: ReasoningLevel::default(),
+            permission_mode: PermissionMode::default(),
             billing: BillingInfo::Metered,
             model_metadata: None,
             model_metadata_loading: false,
@@ -82,6 +85,7 @@ impl StatusLineState {
             provider: info.provider.clone(),
             model: info.model.clone(),
             reasoning: info.reasoning,
+            permission_mode: info.permission_mode,
             billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
             model_metadata: None,
             model_metadata_loading: false,
@@ -96,7 +100,13 @@ impl StatusLineState {
     }
 
     fn right_bottom(&self) -> String {
-        format!("({}) {} • {}", self.provider, self.model, self.reasoning)
+        format!(
+            "◇ {} • ({}) {} • {}",
+            self.permission_mode.label(),
+            self.provider,
+            self.model,
+            self.reasoning
+        )
     }
 }
 
@@ -121,11 +131,13 @@ impl StatusLine {
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.reasoning != info.reasoning
+            || self.state.permission_mode != info.permission_mode
             || self.state.billing != billing
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
             self.state.reasoning = info.reasoning;
+            self.state.permission_mode = info.permission_mode;
             self.state.billing = billing;
             self.invalidate();
         }

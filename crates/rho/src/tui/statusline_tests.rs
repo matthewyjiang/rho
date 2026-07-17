@@ -23,6 +23,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        permission_mode: crate::permission::PermissionMode::Auto,
         billing: BillingInfo::Metered,
         model_metadata: Some(priced_metadata()),
         model_metadata_loading: false,
@@ -242,6 +243,7 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        permission_mode: crate::permission::PermissionMode::Auto,
         show_reasoning_output: true,
         auth: "api-key".into(),
         title_provider: None,
@@ -261,6 +263,43 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
         herdr: HerdrReporter::default(),
     }
+}
+
+#[test]
+fn permission_mode_indicator_is_always_visible_and_prioritized() {
+    let auto = test_info(PathBuf::from("/tmp/project"));
+    assert!(StatusLineState::from_tui(&auto)
+        .right_bottom()
+        .starts_with("◇ Auto • "));
+
+    let mut plan = auto;
+    plan.permission_mode = crate::permission::PermissionMode::Plan;
+    assert!(StatusLineState::from_tui(&plan)
+        .right_bottom()
+        .starts_with("◇ Plan • "));
+
+    plan.permission_mode = crate::permission::PermissionMode::Supervised;
+    assert!(StatusLineState::from_tui(&plan)
+        .right_bottom()
+        .starts_with("◇ Supervised • "));
+}
+
+#[test]
+fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
+    let mut info = test_info(PathBuf::from("/tmp/project"));
+    let mut statusline = StatusLine::new(&info);
+    statusline.lines(18, None);
+    let initial_render_count = statusline.render_count();
+
+    info.permission_mode = crate::permission::PermissionMode::Plan;
+    statusline.update_model(&info);
+    let lines = statusline.lines(18, None).to_vec();
+
+    assert_eq!(statusline.render_count(), initial_render_count + 1);
+    assert!(lines
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 18));
+    assert!(line_text(&lines[1]).contains("◇ Plan"));
 }
 
 #[test]

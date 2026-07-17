@@ -10,6 +10,7 @@ use crate::{
     keybindings::Keybindings,
     model::favorites::{favorite_model_values, normalized_favorite_models},
     paths,
+    permission::PermissionMode,
     reasoning::ReasoningLevel,
 };
 
@@ -41,6 +42,7 @@ pub struct Config {
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    pub permission_mode: PermissionMode,
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
     pub inline_shell: String,
@@ -72,6 +74,7 @@ impl Default for Config {
             web_search_provider: SearchProvider::Auto,
             check_for_updates: true,
             enable_subagents: true,
+            permission_mode: PermissionMode::Auto,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
             inline_shell: default_inline_shell(),
@@ -299,6 +302,7 @@ struct WebSearchConfig<'a> {
 struct BehaviorConfig<'a> {
     check_for_updates: bool,
     enable_subagents: bool,
+    permission_mode: PermissionMode,
     rtk: bool,
     inline_shell: &'a str,
 }
@@ -339,6 +343,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             behavior: BehaviorConfig {
                 check_for_updates: config.check_for_updates,
                 enable_subagents: config.enable_subagents,
+                permission_mode: config.permission_mode,
                 rtk: config.rtk,
                 inline_shell: &config.inline_shell,
             },
@@ -423,6 +428,9 @@ impl Config {
         if let Some(v) = file.enable_subagents {
             cfg.enable_subagents = v;
         }
+        if let Some(v) = file.permission_mode {
+            cfg.permission_mode = v;
+        }
         cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
             openai: file.web_search_openai_api_key.and_then(non_empty_secret),
             exa: file.web_search_exa_api_key.and_then(non_empty_secret),
@@ -487,6 +495,7 @@ impl Config {
         if let Some(group) = file.behavior {
             cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
             cfg.enable_subagents = group.enable_subagents.unwrap_or(cfg.enable_subagents);
+            cfg.permission_mode = group.permission_mode.unwrap_or(cfg.permission_mode);
             cfg.rtk = group.rtk.unwrap_or(cfg.rtk);
             cfg.inline_shell = group
                 .inline_shell
@@ -598,6 +607,8 @@ struct PartialConfig {
     web_search_provider: Option<String>,
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
+    #[serde(default)]
+    permission_mode: Option<PermissionMode>,
     web_search_openai_api_key: Option<String>,
     web_search_exa_api_key: Option<String>,
     web_search_brave_api_key: Option<String>,
@@ -666,6 +677,8 @@ struct PartialWebSearchConfig {
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
+    #[serde(default)]
+    permission_mode: Option<PermissionMode>,
     rtk: Option<bool>,
     inline_shell: Option<String>,
 }

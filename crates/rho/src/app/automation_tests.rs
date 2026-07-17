@@ -9,10 +9,14 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{complete_run, prompt_from_reader, AutomationWorkspacePolicy};
+use super::{complete_run, prompt_from_reader};
 use crate::{
-    app::runtime_builder::{build_runtime, RuntimeBuildOptions},
+    app::{
+        policy::AppPolicy,
+        runtime_builder::{build_runtime, RuntimeBuildOptions},
+    },
     compaction::CompactionConfig,
+    permission::PermissionMode,
 };
 
 #[test]
@@ -79,7 +83,8 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         provider: shared_provider,
         tools: &tools,
         workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AutomationWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig {

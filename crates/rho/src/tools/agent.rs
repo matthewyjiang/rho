@@ -88,6 +88,17 @@ impl SubagentManager {
         self.executor.update_model(provider, model, reasoning);
     }
 
+    /// Updates the policy snapshot used by future launches. Already-spawned
+    /// agents retain the mode captured when they were launched.
+    pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
+        self.executor.update_permission_mode(mode);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
+        self.executor.launch_permission_mode()
+    }
+
     pub async fn spawn(
         &self,
         definition: &AgentDefinition,

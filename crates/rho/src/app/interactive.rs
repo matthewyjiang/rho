@@ -92,6 +92,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
             provider: config.provider,
             model: config.model,
             reasoning: config.reasoning,
+            permission_mode: config.permission_mode,
             show_reasoning_output: config.show_reasoning_output,
             auth: config.auth,
             title_provider: config.title_provider,

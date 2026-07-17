@@ -76,8 +76,11 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
 | `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
-| `/config` | Open the [config](/configuration) picker. Reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
-| `/info` | Show the running Rho version, provider, model, and reasoning level. |
+| `/config` | Open the [config](/configuration) picker. Permission mode changes apply before the next turn; reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
+| `/auto` | Use unrestricted tool behavior without permission checks. |
+| `/plan` | Investigate without allowing file writes or process execution. |
+| `/supervised` | Ask before file writes and process execution. |
+| `/info` | Show the running Rho version, provider, model, reasoning level, and permission mode. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/goal [condition]` | Set a completion condition and start working immediately. Rho explicitly tells the agent that this is a goal-setting action, then evaluates the transcript after each turn and continues until the condition is met. Connection errors and other incomplete runs are retried automatically while the goal remains active. If only steps requiring user authority remain, the goal pauses as blocked and reports those steps. Run `/goal` for status, `/goal resume` after completing blocked steps, or `/goal clear` to cancel. |
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
@@ -93,6 +96,8 @@ Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/conf
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
 Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
+
+In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. Use the arrow keys to choose **Allow once**, **Allow for session**, or **Deny**, then press Enter. Long operation details open at the final page so dangerous command suffixes remain visible; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan` or `supervised` mode appears in the status line; the default `auto` mode stays hidden to avoid clutter.
 
 Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use `up` and `down` to select, then press `tab` or `enter` to insert the highlighted path into the message as an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
 

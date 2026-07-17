@@ -21,6 +21,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
+    pub(crate) approval_handler: Option<Arc<dyn rho_sdk::ApprovalHandler>>,
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) compaction: CompactionConfig,
@@ -36,6 +37,7 @@ where
         tools,
         workspace,
         workspace_policy,
+        approval_handler,
         system_prompt,
         reasoning,
         compaction,
@@ -56,6 +58,9 @@ where
         .reasoning_level(reasoning)
         .max_steps(super::sdk_config::run_step_limit())
         .compactor(compactor);
+    if let Some(handler) = approval_handler {
+        builder = builder.approval_handler_shared(handler);
+    }
     if let Some(policy) = policy {
         builder = builder.compaction_policy(policy);
     }

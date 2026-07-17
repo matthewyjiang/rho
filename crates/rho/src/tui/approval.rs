@@ -1,0 +1,153 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use rho_sdk::{ApprovalDecision, PendingApproval};
+
+use super::{App, ComposerMode};
+
+mod render;
+
+use render::approval_detail_page_count;
+pub(in crate::tui) use render::approval_lines;
+
+const APPROVAL_CHOICE_COUNT: usize = 3;
+const DENIED_BY_USER_REASON: &str = "denied by user";
+const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
+
+#[derive(Debug)]
+pub(super) struct ApprovalComposer {
+    pending: PendingApproval,
+    active: usize,
+    detail_pages_before_end: usize,
+}
+
+impl ApprovalComposer {
+    fn new(pending: PendingApproval) -> Self {
+        Self {
+            pending,
+            active: 0,
+            detail_pages_before_end: 0,
+        }
+    }
+
+    pub(super) fn request(&self) -> &rho_sdk::ApprovalRequest {
+        self.pending.request()
+    }
+
+    pub(super) fn active(&self) -> usize {
+        self.active
+    }
+
+    pub(super) fn detail_pages_before_end(&self) -> usize {
+        self.detail_pages_before_end
+    }
+
+    fn scroll_details_up(&mut self, width: usize) {
+        let page_count = approval_detail_page_count(self.request(), width);
+        self.detail_pages_before_end = self
+            .detail_pages_before_end
+            .saturating_add(1)
+            .min(page_count.saturating_sub(1));
+    }
+
+    fn scroll_details_down(&mut self) {
+        self.detail_pages_before_end = self.detail_pages_before_end.saturating_sub(1);
+    }
+
+    fn move_previous(&mut self) {
+        self.active = previous_choice(self.active);
+    }
+
+    fn move_next(&mut self) {
+        self.active = next_choice(self.active);
+    }
+
+    fn respond(&mut self, decision: ApprovalDecision) {
+        let _ = self.pending.respond(decision);
+    }
+}
+
+pub(super) fn previous_choice(active: usize) -> usize {
+    active.saturating_sub(1)
+}
+
+pub(super) fn next_choice(active: usize) -> usize {
+    (active + 1).min(APPROVAL_CHOICE_COUNT - 1)
+}
+
+pub(super) fn approval_decision(active: usize) -> ApprovalDecision {
+    match active {
+        0 => ApprovalDecision::AllowOnce,
+        1 => ApprovalDecision::AllowForSession,
+        _ => ApprovalDecision::Deny {
+            reason: DENIED_BY_USER_REASON.into(),
+        },
+    }
+}
+
+impl App {
+    pub(super) fn open_approval(&mut self, pending: PendingApproval) {
+        self.composer = ComposerMode::Approval(ApprovalComposer::new(pending));
+        self.status = "approval requested".into();
+    }
+
+    pub(super) fn handle_approval_key(
+        &mut self,
+        key: KeyEvent,
+        width: usize,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.composer, ComposerMode::Approval(_)) {
+            return Ok(false);
+        }
+
+        match key.code {
+            KeyCode::Left | KeyCode::Up => {
+                if let ComposerMode::Approval(approval) = &mut self.composer {
+                    approval.move_previous();
+                }
+            }
+            KeyCode::Right | KeyCode::Down => {
+                if let ComposerMode::Approval(approval) = &mut self.composer {
+                    approval.move_next();
+                }
+            }
+            KeyCode::PageUp => {
+                if let ComposerMode::Approval(approval) = &mut self.composer {
+                    approval.scroll_details_up(width);
+                }
+            }
+            KeyCode::PageDown => {
+                if let ComposerMode::Approval(approval) = &mut self.composer {
+                    approval.scroll_details_down();
+                }
+            }
+            KeyCode::Enter => self.finish_approval(None),
+            KeyCode::Esc => self.finish_approval(Some(ApprovalDecision::Deny {
+                reason: CANCELLED_BY_USER_REASON.into(),
+            })),
+            _ => return Ok(true),
+        }
+        self.paste_burst.clear();
+        self.ctrl_c_streak = 0;
+        Ok(true)
+    }
+
+    pub(super) fn cancel_approval(&mut self) {
+        if matches!(self.composer, ComposerMode::Approval(_)) {
+            self.finish_approval(Some(ApprovalDecision::Deny {
+                reason: DENIED_BY_USER_REASON.into(),
+            }));
+        }
+    }
+
+    fn finish_approval(&mut self, decision: Option<ApprovalDecision>) {
+        let composer = std::mem::replace(&mut self.composer, ComposerMode::Input);
+        if let ComposerMode::Approval(mut approval) = composer {
+            let decision = decision.unwrap_or_else(|| approval_decision(approval.active));
+            approval.respond(decision);
+            self.status = "running".into();
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "approval_tests.rs"]
+mod tests;

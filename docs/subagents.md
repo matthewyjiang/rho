@@ -61,7 +61,7 @@ The `agent` tool accepts an `agent_id`, prompt, and optional `background` flag:
 - Foreground delegation waits on the run handle and returns its final result.
 - Background delegation returns a six-character run ID immediately and sends a completion notification later.
 
-Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup.
+Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run headlessly and cannot open an approval prompt in the parent TUI. In Supervised mode, delegated Write and Process operations therefore fail closed. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 

@@ -23,6 +23,7 @@ pub enum ScenarioId {
     TerminalRestoration,
     PasteMultiline,
     Questionnaire,
+    SupervisedApproval,
     ProgressTool,
     RetractSteeringDuringTool,
     MarkdownHeadings,
@@ -44,6 +45,7 @@ impl ScenarioId {
             Self::TerminalRestoration => "terminal_restoration",
             Self::PasteMultiline => "paste_multiline",
             Self::Questionnaire => "questionnaire",
+            Self::SupervisedApproval => "supervised_approval",
             Self::ProgressTool => "progress_tool",
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
@@ -65,6 +67,7 @@ impl ScenarioId {
             "terminal_restoration" => Some(Self::TerminalRestoration),
             "paste_multiline" => Some(Self::PasteMultiline),
             "questionnaire" => Some(Self::Questionnaire),
+            "supervised_approval" => Some(Self::SupervisedApproval),
             "progress_tool" => Some(Self::ProgressTool),
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
@@ -366,6 +369,69 @@ const QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("enable_supervised_mode"),
+    Step::SubmitText("/supervised"),
+    Step::WaitText {
+        text: "permission mode: supervised",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "◇ Supervised",
+        timeout: SETTLE,
+    },
+    Step::Phase("inspect_long_process_approval"),
+    Step::SubmitText("fixture approval long"),
+    Step::WaitText {
+        text: "bash wants to execute",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "DANGEROUS_SUFFIX_INSPECTABLE",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Allow for session",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "pgup/pgdn details",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::PageUp),
+    Step::WaitText {
+        text: "output limit:",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::PageDown),
+    Step::WaitText {
+        text: "DANGEROUS_SUFFIX_INSPECTABLE",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
+    },
+    Step::Phase("continue_session"),
+    Step::SubmitText("fixture stream"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "part two",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -661,6 +727,16 @@ pub fn all_scenarios() -> &'static [Scenario] {
             size: DEFAULT_SIZE,
             steps: QUESTIONNAIRE_STEPS,
             smoke: false,
+        },
+        Scenario {
+            id: "supervised_approval",
+            description: "Inspect and cancel a bounded supervised process approval",
+            size: PtySize {
+                rows: 14,
+                cols: 100,
+            },
+            steps: SUPERVISED_APPROVAL_STEPS,
+            smoke: true,
         },
         Scenario {
             id: "progress_tool",
