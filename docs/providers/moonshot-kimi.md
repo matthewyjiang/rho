@@ -24,7 +24,7 @@ Rho supports Moonshot's OpenAI-compatible Chat Completions API through two expli
 | API base | `https://api.kimi.com/coding/v1` |
 | Model list | Refreshable after authentication |
 
-Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated with `/refresh-model-list moonshot` and `/refresh-model-list kimi-code` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
+Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through **Refresh model lists** in `/config` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
 
 ## Moonshot API key
 
@@ -60,7 +60,6 @@ Visit the displayed Kimi authorization URL and enter the displayed code if reque
 Select a model after login:
 
 ```text
-/refresh-model-list kimi-code
 /model kimi-code/<model-id>
 ```
 

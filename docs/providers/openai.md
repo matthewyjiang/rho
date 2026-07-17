@@ -38,7 +38,7 @@ Environment variables are CI/development escape hatches and override stored cred
 
 ## Models
 
-OpenAI can refresh its provider model list with `/refresh-model-list openai`. Switch to an OpenAI model with:
+OpenAI can refresh its provider model list through **Refresh model lists** in `/config`. Switch to an OpenAI model with:
 
 ```text
 /model openai/gpt-5.6-sol

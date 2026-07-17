@@ -73,13 +73,8 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/login [provider]` | Log in with a provider. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
-| `/title-model [provider/model]` | Open a picker for the session-title model, or switch it directly and save optional title model settings. |
-| `/refresh-model-list [provider]` | Refresh cached API model lists for a provider, or for all refreshable authenticated providers when no provider is given. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
-| `/config` | Open the [config](/configuration) picker. Permission mode changes apply before the next turn; reasoning changes apply immediately; reasoning output visibility and auto compaction settings apply on the next model call; max output bytes changes save for the next session. |
-| `/auto` | Use unrestricted tool behavior without permission checks. |
-| `/plan` | Investigate without allowing file writes or process execution. |
-| `/supervised` | Ask before file writes and process execution. |
+| `/config` | Open the [config](/configuration) picker for conversation and title models, model-list refresh, provider login and logout, permission mode, reasoning, and other persistent settings. |
 | `/info` | Show the running Rho version, provider, model, reasoning level, and permission mode. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/goal [condition]` | Set a completion condition and start working immediately. Rho explicitly tells the agent that this is a goal-setting action, then evaluates the transcript after each turn and continues until the condition is met. Connection errors and other incomplete runs are retried automatically while the goal remains active. If only steps requiring user authority remain, the goal pauses as blocked and reports those steps. Run `/goal` for status, `/goal resume` after completing blocked steps, or `/goal clear` to cancel. |
@@ -95,7 +90,7 @@ Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/conf
 
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
-Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In `/model` and `/title-model`, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, the picker stays open after changing a value so you can continue adjusting settings.
+Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In the conversation and title model pickers, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both model pickers. In `/config`, ordinary changes return to the config picker so you can continue adjusting settings; login workflows close it while credentials are entered or authorized.
 
 In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. Use the arrow keys to choose **Allow once**, **Allow for session**, or **Deny**, then press Enter. Long operation details open at the final page so dangerous command suffixes remain visible; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan` or `supervised` mode appears in the status line; the default `auto` mode stays hidden to avoid clutter.
 
@@ -111,7 +106,7 @@ Logging in does not normally switch provider/model. Use `/model` to switch model
 
 ## Model picker
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. Which models each provider exposes, and whether its list is refreshable, is covered on the [provider pages](/authentication-and-models#providers). Run `/refresh-model-list [provider]` to fetch models for a refreshable provider when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of `/model` and `/title-model` in the order they were pinned.
+The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. Which models each provider exposes, and whether its list is refreshable, is covered on the [provider pages](/authentication-and-models#providers). Open `/config` and choose **Refresh model lists** to fetch models for one or all refreshable providers when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of the conversation and title model pickers in the order they were pinned.
 
 Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
 
@@ -126,7 +121,7 @@ A bare model id works when it uniquely matches the catalog. Uncataloged bare mod
 
 `/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. The queued model change is applied only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice.
 
-Use `/title-model` to choose the model used for session title generation. The title model picker follows the same model catalog and auth availability rules as `/model`, but saves optional `title_provider`, `title_model`, and `title_auth` settings instead of changing the active chat model.
+Choose **Session title model** in `/config` to select the model used for session title generation. The title model picker follows the same model catalog and auth availability rules as `/model`, but saves optional `title_provider`, `title_model`, and `title_auth` settings instead of changing the active chat model.
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
 

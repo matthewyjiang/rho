@@ -78,7 +78,7 @@ pub(super) fn apply_provider_override(
     } else {
         Some(catalog::default_model_for_provider(provider).ok_or_else(|| {
             anyhow::anyhow!(
-                "no cached models for provider '{provider}'. Run /refresh-model-list {provider} or pass a cached provider/model with --model"
+                "no cached models for provider '{provider}'. Open /config and choose Refresh model lists, or pass a cached provider/model with --model"
             )
         })?)
     };

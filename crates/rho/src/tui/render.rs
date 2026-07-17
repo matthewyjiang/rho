@@ -274,6 +274,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
+        | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ViewAgent => 30,
     };
@@ -353,6 +354,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ResumeSession => "select",
+        super::PickerAction::RefreshModelList => "refresh",
     };
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"

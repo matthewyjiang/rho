@@ -1,4 +1,7 @@
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use super::{
+    model_picker, provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone,
+    PickerItem, UiPicker,
+};
 use crate::{
     config::Config,
     credentials::{
@@ -6,6 +9,11 @@ use crate::{
     },
     permission::PermissionMode,
 };
+pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
+pub(super) const TITLE_MODEL_VALUE: &str = "title_model";
+pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
+pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
+pub(super) const PROVIDER_LOGOUT_VALUE: &str = "provider_logout";
 pub(super) const PERMISSION_MODE_VALUE: &str = "permission_mode";
 pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
@@ -31,6 +39,51 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
         "Config",
         "type regex filter, enter change, esc cancel",
         vec![
+            PickerItem {
+                label: "Conversation model".into(),
+                detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: format!("{}/{}", info.provider, info.model),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: CONVERSATION_MODEL_VALUE.into(),
+            },
+            PickerItem {
+                label: "Session title model".into(),
+                detail: Some("Model used to generate session titles. Enter to choose a model.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: format!(
+                        "{}/{}",
+                        info.title_provider.as_deref().unwrap_or(&info.provider),
+                        info.title_model.as_deref().unwrap_or(&info.model)
+                    ),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: TITLE_MODEL_VALUE.into(),
+            },
+            PickerItem {
+                label: "Refresh model lists".into(),
+                detail: Some("Refresh cached models from configured API providers.".into()),
+                preview: None,
+                badge: None,
+                value: REFRESH_MODEL_LIST_VALUE.into(),
+            },
+            PickerItem {
+                label: "Log in to provider".into(),
+                detail: Some("Add or replace provider credentials.".into()),
+                preview: None,
+                badge: None,
+                value: PROVIDER_LOGIN_VALUE.into(),
+            },
+            PickerItem {
+                label: "Log out of provider".into(),
+                detail: Some("Delete stored provider credentials.".into()),
+                preview: None,
+                badge: None,
+                value: PROVIDER_LOGOUT_VALUE.into(),
+            },
             PickerItem {
                 label: "Permission mode".into(),
                 detail: Some(permission_mode_description(info.permission_mode).into()),
@@ -347,6 +400,91 @@ fn web_search_api_key_is_set(
         .as_deref()
         .or(legacy)
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+impl App {
+    pub(super) fn open_config_conversation_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let picker = model_picker::model_picker(&self.info, &self.available_auths);
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+            ));
+            self.status = "config".into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select model".into();
+        }
+    }
+
+    pub(super) fn open_config_conversation_model_picker_during_turn(&mut self) {
+        self.refresh_available_auths();
+        let picker = model_picker::model_picker_during_run(
+            &self.info,
+            self.pending_model_selection.as_ref(),
+            &self.available_auths,
+        );
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. refresh model lists after the current turn ends.".into(),
+            ));
+            self.status = "running".into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select model for next turn".into();
+        }
+    }
+
+    pub(super) fn open_config_title_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let (provider, model, _auth) = self.title_model_selection();
+        let picker = model_picker::title_model_picker(
+            &provider,
+            &model,
+            &self.info.favorite_models,
+            &self.available_auths,
+        );
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+            ));
+            self.status = if self.running { "running" } else { "config" }.into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select title model".into();
+        }
+    }
+
+    pub(super) fn open_config_refresh_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let picker = provider_picker::refresh_model_list_picker(&self.available_auths);
+        self.open_child_picker(picker);
+        self.status = "select provider to refresh".into();
+    }
+
+    pub(super) fn open_config_login_picker(&mut self) {
+        self.open_child_picker(provider_picker::login_group_picker());
+        self.status = "select provider to login".into();
+    }
+
+    pub(super) fn open_config_logout_picker(&mut self) {
+        match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
+            Ok(picker) if picker.items.is_empty() => {
+                self.insert_entry(&Entry::Notice(
+                    "no stored provider credentials to delete".into(),
+                ));
+                self.status = "config".into();
+            }
+            Ok(picker) => {
+                self.open_child_picker(picker);
+                self.status = "select provider to logout".into();
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "provider credentials unavailable".into();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

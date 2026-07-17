@@ -2542,7 +2542,7 @@ impl App {
             );
             if picker.items.is_empty() {
                 self.insert_entry(&Entry::Notice(
-                    "no cached API models. run /refresh-model-list after the current run ends."
+                    "no cached API models. refresh model lists from /config after the current run ends."
                         .into(),
                 ));
                 self.status = "running".into();
@@ -2604,20 +2604,14 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
-            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::Limits => {
                 self.start_limits_command();
                 Ok(())
             }
-            CommandId::Auto | CommandId::Plan | CommandId::Supervised => {
-                self.reject_permission_mode_change();
-                Ok(())
-            }
             CommandId::New
             | CommandId::Compact
-            | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
             | CommandId::Resume => {
@@ -2747,6 +2741,7 @@ impl App {
             return Ok(());
         };
 
+        let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(action, PickerAction::Config) {
             self.composer = ComposerMode::Input;
         }
@@ -2795,6 +2790,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList
             | PickerAction::ResumeSession => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
@@ -2802,11 +2798,28 @@ impl App {
                 self.status = "picker action unavailable while running".into();
             }
         }
+        if let Some((picker, selected_value)) = return_picker {
+            self.open_main_config_picker(selected_value, picker.filter)?;
+        }
         Ok(())
     }
 
     fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
+            config_picker::CONVERSATION_MODEL_VALUE => {
+                self.open_config_conversation_model_picker_during_turn();
+            }
+            config_picker::TITLE_MODEL_VALUE => {
+                self.open_config_title_model_picker();
+            }
+            config_picker::REFRESH_MODEL_LIST_VALUE
+            | config_picker::PROVIDER_LOGIN_VALUE
+            | config_picker::PROVIDER_LOGOUT_VALUE => {
+                self.insert_entry(&Entry::Notice(
+                    "provider configuration is unavailable while a model turn is running".into(),
+                ));
+                self.status = "config action unavailable while running".into();
+            }
             config_picker::PERMISSION_MODE_VALUE => {
                 self.reject_permission_mode_change();
             }
@@ -3357,11 +3370,6 @@ impl App {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::RefreshModelList => {
-                self.execute_refresh_model_list_command(invocation, terminal)
-                    .await
-            }
             CommandId::Login => {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
@@ -3372,18 +3380,6 @@ impl App {
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Auto => {
-                self.apply_permission_mode(PermissionMode::Auto, agent)
-                    .await
-            }
-            CommandId::Plan => {
-                self.apply_permission_mode(PermissionMode::Plan, agent)
-                    .await
-            }
-            CommandId::Supervised => {
-                self.apply_permission_mode(PermissionMode::Supervised, agent)
-                    .await
-            }
             CommandId::Info => self.execute_info_command(),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
@@ -3504,12 +3500,12 @@ impl App {
         Ok(())
     }
 
-    async fn execute_refresh_model_list_command(
+    async fn refresh_model_lists(
         &mut self,
-        invocation: CommandInvocation,
+        selected_provider: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let providers = if invocation.args.trim().is_empty() {
+        let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
             self.refresh_available_auths();
             provider::providers()
                 .iter()
@@ -3522,12 +3518,12 @@ impl App {
                 .map(|provider| provider.name.to_string())
                 .collect()
         } else {
-            vec![invocation.args.trim().to_string()]
+            vec![selected_provider.to_string()]
         };
 
         if providers.is_empty() {
             self.insert_entry(&Entry::Notice(
-                    "no refreshable providers are configured. run /login for a provider with model list support."
+                    "no refreshable providers are configured. open Config > Log in to provider to add one."
                         .into(),
                 ),
             );
@@ -3599,7 +3595,7 @@ impl App {
 
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
-                "no cached API models. run /refresh-model-list after signing in.".into(),
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
             ));
             self.status = "ready".into();
             return Ok(());
@@ -3607,58 +3603,6 @@ impl App {
 
         self.composer = ComposerMode::Picker(picker);
         self.status = "select model".into();
-        Ok(())
-    }
-
-    fn execute_title_model_command(
-        &mut self,
-        invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let model = invocation.args.trim();
-        if model.is_empty() {
-            return self.open_title_model_picker(terminal);
-        }
-
-        self.refresh_available_auths();
-        let (provider, _model, auth) = self.title_model_selection();
-        match catalog::resolve_model_selection_for_auths(
-            model,
-            &provider,
-            &auth,
-            &self.available_auths,
-        ) {
-            Ok(selection) => self.select_title_model(selection),
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "title model switch failed".into();
-                Ok(())
-            }
-        }
-    }
-
-    fn open_title_model_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        self.status = "loading title models".into();
-        terminal.draw(|frame| self.draw(frame))?;
-        self.refresh_available_auths();
-        let (provider, model, _auth) = self.title_model_selection();
-        let picker = model_picker::title_model_picker(
-            &provider,
-            &model,
-            &self.info.favorite_models,
-            &self.available_auths,
-        );
-
-        if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached API models. run /refresh-model-list after signing in.".into(),
-            ));
-            self.status = "ready".into();
-            return Ok(());
-        }
-
-        self.composer = ComposerMode::Picker(picker);
-        self.status = "select title model".into();
         Ok(())
     }
 
@@ -3673,10 +3617,11 @@ impl App {
             return Ok(());
         };
 
+        let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(action, PickerAction::Config | PickerAction::LoginGroup) {
             self.composer = ComposerMode::Input;
         }
-        match action {
+        let result = match action {
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
                 match catalog::resolve_model_selection_for_auths(
@@ -3732,6 +3677,7 @@ impl App {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
             PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
+            PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input = format!("/skill:{value}");
                 self.input_cursor = self.input_char_len();
@@ -3744,7 +3690,11 @@ impl App {
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::Doctor | PickerAction::ViewAgent => Ok(()),
+        };
+        if let (true, Some((picker, selected_value))) = (result.is_ok(), return_picker) {
+            self.open_main_config_picker(selected_value, picker.filter)?;
         }
+        result
     }
 
     async fn submit_config_selection(
@@ -3753,6 +3703,26 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match value {
+            config_picker::CONVERSATION_MODEL_VALUE => {
+                self.open_config_conversation_model_picker();
+                Ok(())
+            }
+            config_picker::TITLE_MODEL_VALUE => {
+                self.open_config_title_model_picker();
+                Ok(())
+            }
+            config_picker::REFRESH_MODEL_LIST_VALUE => {
+                self.open_config_refresh_model_picker();
+                Ok(())
+            }
+            config_picker::PROVIDER_LOGIN_VALUE => {
+                self.open_config_login_picker();
+                Ok(())
+            }
+            config_picker::PROVIDER_LOGOUT_VALUE => {
+                self.open_config_logout_picker();
+                Ok(())
+            }
             config_picker::PERMISSION_MODE_VALUE => {
                 let child = config_picker::permission_mode_picker(self.info.permission_mode);
                 self.open_child_picker(child);
@@ -4004,6 +3974,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
@@ -4246,6 +4217,31 @@ impl App {
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.status = format!("web search: {provider}");
         Ok(())
+    }
+
+    fn take_picker_parent_after_selection(
+        &mut self,
+        action: PickerAction,
+    ) -> Option<(UiPicker, &'static str)> {
+        let selected_value = match action {
+            PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
+            PickerAction::SelectTitleModel => config_picker::TITLE_MODEL_VALUE,
+            PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
+            PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
+            PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
+            | PickerAction::ResumeSession
+            | PickerAction::Config
+            | PickerAction::Doctor => return None,
+        };
+        match &mut self.composer {
+            ComposerMode::Picker(picker) => {
+                picker.take_parent().map(|parent| (parent, selected_value))
+            }
+            _ => None,
+        }
     }
 
     fn active_picker_selection(&self) -> Option<(PickerAction, String)> {
