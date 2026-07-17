@@ -35,6 +35,7 @@ pub struct ProviderModel {
     pub provider: String,
     pub model: String,
     pub display_name: String,
+    pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,
 }
 
@@ -55,18 +56,20 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
         return Vec::new();
     };
     let Ok(mut statement) = connection.prepare(
-        "select model, display_name, max_output_tokens from provider_models where provider = ?1 order by model",
+        "select model, display_name, context_window, max_output_tokens from provider_models where provider = ?1 order by model",
     ) else {
         return Vec::new();
     };
     let Ok(rows) = statement.query_map(params![provider], |row| {
         let model: String = row.get(0)?;
         let display_name: String = row.get(1)?;
-        let max_output_tokens: Option<u64> = row.get(2)?;
+        let context_window: Option<u64> = row.get(2)?;
+        let max_output_tokens: Option<u64> = row.get(3)?;
         Ok(ProviderModel {
             provider: provider.to_string(),
             model,
             display_name,
+            context_window,
             max_output_tokens,
         })
     }) else {
@@ -114,12 +117,13 @@ fn replace_cached_provider_models(
     .map_err(model_cache_error)?;
     for model in models {
         tx.execute(
-            "insert into provider_models (provider, model, display_name, max_output_tokens, raw_json, updated_at)
-             values (?1, ?2, ?3, ?4, ?5, strftime('%s', 'now'))",
+            "insert into provider_models (provider, model, display_name, context_window, max_output_tokens, raw_json, updated_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))",
             params![
                 provider,
                 model.model,
                 model.display_name,
+                model.context_window,
                 model.max_output_tokens,
                 Value::Null.to_string()
             ],
@@ -186,7 +190,8 @@ async fn fetch_openai_compatible_models(
         .into_iter()
         .map(|model| ProviderModel {
             provider: descriptor.name.into(),
-            display_name: model.id.clone(),
+            display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+            context_window: model.context_length.filter(|window| *window > 0),
             model: model.id,
             max_output_tokens: None,
         })
@@ -215,7 +220,8 @@ async fn fetch_openai_models(
         .filter(|model| is_supported_openai_model(&model.id))
         .map(|model| ProviderModel {
             provider: provider.to_string(),
-            display_name: model.id.clone(),
+            display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+            context_window: model.context_length.filter(|window| *window > 0),
             model: model.id,
             max_output_tokens: None,
         })
@@ -259,6 +265,7 @@ async fn fetch_anthropic_models(
                     provider: provider.to_string(),
                     display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
                     model: model.id,
+                    context_window: None,
                     max_output_tokens: model.max_tokens,
                 }),
         );
@@ -353,6 +360,7 @@ fn parse_github_copilot_models(
             provider: provider.to_string(),
             display_name: model.clone(),
             model,
+            context_window: None,
             max_output_tokens: None,
         })
         .collect::<Vec<_>>();
@@ -394,6 +402,8 @@ struct OpenAiModelsResponse {
 #[derive(Deserialize)]
 struct OpenAiModel {
     id: String,
+    display_name: Option<String>,
+    context_length: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -422,6 +432,7 @@ fn open_provider_models_cache() -> rusqlite::Result<Connection> {
             provider text not null,
             model text not null,
             display_name text not null,
+            context_window integer,
             max_output_tokens integer,
             raw_json text,
             updated_at integer not null,
@@ -433,6 +444,10 @@ fn open_provider_models_cache() -> rusqlite::Result<Connection> {
             error text
         );",
     )?;
+    let _ = connection.execute(
+        "alter table provider_models add column context_window integer",
+        [],
+    );
     let _ = connection.execute(
         "alter table provider_models add column max_output_tokens integer",
         [],
@@ -584,16 +599,60 @@ mod tests {
                     provider: "github-copilot".into(),
                     model: "claude-sonnet-4".into(),
                     display_name: "claude-sonnet-4".into(),
+                    context_window: None,
                     max_output_tokens: None,
                 },
                 ProviderModel {
                     provider: "github-copilot".into(),
                     model: "gpt-4.1".into(),
                     display_name: "gpt-4.1".into(),
+                    context_window: None,
                     max_output_tokens: None,
                 },
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_models_preserve_account_context_length() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let bytes = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("GET /models HTTP/1.1"));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer moonshot-secret"));
+            let body =
+                r#"{"data":[{"id":"kimi-k3","display_name":"Kimi K3","context_length":1048576}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let store = MemoryCredentialStore::default();
+        save_provider_api_key(&store, "moonshot", "moonshot-secret").unwrap();
+        let descriptor = provider::provider_descriptor("moonshot").unwrap();
+
+        let models = fetch_openai_compatible_models(descriptor, &api_base, &store)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            models,
+            vec![ProviderModel {
+                provider: "moonshot".into(),
+                model: "kimi-k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: Some(1_048_576),
+                max_output_tokens: None,
+            }]
+        );
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -655,13 +714,14 @@ mod tests {
                 provider: "github-copilot".into(),
                 model: "gpt-4.1".into(),
                 display_name: "gpt-4.1".into(),
+                context_window: None,
                 max_output_tokens: None,
             }]
         );
     }
 
     #[test]
-    fn provider_model_cache_replaces_one_provider_and_preserves_max_tokens() {
+    fn provider_model_cache_replaces_one_provider_and_preserves_capabilities() {
         let cache_dir = unique_test_cache_dir("replace");
         with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
             replace_cached_provider_models(
@@ -670,6 +730,7 @@ mod tests {
                     provider: "openai".into(),
                     model: "gpt-5.5".into(),
                     display_name: "gpt-5.5".into(),
+                    context_window: None,
                     max_output_tokens: None,
                 }],
             )
@@ -681,12 +742,14 @@ mod tests {
                         provider: "anthropic".into(),
                         model: "claude-b".into(),
                         display_name: "Claude B".into(),
+                        context_window: None,
                         max_output_tokens: Some(64_000),
                     },
                     ProviderModel {
                         provider: "anthropic".into(),
                         model: "claude-a".into(),
                         display_name: "Claude A".into(),
+                        context_window: None,
                         max_output_tokens: Some(32_000),
                     },
                 ],
@@ -698,6 +761,7 @@ mod tests {
                     provider: "anthropic".into(),
                     model: "claude-c".into(),
                     display_name: "Claude C".into(),
+                    context_window: Some(200_000),
                     max_output_tokens: Some(16_000),
                 }],
             )
@@ -709,6 +773,7 @@ mod tests {
                     provider: "openai".into(),
                     model: "gpt-5.5".into(),
                     display_name: "gpt-5.5".into(),
+                    context_window: None,
                     max_output_tokens: None,
                 }]
             );
@@ -718,6 +783,7 @@ mod tests {
                     provider: "anthropic".into(),
                     model: "claude-c".into(),
                     display_name: "Claude C".into(),
+                    context_window: Some(200_000),
                     max_output_tokens: Some(16_000),
                 }]
             );
@@ -756,6 +822,7 @@ mod tests {
                     provider: "anthropic".into(),
                     model: "claude-sonnet".into(),
                     display_name: "Claude Sonnet".into(),
+                    context_window: None,
                     max_output_tokens: Some(64_000),
                 }],
             )

@@ -31,6 +31,7 @@ fn with_cached_provider_models<T>(provider: &str, models: Vec<&str>, f: impl FnO
             provider: provider.into(),
             model: model.into(),
             display_name: model.into(),
+            context_window: None,
             max_output_tokens: None,
         })
         .collect::<Vec<_>>();

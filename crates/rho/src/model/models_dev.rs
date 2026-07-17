@@ -120,12 +120,34 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
-    model_metadata_from_api(api, upstream_provider(provider), model)
+    model_metadata_from_api(
+        api,
+        upstream_provider(provider),
+        upstream_model(provider, model),
+    )
 }
 
 fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
     let metadata = apply_builtin_overrides(provider, model, metadata);
+    let metadata = apply_provider_capabilities(provider, model, metadata);
     apply_local_overrides(provider, model, metadata)
+}
+
+fn apply_provider_capabilities(
+    provider: &str,
+    model: &str,
+    mut metadata: ModelMetadata,
+) -> ModelMetadata {
+    let context_window = super::provider_models::cached_provider_model(provider, model)
+        .and_then(|model| model.context_window)
+        .or_else(|| {
+            crate::provider::provider_descriptor(provider)
+                .and_then(|descriptor| descriptor.effective_context_fallback(model))
+        });
+    if let Some(context_window) = context_window {
+        metadata.effective_context_window = Some(context_window);
+    }
+    metadata
 }
 
 fn override_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -184,12 +206,13 @@ const MODEL_METADATA_CACHE_VERSION: i64 = 3;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     let upstream_provider = upstream_provider(provider);
+    let upstream_model = upstream_model(provider, model);
     let connection = open_models_dev_cache().ok()?;
     let (contents, cache_version): (String, i64) = connection
         .query_row(
             "select metadata_json, cache_version from model_metadata
              where provider = ?1 and model = ?2",
-            params![upstream_provider, model],
+            params![upstream_provider, upstream_model],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .ok()?;
@@ -203,7 +226,7 @@ fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     // immediately without waiting for a live network refresh.
     if let Some(refreshed) = read_cached_api()
         .as_ref()
-        .and_then(|api| model_metadata_from_api(api, upstream_provider, model))
+        .and_then(|api| model_metadata_from_api(api, upstream_provider, upstream_model))
     {
         if refreshed.reasoning_capabilities_known {
             write_cached_upstream_model_metadata(provider, model, &refreshed);
@@ -224,6 +247,7 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
     let upstream_provider = upstream_provider(provider);
+    let upstream_model = upstream_model(provider, model);
     let Ok(connection) = open_models_dev_cache() else {
         return;
     };
@@ -239,7 +263,7 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
            cache_version = excluded.cache_version",
         params![
             upstream_provider,
-            model,
+            upstream_model,
             contents,
             MODEL_METADATA_CACHE_VERSION
         ],
@@ -273,6 +297,12 @@ fn upstream_provider(provider: &str) -> &str {
     crate::provider::provider_descriptor(provider)
         .map(|descriptor| descriptor.metadata_upstream)
         .unwrap_or(provider)
+}
+
+fn upstream_model<'a>(provider: &str, model: &'a str) -> &'a str {
+    crate::provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.metadata_model(model))
+        .unwrap_or(model)
 }
 
 fn models_dev_sqlite_path() -> PathBuf {

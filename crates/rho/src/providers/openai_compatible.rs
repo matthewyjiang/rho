@@ -1,6 +1,11 @@
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
+#[path = "openai_compatible/moonshot.rs"]
+mod moonshot;
+
+pub(crate) use moonshot::OpenAiCompatibleDialect;
+
 use crate::{
     auth::kimi_token::KimiAuthManager,
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
@@ -21,6 +26,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     client: reqwest::Client,
     provider: &'static str,
     model: String,
+    dialect: OpenAiCompatibleDialect,
     auth: CompatibleAuth,
     api_base: String,
 }
@@ -30,6 +36,7 @@ impl OpenAiCompatibleProvider {
         client: reqwest::Client,
         provider: &'static str,
         model: String,
+        dialect: OpenAiCompatibleDialect,
         auth: CompatibleAuth,
         api_base: String,
     ) -> Self {
@@ -37,6 +44,7 @@ impl OpenAiCompatibleProvider {
             client,
             provider,
             model,
+            dialect,
             auth,
             api_base,
         }
@@ -115,6 +123,7 @@ impl OpenAiCompatibleProvider {
             .iter()
             .cloned()
             .map(to_openai_tool)
+            .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
         Ok(ChatRequest {
@@ -127,6 +136,9 @@ impl OpenAiCompatibleProvider {
                 include_usage: true,
             }),
             reasoning_effort: None,
+            thinking: self
+                .dialect
+                .thinking(self.provider, &self.model, request.reasoning_level),
         })
     }
 

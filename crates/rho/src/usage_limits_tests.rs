@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::credentials::{save_xai_tokens, CredentialResult};
+use crate::credentials::{save_kimi_tokens, save_xai_tokens, CredentialResult};
 
 #[derive(Default)]
 struct TestStore {
@@ -57,19 +57,19 @@ impl UsageLimitsSource for ConcurrentSource {
 }
 
 #[tokio::test]
-async fn fetches_connected_providers_concurrently_in_stable_order() {
+async fn fetches_connected_providers_concurrently_in_alphabetical_order() {
     let barrier = Arc::new(Barrier::new(2));
     let first = ConcurrentSource {
         barrier: barrier.clone(),
         limits: ProviderUsageLimits {
-            provider: "first".into(),
+            provider: "Zulu".into(),
             windows: Vec::new(),
         },
     };
     let second = ConcurrentSource {
         barrier,
         limits: ProviderUsageLimits {
-            provider: "second".into(),
+            provider: "alpha".into(),
             windows: Vec::new(),
         },
     };
@@ -85,7 +85,7 @@ async fn fetches_connected_providers_concurrently_in_stable_order() {
     assert_eq!(
         limits,
         ProviderLimits {
-            providers: vec![first.limits, second.limits],
+            providers: vec![second.limits, first.limits],
         }
     );
     assert!(errors.is_empty());
@@ -270,6 +270,125 @@ async fn codex_source_sends_oauth_and_account_headers() {
                 label: "5-hour".into(),
                 remaining_percent: 75.0,
                 resets_at_unix: 1_800_000_000,
+            }],
+        }
+    );
+}
+
+#[test]
+fn parses_kimi_weekly_and_rolling_windows() {
+    let payload: KimiUsagePayload = serde_json::from_value(serde_json::json!({
+        "usage": {
+            "limit": "100",
+            "remaining": "75",
+            "resetTime": "2026-02-11T17:32:50.757941Z"
+        },
+        "limits": [{
+            "window": {
+                "duration": 300,
+                "timeUnit": "TIME_UNIT_MINUTE"
+            },
+            "detail": {
+                "limit": "200",
+                "used": "139",
+                "resetTime": "2026-02-07T12:32:50.757941Z"
+            }
+        }]
+    }))
+    .unwrap();
+
+    assert_eq!(
+        payload.windows(),
+        vec![
+            UsageLimitWindow {
+                label: "5-hour".into(),
+                remaining_percent: 30.5,
+                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-07T12:32:50.757941Z")
+                    .unwrap()
+                    .timestamp(),
+            },
+            UsageLimitWindow {
+                label: "Weekly".into(),
+                remaining_percent: 75.0,
+                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
+                    .unwrap()
+                    .timestamp(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn blank_kimi_env_token_falls_back_to_stored_oauth_tokens() {
+    let store = TestStore::default();
+    let tokens = KimiTokens {
+        access_token: "stored-access".into(),
+        refresh_token: Some("refresh".into()),
+        expires_at_unix: None,
+        scope: "kimi:code".into(),
+        token_type: "Bearer".into(),
+        expires_in: None,
+    };
+    save_kimi_tokens(&store, &tokens).unwrap();
+
+    assert_eq!(
+        KimiUsageLimitsSource::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        Some((tokens, KimiAuthSource::Store))
+    );
+}
+
+#[tokio::test]
+async fn kimi_source_sends_oauth_header() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/usages", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let count = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+        assert!(request.contains("authorization: bearer access-token"));
+        assert!(request.contains("accept: application/json"));
+        let body = r#"{"usage":{"limit":"100","remaining":"75","resetTime":"2026-02-11T17:32:50.757941Z"},"limits":[]}"#;
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let source = KimiUsageLimitsSource::with_endpoint(endpoint);
+    let limits = source
+        .fetch_with_tokens(
+            &TestStore::default(),
+            KimiTokens {
+                access_token: "access-token".into(),
+                refresh_token: None,
+                expires_at_unix: None,
+                scope: "kimi:code".into(),
+                token_type: "Bearer".into(),
+                expires_in: None,
+            },
+            KimiAuthSource::Store,
+        )
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    assert_eq!(
+        limits,
+        ProviderUsageLimits {
+            provider: "Kimi Code".into(),
+            windows: vec![UsageLimitWindow {
+                label: "Weekly".into(),
+                remaining_percent: 75.0,
+                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
+                    .unwrap()
+                    .timestamp(),
             }],
         }
     );

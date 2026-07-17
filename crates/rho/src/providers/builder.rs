@@ -14,7 +14,7 @@ use crate::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
         openai::{auth::Auth, OpenAiProvider},
-        openai_compatible::{CompatibleAuth, OpenAiCompatibleProvider},
+        openai_compatible::{CompatibleAuth, OpenAiCompatibleDialect, OpenAiCompatibleProvider},
         xai::XaiProvider,
     },
     reasoning::ReasoningLevel,
@@ -207,6 +207,7 @@ impl ProviderBuilder {
                     client,
                     "moonshot",
                     self.options.model,
+                    OpenAiCompatibleDialect::Moonshot,
                     auth,
                     endpoint.unwrap_or_else(|| MOONSHOT_API_BASE.into()),
                 )))
@@ -216,6 +217,7 @@ impl ProviderBuilder {
                     client,
                     "kimi-code",
                     self.options.model,
+                    OpenAiCompatibleDialect::Moonshot,
                     auth,
                     endpoint.unwrap_or_else(|| KIMI_CODE_API_BASE.into()),
                 )))

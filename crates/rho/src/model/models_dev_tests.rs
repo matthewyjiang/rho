@@ -1,6 +1,82 @@
 use super::*;
+use crate::model::provider_models::{
+    replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+    ProviderModel,
+};
 use pretty_assertions::assert_eq;
 use serde_json::json;
+
+#[test]
+fn kimi_code_resolves_k3_models_dev_identity() {
+    let api = json!({
+        "moonshotai": {
+            "models": {
+                "kimi-k3": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "toggle"},
+                        {"type": "effort", "values": ["max"]}
+                    ],
+                    "limit": {"context": 1_048_576, "output": 131_072}
+                }
+            }
+        }
+    });
+
+    let metadata = upstream_metadata_from_api(&api, "kimi-code", "k3").unwrap();
+
+    assert_eq!(metadata.advertised_context_window, Some(1_048_576));
+    assert_eq!(metadata.effective_context_window, Some(1_048_576));
+    assert_eq!(metadata.max_output_tokens, Some(131_072));
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+    );
+    assert!(metadata.reasoning_capabilities_known);
+}
+
+#[test]
+fn provider_context_length_overrides_generic_effective_context() {
+    let cache_dir = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache_dir.path().to_path_buf(), || {
+        let fallback = apply_overrides(
+            "kimi-code",
+            "k3",
+            ModelMetadata {
+                advertised_context_window: Some(1_048_576),
+                effective_context_window: Some(1_048_576),
+                ..ModelMetadata::default()
+            },
+        );
+        assert_eq!(fallback.effective_context_window, Some(262_144));
+
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: Some(262_144),
+                max_output_tokens: None,
+            }],
+        )
+        .unwrap();
+
+        let metadata = apply_overrides(
+            "kimi-code",
+            "k3",
+            ModelMetadata {
+                advertised_context_window: Some(1_048_576),
+                effective_context_window: Some(1_048_576),
+                ..ModelMetadata::default()
+            },
+        );
+
+        assert_eq!(metadata.advertised_context_window, Some(1_048_576));
+        assert_eq!(metadata.effective_context_window, Some(262_144));
+        assert_eq!(metadata.display_context_window(), Some(262_144));
+    });
+}
 
 #[test]
 fn parses_reasoning_effort_options() {

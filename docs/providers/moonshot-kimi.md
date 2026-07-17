@@ -7,7 +7,7 @@ Rho supports Moonshot's OpenAI-compatible Chat Completions API through two expli
 | `moonshot` | `moonshot-api-key` | `https://api.moonshot.ai/v1` |
 | `kimi-code` | `kimi-oauth` | `https://api.kimi.com/coding/v1` |
 
-Both providers send turns to `/chat/completions`. Their model lists can be updated with `/refresh-model-list moonshot` and `/refresh-model-list kimi-code` after authentication.
+Both providers send turns to `/chat/completions`. Their model lists can be updated with `/refresh-model-list moonshot` and `/refresh-model-list kimi-code` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
 
 ## Moonshot API key
 
@@ -47,10 +47,12 @@ Select a model after login:
 /model kimi-code/<model-id>
 ```
 
+For Kimi K3, Rho uses the authenticated `context_length` returned for the current account. If that field is unavailable, Rho uses a conservative 256K effective window while retaining the model's advertised 1M maximum. K3 reasoning choices follow models.dev capabilities and currently expose thinking off or max; Rho sends these through Kimi's native `thinking.type` field.
+
 For automation after a prior login or with `KIMI_ACCESS_TOKEN`:
 
 ```sh
 rho --provider kimi-code --auth kimi-oauth --model <model-id>
 ```
 
-Remove stored OAuth tokens with `/logout kimi-code`. An active `KIMI_ACCESS_TOKEN` override remains available after logout.
+Use `/limits` in the TUI to inspect the weekly and rolling usage windows reported by Kimi Code. Remove stored OAuth tokens with `/logout kimi-code`. An active `KIMI_ACCESS_TOKEN` override remains available after logout.
