@@ -226,59 +226,43 @@ fn thinking_config(
     ))
 }
 
-#[derive(Clone, Copy, Default)]
-struct ModelCapabilities {
-    adaptive_thinking: bool,
-    mandatory_adaptive_thinking: bool,
-    disabled_thinking: bool,
-    xhigh_effort: bool,
-}
+const ADAPTIVE: u8 = 1 << 0;
+const MANDATORY: u8 = 1 << 1;
+const DISABLED: u8 = 1 << 2;
+const XHIGH: u8 = 1 << 3;
 
-const fn capabilities(
-    adaptive_thinking: bool,
-    mandatory_adaptive_thinking: bool,
-    disabled_thinking: bool,
-    xhigh_effort: bool,
-) -> ModelCapabilities {
-    ModelCapabilities {
-        adaptive_thinking,
-        mandatory_adaptive_thinking,
-        disabled_thinking,
-        xhigh_effort,
-    }
-}
-
-fn model_capabilities(model: &str) -> ModelCapabilities {
-    const TABLE: &[(&str, ModelCapabilities)] = &[
-        ("claude-opus-4-6", capabilities(true, false, false, false)),
-        ("claude-opus-4-7", capabilities(true, false, false, true)),
-        ("claude-opus-4-8", capabilities(true, false, false, true)),
-        ("claude-sonnet-4-6", capabilities(true, false, false, false)),
-        ("claude-sonnet-5", capabilities(true, false, true, true)),
-        ("claude-fable-5", capabilities(true, true, false, true)),
-        ("claude-mythos-5", capabilities(true, true, false, true)),
-        (
-            "claude-mythos-preview",
-            capabilities(true, true, false, false),
-        ),
+fn model_capabilities(model: &str) -> u8 {
+    const TABLE: &[(&str, u8)] = &[
+        ("claude-opus-4-6", ADAPTIVE),
+        ("claude-opus-4-7", ADAPTIVE | XHIGH),
+        ("claude-opus-4-8", ADAPTIVE | XHIGH),
+        ("claude-sonnet-4-6", ADAPTIVE),
+        ("claude-sonnet-5", ADAPTIVE | DISABLED | XHIGH),
+        ("claude-fable-5", ADAPTIVE | MANDATORY | XHIGH),
+        ("claude-mythos-5", ADAPTIVE | MANDATORY | XHIGH),
+        ("claude-mythos-preview", ADAPTIVE | MANDATORY),
     ];
     TABLE
         .iter()
         .find(|(prefix, _)| model_matches(model, prefix))
-        .map(|(_, caps)| *caps)
-        .unwrap_or_default()
+        .map(|(_, flags)| *flags)
+        .unwrap_or(0)
+}
+
+fn has_capability(model: &str, capability: u8) -> bool {
+    model_capabilities(model) & capability != 0
 }
 
 fn supports_adaptive_thinking(model: &str) -> bool {
-    model_capabilities(model).adaptive_thinking
+    has_capability(model, ADAPTIVE)
 }
 
 fn adaptive_thinking_is_mandatory(model: &str) -> bool {
-    model_capabilities(model).mandatory_adaptive_thinking
+    has_capability(model, MANDATORY)
 }
 
 fn supports_disabled_thinking(model: &str) -> bool {
-    model_capabilities(model).disabled_thinking
+    has_capability(model, DISABLED)
 }
 
 fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
@@ -293,7 +277,7 @@ fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
 }
 
 fn supports_xhigh_effort(model: &str) -> bool {
-    model_capabilities(model).xhigh_effort
+    has_capability(model, XHIGH)
 }
 
 fn model_matches(model: &str, prefix: &str) -> bool {
