@@ -46,7 +46,7 @@ Use structured tool calls when available. Do not write tool calls in prose.
 
 Do not invent tool results. When done, answer directly.
 
-Mermaid rendering applies only to closed `mermaid` fenced code blocks containing valid Mermaid source. The interactive transcript also renders CommonMark.
+If you produce a Mermaid diagram, always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render. The interactive transcript also renders CommonMark.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "agent") {
@@ -283,13 +283,15 @@ mod tests {
     }
 
     #[test]
-    fn describes_the_mermaid_fence_requirement_without_encouraging_diagrams() {
+    fn instructs_models_to_fence_mermaid_without_encouraging_diagrams() {
         let project = TempDir::new().unwrap();
 
         let prompt = system_prompt_with_home(&[], project.path(), None).text;
 
-        assert!(prompt.contains("closed `mermaid` fenced code blocks"));
-        assert!(prompt.contains("valid Mermaid source"));
+        assert!(prompt.contains("If you produce a Mermaid diagram"));
+        assert!(prompt.contains("always wrap valid Mermaid source"));
+        assert!(prompt.contains("closed `mermaid` fenced code block"));
+        assert!(prompt.contains("Bare Mermaid source does not render"));
         assert!(!prompt.contains("use Mermaid"));
         assert!(!prompt.contains("consider a diagram"));
     }
