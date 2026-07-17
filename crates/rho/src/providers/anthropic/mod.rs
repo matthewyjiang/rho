@@ -226,27 +226,49 @@ fn thinking_config(
     ))
 }
 
-fn supports_adaptive_thinking(model: &str) -> bool {
-    const MODELS: &[&str] = &[
-        "claude-opus-4-6",
-        "claude-opus-4-7",
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
-        "claude-sonnet-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-        "claude-mythos-preview",
+const ADAPTIVE: u8 = 1 << 0;
+const MANDATORY: u8 = 1 << 1;
+const DISABLED: u8 = 1 << 2;
+const XHIGH: u8 = 1 << 3;
+
+#[derive(Clone, Copy)]
+struct ModelCapabilities(u8);
+
+impl ModelCapabilities {
+    fn has(self, capability: u8) -> bool {
+        self.0 & capability != 0
+    }
+}
+
+fn model_capabilities(model: &str) -> ModelCapabilities {
+    const TABLE: &[(&str, u8)] = &[
+        ("claude-opus-4-6", ADAPTIVE),
+        ("claude-opus-4-7", ADAPTIVE | XHIGH),
+        ("claude-opus-4-8", ADAPTIVE | XHIGH),
+        ("claude-sonnet-4-6", ADAPTIVE),
+        ("claude-sonnet-5", ADAPTIVE | DISABLED | XHIGH),
+        ("claude-fable-5", ADAPTIVE | MANDATORY | XHIGH),
+        ("claude-mythos-5", ADAPTIVE | MANDATORY | XHIGH),
+        ("claude-mythos-preview", ADAPTIVE | MANDATORY),
     ];
-    MODELS.iter().any(|prefix| model_matches(model, prefix))
+    let flags = TABLE
+        .iter()
+        .find(|(prefix, _)| model_matches(model, prefix))
+        .map(|(_, flags)| *flags)
+        .unwrap_or(0);
+    ModelCapabilities(flags)
+}
+
+fn supports_adaptive_thinking(model: &str) -> bool {
+    model_capabilities(model).has(ADAPTIVE)
 }
 
 fn adaptive_thinking_is_mandatory(model: &str) -> bool {
-    const MODELS: &[&str] = &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"];
-    MODELS.iter().any(|prefix| model_matches(model, prefix))
+    model_capabilities(model).has(MANDATORY)
 }
 
 fn supports_disabled_thinking(model: &str) -> bool {
-    model_matches(model, "claude-sonnet-5")
+    model_capabilities(model).has(DISABLED)
 }
 
 fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
@@ -261,14 +283,7 @@ fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
 }
 
 fn supports_xhigh_effort(model: &str) -> bool {
-    const MODELS: &[&str] = &[
-        "claude-opus-4-7",
-        "claude-opus-4-8",
-        "claude-sonnet-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-    ];
-    MODELS.iter().any(|prefix| model_matches(model, prefix))
+    model_capabilities(model).has(XHIGH)
 }
 
 fn model_matches(model: &str, prefix: &str) -> bool {

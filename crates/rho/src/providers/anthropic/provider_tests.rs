@@ -238,3 +238,39 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
     assert!(schema["properties"]["value"].get("anyOf").is_some());
     assert_eq!(schema["properties"]["path"]["type"], "string");
 }
+
+#[test]
+fn model_capability_predicates_match_the_known_table() {
+    let cases = [
+        ("claude-opus-4-6", true, false, false, false),
+        ("claude-opus-4-7", true, false, false, true),
+        ("claude-opus-4-8", true, false, false, true),
+        ("claude-sonnet-4-6", true, false, false, false),
+        ("claude-sonnet-5", true, false, true, true),
+        ("claude-fable-5", true, true, false, true),
+        ("claude-mythos-5", true, true, false, true),
+        ("claude-mythos-preview", true, true, false, false),
+        ("claude-haiku-4-5-20251001", false, false, false, false),
+        ("gpt-5", false, false, false, false),
+    ];
+    for (model, adaptive, mandatory, disabled, xhigh) in cases {
+        assert_eq!(
+            supports_adaptive_thinking(model),
+            adaptive,
+            "{model} adaptive"
+        );
+        assert_eq!(
+            adaptive_thinking_is_mandatory(model),
+            mandatory,
+            "{model} mandatory"
+        );
+        assert_eq!(
+            supports_disabled_thinking(model),
+            disabled,
+            "{model} disabled"
+        );
+        assert_eq!(supports_xhigh_effort(model), xhigh, "{model} xhigh");
+    }
+    assert!(adaptive_thinking_is_mandatory("claude-fable-5-20260101"));
+    assert!(supports_xhigh_effort("claude-opus-4-8-20260101"));
+}
