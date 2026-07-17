@@ -263,15 +263,6 @@ pub enum ModelEvent {
         data: Value,
     },
     Usage(ModelUsage),
-    /// A physical provider attempt failed before the provider retried internally.
-    ///
-    /// `usage` contains any usage not already emitted through [`Self::Usage`]
-    /// for the failed attempt. Consumers reset their per-attempt usage after this event.
-    #[doc(hidden)]
-    RequestAttemptFailed {
-        kind: crate::ProviderErrorKind,
-        usage: ModelUsage,
-    },
 }
 
 /// Source used to calculate the current context consumption.

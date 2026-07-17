@@ -68,10 +68,12 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
-            result = self.stream_inner(request, on_event) => result,
+            result = self.stream_inner(request, on_event, on_request_event) => result,
             () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }
@@ -80,9 +82,11 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
-        let response = self.send(&body, Some(on_event)).await?;
+        let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -149,7 +153,10 @@ impl OpenAiCompatibleProvider {
     async fn send(
         &self,
         body: &ChatRequest,
-        on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
     ) -> Result<reqwest::Response, ModelError> {
         let token = match &self.auth {
             CompatibleAuth::ApiKey(key) => key.clone(),
@@ -165,11 +172,13 @@ impl OpenAiCompatibleProvider {
         let Some(refreshed) = auth.force_refresh(&token).await? else {
             return Ok(response);
         };
-        if let Some(on_event) = on_event {
-            on_event(ModelEvent::RequestAttemptFailed {
-                kind: rho_sdk::ProviderErrorKind::Authentication,
-                usage: ModelUsage::default(),
-            })?;
+        if let Some(on_request_event) = on_request_event {
+            on_request_event(
+                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                    kind: rho_sdk::ProviderErrorKind::Authentication,
+                    usage: ModelUsage::default(),
+                },
+            )?;
         }
         self.send_with_token(body, &refreshed).await
     }

@@ -10,7 +10,8 @@ use super::*;
 use crate::{
     model::{ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     provider::{
-        ModelProvider, ProviderEventSender, ProviderFuture, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderEventSender, ProviderFuture, ProviderRequestEvent,
+        ProviderStreamEvent, ScriptedProvider, ScriptedTurn,
     },
     Rho, RunEvent, SessionId, SessionOptions, UserInput, Workspace,
 };
@@ -286,13 +287,13 @@ async fn records_provider_internal_retries_as_distinct_physical_attempts() {
     };
     let provider = ScriptedProvider::new(
         identity(),
-        [ScriptedTurn::streaming(
+        [ScriptedTurn::streaming_with_request_events(
             vec![
-                ModelEvent::RequestAttemptFailed {
+                ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind: ProviderErrorKind::Unavailable,
                     usage: ModelUsage::default(),
-                },
-                ModelEvent::Usage(final_usage.clone()),
+                }),
+                ProviderStreamEvent::Model(ModelEvent::Usage(final_usage.clone())),
             ],
             ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
         )],

@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use rho_sdk::{
     model::{ModelEvent, ModelRequest, ModelResponse, ModelUsage},
-    provider::{provider_event_channel, ModelProvider},
+    provider::{provider_event_channel, ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
     ProviderError, ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecording,
 };
@@ -23,22 +23,26 @@ pub(crate) async fn send_recorded(
     let collect_usage = async {
         let mut usage = ModelUsage::default();
         let mut failed_attempts = Vec::new();
-        while let Some(event) = receiver.recv().await {
+        while let Some(event) = receiver.recv_stream_event().await {
             match event {
-                ModelEvent::Usage(partial) => usage = usage.saturating_add(&partial),
-                ModelEvent::RequestAttemptFailed {
+                ProviderStreamEvent::Model(ModelEvent::Usage(partial)) => {
+                    usage = usage.saturating_add(&partial);
+                }
+                ProviderStreamEvent::Model(
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. }
+                    | ModelEvent::ProviderContext { .. },
+                ) => {}
+                ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind,
                     usage: attempt_usage,
-                } => {
+                }) => {
                     failed_attempts.push((kind, usage.saturating_add(&attempt_usage)));
                     usage = ModelUsage::default();
                 }
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. }
-                | ModelEvent::ProviderContext { .. } => {}
             }
         }
         (usage, failed_attempts)

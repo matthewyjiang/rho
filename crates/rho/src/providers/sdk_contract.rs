@@ -13,7 +13,7 @@ use std::{
 
 use rho_sdk::{
     model::{ModelEvent, ModelResponse},
-    provider::ProviderEventSender,
+    provider::{ProviderEventSender, ProviderRequestEvent},
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
 };
 use tokio::sync::Notify;
@@ -163,8 +163,16 @@ fn sanitize_diagnostic(value: &str) -> String {
     diagnostic
 }
 
-/// Shared queue used by [`callback_event_sink`] and [`drive_callback_stream`].
-pub type CallbackEventQueue = Arc<Mutex<VecDeque<ModelEvent>>>;
+/// Event buffered by the application callback adapter.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum CallbackEvent {
+    Model(ModelEvent),
+    Request(ProviderRequestEvent),
+}
+
+/// Shared queue used by the callback sinks and [`drive_callback_stream`].
+pub type CallbackEventQueue = Arc<Mutex<VecDeque<CallbackEvent>>>;
 
 /// Builds the synchronous callback used by application stream transports.
 ///
@@ -183,7 +191,26 @@ pub fn callback_event_sink(
         pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push_back(event);
+            .push_back(CallbackEvent::Model(event));
+        notify.notify_one();
+        Ok(())
+    }
+}
+
+/// Builds the synchronous physical request callback used by application transports.
+pub fn callback_request_event_sink(
+    cancellation: CancellationToken,
+    pending: CallbackEventQueue,
+    notify: Arc<Notify>,
+) -> impl FnMut(ProviderRequestEvent) -> Result<(), ModelError> + Send {
+    move |event| {
+        if cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_back(CallbackEvent::Request(event));
         notify.notify_one();
         Ok(())
     }
@@ -213,7 +240,15 @@ where
             let Some(event) = next else {
                 break;
             };
-            events.send(event).await?;
+            match event {
+                CallbackEvent::Model(event) => events.send(event).await?,
+                CallbackEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
+                    kind,
+                    usage,
+                }) => {
+                    events.send_request_attempt_failed(kind, usage).await?;
+                }
+            }
         }
 
         if let Some(result) = provider_result.take() {
@@ -287,7 +322,13 @@ macro_rules! impl_sdk_model_provider {
                         ::std::sync::Arc::clone(&pending),
                         ::std::sync::Arc::clone(&notify),
                     );
-                    let provider = self.stream_turn(request, &mut on_event);
+                    let mut on_request_event =
+                        $crate::providers::sdk_contract::callback_request_event_sink(
+                            cancellation.clone(),
+                            ::std::sync::Arc::clone(&pending),
+                            ::std::sync::Arc::clone(&notify),
+                        );
+                    let provider = self.stream_turn(request, &mut on_event, &mut on_request_event);
                     $crate::providers::sdk_contract::drive_callback_stream(
                         cancellation,
                         events,

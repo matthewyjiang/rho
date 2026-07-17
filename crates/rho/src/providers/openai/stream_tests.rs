@@ -62,6 +62,7 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
                 events.push(event);
                 Ok(())
             },
+            &mut |_| Ok(()),
         )
         .await
         .unwrap();
@@ -144,6 +145,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     };
     let first_messages = [Message::user_text("first")];
     let mut on_first_event = |_| Ok(());
+    let mut on_first_request_event = |_| Ok(());
     let first_turn = provider.stream_turn(
         ModelRequest {
             messages: &first_messages,
@@ -153,6 +155,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             prompt_cache_key: None,
         },
         &mut on_first_event,
+        &mut on_first_request_event,
     );
     let (result, ()) = tokio::join!(first_turn, cancel_after_request);
     assert!(matches!(result, Err(ModelError::Interrupted)));
@@ -166,6 +169,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
+            &mut |_| Ok(()),
             &mut |_| Ok(()),
         )
         .await

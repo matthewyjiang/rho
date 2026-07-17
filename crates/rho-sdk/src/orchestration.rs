@@ -509,14 +509,14 @@ async fn provider_turn(
     let mut future = provider.send_turn_stream(request, provider_events);
     let identity = provider.identity();
     let mut capture = StreamCapture::default();
-    let mut events_open = true;
+    let mut stream_open = true;
     let mut commands_open = true;
     let result = loop {
         tokio::select! {
             result = &mut future => break result,
-            event = receiver.recv(), if events_open => {
+            event = receiver.recv_stream_event(), if stream_open => {
                 match event {
-                    Some(event) => {
+                    Some(crate::provider::ProviderStreamEvent::Model(event)) => {
                         if let Err(error) = handle_provider_event(
                             event,
                             &identity,
@@ -536,7 +536,17 @@ async fn provider_turn(
                             return Err(RequestFailure { error, capture });
                         }
                     }
-                    None => events_open = false,
+                    Some(crate::provider::ProviderStreamEvent::Request(event)) => {
+                        if let Err(error) = handle_provider_request_event(
+                            event,
+                            &mut capture,
+                            control.events,
+                            control.cancellation,
+                        ).await {
+                            return Err(RequestFailure { error, capture });
+                        }
+                    }
+                    None => stream_open = false,
                 }
             }
             command = control.commands.recv(), if commands_open => {
@@ -564,17 +574,30 @@ async fn provider_turn(
             }
         }
     };
-    while let Some(event) = receiver.try_recv() {
-        if let Err(error) = handle_provider_event(
-            event,
-            &identity,
-            accumulated_usage,
-            &mut capture,
-            control.events,
-            control.cancellation,
-        )
-        .await
-        {
+    while let Some(event) = receiver.try_recv_stream_event() {
+        let result = match event {
+            crate::provider::ProviderStreamEvent::Model(event) => {
+                handle_provider_event(
+                    event,
+                    &identity,
+                    accumulated_usage,
+                    &mut capture,
+                    control.events,
+                    control.cancellation,
+                )
+                .await
+            }
+            crate::provider::ProviderStreamEvent::Request(event) => {
+                handle_provider_request_event(
+                    event,
+                    &mut capture,
+                    control.events,
+                    control.cancellation,
+                )
+                .await
+            }
+        };
+        if let Err(error) = result {
             if control.cancellation.is_cancelled() {
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
             }
@@ -623,6 +646,28 @@ fn drain_commands(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut Stee
     while let Ok(command) = commands.try_recv() {
         accept_non_tool_command(command, steering);
     }
+}
+
+async fn handle_provider_request_event(
+    event: crate::provider::ProviderRequestEvent,
+    capture: &mut StreamCapture,
+    events: &mpsc::Sender<RunEvent>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    let crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } = event;
+    let attempt_usage = capture.usage.saturating_add(&usage);
+    capture.usage = ModelUsage::default();
+    capture.failed_attempts.push((kind, attempt_usage));
+    emit(
+        events,
+        cancellation,
+        RunEvent::ProviderActivity {
+            kind: "provider_request_retry".into(),
+            detail: "retrying after a failed physical provider request".into(),
+        },
+    )
+    .await
+    .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
 async fn handle_provider_event(
@@ -704,15 +749,6 @@ fn capture_provider_event(
             });
             RunEvent::ProviderContextUpdated { kind }
         }
-        ModelEvent::RequestAttemptFailed { kind, usage } => {
-            let attempt_usage = capture.usage.saturating_add(&usage);
-            capture.usage = ModelUsage::default();
-            capture.failed_attempts.push((kind, attempt_usage));
-            RunEvent::ProviderActivity {
-                kind: "provider_request_retry".into(),
-                detail: "retrying after a failed physical provider request".into(),
-            }
-        }
         ModelEvent::Usage(usage) => {
             // Providers may emit partial usage across multiple stream events
             // (for example Anthropic input/cache at message_start and later
@@ -731,13 +767,13 @@ async fn drain_cooperative_provider_on_cancellation(
     identity: &crate::model::ModelIdentity,
     capture: &mut StreamCapture,
 ) {
-    let mut events_open = true;
+    let mut stream_open = true;
     loop {
         tokio::select! {
             biased;
-            event = receiver.recv(), if events_open => {
+            event = receiver.recv_stream_event(), if stream_open => {
                 match event {
-                    Some(event) => {
+                    Some(crate::provider::ProviderStreamEvent::Model(event)) => {
                         let _ = capture_provider_event(
                             event,
                             identity,
@@ -745,7 +781,14 @@ async fn drain_cooperative_provider_on_cancellation(
                             capture,
                         );
                     }
-                    None => events_open = false,
+                    Some(crate::provider::ProviderStreamEvent::Request(
+                        crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage }
+                    )) => {
+                        let attempt_usage = capture.usage.saturating_add(&usage);
+                        capture.usage = ModelUsage::default();
+                        capture.failed_attempts.push((kind, attempt_usage));
+                    }
+                    None => stream_open = false,
                 }
             }
             _ = &mut *future => break,
@@ -758,10 +801,21 @@ fn drain_cancelled_provider_events(
     identity: &crate::model::ModelIdentity,
     capture: &mut StreamCapture,
 ) {
-    while let Some(event) = receiver.try_recv() {
-        // Cancellation-sensitive host publication must not prevent capture of
-        // events the provider had already queued before its future was dropped.
-        let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
+    while let Some(event) = receiver.try_recv_stream_event() {
+        match event {
+            crate::provider::ProviderStreamEvent::Model(event) => {
+                // Cancellation-sensitive host publication must not prevent capture of
+                // events the provider had already queued before its future was dropped.
+                let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
+            }
+            crate::provider::ProviderStreamEvent::Request(
+                crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage },
+            ) => {
+                let attempt_usage = capture.usage.saturating_add(&usage);
+                capture.usage = ModelUsage::default();
+                capture.failed_attempts.push((kind, attempt_usage));
+            }
+        }
     }
 }
 

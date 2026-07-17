@@ -111,6 +111,8 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
@@ -121,8 +123,14 @@ impl OpenAiProvider {
                     }
                     Auth::Codex { tokens, source } => {
                         let tokens = self.codex_turn_tokens(tokens, *source);
-                        self.send_codex_responses_stream(request, tokens, *source, on_event)
-                            .await
+                        self.send_codex_responses_stream(
+                            request,
+                            tokens,
+                            *source,
+                            on_event,
+                            on_request_event,
+                        )
+                        .await
                     }
                 }
             } => result,
@@ -342,8 +350,10 @@ impl OpenAiProvider {
         tokens: CodexTokens,
         source: CodexAuthSource,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_codex_responses_inner(request, tokens, source, Some(on_event))
+        self.send_codex_responses_inner(request, tokens, source, Some(on_event), on_request_event)
             .await
     }
 
@@ -353,6 +363,8 @@ impl OpenAiProvider {
         tokens: CodexTokens,
         source: CodexAuthSource,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = build_codex_responses_body(&self.model, request.clone())?;
         let mode = CodexRequestMode::for_model(&self.model);
@@ -366,12 +378,12 @@ impl OpenAiProvider {
                 if request_submitted {
                     // The submitted WebSocket request may have reached the model
                     // before the transport failed, so account for it separately.
-                    if let Some(on_event) = on_event.as_deref_mut() {
-                        on_event(ModelEvent::RequestAttemptFailed {
+                    on_request_event(
+                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
                             kind: rho_sdk::ProviderErrorKind::Unavailable,
                             usage: ModelUsage::default(),
-                        })?;
-                    }
+                        },
+                    )?;
                 }
             }
         }
@@ -418,12 +430,12 @@ impl OpenAiProvider {
                 )
                 .await?;
                 self.remember_refreshed_codex_tokens(refreshed.clone());
-                if let Some(on_event) = on_event.as_deref_mut() {
-                    on_event(ModelEvent::RequestAttemptFailed {
+                on_request_event(
+                    rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
                         kind: rho_sdk::ProviderErrorKind::Authentication,
                         usage: ModelUsage::default(),
-                    })?;
-                }
+                    },
+                )?;
                 let mut req = make_request(&refreshed.access_token);
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);

@@ -68,6 +68,8 @@ impl FakeProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let response = self.complete_turn(request).await?;
         let ModelResponse::Assistant(blocks) = &response;
@@ -119,6 +121,8 @@ impl YieldingProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         if request.cancellation.is_cancelled() {
             return Err(ModelError::Interrupted);
@@ -153,7 +157,15 @@ impl CancellingUsageProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
+        on_request_event(
+            rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                kind: ProviderErrorKind::Unavailable,
+                usage: ModelUsage::default(),
+            },
+        )?;
         on_event(ModelEvent::Usage(ModelUsage {
             output_tokens: Some(7),
             ..ModelUsage::default()
@@ -199,6 +211,15 @@ async fn callback_events_accepted_before_cancellation_are_forwarded() {
             output_tokens: Some(7),
             ..ModelUsage::default()
         }))
+    );
+    assert_eq!(
+        receiver.recv_request_event().await,
+        Some(
+            rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                kind: ProviderErrorKind::Unavailable,
+                usage: ModelUsage::default(),
+            }
+        )
     );
 }
 

@@ -21,7 +21,29 @@ pub type ProviderFuture<'a> =
 /// Sending side of a bounded provider-event channel.
 #[derive(Clone, Debug)]
 pub struct ProviderEventSender {
-    sender: mpsc::Sender<ModelEvent>,
+    sender: mpsc::Sender<ProviderStreamEvent>,
+}
+
+/// Internal lifecycle event for a physical provider request.
+///
+/// This type is public only so application provider adapters can forward built-in
+/// transport retry boundaries. It is not part of the semantic model event stream.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProviderRequestEvent {
+    /// A physical request failed before the provider retried internally.
+    RequestAttemptFailed {
+        kind: ProviderErrorKind,
+        usage: crate::model::ModelUsage,
+    },
+}
+
+/// An item from either provider event path.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProviderStreamEvent {
+    Model(ModelEvent),
+    Request(ProviderRequestEvent),
 }
 
 impl ProviderEventSender {
@@ -33,25 +55,72 @@ impl ProviderEventSender {
     /// Sends an event, waiting for bounded channel capacity when necessary.
     pub async fn send(&self, event: ModelEvent) -> Result<(), ProviderError> {
         self.sender
-            .send(event)
+            .send(ProviderStreamEvent::Model(event))
             .await
             .map_err(|_| ProviderError::interrupted("provider event consumer was dropped"))
+    }
+
+    /// Reports a failed physical request that the provider will retry internally.
+    #[doc(hidden)]
+    pub async fn send_request_attempt_failed(
+        &self,
+        kind: ProviderErrorKind,
+        usage: crate::model::ModelUsage,
+    ) -> Result<(), ProviderError> {
+        self.sender
+            .send(ProviderStreamEvent::Request(
+                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
+            ))
+            .await
+            .map_err(|_| ProviderError::interrupted("provider request event consumer was dropped"))
     }
 }
 
 /// Receiving side of a bounded provider-event channel.
 #[derive(Debug)]
 pub struct ProviderEventReceiver {
-    receiver: mpsc::Receiver<ModelEvent>,
+    receiver: mpsc::Receiver<ProviderStreamEvent>,
+    pending_model_events: VecDeque<ModelEvent>,
+    pending_request_events: VecDeque<ProviderRequestEvent>,
 }
 
 impl ProviderEventReceiver {
     /// Receives the next event, or `None` after every sender is dropped.
     pub async fn recv(&mut self) -> Option<ModelEvent> {
+        if let Some(event) = self.pending_model_events.pop_front() {
+            return Some(event);
+        }
+        while let Some(event) = self.receiver.recv().await {
+            match event {
+                ProviderStreamEvent::Model(event) => return Some(event),
+                ProviderStreamEvent::Request(event) => self.pending_request_events.push_back(event),
+            }
+        }
+        None
+    }
+
+    /// Receives the next physical request lifecycle event.
+    #[doc(hidden)]
+    pub async fn recv_request_event(&mut self) -> Option<ProviderRequestEvent> {
+        if let Some(event) = self.pending_request_events.pop_front() {
+            return Some(event);
+        }
+        while let Some(event) = self.receiver.recv().await {
+            match event {
+                ProviderStreamEvent::Request(event) => return Some(event),
+                ProviderStreamEvent::Model(event) => self.pending_model_events.push_back(event),
+            }
+        }
+        None
+    }
+
+    /// Receives the next semantic or physical request event.
+    #[doc(hidden)]
+    pub async fn recv_stream_event(&mut self) -> Option<ProviderStreamEvent> {
         self.receiver.recv().await
     }
 
-    pub(crate) fn try_recv(&mut self) -> Option<ModelEvent> {
+    pub(crate) fn try_recv_stream_event(&mut self) -> Option<ProviderStreamEvent> {
         self.receiver.try_recv().ok()
     }
 }
@@ -63,7 +132,11 @@ pub fn provider_event_channel(
     let (sender, receiver) = mpsc::channel(capacity.get());
     (
         ProviderEventSender { sender },
-        ProviderEventReceiver { receiver },
+        ProviderEventReceiver {
+            receiver,
+            pending_model_events: VecDeque::new(),
+            pending_request_events: VecDeque::new(),
+        },
     )
 }
 
@@ -136,7 +209,7 @@ pub struct RecordedModelRequest {
 /// One deterministic turn returned by [`ScriptedProvider`].
 #[derive(Clone, Debug)]
 pub struct ScriptedTurn {
-    events: Vec<ModelEvent>,
+    events: Vec<ProviderStreamEvent>,
     result: Result<ModelResponse, ProviderError>,
 }
 
@@ -149,6 +222,18 @@ impl ScriptedTurn {
     }
 
     pub fn streaming(events: Vec<ModelEvent>, response: ModelResponse) -> Self {
+        Self {
+            events: events.into_iter().map(ProviderStreamEvent::Model).collect(),
+            result: Ok(response),
+        }
+    }
+
+    /// Creates a turn with semantic and physical request events.
+    #[doc(hidden)]
+    pub fn streaming_with_request_events(
+        events: Vec<ProviderStreamEvent>,
+        response: ModelResponse,
+    ) -> Self {
         Self {
             events,
             result: Ok(response),
@@ -247,7 +332,14 @@ impl ModelProvider for ScriptedProvider {
             let turn = self.take_turn(&request)?;
             for event in turn.events {
                 tokio::select! {
-                    result = events.send(event) => result?,
+                    result = async {
+                        match event {
+                            ProviderStreamEvent::Model(event) => events.send(event).await,
+                            ProviderStreamEvent::Request(
+                                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
+                            ) => events.send_request_attempt_failed(kind, usage).await,
+                        }
+                    } => result?,
                     () = cancellation.cancelled() => {
                         return Err(ProviderError::interrupted("provider request cancelled"));
                     }

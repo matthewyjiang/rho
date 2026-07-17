@@ -2,10 +2,10 @@ use std::{path::PathBuf, sync::Arc, thread, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
+    model::{ContentBlock, Message, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
+    provider::{
+        ModelProvider, ProviderRequestEvent, ProviderStreamEvent, ScriptedProvider, ScriptedTurn,
     },
-    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
 };
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
@@ -155,11 +155,13 @@ async fn recorded_non_agent_request_persists_each_physical_attempt() {
     let database_path = recorder.path().to_owned();
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "fixture-api", "model"),
-        [ScriptedTurn::streaming(
-            vec![ModelEvent::RequestAttemptFailed {
-                kind: rho_sdk::ProviderErrorKind::Unavailable,
-                usage: ModelUsage::default(),
-            }],
+        [ScriptedTurn::streaming_with_request_events(
+            vec![ProviderStreamEvent::Request(
+                ProviderRequestEvent::RequestAttemptFailed {
+                    kind: rho_sdk::ProviderErrorKind::Unavailable,
+                    usage: ModelUsage::default(),
+                },
+            )],
             ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
         )],
     );

@@ -443,7 +443,6 @@ mod tests {
                     | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::Usage(_)
-                    | ModelEvent::RequestAttemptFailed { .. }
                     | ModelEvent::ToolCallDelta { .. } => None,
                 })
                 .collect::<String>(),
@@ -516,7 +515,6 @@ mod tests {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::RequestAttemptFailed { .. }
                 | ModelEvent::ToolCallDelta { .. } => None,
             })
             .collect::<Vec<_>>();
