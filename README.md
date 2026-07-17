@@ -1,5 +1,7 @@
 # Rho
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/matthewyjiang/rho)
+
 Rho is a lightweight agent harness inspired by Pi, built in Rust to stay fast and memory-efficient.
 
 ## Install
