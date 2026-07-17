@@ -5,6 +5,8 @@ use crate::agent::{
 
 use super::{PickerAction, PickerItem, PickerLayout, UiPicker};
 
+const PROMPT_PREVIEW_MAX_CHARS: usize = 500;
+
 pub(super) fn agent_picker(catalog: AgentCatalog) -> UiPicker {
     let items = catalog.iter().map(agent_item).collect();
     UiPicker::new(
@@ -57,14 +59,34 @@ fn agent_detail(entry: &AgentCatalogEntry) -> String {
         ToolPolicy::Allow(tools) => tools.join(", "),
     };
     let prompt = match &definition.prompt {
-        PromptPolicy::Extend(_) => "extend system prompt",
-        PromptPolicy::Replace(_) => "replace system prompt",
+        PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
+        PromptPolicy::Extend(text) => format!(
+            "extend system prompt\n\nPrompt extension preview\n{}",
+            prompt_preview(text)
+        ),
+        PromptPolicy::Replace(text) => format!(
+            "replace system prompt\n\nReplacement prompt preview\n{}",
+            prompt_preview(text)
+        ),
     };
 
     format!(
-        "Description\n{}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}\n\nPrompt\n{prompt}",
+        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}",
         definition.description
     )
+}
+
+fn prompt_preview(prompt: &str) -> String {
+    let mut chars = prompt.chars();
+    let preview = chars
+        .by_ref()
+        .take(PROMPT_PREVIEW_MAX_CHARS)
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}\n… (preview truncated)")
+    } else {
+        preview
+    }
 }
 
 fn model_name(selection: &ModelSelection) -> String {
