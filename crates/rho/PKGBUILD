@@ -28,7 +28,8 @@ build() {
 check() {
     cd "rho-$_tagname"
     export CARGO_HOME="$srcdir/cargo"
-    # Test fixtures use debug assertions and are not included in the release binary.
+    # Arch's optimized RUSTFLAGS disable debug assertions, which test fixtures require.
+    export RUSTFLAGS="$RUSTFLAGS -C debug-assertions=on"
     cargo test --locked --no-default-features
 }
 
