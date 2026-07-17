@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.5.0...rho-coding-agent-v1.6.0) (2026-07-17)
+
+
+### Features
+
+* **tools:** add permission modes ([#372](https://github.com/matthewyjiang/rho/issues/372)) ([dd45f31](https://github.com/matthewyjiang/rho/commit/dd45f3161d53042baaed679fb101cacd929417a1))
+* **tui:** move persistent commands into config ([#377](https://github.com/matthewyjiang/rho/issues/377)) ([9e58048](https://github.com/matthewyjiang/rho/commit/9e58048486633a191879bbbfdfe5027027c37d07))
+* **tui:** preview custom agent prompts ([#378](https://github.com/matthewyjiang/rho/issues/378)) ([235eed1](https://github.com/matthewyjiang/rho/commit/235eed1636685e4fbe683a9d00906ee5554a408a))
+* **tui:** redesign questionnaire with tabbed question layout ([#369](https://github.com/matthewyjiang/rho/issues/369)) ([a90135a](https://github.com/matthewyjiang/rho/commit/a90135a494409cfc1c99ffd2226bee9075788d41))
+* **usage:** add durable request ledger ([#381](https://github.com/matthewyjiang/rho/issues/381)) ([0502b99](https://github.com/matthewyjiang/rho/commit/0502b9987be74a8922f675ab941eadb23bc88b12))
+
+
+### Bug Fixes
+
+* **agents:** reserve background results for notifications ([#384](https://github.com/matthewyjiang/rho/issues/384)) ([377e35e](https://github.com/matthewyjiang/rho/commit/377e35effa871595a188d6c92a078599e757a215))
+* **prompt:** require fenced Mermaid diagrams ([#375](https://github.com/matthewyjiang/rho/issues/375)) ([afd5656](https://github.com/matthewyjiang/rho/commit/afd56567c43779b50ad13999b78325d5eb834d31))
+* **provider:** classify Anthropic in-stream provider errors by type ([#345](https://github.com/matthewyjiang/rho/issues/345)) ([768562d](https://github.com/matthewyjiang/rho/commit/768562d789b16558be24d407df325bbdd0204c95)), closes [#343](https://github.com/matthewyjiang/rho/issues/343)
+* **tui:** align mouse selection with history viewport ([#370](https://github.com/matthewyjiang/rho/issues/370)) ([d91ff50](https://github.com/matthewyjiang/rho/commit/d91ff50ceb50723c64b263f9ce6caef04b6ad0ea))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.1.0 to 1.2.0
+
 ## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.1...rho-coding-agent-v1.5.0) (2026-07-17)
 
 
