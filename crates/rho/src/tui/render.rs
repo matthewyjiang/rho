@@ -5,7 +5,10 @@ use super::{
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
 };
-use crate::tool::ToolDisplayStyle;
+use crate::{
+    model::{image_summary, ImageContent},
+    tool::ToolDisplayStyle,
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use ratatui::{
@@ -405,6 +408,63 @@ pub(super) fn input_cursor_index_on_visual_line(
         }
     }
     cursor
+}
+
+pub(super) fn input_lines_with_images(
+    input: &str,
+    images: &[ImageContent],
+    width: usize,
+    highlighted_range: Option<std::ops::Range<usize>>,
+) -> Vec<Line<'static>> {
+    let mut lines = images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| {
+            styled_line(
+                format!("[image {}: {}]", index + 1, image_summary(image)),
+                width.max(1),
+                Theme::dim(),
+                LineFill::Natural,
+            )
+        })
+        .collect::<Vec<_>>();
+    let input_lines = input_visual_lines(input, width);
+    let input_chars = input.chars().collect::<Vec<_>>();
+    let mut input_cursor = 0;
+    for (line_index, visual_line) in input_lines.into_iter().enumerate() {
+        if line_index > 0 && input_chars.get(input_cursor) == Some(&'\n') {
+            input_cursor += 1;
+        }
+        let mut spans = Vec::new();
+        let mut span_text = String::new();
+        let mut span_highlighted = false;
+        for character in visual_line.chars() {
+            let highlighted = highlighted_range
+                .as_ref()
+                .is_some_and(|range| range.contains(&input_cursor));
+            input_cursor += 1;
+            if !span_text.is_empty() && highlighted != span_highlighted {
+                let style = if span_highlighted {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(std::mem::take(&mut span_text), style));
+            }
+            span_highlighted = highlighted;
+            span_text.push(character);
+        }
+        if !span_text.is_empty() {
+            let style = if span_highlighted {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(span_text, style));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {

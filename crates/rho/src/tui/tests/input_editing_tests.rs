@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
+    let mut app = test_app();
+    app.insert_input_text("a");
+    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    let segment = app.paste_segments[0].clone();
+
+    app.move_input_cursor_left();
+    assert_eq!(app.input_cursor, segment.start);
+
+    app.move_input_cursor_right();
+    assert_eq!(app.input_cursor, segment.end());
+
+    app.move_input_cursor_left();
+    app.move_input_cursor_left();
+    assert_eq!(app.input_cursor, segment.start - 1);
+}
+
+#[test]
+fn focused_collapsed_paste_highlights_the_whole_marker() {
+    let mut app = test_app();
+    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.move_input_cursor_left();
+
+    let highlighted = app
+        .composer_lines(10)
+        .iter()
+        .flat_map(|line| &line.spans)
+        .filter(|span| span.style.add_modifier.contains(Modifier::REVERSED))
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(highlighted, "[ pasted: 3 lines ]");
+}
+
+#[test]
+fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
+    let mut app = test_app();
+    app.insert_input_text("first line\n");
+    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    let segment = app.paste_segments[0].clone();
+    app.input_cursor = 5;
+
+    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+
+    assert_eq!(app.input_cursor, segment.start);
+}
+
+#[test]
 fn backspace_removes_collapsed_paste_as_one_item() {
     let mut app = test_app();
     app.insert_pasted_input_text("alpha\nbeta\ngamma");

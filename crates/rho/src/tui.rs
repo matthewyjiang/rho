@@ -110,8 +110,9 @@ use questionnaire::{
 };
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
-    input_cursor_position, input_visual_lines, picker_lines, push_wrapped_text,
-    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
+    input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
+    push_wrapped_text, session_header_lines, styled_line, tool_entry_lines, truncate_one_line,
+    LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use statusline::{GoalStatus, StatusLine};
@@ -1126,11 +1127,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
-                self.input_cursor = self.input_cursor.saturating_sub(1);
+                self.move_input_cursor_left();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Right) => {
-                self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
+                self.move_input_cursor_right();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Up) => {
@@ -1877,6 +1878,47 @@ impl App {
             target_row,
             cursor_position.x as usize,
         );
+        self.focus_paste_segment_at_cursor();
+    }
+
+    fn move_input_cursor_left(&mut self) {
+        if let Some(segment) = self
+            .paste_segments
+            .iter()
+            .find(|segment| segment.start < self.input_cursor && self.input_cursor <= segment.end())
+        {
+            self.input_cursor = segment.start;
+        } else {
+            self.input_cursor = self.input_cursor.saturating_sub(1);
+        }
+    }
+
+    fn move_input_cursor_right(&mut self) {
+        if let Some(segment) = self
+            .paste_segments
+            .iter()
+            .find(|segment| segment.start <= self.input_cursor && self.input_cursor < segment.end())
+        {
+            self.input_cursor = segment.end();
+        } else {
+            self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
+        }
+    }
+
+    fn focus_paste_segment_at_cursor(&mut self) {
+        if let Some(segment) = self
+            .paste_segments
+            .iter()
+            .find(|segment| segment.start < self.input_cursor && self.input_cursor < segment.end())
+        {
+            self.input_cursor = segment.start;
+        }
+    }
+
+    fn focused_paste_segment(&self) -> Option<&PasteSegment> {
+        self.paste_segments
+            .iter()
+            .find(|segment| segment.start == self.input_cursor)
     }
 
     fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
@@ -2368,11 +2410,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
-                self.input_cursor = self.input_cursor.saturating_sub(1);
+                self.move_input_cursor_left();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Right) => {
-                self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
+                self.move_input_cursor_right();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Up) => {
@@ -5272,7 +5314,15 @@ impl App {
     fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
         match &self.composer {
             ComposerMode::Input => {
-                let mut lines = input_lines_with_images(&self.input, &self.pending_images, width);
+                let focused_paste = self
+                    .focused_paste_segment()
+                    .map(|segment| segment.start..segment.end());
+                let mut lines = input_lines_with_images(
+                    &self.input,
+                    &self.pending_images,
+                    width,
+                    focused_paste,
+                );
                 if let Some(mode) = inline_shell::mode_when_idle(self.running, &self.input) {
                     let style = match mode {
                         InlineShellMode::IncludeInContext => Theme::shell_context(),
@@ -5935,27 +5985,6 @@ fn expand_paste_segments(input: &str, segments: &[PasteSegment]) -> String {
     }
     result.extend(input.chars().skip(cursor));
     result
-}
-
-fn input_lines_with_images(
-    input: &str,
-    images: &[ImageContent],
-    width: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = images
-        .iter()
-        .enumerate()
-        .map(|(index, image)| {
-            styled_line(
-                format!("[image {}: {}]", index + 1, image_summary(image)),
-                width.max(1),
-                Theme::dim(),
-                LineFill::Natural,
-            )
-        })
-        .collect::<Vec<_>>();
-    lines.extend(input_visual_lines(input, width).into_iter().map(Line::raw));
-    lines
 }
 
 fn render_user_entry(prompt: &str, images: &[ImageContent]) -> String {
