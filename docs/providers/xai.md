@@ -1,6 +1,28 @@
 # xAI
 
-xAI supports API-key authentication (`provider = "xai"`, `auth = "xai-api-key"`) and OAuth (`provider = "xai-oauth"`, `auth = "xai-oauth"`) for models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+xAI supports API-key authentication and OAuth for models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+
+## At a glance
+
+### API key
+
+| Setting | Value |
+| --- | --- |
+| Provider | `xai` |
+| Auth | `xai-api-key` |
+| Environment override | `XAI_API_KEY` |
+| API base | `https://api.x.ai/v1` |
+| Model list | Static allowlist maintained by Rho |
+
+### OAuth
+
+| Setting | Value |
+| --- | --- |
+| Provider | `xai-oauth` |
+| Auth | `xai-oauth` |
+| Environment override | `XAI_ACCESS_TOKEN` |
+| API base | `https://api.x.ai/v1` |
+| Model list | Static allowlist maintained by Rho |
 
 ## Sign in
 
@@ -48,12 +70,14 @@ xAI uses a static allowlist rather than a refreshable API list: `grok-4.5`, `gro
 /model xai-oauth/grok-4.5
 ```
 
-Or select it from the CLI, which also updates the persistent default:
+For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider xai --auth xai-api-key --model grok-4.5
-rho --provider xai-oauth --auth xai-oauth --model grok-4.5
+rho --provider xai --auth xai-api-key --model grok-4.5 run "hello"
+rho --provider xai-oauth --auth xai-oauth --model grok-4.5 run "hello"
 ```
+
+Provide the matching environment override or log in once so Rho can read the stored credential.
 
 ## Notes
 
