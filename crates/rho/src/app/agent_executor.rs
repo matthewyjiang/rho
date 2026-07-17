@@ -11,12 +11,12 @@ use crate::{
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation::{self, RunReporter},
+    automation::{self, RunArtifactIdentity, RunReporter},
 };
 
 #[derive(Clone)]
 pub(crate) struct AgentExecutor {
-    config: Config,
+    config: Arc<std::sync::RwLock<Config>>,
     config_path: PathBuf,
     cwd: PathBuf,
     permits: Arc<tokio::sync::Semaphore>,
@@ -62,19 +62,32 @@ impl AgentExecutor {
             .filter(|limit| *limit > 0)
             .unwrap_or(4);
         Self {
-            config,
+            config: Arc::new(std::sync::RwLock::new(config)),
             config_path,
             cwd,
             permits: Arc::new(tokio::sync::Semaphore::new(concurrency)),
         }
     }
 
+    pub(crate) fn update_model(
+        &self,
+        provider: &str,
+        model: &str,
+        reasoning: rho_sdk::ReasoningLevel,
+    ) {
+        let mut config = self.config.write().expect("delegated config lock");
+        config.provider = provider.to_string();
+        config.model = model.to_string();
+        config.reasoning = reasoning;
+    }
+
     pub(crate) fn spawn(&self, request: AgentLaunchRequest) -> anyhow::Result<AgentRunHandle> {
+        let config = self.config.read().expect("delegated config lock").clone();
         let mut capabilities = KNOWN_TOOLS
             .iter()
             .map(|tool| (*tool).to_string())
             .collect::<BTreeSet<_>>();
-        if !crate::tools::web::access_tools(&self.config).is_available() {
+        if !crate::tools::web::access_tools(&config).is_available() {
             capabilities.remove("web_search");
         }
         #[cfg(windows)]
@@ -87,12 +100,14 @@ impl AgentExecutor {
                 role: AgentRole::Delegated,
                 available_tools: capabilities,
             },
-            &self.config,
+            &config,
         )?;
         let initial = RunStatus {
             state: RunState::Starting,
             agent_id: Some(bound.id().to_string()),
             agent_fingerprint: Some(bound.fingerprint().to_string()),
+            provider: Some(bound.config().provider.clone()),
+            model: Some(bound.config().model.clone()),
             ..RunStatus::default()
         };
         subagent::write_status(&request.output_file, &initial)?;
@@ -114,6 +129,8 @@ impl AgentExecutor {
                     state: RunState::Stopped,
                     agent_id: Some(bound.id().to_string()),
                     agent_fingerprint: Some(bound.fingerprint().to_string()),
+                    provider: Some(bound.config().provider.clone()),
+                    model: Some(bound.config().model.clone()),
                     last_activity: Some("cancelled before execution".into()),
                     ..RunStatus::default()
                 };
@@ -135,8 +152,12 @@ impl AgentExecutor {
             diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
             let mut reporter = RunReporter::new(
                 output_file,
-                Some(bound.id().to_string()),
-                Some(bound.fingerprint().to_string()),
+                RunArtifactIdentity {
+                    agent_id: bound.id().to_string(),
+                    agent_fingerprint: bound.fingerprint().to_string(),
+                    provider: config.provider.clone(),
+                    model: config.model.clone(),
+                },
                 cwd.clone(),
                 &prompt,
                 /* stream_output */ false,

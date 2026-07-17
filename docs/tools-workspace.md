@@ -25,6 +25,8 @@ bash                macOS and Linux
 powershell          Windows
 ```
 
+Built-in skills that ship with the binary include `rho-diagnostics` for harness diagnostics and `rho-agent-creator` for defining new agents. The `rho-agent-creator` skill guides you through a step-by-step questionnaire to produce a valid agent Markdown file with YAML frontmatter and a prompt body. Custom user skills can be added under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`.
+
 Web access tools keep normal prompts small. They return concise previews, snippets, citations or warnings when available, and response handles for stored content. `web_search` uses optional provider credentials for live results and stores fetched source pages only when `includeContent` succeeds. GitHub repository URLs prefer a local clone so the agent can inspect real files; oversized repositories fall back to the GitHub API unless `forceClone` is set.
 
 These tools can read and modify files, run shell commands in the working directory, and fetch external or local content when invoked. The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.

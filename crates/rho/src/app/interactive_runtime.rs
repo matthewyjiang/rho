@@ -516,6 +516,10 @@ impl InteractiveRuntime {
             self.state = InteractiveState::Idle;
             return Err(error);
         }
+        let identity = self.provider.identity();
+        if let Some(manager) = self.tools.subagents() {
+            manager.update_model(&identity.provider, &identity.model, reasoning);
+        }
         self.state = InteractiveState::Idle;
         Ok(report)
     }

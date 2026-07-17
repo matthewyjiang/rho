@@ -35,6 +35,7 @@ use ratatui::{
     DefaultTerminal, Frame, Terminal,
 };
 mod activity;
+mod agent_picker;
 mod attachment;
 mod command_palette;
 mod config_editor;
@@ -101,7 +102,7 @@ use markdown::{
 };
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
-use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker};
 use prompt_turn::FailedTurn;
 use provider_attempt::ProviderAttempt;
 use questionnaire::{
@@ -2653,6 +2654,7 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command(),
             CommandId::Skills => self.execute_skills_command(),
+            CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
@@ -2806,7 +2808,7 @@ impl App {
                 self.status = "skill command inserted".into();
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
-            PickerAction::Doctor => {
+            PickerAction::Doctor | PickerAction::ViewAgent => {
                 self.status = "running".into();
             }
             PickerAction::SelectTitleModel => {
@@ -3407,6 +3409,7 @@ impl App {
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(),
+            CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
@@ -3761,7 +3764,7 @@ impl App {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent),
-            PickerAction::Doctor => Ok(()),
+            PickerAction::Doctor | PickerAction::ViewAgent => Ok(()),
         }
     }
 
@@ -4013,6 +4016,7 @@ impl App {
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
             | PickerAction::ResumeSession
             | PickerAction::Config
             | PickerAction::Doctor => return Ok(()),

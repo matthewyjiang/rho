@@ -116,8 +116,12 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .map(|path| {
             RunReporter::new(
                 path.clone(),
-                Some(startup.agent.id().to_string()),
-                Some(startup.agent.fingerprint().to_string()),
+                RunArtifactIdentity {
+                    agent_id: startup.agent.id().to_string(),
+                    agent_fingerprint: startup.agent.fingerprint().to_string(),
+                    provider: startup.config.provider.clone(),
+                    model: startup.config.model.clone(),
+                },
                 startup.cwd.clone(),
                 &prompt_text,
                 /* stream_output */ true,
@@ -295,6 +299,13 @@ async fn drive_headless_run(
     Ok(run.outcome().await?)
 }
 
+pub(crate) struct RunArtifactIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) agent_fingerprint: String,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+}
+
 /// Maintains the `--output-file` status contract for subagent runs and
 /// streams progress to stdout so a watching pane shows live activity.
 pub(crate) struct RunReporter {
@@ -315,8 +326,7 @@ const LAST_TEXT_BYTES: usize = 400;
 impl RunReporter {
     pub(crate) fn new(
         path: PathBuf,
-        agent_id: Option<String>,
-        agent_fingerprint: Option<String>,
+        identity: RunArtifactIdentity,
         cwd: PathBuf,
         prompt: &str,
         stream_output: bool,
@@ -324,8 +334,10 @@ impl RunReporter {
     ) -> anyhow::Result<Self> {
         let status = RunStatus {
             state: RunState::Starting,
-            agent_id,
-            agent_fingerprint,
+            agent_id: Some(identity.agent_id),
+            agent_fingerprint: Some(identity.agent_fingerprint),
+            provider: Some(identity.provider),
+            model: Some(identity.model),
             ..RunStatus::default()
         };
         subagent::write_status(&path, &status)?;

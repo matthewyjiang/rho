@@ -180,8 +180,38 @@ fn output_run_persists_agent_identity() {
     assert_eq!(result["state"], "ok");
     assert_eq!(result["agent_id"], "worker");
     assert_eq!(result["agent_fingerprint"].as_str().unwrap().len(), 64);
+    assert_eq!(result["provider"], "openai");
+    assert!(result["model"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
     let events = std::fs::read_to_string(root.path().join("events.jsonl")).unwrap();
     assert!(events.contains("complete the task"));
+}
+
+#[test]
+fn failed_output_run_persists_resolved_provider_and_model() {
+    let root = TempDir::new().unwrap();
+    let output_file = root.path().join("result.json");
+    let mut command = command(&root, "fail");
+    command.args([
+        "--no-subagents",
+        "run",
+        "--output-file",
+        output_file.to_str().unwrap(),
+        "complete the task",
+    ]);
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
+    assert_eq!(result["state"], "error");
+    assert_eq!(result["provider"], "openai");
+    assert_eq!(result["model"], "gpt-5.5");
+    assert!(result["error"]
+        .as_str()
+        .unwrap()
+        .contains("deterministic provider failure"));
 }
 
 #[test]

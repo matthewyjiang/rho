@@ -14,6 +14,7 @@ pub enum CommandId {
     Compact,
     Goal,
     Skills,
+    Agents,
     Diff,
     Doctor,
     Limits,
@@ -147,6 +148,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Agents,
+        name: "agents",
+        usage: "/agents",
+        description: "reload agents and show their details",
         argument_choices: &[],
     },
     CommandSpec {
@@ -363,6 +371,14 @@ mod tests {
         assert_eq!(invocation.id, CommandId::Goal);
         assert_eq!(invocation.name, "goal");
         assert_eq!(invocation.args, "all tests pass");
+    }
+
+    #[test]
+    fn parses_agents_command() {
+        let invocation = parse_command("/agents").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Agents);
+        assert_eq!(invocation.args, "");
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub enum ScenarioId {
     RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
+    OpenAgentsPicker,
     LoginProviderGroups,
     GoalBlockedAndResumed,
 }
@@ -47,6 +48,7 @@ impl ScenarioId {
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
+            Self::OpenAgentsPicker => "open_agents_picker",
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
         }
@@ -67,6 +69,7 @@ impl ScenarioId {
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
+            "open_agents_picker" => Some(Self::OpenAgentsPicker),
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
             _ => None,
@@ -459,6 +462,33 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "loaded agents",
+        timeout: SETTLE,
+    },
+    Step::AssertText("default"),
+    Step::AssertText("Rho's standard coding agent"),
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Read-only investigation",
+        timeout: SETTLE,
+    },
+    Step::Resize { rows: 32, cols: 50 },
+    Step::WaitText {
+        text: "Read-only investigation",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Phase("open_group_picker"),
     Step::WaitText {
@@ -658,6 +688,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
             steps: OPEN_MODEL_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "open_agents_picker",
+            description: "Browse agent metadata and adapt the picker to a narrow terminal",
+            size: DEFAULT_SIZE,
+            steps: OPEN_AGENTS_PICKER_STEPS,
             smoke: false,
         },
         Scenario {
