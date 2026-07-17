@@ -172,6 +172,13 @@ fn builtin_default_model(provider: &str) -> Option<String> {
     }
 }
 
+pub fn resolve_model_selection_for_provider(
+    provider: &str,
+    model: &str,
+) -> Result<ModelSelection, ModelSelectionError> {
+    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim())
+}
+
 pub fn resolve_model_selection_for_auths(
     input: &str,
     current_provider: &str,
@@ -322,39 +329,7 @@ fn resolve_model_selection_from(
     }
 
     if let Some((provider, model)) = input.split_once('/') {
-        let provider = provider.trim();
-        let model = model.trim();
-        if provider.is_empty() || model.is_empty() {
-            return Err(ModelSelectionError::Empty);
-        }
-        if !implemented_providers().contains(&provider) {
-            return Err(ModelSelectionError::UnknownProvider {
-                provider: provider.to_string(),
-            });
-        }
-        if provider_uses_cached_models(provider) {
-            if let Some(entry) = provider_models::cached_provider_model(provider, model) {
-                return Ok(selection_from_provider_model(provider, &entry));
-            }
-            if builtin_default_model(provider).as_deref() == Some(model) {
-                return Ok(ModelSelection {
-                    provider: provider.to_string(),
-                    model: model.to_string(),
-                    auth: provider_default_auth(provider)
-                        .unwrap_or("api-key")
-                        .to_string(),
-                    from_catalog: true,
-                });
-            }
-            return Err(unavailable_model_error(provider, model));
-        }
-        if let Some(entry) = catalog
-            .iter()
-            .find(|entry| entry.provider == provider && entry.model == model)
-        {
-            return Ok(selection_from_entry(entry));
-        }
-        return Err(unavailable_model_error(provider, model));
+        return resolve_model_selection_for_provider_from(catalog, provider.trim(), model.trim());
     }
 
     let auths = if available_auths.is_empty() {
@@ -373,6 +348,42 @@ fn resolve_model_selection_from(
             model: input.to_string(),
         }),
     }
+}
+
+fn resolve_model_selection_for_provider_from(
+    catalog: &[ModelCatalogEntry],
+    provider: &str,
+    model: &str,
+) -> Result<ModelSelection, ModelSelectionError> {
+    if provider.is_empty() || model.is_empty() {
+        return Err(ModelSelectionError::Empty);
+    }
+    if !implemented_providers().contains(&provider) {
+        return Err(ModelSelectionError::UnknownProvider {
+            provider: provider.to_string(),
+        });
+    }
+    if provider_uses_cached_models(provider) {
+        if let Some(entry) = provider_models::cached_provider_model(provider, model) {
+            return Ok(selection_from_provider_model(provider, &entry));
+        }
+        if builtin_default_model(provider).as_deref() == Some(model) {
+            return Ok(ModelSelection {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                auth: provider_default_auth(provider)
+                    .unwrap_or("api-key")
+                    .to_string(),
+                from_catalog: true,
+            });
+        }
+        return Err(unavailable_model_error(provider, model));
+    }
+    catalog
+        .iter()
+        .find(|entry| entry.provider == provider && entry.model == model)
+        .map(selection_from_entry)
+        .ok_or_else(|| unavailable_model_error(provider, model))
 }
 
 #[cfg(test)]
