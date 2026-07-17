@@ -37,6 +37,7 @@ pub(super) struct UiPicker {
     pub(super) selected: usize,
     pub(super) filter: String,
     pub(super) action: PickerAction,
+    pub(super) layout: PickerLayout,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
 }
@@ -64,6 +65,13 @@ pub(super) enum PickerBadgeTone {
     Warning,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PickerLayout {
+    #[default]
+    List,
+    MasterDetail,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerAction {
     SelectModel,
@@ -72,6 +80,7 @@ pub(super) enum PickerAction {
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
+    ViewAgent,
     ResumeSession,
     Config,
     Doctor,
@@ -87,6 +96,7 @@ impl PickerAction {
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
             | PickerAction::ResumeSession => false,
         }
     }
@@ -106,9 +116,15 @@ impl UiPicker {
             selected: 0,
             filter: String::new(),
             action,
+            layout: PickerLayout::List,
             parent: None,
             matches: RefCell::default(),
         }
+    }
+
+    pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
+        self.layout = layout;
+        self
     }
 
     pub(super) fn with_parent(mut self, parent: UiPicker) -> Self {
@@ -176,6 +192,7 @@ impl UiPicker {
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
+                | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
                 | PickerAction::Config
                 | PickerAction::Doctor => regex::escape(&item.value),
@@ -203,6 +220,7 @@ impl UiPicker {
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
+                | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
                 | PickerAction::Config
                 | PickerAction::Doctor => (!filter.is_empty())
@@ -222,6 +240,7 @@ impl UiPicker {
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
+                | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
                 | PickerAction::Config
                 | PickerAction::Doctor => {

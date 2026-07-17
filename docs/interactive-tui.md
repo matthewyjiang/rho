@@ -81,6 +81,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/goal [condition]` | Set a completion condition and start working immediately. Rho explicitly tells the agent that this is a goal-setting action, then evaluates the transcript after each turn and continues until the condition is met. Connection errors and other incomplete runs are retried automatically while the goal remains active. If only steps requiring user authority remain, the goal pauses as blocked and reports those steps. Run `/goal` for status, `/goal resume` after completing blocked steps, or `/goal clear` to cancel. |
 | `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
+| `/agents` | Reload agent definitions and browse their descriptions, sources, model policies, reasoning levels, tools, and prompt policies. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth, Kimi Code OAuth, and xAI OAuth are supported when logged in; absent windows are omitted. |

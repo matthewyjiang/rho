@@ -79,6 +79,76 @@ fn narrow_picker_rows_do_not_exceed_width() {
 }
 
 #[test]
+fn master_detail_picker_renders_selected_detail_in_two_columns() {
+    let mut picker = UiPicker::new(
+        "agents",
+        "enter close",
+        vec![
+            PickerItem {
+                label: "explorer".into(),
+                detail: Some("Description\nread-only investigation".into()),
+                preview: None,
+                badge: None,
+                value: "explorer".into(),
+            },
+            PickerItem {
+                label: "worker".into(),
+                detail: Some("Description\nimplementation work".into()),
+                preview: None,
+                badge: None,
+                value: "worker".into(),
+            },
+        ],
+        crate::tui::PickerAction::ViewAgent,
+    )
+    .with_layout(crate::tui::PickerLayout::MasterDetail);
+
+    let first = picker_lines(&picker, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    picker.select_next();
+    let second = picker_lines(&picker, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(first.contains("│ Description"));
+    assert!(first.contains("read-only investigation"));
+    assert!(!first.contains("implementation work"));
+    assert!(second.contains("implementation work"));
+    assert!(!second.contains("read-only investigation"));
+}
+
+#[test]
+fn master_detail_picker_stacks_details_at_narrow_widths() {
+    let picker = UiPicker::new(
+        "agents",
+        "enter close",
+        vec![PickerItem {
+            label: "explorer".into(),
+            detail: Some("Description\nread-only investigation across many files".into()),
+            preview: None,
+            badge: None,
+            value: "explorer".into(),
+        }],
+        crate::tui::PickerAction::ViewAgent,
+    )
+    .with_layout(crate::tui::PickerLayout::MasterDetail);
+
+    let lines = picker_lines(&picker, 30);
+    let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+    assert!(!text.contains('│'));
+    assert!(text.contains("Description"));
+    assert!(lines
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 30));
+}
+
+#[test]
 fn assistant_markdown_styles_inline_code_bold_and_italic() {
     let lines = entry_lines(
         &Entry::Assistant("use `cargo test`, then **ship** the *fix*".into()),
