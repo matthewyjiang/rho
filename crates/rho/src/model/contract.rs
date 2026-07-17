@@ -17,6 +17,10 @@ pub enum ModelError {
     MissingAnthropicApiKey,
     #[error("missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override")]
     MissingGithubCopilotAuth,
+    #[error("missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override")]
+    MissingMoonshotApiKey,
+    #[error("missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override")]
+    MissingKimiAuth,
     #[error("missing xAI OAuth credentials; run /login xai in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override")]
     MissingXaiAuth,
     #[error("credential store error: {0}")]

@@ -74,6 +74,7 @@ impl App {
                 self.start_github_copilot_login(target, terminal, agent)
                     .await
             }
+            ProviderAuthKind::KimiOAuth { .. } => self.start_kimi_login(target, terminal).await,
             ProviderAuthKind::XaiOAuth { .. } => self.start_xai_login(target, terminal).await,
         }
     }
@@ -168,6 +169,50 @@ impl App {
                 codex_oauth::complete_codex_device_login(login)
                     .await
                     .map(PendingOAuthResult::Codex)
+                    .map_err(|err| err.to_string())
+            }),
+        });
+        Ok(())
+    }
+
+    async fn start_kimi_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        if self.pending_oauth_login.is_some() {
+            self.insert_entry(&Entry::Notice(
+                "OAuth login is already in progress. Press esc to cancel.".into(),
+            ));
+            return Ok(());
+        }
+        self.status = "starting Kimi device login".into();
+        terminal.draw(|frame| self.draw(frame))?;
+        let login = match kimi_oauth::start_kimi_device_login().await {
+            Ok(login) => login,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "login failed".into();
+                return Ok(());
+            }
+        };
+        self.insert_entry(&Entry::Notice(format!(
+            "Kimi login: visit {} and enter code {}",
+            login.verification_uri, login.user_code
+        )));
+        if let Some(uri) = &login.verification_uri_complete {
+            self.insert_entry(&Entry::Notice(format!(
+                "Or open this URL to continue: {uri}"
+            )));
+        }
+        self.status = "waiting for Kimi device login; press esc to cancel".into();
+        self.composer = ComposerMode::OAuthPending(target.clone());
+        self.pending_oauth_login = Some(PendingOAuthLogin {
+            target,
+            handle: tokio::spawn(async move {
+                kimi_oauth::complete_kimi_device_login(login)
+                    .await
+                    .map(PendingOAuthResult::Kimi)
                     .map_err(|err| err.to_string())
             }),
         });
@@ -310,6 +355,9 @@ impl App {
                     }
                     PendingOAuthResult::GithubCopilot(tokens) => {
                         save_github_copilot_tokens(self.credential_store.as_ref(), &tokens)
+                    }
+                    PendingOAuthResult::Kimi(tokens) => {
+                        save_kimi_tokens(self.credential_store.as_ref(), &tokens)
                     }
                     PendingOAuthResult::Xai(tokens) => {
                         save_xai_tokens(self.credential_store.as_ref(), &tokens)

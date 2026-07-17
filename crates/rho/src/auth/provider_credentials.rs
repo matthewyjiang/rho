@@ -5,11 +5,12 @@ use rho_sdk::SecretString;
 use crate::{
     auth::{
         github_copilot_token::GitHubCopilotAuthManager,
+        kimi_token::{KimiAuthManager, KimiAuthSource},
         xai_token::{XaiAuthManager, XaiAuthSource},
     },
     credentials::{
-        load_codex_tokens, load_provider_api_key, load_xai_tokens, CodexTokens, CredentialStore,
-        XaiTokens,
+        load_codex_tokens, load_kimi_tokens, load_provider_api_key, load_xai_tokens, CodexTokens,
+        CredentialStore, KimiTokens, XaiTokens,
     },
     model::{
         registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
@@ -19,6 +20,7 @@ use crate::{
     providers::{
         builder::ProviderCredential,
         openai::auth::{Auth, CodexAuthSource},
+        openai_compatible::CompatibleAuth,
     },
 };
 
@@ -69,6 +71,41 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             ProviderRuntime::GithubCopilot => Ok(ProviderCredential::GitHubCopilot(
                 GitHubCopilotAuthManager::new(self.store.clone())?,
             )),
+            ProviderRuntime::KimiCode => {
+                let descriptor =
+                    provider::provider_descriptor_by_id(provider::ProviderId::KimiCode);
+                let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
+                    Ok(access_token) if !access_token.trim().is_empty() => (
+                        KimiAuthSource::Env,
+                        KimiTokens {
+                            access_token,
+                            refresh_token: None,
+                            expires_at_unix: None,
+                            scope: String::new(),
+                            token_type: "Bearer".into(),
+                            expires_in: None,
+                        },
+                    ),
+                    _ => (
+                        KimiAuthSource::Store,
+                        load_kimi_tokens(self.store.as_ref())?
+                            .ok_or(ModelError::MissingKimiAuth)?,
+                    ),
+                };
+                Ok(ProviderCredential::OpenAiCompatible(
+                    CompatibleAuth::KimiOAuth(KimiAuthManager::from_tokens(
+                        self.store.clone(),
+                        source,
+                        tokens,
+                    )),
+                ))
+            }
+            ProviderRuntime::Moonshot => Ok(ProviderCredential::OpenAiCompatible(
+                CompatibleAuth::ApiKey(load_provider_api_key_auth(
+                    "moonshot",
+                    self.store.as_ref(),
+                )?),
+            )),
             ProviderRuntime::Xai => {
                 let descriptor = provider::provider_descriptor_by_id(provider::ProviderId::Xai);
                 let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
@@ -94,6 +131,24 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             }
         }
     }
+}
+
+fn load_provider_api_key_auth(
+    provider_name: &str,
+    store: &dyn CredentialStore,
+) -> Result<String, ModelError> {
+    let descriptor = provider::provider_descriptor(provider_name)
+        .ok_or_else(|| ModelError::UnsupportedProvider(provider_name.into()))?;
+    let ProviderAuthKind::ApiKey {
+        env_var, missing, ..
+    } = descriptor.auth_kind
+    else {
+        return Err(ModelError::UnsupportedProvider(provider_name.into()));
+    };
+    if let Ok(key) = std::env::var(env_var) {
+        return Ok(key);
+    }
+    load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
 }
 
 fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {

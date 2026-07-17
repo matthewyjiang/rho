@@ -129,14 +129,15 @@ use turn_prompt::TurnPrompt;
 use crate::{
     app::config_repository::ConfigRepository,
     app::interactive_runtime::InteractiveRuntime,
-    auth::{codex_oauth, github_copilot_device, xai_oauth},
+    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
     clipboard_image::read_clipboard_image,
     commands::{self, CommandId, CommandInvocation, CommandSpec},
     credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
-        save_github_copilot_tokens, save_provider_api_key, save_xai_tokens, CodexTokens,
-        CredentialStore, GitHubCopilotTokens, OsCredentialStore, XaiTokens,
+        save_github_copilot_tokens, save_kimi_tokens, save_provider_api_key, save_xai_tokens,
+        CodexTokens, CredentialStore, GitHubCopilotTokens, KimiTokens, OsCredentialStore,
+        XaiTokens,
     },
     herdr::{HerdrReporter, HerdrState},
     keybindings::Keybindings,
@@ -431,6 +432,7 @@ impl PasteSegment {
 enum PendingOAuthResult {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
+    Kimi(KimiTokens),
     Xai(XaiTokens),
 }
 

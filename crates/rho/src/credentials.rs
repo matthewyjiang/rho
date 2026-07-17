@@ -50,6 +50,23 @@ pub struct GitHubCopilotTokens {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct KimiTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at_unix: Option<i64>,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default = "default_bearer_token_type")]
+    pub token_type: String,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+}
+
+fn default_bearer_token_type() -> String {
+    "Bearer".into()
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct XaiTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -80,11 +97,12 @@ redacted_token_debug!(
     copilot_chat_endpoint,
     copilot_models_endpoint,
 );
+redacted_token_debug!(KimiTokens, expires_at_unix);
 redacted_token_debug!(XaiTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, or XAI_ACCESS_TOKEN.")]
+    #[error("OS credential store is unavailable: {0}. Configure your OS keychain, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, MOONSHOT_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, KIMI_ACCESS_TOKEN, or XAI_ACCESS_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -566,6 +584,21 @@ pub fn save_codex_tokens(
     store.set_secret(CODEX_TOKENS_ACCOUNT, &secret)
 }
 
+pub fn load_kimi_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<KimiTokens>> {
+    let Some(secret) = store.get_secret(crate::provider::KIMI_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored Kimi token JSON: {err}"))
+    })
+}
+
+pub fn save_kimi_tokens(store: &dyn CredentialStore, tokens: &KimiTokens) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(crate::provider::KIMI_TOKENS_ACCOUNT, &secret)
+}
+
 pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<XaiTokens>> {
     let Some(secret) = store.get_secret(XAI_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -643,6 +676,7 @@ pub fn provider_has_credentials(
             Ok(load_github_copilot_tokens(store)?.is_some())
         }
         Some(ProviderAuthKind::XaiOAuth { .. }) => Ok(load_xai_tokens(store)?.is_some()),
+        Some(ProviderAuthKind::KimiOAuth { .. }) => Ok(load_kimi_tokens(store)?.is_some()),
         None => Ok(false),
     }
 }

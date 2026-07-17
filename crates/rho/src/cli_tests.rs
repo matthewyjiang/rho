@@ -3,6 +3,14 @@ use clap::Parser;
 use super::*;
 
 #[test]
+fn parses_moonshot_auth_modes() {
+    for auth in ["moonshot-api-key", "kimi-oauth"] {
+        let cli = Cli::try_parse_from(["rho", "--auth", auth]).unwrap();
+        assert_eq!(cli.auth.as_deref(), Some(auth));
+    }
+}
+
+#[test]
 fn parses_attach_subcommand() {
     let cli = Cli::try_parse_from(["rho", "attach", "abc123"]).unwrap();
 
