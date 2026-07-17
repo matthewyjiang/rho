@@ -499,7 +499,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check or stop background agents.".into(),
+            description: "Check background-agent progress or stop a run. Completed results are delivered automatically; do not poll for completion when no foreground work remains.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -554,7 +554,7 @@ impl Tool for AgentsTool {
                     .stop(id)
                     .await
                     .map_err(|error| ToolError::Message(error.to_string()))?;
-                format_snapshot(&snapshot, SnapshotFormat::Completion)
+                format_snapshot(&snapshot, SnapshotFormat::Status)
             }
             other => {
                 return Err(ToolError::Message(format!(

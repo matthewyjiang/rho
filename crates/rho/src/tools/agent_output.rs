@@ -37,24 +37,33 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
                 "elapsed: {} · {metrics}",
                 format_elapsed(snapshot.elapsed.as_secs())
             ));
-            if let Some(activity) = &snapshot.status.last_activity {
-                lines.push(format!("activity: {activity}"));
-            }
-            if let Some(text) = &snapshot.status.last_text {
-                lines.push(format!("latest: {text}"));
+            if !snapshot.done {
+                if let Some(activity) = &snapshot.status.last_activity {
+                    lines.push(format!("activity: {activity}"));
+                }
+                if let Some(text) = &snapshot.status.last_text {
+                    lines.push(format!("latest: {text}"));
+                }
             }
         }
     }
-    if let Some(error) = &snapshot.status.error {
-        lines.push(format!("error: {error}"));
+    if matches!(format, SnapshotFormat::Completion) {
+        if let Some(error) = &snapshot.status.error {
+            lines.push(format!("error: {error}"));
+        }
     }
-    if let Some(error) = &snapshot.status.attachment_error {
-        lines.push(format!("attachment error: {error}"));
+    if matches!(format, SnapshotFormat::Completion) || !snapshot.done {
+        if let Some(error) = &snapshot.status.attachment_error {
+            lines.push(format!("attachment error: {error}"));
+        }
     }
     if matches!(format, SnapshotFormat::Status) {
+        if snapshot.done && snapshot.background {
+            lines.push("completion result uses automatic delivery".into());
+        }
         lines.push(format!("attach: rho attach {}", snapshot.id));
     }
-    if snapshot.done {
+    if snapshot.done && matches!(format, SnapshotFormat::Completion) {
         if let Some(result) = snapshot
             .status
             .result

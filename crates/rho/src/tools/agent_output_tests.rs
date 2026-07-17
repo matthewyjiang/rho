@@ -61,11 +61,32 @@ fn formats_status_with_runtime_details() {
 }
 
 #[test]
-fn formats_completion_with_result() {
+fn completed_status_defers_result_to_automatic_delivery() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Error;
+    snapshot.status.error = Some("provider stream failed".into());
+    snapshot.status.last_text = Some("found it".into());
+
     assert_eq!(
-        format_snapshot(&snapshot(true), SnapshotFormat::Completion),
-        "agent abc123 (explorer): ok\n\
+        format_snapshot(&snapshot, SnapshotFormat::Status),
+        "agent abc123 (explorer): error\n\
+         elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
+         completion result uses automatic delivery\n\
+         attach: rho attach abc123"
+    );
+}
+
+#[test]
+fn formats_completion_with_result_and_error() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Error;
+    snapshot.status.error = Some("provider stream failed".into());
+
+    assert_eq!(
+        format_snapshot(&snapshot, SnapshotFormat::Completion),
+        "agent abc123 (explorer): error\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
+         error: provider stream failed\n\
          \n\
          found it"
     );
