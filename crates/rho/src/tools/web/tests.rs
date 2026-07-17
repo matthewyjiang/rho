@@ -204,6 +204,7 @@ async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
     server.join().unwrap();
 
     let content = result.expect("truncated fetch of valid UTF-8 must not fail");
+    assert_eq!(content.len(), 2_097_150);
     assert!(content.chars().all(|c| c == 'あ'));
 }
 
@@ -238,6 +239,44 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/small");
+    let result = super::fetch::fetch_url_text(&client, &url).await;
+    server.join().unwrap();
+
+    assert!(matches!(result, Err(crate::tool::ToolError::Utf8(_))));
+}
+
+#[tokio::test]
+async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let mut body = vec![b'a'; 2 * 1024 * 1024 - 2];
+        body.extend_from_slice(b"\xe3\x81");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.write_all(&body);
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/exact-cap");
     let result = super::fetch::fetch_url_text(&client, &url).await;
     server.join().unwrap();
 

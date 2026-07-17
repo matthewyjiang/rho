@@ -72,14 +72,16 @@ async fn fetch_url_text_with_auth(
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|err| ToolError::Message(format!("request failed: {err}")))?;
-        let remaining = MAX_FETCH_BYTES.saturating_sub(bytes.len());
+        let remaining = (MAX_FETCH_BYTES + 1).saturating_sub(bytes.len());
         bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-        if bytes.len() >= MAX_FETCH_BYTES {
+        if bytes.len() > MAX_FETCH_BYTES {
             break;
         }
     }
+    let truncated = bytes.len() > MAX_FETCH_BYTES;
+    bytes.truncate(MAX_FETCH_BYTES);
     String::from_utf8(bytes).or_else(|error| {
-        if error.as_bytes().len() >= MAX_FETCH_BYTES && error.utf8_error().error_len().is_none() {
+        if truncated && error.utf8_error().error_len().is_none() {
             let valid_len = error.utf8_error().valid_up_to();
             let mut bytes = error.into_bytes();
             bytes.truncate(valid_len);
