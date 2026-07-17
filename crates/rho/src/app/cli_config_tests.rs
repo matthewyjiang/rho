@@ -338,6 +338,32 @@ fn cli_github_copilot_model_override_selects_matching_auth() {
 }
 
 #[test]
+fn cli_explicit_provider_keeps_slash_containing_model_id() {
+    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("openrouter".into()),
+            model: Some("anthropic/claude-sonnet-4".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "openrouter");
+        assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
+        assert_eq!(cfg.auth, "openrouter-api-key");
+    });
+}
+
+#[test]
 fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
     let mut cfg = Config {
         provider: "openai-codex".into(),

@@ -34,7 +34,11 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         save_config = true;
     }
     if let Some(model) = &cli.model {
-        apply_model_override(config, model)?;
+        let provider_model = cli
+            .provider
+            .as_ref()
+            .map(|provider| format!("{provider}/{model}"));
+        apply_model_override(config, provider_model.as_deref().unwrap_or(model))?;
         save_config = true;
     }
     if let Some(auth) = &cli.auth {
