@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use rho_sdk::CancellationToken;
 use serde::Deserialize;
 
 use crate::{
@@ -169,6 +170,7 @@ pub(super) async fn evaluate(
     model: &str,
     condition: &str,
     messages: &[Message],
+    cancellation: CancellationToken,
 ) -> anyhow::Result<GoalEvaluation> {
     let provider = build_sdk_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
@@ -186,7 +188,7 @@ pub(super) async fn evaluate(
         ModelRequest {
             messages: &request_messages,
             tools: &[],
-            cancellation: Default::default(),
+            cancellation,
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         },

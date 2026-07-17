@@ -1,10 +1,4 @@
-use std::{
-    num::NonZeroUsize,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use rho_sdk::{
     model::{ModelEvent, ModelRequest, ModelResponse, ModelUsage},
@@ -15,7 +9,6 @@ use rho_sdk::{
 use super::{RequestOutcome, SqliteUsageRecorder, UsageEvent, UsageRecorder};
 
 const EVENT_CAPACITY: usize = 16;
-static WRITE_WARNING_EMITTED: AtomicBool = AtomicBool::new(false);
 
 /// Executes and durably accounts for a non-agent provider request.
 pub(crate) async fn send_recorded(
@@ -53,17 +46,9 @@ pub(crate) async fn send_recorded(
             usage.clone(),
         );
         let write = tokio::task::spawn_blocking(move || UsageRecorder::record(&*recorder, &event));
-        let failure = match write.await {
-            Ok(Ok(_)) => None,
-            Ok(Err(error)) => Some(error.to_string()),
-            Err(error) => Some(format!("usage ledger task failed: {error}")),
-        };
-        match failure {
-            Some(error) if !WRITE_WARNING_EMITTED.swap(true, Ordering::Relaxed) => {
-                eprintln!("warning: model response usage could not be recorded: {error}");
-            }
-            Some(_) | None => {}
-        }
+        // Accounting failures are non-fatal and must not write outside an active
+        // TUI renderer. The request result remains authoritative for callers.
+        let _ = write.await;
     }
     result.map(|response| (response, usage))
 }

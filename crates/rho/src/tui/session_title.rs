@@ -21,31 +21,32 @@ pub(super) async fn generate_session_title(
         Message::user_text(format!("First user message:\n\n{first_user_message}")),
     ];
     let cancellation = CancellationToken::new();
-    let request = crate::usage::send_recorded(
-        provider.as_ref(),
-        ModelRequest {
-            messages: &request_messages,
-            tools: &[],
-            cancellation: cancellation.clone(),
-            reasoning_level: ReasoningLevel::Low,
-            prompt_cache_key: None,
-        },
-        "title",
-        crate::usage::default_recorder(),
-    );
-    tokio::pin!(request);
-    let (result, timed_out) = tokio::select! {
-        result = &mut request => (result, false),
-        () = tokio::time::sleep(Duration::from_secs(20)) => {
-            cancellation.cancel();
-            (request.await, true)
+    let request_cancellation = cancellation.clone();
+    let request = tokio::spawn(async move {
+        crate::usage::send_recorded(
+            provider.as_ref(),
+            ModelRequest {
+                messages: &request_messages,
+                tools: &[],
+                cancellation: request_cancellation,
+                reasoning_level: ReasoningLevel::Low,
+                prompt_cache_key: None,
+            },
+            "title",
+            crate::usage::default_recorder(),
+        )
+        .await
+    });
+    let (response, _) = match tokio::time::timeout(Duration::from_secs(20), request).await {
+        Ok(result) => {
+            result.map_err(|error| anyhow::anyhow!("title generation task failed: {error}"))??
         }
-    };
-    let (response, _) = match result {
-        Err(_) if timed_out => {
+        Err(_) => {
+            // Dropping the join handle detaches the task so it can finish recording
+            // the cancelled request without extending the interactive deadline.
+            cancellation.cancel();
             return Err(anyhow::anyhow!("title generation timed out"));
         }
-        result => result?,
     };
     let ModelResponse::Assistant(blocks) = response;
     let title = blocks
