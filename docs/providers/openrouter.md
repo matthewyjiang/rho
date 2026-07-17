@@ -2,9 +2,9 @@
 
 Rho supports OpenRouter through its OpenAI-compatible Chat Completions API using API-key authentication.
 
-| Provider | Auth | API base |
-| --- | --- | --- |
-| `openrouter` | `openrouter-api-key` | `https://openrouter.ai/api/v1` |
+| Provider | Auth | Environment override | API base | Model list |
+| --- | --- | --- | --- | --- |
+| `openrouter` | `openrouter-api-key` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | Refreshable after authentication |
 
 ## Login and model selection
 
@@ -24,7 +24,7 @@ OpenRouter model IDs commonly contain a slash, so a complete selection can look 
 /model openrouter/anthropic/claude-sonnet-4
 ```
 
-The model list is fetched from OpenRouter after authentication. Run `/refresh-model-list openrouter` when models are added or removed.
+The model list is fetched from OpenRouter's `/models` endpoint after authentication. Run `/refresh-model-list openrouter` when models are added or removed. Rho sends turns to `/chat/completions`.
 
 ## Automation
 

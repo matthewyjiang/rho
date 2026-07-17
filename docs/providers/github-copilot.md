@@ -1,6 +1,16 @@
 # GitHub Copilot
 
-GitHub Copilot uses GitHub device-code auth (`provider = "github-copilot"`, `auth = "github-copilot"`). Rho talks to GitHub Copilot endpoints, not GitHub Models endpoints. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+GitHub Copilot uses GitHub device-code auth. Rho talks to GitHub Copilot endpoints, not GitHub Models endpoints. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+
+## At a glance
+
+| Setting | Value |
+| --- | --- |
+| Provider | `github-copilot` |
+| Auth | `github-copilot` |
+| Environment override | `GITHUB_COPILOT_TOKEN` |
+| API endpoints | Returned by the Copilot token exchange |
+| Model list | Refreshable after authentication |
 
 ## Sign in
 
@@ -34,10 +44,10 @@ GitHub Copilot exposes `github-copilot/<model>` names from the refreshed Copilot
 /model github-copilot/gpt-4.1
 ```
 
-Or from the CLI, which also updates the persistent default:
+For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider github-copilot --auth github-copilot --model gpt-4.1
+rho --provider github-copilot --auth github-copilot --model gpt-4.1 run "hello"
 ```
 
 ## Automation

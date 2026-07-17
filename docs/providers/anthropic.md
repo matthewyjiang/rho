@@ -1,6 +1,16 @@
 # Anthropic
 
-Anthropic uses API-key auth (`provider = "anthropic"`, `auth = "anthropic-api-key"`). For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+Anthropic uses API-key auth. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+
+## At a glance
+
+| Setting | Value |
+| --- | --- |
+| Provider | `anthropic` |
+| Auth | `anthropic-api-key` |
+| Environment override | `ANTHROPIC_API_KEY` |
+| API base | `https://api.anthropic.com/v1` |
+| Model list | Refreshable after authentication |
 
 ## Sign in
 
@@ -34,8 +44,10 @@ Anthropic can refresh its provider model list with `/refresh-model-list anthropi
 /model anthropic/claude-sonnet-4-5
 ```
 
-Or from the CLI, which also updates the persistent default:
+For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5
+rho --provider anthropic --auth anthropic-api-key --model claude-sonnet-4-5 run "hello"
 ```
+
+Provide `ANTHROPIC_API_KEY` in the automation environment or log in once through the TUI so Rho can read the stored key.
