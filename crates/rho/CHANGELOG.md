@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.0...rho-coding-agent-v1.4.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **packaging:** enable test fixtures in Arch build ([#356](https://github.com/matthewyjiang/rho/issues/356)) ([2e19b5e](https://github.com/matthewyjiang/rho/commit/2e19b5e0e6bdbd7881ec2b5f0becc4ae5adb596f))
+* **tui:** extend activity background below spinner ([#354](https://github.com/matthewyjiang/rho/issues/354)) ([d692736](https://github.com/matthewyjiang/rho/commit/d69273600b1a91737ec1217d5f007d22337985e8))
+
 ## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.3.0...rho-coding-agent-v1.4.0) (2026-07-17)
 
 
