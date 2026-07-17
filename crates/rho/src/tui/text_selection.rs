@@ -66,6 +66,11 @@ impl TextSelection {
         self.anchor != self.focus
     }
 
+    pub(super) fn selected_line_range(self) -> Range<usize> {
+        let (start, end) = self.ordered_positions();
+        start.line..end.line.saturating_add(1)
+    }
+
     pub(super) fn selected_text(self, lines: &[Line<'_>], first_line: usize) -> Option<String> {
         if !self.has_moved() {
             return None;

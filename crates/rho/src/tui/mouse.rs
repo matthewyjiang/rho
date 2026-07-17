@@ -25,14 +25,12 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
-                self.text_selection = None;
                 self.hovered_code_block_copy = None;
                 self.reveal_history_scrollbar(now);
                 self.history_scrollbar_drag = None;
                 self.scroll_history_lines(width, height, now, -3);
             }
             MouseEventKind::ScrollDown => {
-                self.text_selection = None;
                 self.hovered_code_block_copy = None;
                 self.reveal_history_scrollbar(now);
                 self.history_scrollbar_drag = None;
@@ -123,13 +121,14 @@ impl App {
                         selection.update(position);
                     }
                     if selection.has_moved() {
-                        let visible_lines = self.visible_history_lines(
+                        let selected_lines = selection.selected_line_range();
+                        let lines = self.visible_history_lines(
                             width,
                             now,
-                            history_start,
-                            layout.history.height as usize,
+                            selected_lines.start,
+                            selected_lines.len(),
                         );
-                        if let Some(text) = selection.selected_text(&visible_lines, history_start) {
+                        if let Some(text) = selection.selected_text(&lines, selected_lines.start) {
                             self.copy_text(&text, now);
                             self.text_selection = Some(selection);
                         }

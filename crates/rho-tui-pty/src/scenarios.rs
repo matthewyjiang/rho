@@ -306,7 +306,23 @@ const PASTE_MULTILINE_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("paste"),
+    Step::Phase("delete_collapsed_paste"),
+    Step::Paste("discard one\ndiscard two\ndiscard three"),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Backspace),
+    Step::SubmitText("fixture stream"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "part two",
+        timeout: STREAM,
+    },
+    Step::Phase("submit_multiline_paste"),
     Step::Paste("line one\n/not-a-command\nline three"),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
