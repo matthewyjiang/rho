@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.1...rho-coding-agent-v1.5.0) (2026-07-17)
+
+
+### Features
+
+* **agents:** unify agent definitions and execution ([#355](https://github.com/matthewyjiang/rho/issues/355)) ([157712e](https://github.com/matthewyjiang/rho/commit/157712e86906b72c5c76fe3664380700cb37eb7f))
+* **auth:** add grouped login methods and xAI API keys ([#363](https://github.com/matthewyjiang/rho/issues/363)) ([1f1fdc9](https://github.com/matthewyjiang/rho/commit/1f1fdc93b5c3476ade353801ef9fc34d33c50897))
+* **providers:** add Moonshot and Kimi authentication ([#359](https://github.com/matthewyjiang/rho/issues/359)) ([051fbda](https://github.com/matthewyjiang/rho/commit/051fbda5153c0c1d3dd8fd0a8d12c97c1b8f66ea))
+* **providers:** add OpenRouter API key support ([#365](https://github.com/matthewyjiang/rho/issues/365)) ([51c69dd](https://github.com/matthewyjiang/rho/commit/51c69ddcca60d21da189d23ff91858bcc16f9242))
+* **tui:** add agent browser and creator skill ([#366](https://github.com/matthewyjiang/rho/issues/366)) ([84937e3](https://github.com/matthewyjiang/rho/commit/84937e343f3ae8e1a9489b31ce9366231aea527b))
+* **tui:** add Kimi OAuth usage limits ([#361](https://github.com/matthewyjiang/rho/issues/361)) ([84a8ca8](https://github.com/matthewyjiang/rho/commit/84a8ca8ca9c5760304eb3b789220e2a76e03a302))
+
+
+### Bug Fixes
+
+* **tui:** constrain activity rail background ([#362](https://github.com/matthewyjiang/rho/issues/362)) ([139b9e1](https://github.com/matthewyjiang/rho/commit/139b9e131ed3022d78aebf8be603be772cb7cfda))
+* **tui:** extend activity background to agents ([#364](https://github.com/matthewyjiang/rho/issues/364)) ([11cfc9e](https://github.com/matthewyjiang/rho/commit/11cfc9ef5dd752a851a64739571e22c5767ffe94))
+
 ## [1.4.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.0...rho-coding-agent-v1.4.1) (2026-07-17)
 
 
