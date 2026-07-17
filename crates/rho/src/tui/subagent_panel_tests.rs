@@ -2,14 +2,14 @@ use super::*;
 
 fn agent(
     id: &str,
-    preset: &str,
+    agent_id: &str,
     state: RunState,
     activity: Option<&str>,
     elapsed_seconds: u64,
 ) -> RunningSubagent {
     RunningSubagent {
         id: id.into(),
-        preset: preset.into(),
+        agent_id: agent_id.into(),
         state,
         last_activity: activity.map(str::to_string),
         elapsed_seconds,
@@ -99,7 +99,7 @@ fn active_tui_frame_places_panel_above_the_composer() {
     let lines = text(&app.active_lines_for_height(60, 12));
     let panel = lines
         .iter()
-        .position(|line| line.contains("1 subagent working"))
+        .position(|line| line.contains("1 agent working"))
         .unwrap();
 
     assert_eq!(layout.subagents.height, 1);
@@ -139,7 +139,7 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
         .collect::<String>();
     assert_eq!(activity.y, jump.y);
     assert!(activity.right() < jump.x);
-    assert!(row.contains("working  ·  2 subagents"), "{row:?}");
+    assert!(row.contains("working  ·  2 agents"), "{row:?}");
     assert!(row.contains("jump to bottom"), "{row:?}");
 }
 

@@ -26,3 +26,12 @@ fn attach_requires_an_id() {
 
     assert!(error.to_string().contains("<ID>"));
 }
+
+#[test]
+fn agent_selection_is_global() {
+    let root = Cli::try_parse_from(["rho", "--agent", "reviewer"]).unwrap();
+    assert_eq!(root.agent.as_deref(), Some("reviewer"));
+
+    let run = Cli::try_parse_from(["rho", "run", "--agent", "worker", "ship it"]).unwrap();
+    assert_eq!(run.agent.as_deref(), Some("worker"));
+}

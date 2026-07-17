@@ -22,6 +22,10 @@ pub struct RuntimeIdentity {
     pub provider: String,
     pub model: String,
     pub reasoning: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_fingerprint: Option<String>,
 }
 
 impl RuntimeIdentity {
@@ -31,6 +35,8 @@ impl RuntimeIdentity {
             provider: provider.into(),
             model: model.into(),
             reasoning: reasoning.to_string(),
+            agent_id: None,
+            agent_fingerprint: None,
         }
     }
 }
@@ -100,8 +106,18 @@ impl RuntimeDiagnostics {
 
     pub fn update_identity(&self, provider: &str, model: &str, reasoning: ReasoningLevel) {
         let mut state = self.write();
+        let agent_id = state.identity.agent_id.clone();
+        let agent_fingerprint = state.identity.agent_fingerprint.clone();
         state.identity = RuntimeIdentity::new(provider, model, reasoning);
+        state.identity.agent_id = agent_id;
+        state.identity.agent_fingerprint = agent_fingerprint;
         state.context = None;
+    }
+
+    pub fn update_agent(&self, id: &str, fingerprint: &str) {
+        let mut state = self.write();
+        state.identity.agent_id = Some(id.to_string());
+        state.identity.agent_fingerprint = Some(fingerprint.to_string());
     }
 
     pub fn record_context(&self, context: ContextUsage) {

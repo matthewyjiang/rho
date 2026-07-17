@@ -21,9 +21,12 @@ pub struct Cli {
     /// Do not expose any tools to the model.
     #[arg(long)]
     pub no_tools: bool,
-    /// Do not expose the subagent tools (agent/agents) to the model.
+    /// Do not expose the delegated-agent tools (agent/agents) to the model.
     #[arg(long, global = true)]
     pub no_subagents: bool,
+    /// Select the agent definition used for this session or automation run.
+    #[arg(long, global = true, value_name = "ID")]
+    pub agent: Option<String>,
     /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
@@ -41,10 +44,6 @@ pub enum Command {
         /// Read additional prompt text from stdin.
         #[arg(long)]
         stdin: bool,
-        /// Run as a subagent preset: apply its model/reasoning/tool
-        /// restrictions and append its instructions to the system prompt.
-        #[arg(long, value_name = "NAME")]
-        preset: Option<String>,
         /// Stream progress to stdout and write a structured status/result
         /// file (JSON) that is updated during the run and finalized on exit.
         #[arg(long, value_name = "PATH")]
@@ -53,9 +52,9 @@ pub enum Command {
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
     },
-    /// Watch a subagent in a read-only TUI.
+    /// Watch a delegated agent run in a read-only TUI.
     Attach {
-        /// Subagent ID shown when the agent was started.
+        /// Delegated run ID shown when the agent was started.
         #[arg(value_name = "ID")]
         id: String,
     },

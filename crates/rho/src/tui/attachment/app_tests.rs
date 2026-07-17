@@ -77,7 +77,7 @@ fn attached_view_renders_transcript_without_a_composer() {
     );
     app.status = Some(RunStatus {
         state: RunState::Running,
-        preset: Some("explorer".into()),
+        agent_id: Some("explorer".into()),
         last_activity: Some("tool: read_file".into()),
         ..RunStatus::default()
     });

@@ -12,7 +12,7 @@ const MAX_AGENT_CONTENT_WIDTH: usize = 52;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RunningSubagent {
     id: String,
-    preset: String,
+    agent_id: String,
     state: RunState,
     last_activity: Option<String>,
     elapsed_seconds: u64,
@@ -32,7 +32,7 @@ impl SubagentPanel {
             .filter(|snapshot| !snapshot.done && !snapshot.status.state.is_terminal())
             .map(|snapshot| RunningSubagent {
                 id: snapshot.id,
-                preset: snapshot.preset,
+                agent_id: snapshot.agent_id,
                 state: snapshot.status.state,
                 last_activity: snapshot.status.last_activity,
                 elapsed_seconds: snapshot.elapsed.as_secs(),
@@ -94,7 +94,7 @@ fn agent_line(
     let content_width = width
         .saturating_sub(connector_width)
         .min(MAX_AGENT_CONTENT_WIDTH);
-    let identity_width = display_width(&agent.preset) + 2 + display_width(&agent.id);
+    let identity_width = display_width(&agent.agent_id) + 2 + display_width(&agent.id);
     let separator_width = display_width(SEPARATOR);
     let elapsed = format_elapsed(agent.elapsed_seconds);
     let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&elapsed);
@@ -103,7 +103,7 @@ fn agent_line(
         let detail = truncate_one_line(
             &format!(
                 "{}  {}{SEPARATOR}{activity}  {elapsed}",
-                agent.preset, agent.id
+                agent.agent_id, agent.id
             ),
             content_width,
         );
@@ -120,7 +120,7 @@ fn agent_line(
     ));
     Line::from(vec![
         Span::styled(connector, Theme::dim()),
-        Span::styled(agent.preset.clone(), Theme::text_strong()),
+        Span::styled(agent.agent_id.clone(), Theme::text_strong()),
         Span::raw("  "),
         Span::styled(agent.id.clone(), Theme::dim()),
         Span::styled(SEPARATOR, Theme::dim()),

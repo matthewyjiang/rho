@@ -1,3 +1,5 @@
+mod agent_binding;
+pub(crate) mod agent_executor;
 mod automation;
 mod bootstrap;
 mod cli_config;

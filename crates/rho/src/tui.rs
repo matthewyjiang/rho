@@ -2115,7 +2115,9 @@ impl App {
     fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
             let session_id = agent.session_id().to_string();
-            let session = Session::create_with_id(&self.info.cwd, &session_id)?;
+            let (agent_id, agent_fingerprint) = agent.agent_identity();
+            let session =
+                Session::create_with_id(&self.info.cwd, &session_id, agent_id, agent_fingerprint)?;
             self.info.session_id = Some(session_id);
             agent.attach_storage(session);
         }
@@ -4427,6 +4429,8 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let (session, histories) = Session::open_by_id_with_histories(&self.info.cwd, session_id)?;
+        let (agent_id, agent_fingerprint) = agent.agent_identity();
+        session.validate_agent_identity(agent_id, agent_fingerprint)?;
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 

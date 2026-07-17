@@ -40,11 +40,11 @@ fn activity_line_combines_parent_and_subagent_work() {
 
     assert_eq!(
         line_text(&spinner.line(Instant::now(), 40, ActivityStatus::WorkingWithSubagents(2),)),
-        "⠋ working  ·  2 subagents"
+        "⠋ working  ·  2 agents"
     );
     assert_eq!(
         line_text(&spinner.line(Instant::now(), 40, ActivityStatus::Subagents(2))),
-        "⠋ 2 subagents working"
+        "⠋ 2 agents working"
     );
 }
 
@@ -61,6 +61,6 @@ fn spinner_line_compacts_to_available_width() {
     );
     assert_eq!(
         activity_width(40, ActivityStatus::WorkingWithSubagents(2)),
-        display_width("⠋ working  ·  2 subagents")
+        display_width("⠋ working  ·  2 agents")
     );
 }

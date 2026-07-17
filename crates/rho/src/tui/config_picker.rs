@@ -80,7 +80,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 value: CHECK_FOR_UPDATES_VALUE.into(),
             },
             PickerItem {
-                label: "Enable subagents".into(),
+                label: "Enable delegation".into(),
                 detail: Some(
                     "Controls whether agent tools are available. Applies next session.".into(),
                 ),

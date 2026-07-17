@@ -112,6 +112,10 @@ enum SessionEntry {
         id: String,
         timestamp: String,
         cwd: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_fingerprint: Option<String>,
     },
     Message {
         timestamp: String,
@@ -229,6 +233,48 @@ impl Session {
         })
     }
 
+    pub(crate) fn stored_agent_identity(&self) -> anyhow::Result<Option<(String, String)>> {
+        let file = fs::File::open(&self.path)?;
+        let line = BufReader::new(file)
+            .lines()
+            .next()
+            .transpose()?
+            .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
+        let entry: SessionEntry = serde_json::from_str(&line)?;
+        match entry {
+            SessionEntry::Session {
+                agent_id: Some(id),
+                agent_fingerprint: Some(fingerprint),
+                ..
+            } => Ok(Some((id, fingerprint))),
+            SessionEntry::Session { .. } => Ok(None),
+            _ => anyhow::bail!("session file does not start with session metadata"),
+        }
+    }
+
+    pub(crate) fn validate_agent_identity(
+        &self,
+        selected_id: &str,
+        selected_fingerprint: &str,
+    ) -> anyhow::Result<()> {
+        let Some((stored_id, stored_fingerprint)) = self.stored_agent_identity()? else {
+            anyhow::bail!(
+                "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+            );
+        };
+        if stored_id != selected_id {
+            anyhow::bail!(
+                "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
+            );
+        }
+        if stored_fingerprint != selected_fingerprint {
+            anyhow::bail!(
+                "cannot resume agent '{selected_id}': its definition changed since the session was created"
+            );
+        }
+        Ok(())
+    }
+
     pub fn list(cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
         Self::list_in_root(&session_root()?, cwd)
     }
@@ -258,16 +304,46 @@ impl Session {
         }
     }
 
-    pub(crate) fn create_with_id(cwd: &Path, id: &str) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(&session_root()?, cwd, id)
+    pub(crate) fn create_with_id(
+        cwd: &Path,
+        id: &str,
+        agent_id: &str,
+        agent_fingerprint: &str,
+    ) -> anyhow::Result<Self> {
+        Self::create_with_id_in_root(
+            &session_root()?,
+            cwd,
+            id,
+            Some((agent_id, agent_fingerprint)),
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string())
+        Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string(), None)
     }
 
-    fn create_with_id_in_root(session_root: &Path, cwd: &Path, id: &str) -> anyhow::Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn create_in_root_with_agent(
+        session_root: &Path,
+        cwd: &Path,
+        agent_id: &str,
+        agent_fingerprint: &str,
+    ) -> anyhow::Result<Self> {
+        Self::create_with_id_in_root(
+            session_root,
+            cwd,
+            &Uuid::new_v4().to_string(),
+            Some((agent_id, agent_fingerprint)),
+        )
+    }
+
+    fn create_with_id_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id: &str,
+        agent: Option<(&str, &str)>,
+    ) -> anyhow::Result<Self> {
         let dir = ensure_session_dir(session_root, cwd)?;
         let id = id.to_string();
         let created_at = unix_timestamp_secs();
@@ -278,6 +354,8 @@ impl Session {
             id,
             timestamp: created_at.to_string(),
             cwd: cwd.to_path_buf(),
+            agent_id: agent.map(|(id, _)| id.to_string()),
+            agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
         })?;
         let _ = index::record_created(&session, created_at);
         Ok(session)

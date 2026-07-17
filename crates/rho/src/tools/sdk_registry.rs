@@ -19,6 +19,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    app::agent_executor::AgentExecutor,
     config::Config,
     diagnostics::RuntimeDiagnostics,
     tool::{truncate, Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError},
@@ -32,12 +33,18 @@ use super::{
     sdk_support::{check_cancelled, required_string, workspace, workspace_root},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DelegationToolOptions {
+    cwd: std::path::PathBuf,
+    launch: bool,
+    manage: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolSetOptions {
     questionnaire: bool,
-    /// Working directory to discover subagent presets from; `None` disables
-    /// the agent/agents tools.
-    subagents: Option<std::path::PathBuf>,
+    /// Delegation tool selection and its agent discovery working directory.
+    delegation: Option<DelegationToolOptions>,
     subagent_config_path: Option<std::path::PathBuf>,
     background_subagents: bool,
 }
@@ -52,8 +59,19 @@ impl ToolSetOptions {
         self
     }
 
-    pub fn subagents(mut self, cwd: Option<std::path::PathBuf>) -> Self {
-        self.subagents = cwd;
+    pub fn delegation_tools(
+        mut self,
+        cwd: Option<std::path::PathBuf>,
+        allowed_tools: &std::collections::BTreeSet<String>,
+    ) -> Self {
+        self.delegation = cwd.and_then(|cwd| {
+            let options = DelegationToolOptions {
+                cwd,
+                launch: allowed_tools.contains("agent"),
+                manage: allowed_tools.contains("agents"),
+            };
+            (options.launch || options.manage).then_some(options)
+        });
         self
     }
 
@@ -130,28 +148,35 @@ impl AppToolSet {
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
         let subagents = options
-            .subagents
+            .delegation
             .filter(|_| config.enable_subagents)
-            .as_deref()
-            .map(|cwd| {
-                let manager =
-                    SubagentManager::with_config_path(options.subagent_config_path.clone());
-                tools.push(adapt(
-                    super::agent::AgentTool::new(
-                        manager.clone(),
-                        cwd,
-                        if options.background_subagents {
-                            BackgroundSubagents::Enabled
-                        } else {
-                            BackgroundSubagents::Disabled
-                        },
-                    ),
-                    config.max_output_bytes,
+            .map(|delegation| {
+                let cwd = delegation.cwd;
+                let manager = SubagentManager::new(AgentExecutor::new(
+                    config.clone(),
+                    options.subagent_config_path.clone().unwrap_or_default(),
+                    cwd.clone(),
                 ));
-                tools.push(adapt(
-                    super::agent::AgentsTool::new(manager.clone()),
-                    config.max_output_bytes,
-                ));
+                if delegation.launch {
+                    tools.push(adapt(
+                        super::agent::AgentTool::new(
+                            manager.clone(),
+                            &cwd,
+                            if options.background_subagents {
+                                BackgroundSubagents::Enabled
+                            } else {
+                                BackgroundSubagents::Disabled
+                            },
+                        ),
+                        config.max_output_bytes,
+                    ));
+                }
+                if delegation.manage {
+                    tools.push(adapt(
+                        super::agent::AgentsTool::new(manager.clone()),
+                        config.max_output_bytes,
+                    ));
+                }
                 manager
             });
 
@@ -174,7 +199,7 @@ impl AppToolSet {
         self.subagents.as_ref()
     }
 
-    /// Restricts the set to the named tools (a subagent preset's allowlist).
+    /// Restricts the set to the named capabilities before model exposure.
     pub fn retain_named(&mut self, names: &[String]) {
         self.tools
             .retain(|tool| names.iter().any(|name| name == &tool.spec().name));

@@ -349,6 +349,8 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: None,
+        agent_id: "default".into(),
+        agent_fingerprint: "test-fingerprint".into(),
         storage: None,
         pending_model_user: None,
         pending_display_user: None,

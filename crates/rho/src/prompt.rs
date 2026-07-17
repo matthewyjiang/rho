@@ -117,7 +117,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
-    text.push_str("\n\nSubagents are disabled. Do not attempt to spawn or use subagents.\n");
+    text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
 }
 
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
@@ -347,8 +347,8 @@ mod tests {
 
         append_subagents_disabled_instruction(&mut text);
 
-        assert!(text.contains("Subagents are disabled"));
-        assert!(text.contains("Do not attempt to spawn or use subagents"));
+        assert!(text.contains("Agent delegation is disabled"));
+        assert!(text.contains("Do not attempt to delegate work"));
     }
 
     fn skill_tool_spec() -> ToolSpec {

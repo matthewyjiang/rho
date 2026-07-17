@@ -599,6 +599,8 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         id: id.into(),
         timestamp: timestamp.to_string(),
         cwd: cwd.to_path_buf(),
+        agent_id: None,
+        agent_fingerprint: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -612,4 +614,32 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         .join("\n")
         + "\n";
     fs::write(path, contents).unwrap();
+}
+
+#[test]
+fn session_header_persists_agent_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_with_id_in_root(
+        root.path(),
+        cwd.path(),
+        "agent-session",
+        Some(("reviewer", "fingerprint-123")),
+    )
+    .unwrap();
+
+    assert_eq!(
+        session.stored_agent_identity().unwrap(),
+        Some(("reviewer".into(), "fingerprint-123".into()))
+    );
+}
+
+#[test]
+fn legacy_session_reports_missing_agent_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session =
+        Session::create_with_id_in_root(root.path(), cwd.path(), "legacy-session", None).unwrap();
+
+    assert_eq!(session.stored_agent_identity().unwrap(), None);
 }

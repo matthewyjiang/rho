@@ -11,19 +11,19 @@ pub(super) enum SnapshotFormat {
     Status,
 }
 
-pub(super) fn format_background_start(id: &str, preset: &str) -> String {
-    format!("subagent {id} ({preset}) started in background\nattach: rho attach {id}")
+pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
+    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
 pub(super) fn format_running(id: &str) -> String {
-    format!("subagent {id} running\nattach: rho attach {id}")
+    format!("agent {id} running\nattach: rho attach {id}")
 }
 
 pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotFormat) -> String {
     let mut lines = vec![format!(
-        "subagent {} ({}): {}",
+        "agent {} ({}): {}",
         snapshot.id,
-        snapshot.preset,
+        snapshot.agent_id,
         snapshot.status.state.as_str()
     )];
     let metrics = format!(
@@ -79,7 +79,7 @@ pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
     format!(
         "{}  {}  {}  {}  {}",
         snapshot.id,
-        snapshot.preset,
+        snapshot.agent_id,
         snapshot.status.state.as_str(),
         format_elapsed(snapshot.elapsed.as_secs()),
         truncate(detail.to_string(), DETAIL_BYTES)
