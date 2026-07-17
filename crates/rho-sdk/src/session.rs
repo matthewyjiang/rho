@@ -153,6 +153,10 @@ impl SessionCore {
         })
     }
 
+    pub(crate) fn id(&self) -> &SessionId {
+        &self.id
+    }
+
     pub(crate) fn runtime(&self) -> Rho {
         self.runtime
             .read()

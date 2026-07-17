@@ -139,13 +139,15 @@ mod secret;
 mod session;
 mod steering;
 pub mod tool;
+mod usage;
 mod workspace;
 
 pub use cancellation::CancellationToken;
 pub use client::{Rho, RhoBuilder, SessionOptions, ShutdownOutcome, SystemPrompt};
 pub use compaction::{
     CompactionFuture, CompactionOutcome, CompactionOutput, CompactionPolicy, CompactionRequest,
-    CompactionState, CompactionThreshold, CompactionTrigger, Compactor, ScriptedCompactor,
+    CompactionState, CompactionThreshold, CompactionTrigger, Compactor, CompactorCancellationMode,
+    ScriptedCompactor,
 };
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
@@ -166,6 +168,11 @@ pub use run::Run;
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use steering::SteeringRetraction;
+pub use usage::{
+    ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
+    ProviderRequestUsageRecorder, ProviderRequestUsageRecorderError,
+    ProviderRequestUsageRecorderFuture, UsageRecorderDiagnostic,
+};
 pub use workspace::{
     approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
     ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, AuthorizationDenialKind,

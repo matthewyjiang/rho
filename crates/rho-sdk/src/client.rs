@@ -171,6 +171,8 @@ pub struct RhoBuilder {
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
     reasoning_level: crate::ReasoningLevel,
+    usage_recorder: Option<Arc<dyn crate::ProviderRequestUsageRecorder>>,
+    usage_purpose: Option<String>,
 }
 
 impl RhoBuilder {
@@ -261,6 +263,28 @@ impl RhoBuilder {
         self
     }
 
+    pub fn usage_recorder<R>(mut self, recorder: R) -> Self
+    where
+        R: crate::ProviderRequestUsageRecorder + 'static,
+    {
+        self.usage_recorder = Some(Arc::new(recorder));
+        self
+    }
+
+    pub fn usage_recorder_shared(
+        mut self,
+        recorder: Arc<dyn crate::ProviderRequestUsageRecorder>,
+    ) -> Self {
+        self.usage_recorder = Some(recorder);
+        self
+    }
+
+    /// Labels provider requests for host accounting. Defaults to `"agent"`.
+    pub fn usage_purpose(mut self, purpose: impl Into<String>) -> Self {
+        self.usage_purpose = Some(purpose.into());
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
@@ -276,6 +300,12 @@ impl RhoBuilder {
         if self.compaction_policy.is_some() && self.compactor.is_none() {
             return Err(Error::InvalidConfiguration {
                 message: "automatic compaction policy requires a compactor".into(),
+            });
+        }
+        let usage_purpose = self.usage_purpose.unwrap_or_else(|| "agent".into());
+        if usage_purpose.trim().is_empty() {
+            return Err(Error::InvalidConfiguration {
+                message: "usage purpose must not be empty".into(),
             });
         }
         Ok(Rho {
@@ -298,6 +328,9 @@ impl RhoBuilder {
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
+            usage_recorder: self.usage_recorder,
+            usage_purpose,
+            usage_recorder_diagnostics: Arc::default(),
             approval_audit: Arc::default(),
             lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
@@ -318,6 +351,9 @@ pub struct Rho {
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) usage_recorder: Option<Arc<dyn crate::ProviderRequestUsageRecorder>>,
+    pub(crate) usage_purpose: String,
+    pub(crate) usage_recorder_diagnostics: Arc<crate::usage::UsageRecorderDiagnostics>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
@@ -374,6 +410,7 @@ impl Rho {
                     }
                 }),
                 reasoning_level: self.reasoning_level,
+                usage_recorder_diagnostics: self.usage_recorder_diagnostics.snapshot(),
             },
         )
     }
@@ -415,6 +452,8 @@ impl std::fmt::Debug for Rho {
             .field("compactor", &self.compactor.is_some())
             .field("compaction_policy", &self.compaction_policy)
             .field("reasoning_level", &self.reasoning_level)
+            .field("usage_recorder", &self.usage_recorder.is_some())
+            .field("usage_purpose", &self.usage_purpose)
             .finish()
     }
 }

@@ -89,6 +89,7 @@ pub(super) struct Startup<'a> {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
+    pub usage_purpose: &'static str,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub diagnostics: RuntimeDiagnostics,
@@ -214,6 +215,7 @@ pub(crate) async fn run_session(
         reasoning: sdk_options.runtime.reasoning,
         compaction,
         context_window,
+        usage_purpose: startup.usage_purpose,
     })?;
     let session = runtime.session(SessionOptions::default()).await?;
 

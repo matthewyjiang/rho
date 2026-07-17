@@ -181,16 +181,20 @@ pub(super) async fn evaluate(
             "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
         )),
     ];
-    let response = provider
-        .send_turn(ModelRequest {
+    let (response, _) = crate::usage::send_recorded(
+        provider.as_ref(),
+        ModelRequest {
             messages: &request_messages,
             tools: &[],
             cancellation: Default::default(),
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!(error))?;
+        },
+        "goal",
+        crate::usage::default_recorder(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))?;
     let ModelResponse::Assistant(blocks) = response;
     let text = blocks
         .into_iter()

@@ -185,6 +185,7 @@ impl AgentExecutor {
                 no_system_prompt: false,
                 no_tools: false,
                 no_subagents: true,
+                usage_purpose: "subagent",
                 agent: bound,
                 output_file: None,
                 diagnostics,

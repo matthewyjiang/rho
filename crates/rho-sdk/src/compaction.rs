@@ -238,6 +238,16 @@ impl CompactionOutput {
 pub type CompactionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CompactionOutput, Error>> + Send + 'a>>;
 
+/// Defines who cancels an in-flight compaction future.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompactorCancellationMode {
+    /// The SDK must drop the future when cancellation is requested.
+    #[default]
+    External,
+    /// The compactor observes `CompactionRequest::cancellation` and resolves itself.
+    Cooperative,
+}
+
 /// Transport-independent history compaction extension point.
 ///
 /// Implementors may summarize through a model or apply another host policy, but
@@ -245,6 +255,11 @@ pub type CompactionFuture<'a> =
 /// cancellation. Session history mutation remains owned by the SDK.
 pub trait Compactor: Send + Sync {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a>;
+
+    /// Describes whether the compactor resolves its future after request cancellation.
+    fn cancellation_mode(&self) -> CompactorCancellationMode {
+        CompactorCancellationMode::External
+    }
 }
 
 /// Cause of a compaction operation.

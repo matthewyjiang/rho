@@ -32,6 +32,7 @@ mod tools;
 mod transcript;
 mod tui;
 mod update;
+mod usage;
 mod usage_limits;
 mod workspace;
 

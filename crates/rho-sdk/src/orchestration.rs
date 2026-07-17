@@ -48,7 +48,10 @@ pub(crate) async fn execute_run(
     match emit(
         &events,
         &cancellation,
-        RunEvent::Started { run_id, revision },
+        RunEvent::Started {
+            run_id: run_id.clone(),
+            revision,
+        },
     )
     .await
     {
@@ -107,8 +110,14 @@ pub(crate) async fn execute_run(
             commands: &mut commands,
             steering: &mut steering,
         };
+        let request_scope = ProviderRequestScope {
+            runtime: &runtime,
+            session_id: core.id(),
+            run_id: &run_id,
+            step_index: step,
+        };
         let (response, capture) = match request_valid_response(
-            runtime.provider.as_ref(),
+            request_scope,
             &history,
             &tool_specs,
             &accumulated_usage,
@@ -276,9 +285,14 @@ async fn maybe_compact(
     .await?;
     let previous = HistoryMetrics::from_history(history);
     let request = crate::CompactionRequest::new(history.clone(), cancellation.clone());
-    let output = tokio::select! {
-        result = compactor.compact(request) => result?,
-        () = cancellation.cancelled() => return Err(Error::Cancelled),
+    let output = match compactor.cancellation_mode() {
+        crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
+        crate::CompactorCancellationMode::External => {
+            tokio::select! {
+                result = compactor.compact(request) => result?,
+                () = cancellation.cancelled() => return Err(Error::Cancelled),
+            }
+        }
     };
     let (replacement, usage) = output.into_parts();
     let outcome = core.commit_compaction(previous, replacement.clone(), usage)?;
@@ -306,8 +320,15 @@ struct RunControl<'a> {
     steering: &'a mut SteeringQueue,
 }
 
+struct ProviderRequestScope<'a> {
+    runtime: &'a Rho,
+    session_id: &'a crate::SessionId,
+    run_id: &'a RunId,
+    step_index: usize,
+}
+
 async fn request_valid_response(
-    provider: &dyn ModelProvider,
+    scope: ProviderRequestScope<'_>,
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
@@ -316,8 +337,8 @@ async fn request_valid_response(
     control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     for attempt in 1..=INVALID_RESPONSE_ATTEMPTS {
-        let (response, capture) = provider_turn(
-            provider,
+        let result = provider_turn(
+            scope.runtime.provider.as_ref(),
             history,
             tools,
             accumulated_usage,
@@ -325,7 +346,27 @@ async fn request_valid_response(
             prompt_cache_key,
             control,
         )
-        .await?;
+        .await;
+        let (response, capture) = match result {
+            Ok((response, capture)) => {
+                let outcome = if valid_response(&response) {
+                    crate::ProviderRequestOutcome::Completed
+                } else {
+                    crate::ProviderRequestOutcome::InvalidResponse
+                };
+                record_request_usage(&scope, attempt, capture.usage.clone(), outcome).await;
+                (response, capture)
+            }
+            Err(failure) => {
+                let outcome = if control.cancellation.is_cancelled() {
+                    crate::ProviderRequestOutcome::Cancelled
+                } else {
+                    crate::ProviderRequestOutcome::Failed(failure.error.kind())
+                };
+                record_request_usage(&scope, attempt, failure.capture.usage.clone(), outcome).await;
+                return Err(failure);
+            }
+        };
         if valid_response(&response) {
             return Ok((response, capture));
         }
@@ -351,6 +392,34 @@ async fn request_valid_response(
         }
     }
     unreachable!("invalid response attempts is nonzero")
+}
+
+async fn record_request_usage(
+    scope: &ProviderRequestScope<'_>,
+    attempt_index: usize,
+    usage: ModelUsage,
+    outcome: crate::ProviderRequestOutcome,
+) {
+    let Some(recorder) = &scope.runtime.usage_recorder else {
+        return;
+    };
+    let context = crate::ProviderRequestUsageContext::new(
+        scope.runtime.provider.identity(),
+        scope.session_id.clone(),
+        scope.run_id.clone(),
+        scope.step_index,
+        attempt_index,
+        scope
+            .runtime
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root().to_path_buf()),
+        scope.runtime.usage_purpose.clone(),
+    );
+    let event = crate::ProviderRequestUsageEvent::observed(context, usage, outcome);
+    if let Err(error) = recorder.record(event).await {
+        scope.runtime.usage_recorder_diagnostics.push(error);
+    }
 }
 
 fn valid_response(response: &ModelResponse) -> bool {

@@ -26,6 +26,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) compaction: CompactionConfig,
     pub(crate) context_window: Option<u64>,
+    pub(crate) usage_purpose: &'static str,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -42,7 +43,9 @@ where
         reasoning,
         compaction,
         context_window,
+        usage_purpose,
     } = options;
+    let usage_recorder = crate::usage::default_recorder();
     let (compactor, policy) = build_compaction(
         Arc::clone(&provider),
         tools,
@@ -57,7 +60,11 @@ where
         .workspace_policy(workspace_policy)
         .reasoning_level(reasoning)
         .max_steps(super::sdk_config::run_step_limit())
+        .usage_purpose(usage_purpose)
         .compactor(compactor);
+    if let Some(recorder) = usage_recorder {
+        builder = builder.usage_recorder_shared(recorder);
+    }
     if let Some(handler) = approval_handler {
         builder = builder.approval_handler_shared(handler);
     }
@@ -80,6 +87,7 @@ pub(crate) fn build_compaction(
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
         provider,
+        recorder: crate::usage::default_recorder(),
         tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
         reasoning,
         config: compaction,
@@ -105,6 +113,7 @@ pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
 
 pub(crate) struct ModelCompactor {
     provider: Arc<dyn ModelProvider>,
+    recorder: Option<Arc<crate::usage::SqliteUsageRecorder>>,
     tool_specs: Vec<rho_sdk::model::ToolSpec>,
     reasoning: rho_sdk::ReasoningLevel,
     config: CompactionConfig,
@@ -114,6 +123,7 @@ pub(crate) struct ModelCompactor {
 impl Compactor for ModelCompactor {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
         Box::pin(async move {
+            let cancellation = request.cancellation().clone();
             let messages = request.messages().to_vec();
             let target_tokens = self
                 .context_window
@@ -128,11 +138,22 @@ impl Compactor for ModelCompactor {
             let model_request = ModelRequest {
                 messages: &summary_messages,
                 tools: &[],
-                cancellation: request.cancellation().clone(),
+                cancellation: cancellation.clone(),
                 reasoning_level: self.reasoning,
                 prompt_cache_key: None,
             };
-            let response = self.provider.send_turn(model_request).await?;
+            let (response, usage) = match crate::usage::send_recorded(
+                self.provider.as_ref(),
+                model_request,
+                "compaction",
+                self.recorder.clone(),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) if cancellation.is_cancelled() => return Err(Error::Cancelled),
+                Err(error) => return Err(error.into()),
+            };
             let ModelResponse::Assistant(blocks) = response;
             let summary = blocks
                 .iter()
@@ -147,7 +168,14 @@ impl Compactor for ModelCompactor {
                     message: "compaction model returned no summary text".into(),
                 });
             }
-            CompactionOutput::new(replacement_history_from_summary(partition, summary))
+            CompactionOutput::with_usage(
+                replacement_history_from_summary(partition, summary),
+                usage,
+            )
         })
+    }
+
+    fn cancellation_mode(&self) -> rho_sdk::CompactorCancellationMode {
+        rho_sdk::CompactorCancellationMode::Cooperative
     }
 }

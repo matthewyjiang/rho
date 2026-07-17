@@ -221,6 +221,7 @@ impl InteractiveRuntime {
             reasoning: sdk_options.runtime.reasoning,
             compaction: compaction.clone(),
             context_window,
+            usage_purpose: "agent",
         })?;
         let cache_key = session_id.as_deref().map(prompt_cache_key);
         let resumed_snapshot = storage
@@ -311,6 +312,7 @@ impl InteractiveRuntime {
             reasoning: self.reasoning,
             compaction: self.compaction.clone(),
             context_window: self.context_window,
+            usage_purpose: "agent",
         })?;
         let replacement_session = replacement_runtime
             .session(SessionOptions::from_snapshot(snapshot))
@@ -703,6 +705,7 @@ impl InteractiveRuntime {
             reasoning: self.reasoning,
             compaction: self.compaction.clone(),
             context_window: self.context_window,
+            usage_purpose: "agent",
         })?;
         let replacement_session = replacement_runtime.session(options).await?;
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);

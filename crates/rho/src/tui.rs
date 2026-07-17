@@ -75,6 +75,7 @@ mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
 mod session_picker;
+mod session_title;
 mod skill_picker;
 #[cfg(debug_assertions)]
 mod smoke_injection;
@@ -120,6 +121,7 @@ use render::{
     LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
+use session_title::generate_session_title;
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
@@ -151,8 +153,8 @@ use crate::{
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
-        ModelResponse, ModelUsage, UnavailableProvider,
+        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
+        UnavailableProvider,
     },
     permission::PermissionMode,
     provider::{self, ProviderAuthKind},
@@ -5709,64 +5711,6 @@ fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-async fn generate_session_title(
-    provider_name: String,
-    model: String,
-    first_user_message: String,
-) -> anyhow::Result<String> {
-    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let request_messages = vec![
-                Message::System(
-                    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
-                        .into(),
-                ),
-                Message::user_text(format!("First user message:\n\n{first_user_message}")),
-            ];
-    let response = tokio::time::timeout(
-        Duration::from_secs(20),
-        provider.send_turn(ModelRequest {
-            messages: &request_messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        }),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("title generation timed out"))??;
-    let ModelResponse::Assistant(blocks) = response;
-    let title = blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    sanitize_session_title(&title)
-        .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
-}
-
-fn sanitize_session_title(title: &str) -> Option<String> {
-    let title = title
-        .lines()
-        .find(|line| !line.trim().is_empty())?
-        .trim()
-        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '*' | '#'))
-        .trim()
-        .trim_end_matches(['.', ':', ';'])
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    let mut title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.chars().count() > 80 {
-        title = title.chars().take(79).collect();
-        title.push('…');
-    }
-    Some(title)
-}
-
 fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
     let masked = "•".repeat(secret.value.chars().count());
     vec![
@@ -6209,10 +6153,10 @@ mod tests {
     #[test]
     fn sanitizes_generated_session_title() {
         assert_eq!(
-            sanitize_session_title("\"Implement resume picker.\""),
+            session_title::sanitize_session_title("\"Implement resume picker.\""),
             Some("Implement resume picker".into())
         );
-        assert_eq!(sanitize_session_title("\n\n"), None);
+        assert_eq!(session_title::sanitize_session_title("\n\n"), None);
     }
 
     #[test]
