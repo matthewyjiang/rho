@@ -13,7 +13,7 @@ pub(crate) enum OpenAiCompatibleDialect {
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         if self == Self::Moonshot {
-            normalize_moonshot_schema(&mut tool.function.parameters);
+            normalize_moonshot_parameters(&mut tool.function.parameters);
         }
         tool
     }
@@ -37,6 +37,21 @@ impl OpenAiCompatibleDialect {
             }),
             _ => None,
         }
+    }
+}
+
+fn normalize_moonshot_parameters(parameters: &mut Value) {
+    let Some(object) = parameters.as_object_mut() else {
+        return;
+    };
+
+    // Moonshot requires function parameters to be an object, but rejects a
+    // root object type combined with anyOf. Keep the required root type and
+    // rely on tool argument validation for the root alternatives.
+    object.insert("type".into(), Value::String("object".into()));
+    object.remove("anyOf");
+    for value in object.values_mut() {
+        normalize_moonshot_schema(value);
     }
 }
 

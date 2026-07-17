@@ -26,12 +26,8 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         let body: serde_json::Value = serde_json::from_str(request_body).unwrap();
         assert_eq!(body["thinking"]["type"], "enabled");
         let schema = &body["tools"][0]["function"]["parameters"];
-        assert!(schema.get("type").is_none());
-        assert!(schema["anyOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|branch| branch["type"] == "object"));
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("anyOf").is_none());
 
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
         let response = format!(
