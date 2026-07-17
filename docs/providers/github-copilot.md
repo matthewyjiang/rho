@@ -38,7 +38,7 @@ GITHUB_COPILOT_TOKEN=...
 
 ## Models
 
-GitHub Copilot exposes `github-copilot/<model>` names from the refreshed Copilot API model list. Fetch the list with `/refresh-model-list github-copilot` when credentials are available, then switch with:
+GitHub Copilot exposes `github-copilot/<model>` names from the refreshed Copilot API model list. Fetch the list through **Refresh model lists** in `/config` when credentials are available, then switch with:
 
 ```text
 /model github-copilot/gpt-4.1

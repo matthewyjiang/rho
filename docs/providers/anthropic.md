@@ -38,7 +38,7 @@ Environment variables are CI/development escape hatches and override stored cred
 
 ## Models
 
-Anthropic can refresh its provider model list with `/refresh-model-list anthropic`. Switch to an Anthropic model with:
+Anthropic can refresh its provider model list through **Refresh model lists** in `/config`. Switch to an Anthropic model with:
 
 ```text
 /model anthropic/claude-sonnet-4-5

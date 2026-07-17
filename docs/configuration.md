@@ -100,11 +100,7 @@ rho --config ~/.rho/config.toml
 
 ## Title model
 
-Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Use `/title-model` in the TUI to choose from available catalog and cached models, or pass a direct provider/model name:
-
-```text
-/title-model openai/gpt-5.6-luna
-```
+Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Choose **Session title model** in `/config` to select from available catalog and cached models.
 
 If no title model settings are present, Rho falls back to the active provider, model, and auth.
 
@@ -124,7 +120,7 @@ Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_sear
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
 
-Change the mode from the `Permission mode` row in `/config`, or use `/auto`, `/plan`, or `/supervised`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
+Change the mode from the **Permission mode** row in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
 
 Non-interactive `rho run` sessions cannot display approval prompts. Supervised operations that require approval therefore fail closed instead of being approved automatically.
 
@@ -132,9 +128,9 @@ Permission modes are application policy checks, not an operating-system sandbox.
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `enable_subagents` row controls whether agent tools are available in the next session. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. Its model and provider rows change the conversation and title models, refresh cached model lists, and manage provider credentials. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `enable_subagents` row controls whether agent tools are available in the next session. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
-[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
+[`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows, while **Session title model** saves optional title-generation model settings. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
 ## Reasoning options
 

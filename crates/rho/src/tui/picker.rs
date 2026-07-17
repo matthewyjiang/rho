@@ -79,6 +79,7 @@ pub(super) enum PickerAction {
     LoginGroup,
     LoginProvider,
     LogoutProvider,
+    RefreshModelList,
     InsertSkillCommand,
     ViewAgent,
     ResumeSession,
@@ -95,6 +96,7 @@ impl PickerAction {
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession => false,
@@ -191,6 +193,7 @@ impl UiPicker {
                 PickerAction::LoginGroup
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
+                | PickerAction::RefreshModelList
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
@@ -219,6 +222,7 @@ impl UiPicker {
                 PickerAction::LoginGroup
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
+                | PickerAction::RefreshModelList
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
@@ -239,6 +243,7 @@ impl UiPicker {
                 PickerAction::LoginGroup
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
+                | PickerAction::RefreshModelList
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession

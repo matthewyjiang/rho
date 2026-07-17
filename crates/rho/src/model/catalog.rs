@@ -277,7 +277,7 @@ fn provider_uses_static_catalog(provider: &str) -> bool {
 
 fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
     let hint = if provider_uses_cached_models(provider) {
-        "Run /refresh-model-list to update available models."
+        "Open /config and choose Refresh model lists to update available models."
     } else {
         "Choose a model from the provider allowlist."
     };
@@ -604,7 +604,7 @@ mod tests {
                 ModelSelectionError::UnavailableModel {
                     provider: "github-copilot".into(),
                     model: "gpt-4.1".into(),
-                    hint: "Run /refresh-model-list to update available models.",
+                    hint: "Open /config and choose Refresh model lists to update available models.",
                 }
             );
         });
@@ -792,7 +792,7 @@ mod tests {
             ModelSelectionError::UnavailableModel {
                 provider: "anthropic".into(),
                 model: "custom-model".into(),
-                hint: "Run /refresh-model-list to update available models.",
+                hint: "Open /config and choose Refresh model lists to update available models.",
             }
         );
     }
@@ -812,7 +812,7 @@ mod tests {
             ModelSelectionError::UnavailableModel {
                 provider: "openai".into(),
                 model: "brand-new-model".into(),
-                hint: "Run /refresh-model-list to update available models.",
+                hint: "Open /config and choose Refresh model lists to update available models.",
             }
         );
     }
