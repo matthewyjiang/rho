@@ -2,9 +2,15 @@
 
 Rho supports OpenRouter through its OpenAI-compatible Chat Completions API using API-key authentication.
 
-| Provider | Auth | Environment override | API base | Model list |
-| --- | --- | --- | --- | --- |
-| `openrouter` | `openrouter-api-key` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | Refreshable after authentication |
+## At a glance
+
+| Setting | Value |
+| --- | --- |
+| Provider | `openrouter` |
+| Auth | `openrouter-api-key` |
+| Environment override | `OPENROUTER_API_KEY` |
+| API base | `https://openrouter.ai/api/v1` |
+| Model list | Refreshable after authentication |
 
 ## Login and model selection
 

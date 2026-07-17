@@ -2,10 +2,27 @@
 
 Rho supports Moonshot's OpenAI-compatible Chat Completions API through two explicit provider selections. Neither selection uses the Anthropic Messages API.
 
-| Provider | Auth | Environment override | API base | Model list |
-| --- | --- | --- | --- | --- |
-| `moonshot` | `moonshot-api-key` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | Refreshable after authentication |
-| `kimi-code` | `kimi-oauth` | `KIMI_ACCESS_TOKEN` | `https://api.kimi.com/coding/v1` | Refreshable after authentication |
+## At a glance
+
+### Moonshot
+
+| Setting | Value |
+| --- | --- |
+| Provider | `moonshot` |
+| Auth | `moonshot-api-key` |
+| Environment override | `MOONSHOT_API_KEY` |
+| API base | `https://api.moonshot.ai/v1` |
+| Model list | Refreshable after authentication |
+
+### Kimi Code
+
+| Setting | Value |
+| --- | --- |
+| Provider | `kimi-code` |
+| Auth | `kimi-oauth` |
+| Environment override | `KIMI_ACCESS_TOKEN` |
+| API base | `https://api.kimi.com/coding/v1` |
+| Model list | Refreshable after authentication |
 
 Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated with `/refresh-model-list moonshot` and `/refresh-model-list kimi-code` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
 

@@ -4,10 +4,25 @@ xAI supports API-key authentication and OAuth for models available to a SuperGro
 
 ## At a glance
 
-| Provider | Auth | Environment override | API base | Model list |
-| --- | --- | --- | --- | --- |
-| `xai` | `xai-api-key` | `XAI_API_KEY` | `https://api.x.ai/v1` | Static allowlist maintained by Rho |
-| `xai-oauth` | `xai-oauth` | `XAI_ACCESS_TOKEN` | `https://api.x.ai/v1` | Static allowlist maintained by Rho |
+### API key
+
+| Setting | Value |
+| --- | --- |
+| Provider | `xai` |
+| Auth | `xai-api-key` |
+| Environment override | `XAI_API_KEY` |
+| API base | `https://api.x.ai/v1` |
+| Model list | Static allowlist maintained by Rho |
+
+### OAuth
+
+| Setting | Value |
+| --- | --- |
+| Provider | `xai-oauth` |
+| Auth | `xai-oauth` |
+| Environment override | `XAI_ACCESS_TOKEN` |
+| API base | `https://api.x.ai/v1` |
+| Model list | Static allowlist maintained by Rho |
 
 ## Sign in
 

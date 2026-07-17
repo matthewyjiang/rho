@@ -9,7 +9,7 @@ GitHub Copilot uses GitHub device-code auth. Rho talks to GitHub Copilot endpoin
 | Provider | `github-copilot` |
 | Auth | `github-copilot` |
 | Environment override | `GITHUB_COPILOT_TOKEN` |
-| API endpoints | Returned by the Copilot token exchange |
+| API base | Dynamic, returned by the Copilot token exchange |
 | Model list | Refreshable after authentication |
 
 ## Sign in
