@@ -1,6 +1,9 @@
 use futures_util::StreamExt;
 
-use crate::provider_backend::{ModelError, ModelEvent, ModelResponse};
+use crate::{
+    model::ProviderReportedErrorKind,
+    provider_backend::{ModelError, ModelEvent, ModelResponse},
+};
 
 use super::convert::{convert_content_blocks, usage_to_model_usage};
 use super::types::{AnthropicContentBlock, AnthropicUsage};
@@ -240,12 +243,22 @@ pub(crate) fn handle_anthropic_stream_line(
             }
         }
         Some("error") => {
-            let message = value
-                .get("error")
+            let error = value.get("error");
+            let message = error
                 .and_then(|error| error.get("message"))
                 .and_then(|message| message.as_str())
                 .unwrap_or("Anthropic stream returned an error");
-            return Err(ModelError::InvalidResponse(message.to_string()));
+            let error_type = error
+                .and_then(|error| error.get("type"))
+                .and_then(|error_type| error_type.as_str());
+            return Err(match error_type {
+                Some(error_type) => ModelError::ProviderReported {
+                    kind: anthropic_error_kind(error_type),
+                    error_type: error_type.to_string(),
+                    message: message.to_string(),
+                },
+                None => ModelError::InvalidResponse(message.to_string()),
+            });
         }
         Some("content_block_stop") => {
             let index = content_index(&value)?;
@@ -279,6 +292,15 @@ pub(crate) fn handle_anthropic_stream_line(
     Ok(true)
 }
 
+fn anthropic_error_kind(error_type: &str) -> ProviderReportedErrorKind {
+    match error_type {
+        "timeout_error" => ProviderReportedErrorKind::Timeout,
+        "rate_limit_error" => ProviderReportedErrorKind::RateLimit,
+        "overloaded_error" | "api_error" => ProviderReportedErrorKind::Unavailable,
+        _ => ProviderReportedErrorKind::InvalidResponse,
+    }
+}
+
 fn content_index(value: &serde_json::Value) -> Result<usize, ModelError> {
     let index = value
         .get("index")
@@ -307,6 +329,57 @@ mod tests {
 
     use super::*;
     use crate::provider_backend::ContentBlock;
+
+    #[test]
+    fn stream_error_events_map_to_the_provider_contract() {
+        use rho_sdk::ProviderErrorKind;
+
+        let cases = [
+            ("overloaded_error", ProviderErrorKind::Unavailable, true),
+            ("api_error", ProviderErrorKind::Unavailable, true),
+            ("rate_limit_error", ProviderErrorKind::RateLimit, true),
+            ("timeout_error", ProviderErrorKind::Timeout, true),
+            (
+                "invalid_request_error",
+                ProviderErrorKind::InvalidResponse,
+                false,
+            ),
+        ];
+
+        for (error_type, expected_kind, retryable) in cases {
+            let mut state = AnthropicSseState::default();
+            let line = format!(
+                r#"data: {{"type":"error","error":{{"type":"{error_type}","message":"provider details"}}}}"#
+            );
+            let model_error =
+                handle_anthropic_stream_line(&line, &mut state, &mut |_| Ok(())).unwrap_err();
+            let error =
+                crate::providers::sdk_contract::provider_error_from_model_error(model_error);
+            let expected_diagnostic = format!("{error_type}: provider details");
+
+            assert_eq!(error.kind(), expected_kind, "{error_type}");
+            assert_eq!(error.is_retryable(), retryable, "{error_type}");
+            assert_eq!(
+                error.diagnostic(),
+                Some(expected_diagnostic.as_str()),
+                "{error_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_error_events_without_a_type_stay_invalid_responses() {
+        let mut state = AnthropicSseState::default();
+
+        let error = handle_anthropic_stream_line(
+            r#"data: {"type":"error","error":{"message":"broken"}}"#,
+            &mut state,
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, ModelError::InvalidResponse(message) if message == "broken"));
+    }
 
     #[test]
     fn ping_is_not_meaningful_stream_activity() {

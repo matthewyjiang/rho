@@ -7,6 +7,14 @@ pub use rho_sdk::model::{
 };
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderReportedErrorKind {
+    Timeout,
+    RateLimit,
+    Unavailable,
+    InvalidResponse,
+}
+
 #[derive(Debug, Error)]
 pub enum ModelError {
     #[error("missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override")]
@@ -48,6 +56,12 @@ pub enum ModelError {
     StreamFailedAfterOutput { message: String },
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
+    #[error("provider reported {error_type}: {message}")]
+    ProviderReported {
+        kind: ProviderReportedErrorKind,
+        error_type: String,
+        message: String,
+    },
     #[error(
         "provider '{provider}' model '{model}' does not support reasoning level '{requested}'"
     )]
