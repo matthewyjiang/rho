@@ -1,7 +1,8 @@
 use crate::{
-    auth::{codex_oauth, github_copilot_device, xai_oauth},
+    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
     credentials::{
-        save_codex_tokens, save_github_copilot_tokens, save_xai_tokens, OsCredentialStore,
+        save_codex_tokens, save_github_copilot_tokens, save_kimi_tokens, save_xai_tokens,
+        OsCredentialStore,
     },
     model::catalog,
     provider::{self, ProviderAuthKind},
@@ -45,6 +46,18 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             }
             let tokens = github_copilot_device::complete_github_copilot_device_login(login).await?;
             save_github_copilot_tokens(&store, &tokens)?;
+        }
+        ProviderAuthKind::KimiOAuth { .. } => {
+            let login = kimi_oauth::start_kimi_device_login().await?;
+            eprintln!(
+                "Kimi login: visit {} and enter code {}",
+                login.verification_uri, login.user_code
+            );
+            if let Some(uri) = &login.verification_uri_complete {
+                eprintln!("Or open this URL to continue: {uri}");
+            }
+            let tokens = kimi_oauth::complete_kimi_device_login(login).await?;
+            save_kimi_tokens(&store, &tokens)?;
         }
         ProviderAuthKind::XaiOAuth { .. } => {
             let tokens = if device_auth {

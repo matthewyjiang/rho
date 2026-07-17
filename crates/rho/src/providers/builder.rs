@@ -14,6 +14,7 @@ use crate::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
         openai::{auth::Auth, OpenAiProvider},
+        openai_compatible::{CompatibleAuth, OpenAiCompatibleProvider},
         xai::XaiProvider,
     },
     reasoning::ReasoningLevel,
@@ -24,6 +25,8 @@ const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENAI_CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const XAI_API_BASE: &str = "https://api.x.ai/v1";
+const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
 
 /// Provider construction values derived explicitly from application config.
 ///
@@ -113,6 +116,7 @@ pub(crate) enum ProviderCredential {
     AnthropicApiKey(SecretString),
     GitHubCopilot(GitHubCopilotAuthManager),
     Xai(XaiAuthManager),
+    OpenAiCompatible(CompatibleAuth),
 }
 
 impl fmt::Debug for ProviderCredential {
@@ -122,6 +126,7 @@ impl fmt::Debug for ProviderCredential {
             Self::AnthropicApiKey(_) => "anthropic-api-key",
             Self::GitHubCopilot(_) => "github-copilot",
             Self::Xai(_) => "xai",
+            Self::OpenAiCompatible(_) => "openai-compatible",
         };
         formatter
             .debug_struct("ProviderCredential")
@@ -196,6 +201,24 @@ impl ProviderBuilder {
                     client,
                     endpoint,
                 )?))
+            }
+            (ProviderRuntime::Moonshot, ProviderCredential::OpenAiCompatible(auth)) => {
+                Ok(Arc::new(OpenAiCompatibleProvider::new(
+                    client,
+                    "moonshot",
+                    self.options.model,
+                    auth,
+                    endpoint.unwrap_or_else(|| MOONSHOT_API_BASE.into()),
+                )))
+            }
+            (ProviderRuntime::KimiCode, ProviderCredential::OpenAiCompatible(auth)) => {
+                Ok(Arc::new(OpenAiCompatibleProvider::new(
+                    client,
+                    "kimi-code",
+                    self.options.model,
+                    auth,
+                    endpoint.unwrap_or_else(|| KIMI_CODE_API_BASE.into()),
+                )))
             }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
                 Ok(Arc::new(XaiProvider::new_with_transport(

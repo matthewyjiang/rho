@@ -495,14 +495,17 @@ mod tests {
     fn login_targets_use_provider_names() {
         let targets = login_targets();
 
-        assert_eq!(targets[0].provider, "openai");
-        assert_eq!(targets[1].provider, "openai-codex");
-        assert_eq!(targets[2].provider, "anthropic");
-        assert_eq!(targets[2].auth, "anthropic-api-key");
-        assert_eq!(targets[3].provider, "github-copilot");
-        assert_eq!(targets[3].auth, "github-copilot");
-        assert_eq!(targets[4].provider, "xai");
-        assert_eq!(targets[4].auth, "xai-oauth");
+        let providers = targets
+            .iter()
+            .map(|target| (target.provider.as_str(), target.auth.as_str()))
+            .collect::<Vec<_>>();
+        assert!(providers.contains(&("openai", "api-key")));
+        assert!(providers.contains(&("openai-codex", "codex")));
+        assert!(providers.contains(&("anthropic", "anthropic-api-key")));
+        assert!(providers.contains(&("github-copilot", "github-copilot")));
+        assert!(providers.contains(&("moonshot", "moonshot-api-key")));
+        assert!(providers.contains(&("kimi-code", "kimi-oauth")));
+        assert!(providers.contains(&("xai", "xai-oauth")));
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());

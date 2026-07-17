@@ -40,6 +40,26 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
+    let moonshot = super::provider_descriptor_by_id(ProviderId::Moonshot);
+    assert_eq!(moonshot.auth, "moonshot-api-key");
+    assert_eq!(moonshot.auth_kind.env_var(), "MOONSHOT_API_KEY");
+    assert_eq!(
+        moonshot.auth_kind.account(),
+        super::MOONSHOT_API_KEY_ACCOUNT
+    );
+
+    let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode);
+    assert_eq!(kimi.auth, "kimi-oauth");
+    assert_eq!(kimi.auth_kind.env_var(), "KIMI_ACCESS_TOKEN");
+    assert_eq!(kimi.auth_kind.account(), super::KIMI_TOKENS_ACCOUNT);
+    assert!(matches!(
+        kimi.auth_kind,
+        ProviderAuthKind::KimiOAuth {
+            account: super::KIMI_TOKENS_ACCOUNT,
+            ..
+        }
+    ));
+
     let xai = super::provider_descriptor_by_id(ProviderId::Xai);
     assert_eq!(xai.auth_kind.env_var(), "XAI_ACCESS_TOKEN");
     assert_eq!(xai.auth_kind.account(), super::XAI_TOKENS_ACCOUNT);

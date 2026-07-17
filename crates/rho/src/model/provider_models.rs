@@ -12,11 +12,17 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    auth::github_copilot_token::{
-        auth_material_with_store, force_refresh_auth_material_with_store,
-        GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
+    auth::{
+        github_copilot_token::{
+            auth_material_with_store, force_refresh_auth_material_with_store,
+            GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
+        },
+        kimi_oauth::{refresh_kimi_tokens, KimiOAuthError},
+        kimi_token::token_is_expiring,
     },
-    credentials::{load_provider_api_key, CredentialStore},
+    credentials::{
+        load_kimi_tokens, load_provider_api_key, save_kimi_tokens, CredentialStore, KimiTokens,
+    },
     model::{registry::missing_credential_error, ModelError},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
@@ -83,6 +89,9 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             fetch_github_copilot_models(provider, store).await?
         }
+        Some(ProviderModelRefreshKind::OpenAiCompatible { api_base }) => {
+            fetch_openai_compatible_models(descriptor, api_base, store).await?
+        }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
     replace_cached_provider_models(provider, &models)?;
@@ -126,6 +135,65 @@ fn replace_cached_provider_models(
     .map_err(model_cache_error)?;
     tx.commit().map_err(model_cache_error)?;
     Ok(())
+}
+
+async fn fetch_openai_compatible_models(
+    descriptor: &provider::ProviderDescriptor,
+    api_base: &str,
+    store: &dyn CredentialStore,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let token = match descriptor.auth_kind {
+        ProviderAuthKind::ApiKey { .. } => load_api_key_auth(descriptor.name, store)?,
+        ProviderAuthKind::KimiOAuth { .. } => {
+            let mut tokens = match std::env::var(descriptor.auth_kind.env_var()) {
+                Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
+                    access_token,
+                    refresh_token: None,
+                    expires_at_unix: None,
+                    scope: String::new(),
+                    token_type: "Bearer".into(),
+                    expires_in: None,
+                },
+                _ => load_kimi_tokens(store)?.ok_or(ModelError::MissingKimiAuth)?,
+            };
+            if token_is_expiring(&tokens) {
+                let refresh_token = tokens
+                    .refresh_token
+                    .as_deref()
+                    .ok_or(ModelError::MissingKimiAuth)?;
+                tokens = refresh_kimi_tokens(&reqwest::Client::new(), refresh_token)
+                    .await
+                    .map_err(|error| match error {
+                        KimiOAuthError::Unauthorized(_) => ModelError::MissingKimiAuth,
+                        error => ModelError::InvalidResponse(error.to_string()),
+                    })?;
+                save_kimi_tokens(store, &tokens)?;
+            }
+            tokens.access_token
+        }
+        _ => return Err(ModelError::UnsupportedProvider(descriptor.name.into())),
+    };
+    let response: OpenAiModelsResponse = reqwest::Client::new()
+        .get(format!("{api_base}/models"))
+        .bearer_auth(token)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let mut models = response
+        .data
+        .into_iter()
+        .map(|model| ProviderModel {
+            provider: descriptor.name.into(),
+            display_name: model.id.clone(),
+            model: model.id,
+            max_output_tokens: None,
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| left.model.cmp(&right.model));
+    models.dedup_by(|left, right| left.model == right.model);
+    Ok(models)
 }
 
 async fn fetch_openai_models(

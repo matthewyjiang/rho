@@ -14,6 +14,8 @@ pub enum ProviderRuntime {
     OpenAi { auth_mode: AuthMode },
     Anthropic,
     GithubCopilot,
+    Moonshot,
+    KimiCode,
     Xai,
 }
 
@@ -28,14 +30,17 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
         },
         provider::ProviderId::Anthropic => ProviderRuntime::Anthropic,
         provider::ProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
+        provider::ProviderId::KimiCode => ProviderRuntime::KimiCode,
+        provider::ProviderId::Moonshot => ProviderRuntime::Moonshot,
         provider::ProviderId::Xai => ProviderRuntime::Xai,
     })
 }
 
 pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
     match missing {
-        MissingCredential::OpenAiApiKey => ModelError::MissingApiKey,
-        MissingCredential::AnthropicApiKey => ModelError::MissingAnthropicApiKey,
+        MissingCredential::OpenAi => ModelError::MissingApiKey,
+        MissingCredential::Anthropic => ModelError::MissingAnthropicApiKey,
+        MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
     }
 }
 
@@ -45,6 +50,7 @@ pub fn missing_credentials_error(provider_name: &str) -> ModelError {
         Some(ProviderAuthKind::CodexOAuth { .. }) => ModelError::MissingCodexAuth,
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => ModelError::MissingGithubCopilotAuth,
         Some(ProviderAuthKind::XaiOAuth { .. }) => ModelError::MissingXaiAuth,
+        Some(ProviderAuthKind::KimiOAuth { .. }) => ModelError::MissingKimiAuth,
         None => ModelError::UnsupportedProvider(provider_name.to_string()),
     }
 }

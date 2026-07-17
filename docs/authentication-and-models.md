@@ -15,8 +15,10 @@ Rho's implemented providers are:
 | `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
 | `xai` | `xai-oauth` | [xAI](/providers/xai) |
+| `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
+| `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 
-OpenAI, Anthropic, and GitHub Copilot expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched with `/refresh-model-list`.
+OpenAI, Anthropic, GitHub Copilot, Moonshot, and Kimi Code expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched with `/refresh-model-list`.
 
 Each provider page documents its `/login` flow, `/logout` behavior, environment override, and how to select its models.
 
@@ -50,7 +52,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, and GitHub Copilot can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
+OpenAI, Anthropic, GitHub Copilot, Moonshot, and Kimi Code can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
 
 ## Model metadata
 

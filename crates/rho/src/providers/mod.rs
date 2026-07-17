@@ -14,6 +14,7 @@ pub(crate) mod builder;
 mod factory;
 pub(crate) mod github_copilot;
 pub(crate) mod openai;
+pub(crate) mod openai_compatible;
 pub(crate) mod sdk_contract;
 mod send_stream;
 #[cfg(debug_assertions)]

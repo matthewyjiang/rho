@@ -8,6 +8,8 @@ pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 pub const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
+pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
+pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
@@ -16,6 +18,8 @@ pub enum ProviderId {
     Anthropic,
     GithubCopilot,
     Xai,
+    Moonshot,
+    KimiCode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +33,7 @@ pub enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
     GithubCopilot,
+    OpenAiCompatible { api_base: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +56,10 @@ pub enum ProviderAuthKind {
         env_var: &'static str,
         account: &'static str,
     },
+    KimiOAuth {
+        env_var: &'static str,
+        account: &'static str,
+    },
 }
 
 impl ProviderAuthKind {
@@ -59,7 +68,8 @@ impl ProviderAuthKind {
             Self::ApiKey { env_var, .. }
             | Self::CodexOAuth { env_var, .. }
             | Self::GithubCopilotDevice { env_var, .. }
-            | Self::XaiOAuth { env_var, .. } => env_var,
+            | Self::XaiOAuth { env_var, .. }
+            | Self::KimiOAuth { env_var, .. } => env_var,
         }
     }
 
@@ -68,15 +78,17 @@ impl ProviderAuthKind {
             Self::ApiKey { account, .. }
             | Self::CodexOAuth { account, .. }
             | Self::GithubCopilotDevice { account, .. }
-            | Self::XaiOAuth { account, .. } => account,
+            | Self::XaiOAuth { account, .. }
+            | Self::KimiOAuth { account, .. } => account,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissingCredential {
-    OpenAiApiKey,
-    AnthropicApiKey,
+    OpenAi,
+    Anthropic,
+    Moonshot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,7 +115,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "OPENAI_API_KEY",
             account: OPENAI_API_KEY_ACCOUNT,
             entry_label: "OpenAI API key",
-            missing: MissingCredential::OpenAiApiKey,
+            missing: MissingCredential::OpenAi,
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
@@ -133,7 +145,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "ANTHROPIC_API_KEY",
             account: ANTHROPIC_API_KEY_ACCOUNT,
             entry_label: "Anthropic API key",
-            missing: MissingCredential::AnthropicApiKey,
+            missing: MissingCredential::Anthropic,
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
@@ -152,6 +164,40 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         metadata_upstream: "github-copilot",
+    },
+    ProviderDescriptor {
+        id: ProviderId::Moonshot,
+        name: "moonshot",
+        display_name: "Moonshot AI",
+        auth: "moonshot-api-key",
+        login_label: "Moonshot API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "MOONSHOT_API_KEY",
+            account: MOONSHOT_API_KEY_ACCOUNT,
+            entry_label: "Moonshot API key",
+            missing: MissingCredential::Moonshot,
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
+            api_base: "https://api.moonshot.ai/v1",
+        }),
+        metadata_upstream: "moonshotai",
+    },
+    ProviderDescriptor {
+        id: ProviderId::KimiCode,
+        name: "kimi-code",
+        display_name: "Kimi Code",
+        auth: "kimi-oauth",
+        login_label: "Kimi Code OAuth",
+        auth_kind: ProviderAuthKind::KimiOAuth {
+            env_var: "KIMI_ACCESS_TOKEN",
+            account: KIMI_TOKENS_ACCOUNT,
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
+            api_base: "https://api.kimi.com/coding/v1",
+        }),
+        metadata_upstream: "moonshotai",
     },
     ProviderDescriptor {
         id: ProviderId::Xai,
