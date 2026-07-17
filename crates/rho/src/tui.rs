@@ -4757,11 +4757,11 @@ impl App {
                 }
             }
         }
-        if let Some(activity_rail) = layout.activity_rail {
-            frame.render_widget(Clear, activity_rail);
+        if let Some(activity_background) = layout.activity_background {
+            frame.render_widget(Clear, activity_background);
             frame.render_widget(
                 Paragraph::new("").style(Theme::activity_rail()),
-                activity_rail,
+                activity_background,
             );
         }
         if let Some(scrollbar) = layout
