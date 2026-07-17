@@ -381,6 +381,10 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         text: "permission mode: supervised",
         timeout: SETTLE,
     },
+    Step::WaitText {
+        text: "◇ Supervised",
+        timeout: SETTLE,
+    },
     Step::Phase("inspect_long_process_approval"),
     Step::SubmitText("fixture approval long"),
     Step::WaitText {

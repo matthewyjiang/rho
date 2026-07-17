@@ -100,12 +100,13 @@ impl StatusLineState {
     }
 
     fn right_bottom(&self) -> String {
-        let mut text = format!("({}) {} • {}", self.provider, self.model, self.reasoning);
-        if self.permission_mode != PermissionMode::Auto {
-            text.push_str(" • ");
-            text.push_str(self.permission_mode.as_str());
-        }
-        text
+        format!(
+            "◇ {} • ({}) {} • {}",
+            self.permission_mode.label(),
+            self.provider,
+            self.model,
+            self.reasoning
+        )
     }
 }
 

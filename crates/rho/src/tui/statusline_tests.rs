@@ -266,21 +266,22 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
 }
 
 #[test]
-fn permission_mode_indicator_is_hidden_for_auto_and_shown_for_restricted_modes() {
+fn permission_mode_indicator_is_always_visible_and_prioritized() {
     let auto = test_info(PathBuf::from("/tmp/project"));
-    let auto_state = StatusLineState::from_tui(&auto);
-    assert!(!auto_state.right_bottom().contains("auto"));
+    assert!(StatusLineState::from_tui(&auto)
+        .right_bottom()
+        .starts_with("◇ Auto • "));
 
     let mut plan = auto;
     plan.permission_mode = crate::permission::PermissionMode::Plan;
     assert!(StatusLineState::from_tui(&plan)
         .right_bottom()
-        .ends_with(" • plan"));
+        .starts_with("◇ Plan • "));
 
     plan.permission_mode = crate::permission::PermissionMode::Supervised;
     assert!(StatusLineState::from_tui(&plan)
         .right_bottom()
-        .ends_with(" • supervised"));
+        .starts_with("◇ Supervised • "));
 }
 
 #[test]
@@ -298,6 +299,7 @@ fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
     assert!(lines
         .iter()
         .all(|line| display_width(&line_text(line)) <= 18));
+    assert!(line_text(&lines[1]).contains("◇ Plan"));
 }
 
 #[test]
