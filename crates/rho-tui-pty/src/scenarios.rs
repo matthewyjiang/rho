@@ -546,6 +546,7 @@ const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "Read-only investigation",
         timeout: SETTLE,
     },
+    Step::AssertText("You are a read-only exploration subagent"),
     Step::Resize { rows: 32, cols: 50 },
     Step::WaitText {
         text: "Read-only investigation",
