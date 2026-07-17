@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.1.0...rho-sdk-v1.2.0) (2026-07-17)
+
+
+### Features
+
+* **tui:** redesign questionnaire with tabbed question layout ([#369](https://github.com/matthewyjiang/rho/issues/369)) ([a90135a](https://github.com/matthewyjiang/rho/commit/a90135a494409cfc1c99ffd2226bee9075788d41))
+* **usage:** add durable request ledger ([#381](https://github.com/matthewyjiang/rho/issues/381)) ([0502b99](https://github.com/matthewyjiang/rho/commit/0502b9987be74a8922f675ab941eadb23bc88b12))
+
 ## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.0.2...rho-sdk-v1.1.0) (2026-07-16)
 
 
