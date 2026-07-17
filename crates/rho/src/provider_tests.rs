@@ -61,10 +61,22 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     ));
 
     let xai = super::provider_descriptor_by_id(ProviderId::Xai);
-    assert_eq!(xai.auth_kind.env_var(), "XAI_ACCESS_TOKEN");
-    assert_eq!(xai.auth_kind.account(), super::XAI_TOKENS_ACCOUNT);
+    assert_eq!(xai.auth, "xai-api-key");
+    assert_eq!(xai.auth_kind.env_var(), "XAI_API_KEY");
+    assert_eq!(xai.auth_kind.account(), super::XAI_API_KEY_ACCOUNT);
     assert!(matches!(
         xai.auth_kind,
+        ProviderAuthKind::ApiKey {
+            account: super::XAI_API_KEY_ACCOUNT,
+            ..
+        }
+    ));
+
+    let xai_oauth = super::provider_descriptor_by_id(ProviderId::XaiOAuth);
+    assert_eq!(xai_oauth.auth_kind.env_var(), "XAI_ACCESS_TOKEN");
+    assert_eq!(xai_oauth.auth_kind.account(), super::XAI_TOKENS_ACCOUNT);
+    assert!(matches!(
+        xai_oauth.auth_kind,
         ProviderAuthKind::XaiOAuth {
             account: super::XAI_TOKENS_ACCOUNT,
             ..

@@ -301,7 +301,7 @@ impl XaiUsageLimitsSource {
         {
             return Err(UsageLimitsError::Unauthorized {
                 provider: "xAI",
-                login: "/login xai",
+                login: "/login xai-oauth",
             });
         }
         let payload = response

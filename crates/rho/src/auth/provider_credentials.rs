@@ -13,7 +13,9 @@ use crate::{
         CredentialStore, KimiTokens, XaiTokens,
     },
     model::{
-        registry::{missing_credential_error, provider_runtime, AuthMode, ProviderRuntime},
+        registry::{
+            missing_credential_error, provider_runtime, AuthMode, ProviderRuntime, XaiAuthMode,
+        },
         ModelError,
     },
     provider::{self, ProviderAuthKind},
@@ -106,22 +108,37 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     self.store.as_ref(),
                 )?),
             )),
-            ProviderRuntime::Xai => {
-                let descriptor = provider::provider_descriptor_by_id(provider::ProviderId::Xai);
-                let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
-                    Ok(access_token) if !access_token.trim().is_empty() => (
-                        XaiAuthSource::Env,
+            ProviderRuntime::Xai { auth_mode } => {
+                let (source, tokens) = match auth_mode {
+                    XaiAuthMode::ApiKey => (
+                        XaiAuthSource::ApiKey,
                         XaiTokens {
-                            access_token,
+                            access_token: load_provider_api_key_auth("xai", self.store.as_ref())?,
                             refresh_token: None,
                             expires_at_unix: None,
                             id_token: None,
                         },
                     ),
-                    _ => (
-                        XaiAuthSource::Store,
-                        load_xai_tokens(self.store.as_ref())?.ok_or(ModelError::MissingXaiAuth)?,
-                    ),
+                    XaiAuthMode::OAuth => {
+                        let descriptor = provider::provider_descriptor("xai-oauth")
+                            .expect("xAI OAuth provider must be registered");
+                        match std::env::var(descriptor.auth_kind.env_var()) {
+                            Ok(access_token) if !access_token.trim().is_empty() => (
+                                XaiAuthSource::Env,
+                                XaiTokens {
+                                    access_token,
+                                    refresh_token: None,
+                                    expires_at_unix: None,
+                                    id_token: None,
+                                },
+                            ),
+                            _ => (
+                                XaiAuthSource::Store,
+                                load_xai_tokens(self.store.as_ref())?
+                                    .ok_or(ModelError::MissingXaiAuth)?,
+                            ),
+                        }
+                    }
                 };
                 Ok(ProviderCredential::Xai(XaiAuthManager::from_tokens(
                     self.store.clone(),

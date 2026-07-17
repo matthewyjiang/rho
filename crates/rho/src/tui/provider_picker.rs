@@ -4,8 +4,44 @@ use crate::{
     model::catalog,
 };
 
-pub(super) fn provider_picker(verb: &str, action: PickerAction) -> UiPicker {
-    provider_picker_for_targets(verb, action, catalog::login_targets())
+pub(super) fn login_group_picker() -> UiPicker {
+    let items = catalog::login_groups()
+        .into_iter()
+        .map(|group| PickerItem {
+            label: group.prompt,
+            detail: None,
+            preview: None,
+            badge: None,
+            value: group.id,
+        })
+        .collect();
+    UiPicker::new(
+        "select provider to login",
+        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
+        items,
+        PickerAction::LoginGroup,
+    )
+}
+
+pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
+    let title = format!("select {} login method", group.prompt);
+    let items = group
+        .methods
+        .into_iter()
+        .map(|method| PickerItem {
+            label: method.prompt,
+            detail: None,
+            preview: None,
+            badge: None,
+            value: method.target.provider,
+        })
+        .collect();
+    UiPicker::new(
+        title,
+        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
+        items,
+        PickerAction::LoginProvider,
+    )
 }
 
 pub(super) fn logout_provider_picker(

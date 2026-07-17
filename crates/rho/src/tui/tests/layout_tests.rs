@@ -664,3 +664,29 @@ fn started_tool_display_ignores_late_argument_previews() {
         Some(["edit_file src/main.rs".to_string()].as_slice())
     );
 }
+
+#[test]
+fn refreshing_nested_web_search_config_preserves_parent_picker() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.config_repository = ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let config = app.info.config_repository.load().unwrap();
+    let mut parent = config_picker::config_picker(&app.info, &config);
+    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
+    app.composer = ComposerMode::Picker(parent);
+    let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
+    app.open_child_picker(child);
+
+    app.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)
+        .unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
+
+    let ComposerMode::Picker(picker) = &app.composer else {
+        panic!("expected parent picker after refreshed child escape");
+    };
+    assert_eq!(
+        picker.selected_item().unwrap().value,
+        config_picker::WEB_SEARCH_VALUE
+    );
+    assert_eq!(picker.filter, "web");
+}

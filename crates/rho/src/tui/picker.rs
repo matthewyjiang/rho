@@ -37,6 +37,7 @@ pub(super) struct UiPicker {
     pub(super) selected: usize,
     pub(super) filter: String,
     pub(super) action: PickerAction,
+    parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
 }
 
@@ -67,6 +68,7 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerAction {
     SelectModel,
     SelectTitleModel,
+    LoginGroup,
     LoginProvider,
     LogoutProvider,
     InsertSkillCommand,
@@ -81,6 +83,7 @@ impl PickerAction {
             PickerAction::Config | PickerAction::Doctor => true,
             PickerAction::SelectModel
             | PickerAction::SelectTitleModel
+            | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
@@ -103,8 +106,22 @@ impl UiPicker {
             selected: 0,
             filter: String::new(),
             action,
+            parent: None,
             matches: RefCell::default(),
         }
+    }
+
+    pub(super) fn with_parent(mut self, parent: UiPicker) -> Self {
+        self.parent = Some(Box::new(parent));
+        self
+    }
+
+    pub(super) fn has_parent(&self) -> bool {
+        self.parent.is_some()
+    }
+
+    pub(super) fn take_parent(&mut self) -> Option<UiPicker> {
+        self.parent.take().map(|parent| *parent)
     }
 
     pub(super) fn select_previous(&mut self) {
@@ -155,7 +172,8 @@ impl UiPicker {
         if let Some(item) = self.selected_item() {
             self.filter = match self.action {
                 PickerAction::SelectModel | PickerAction::SelectTitleModel => item.value.clone(),
-                PickerAction::LoginProvider
+                PickerAction::LoginGroup
+                | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ResumeSession
@@ -181,7 +199,8 @@ impl UiPicker {
             let filter = self.filter.trim();
             let regex = match self.action {
                 PickerAction::SelectModel | PickerAction::SelectTitleModel => None,
-                PickerAction::LoginProvider
+                PickerAction::LoginGroup
+                | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ResumeSession
@@ -199,7 +218,8 @@ impl UiPicker {
                 PickerAction::SelectModel | PickerAction::SelectTitleModel => {
                     fuzzy_picker_matching_indices(&self.items, filter)
                 }
-                PickerAction::LoginProvider
+                PickerAction::LoginGroup
+                | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ResumeSession
@@ -322,6 +342,30 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
         bonus += 20;
     }
     bonus
+}
+
+impl super::App {
+    pub(super) fn open_child_picker(&mut self, child: UiPicker) {
+        let previous = std::mem::replace(&mut self.composer, super::ComposerMode::Input);
+        let super::ComposerMode::Picker(parent) = previous else {
+            unreachable!("child picker requires an active parent picker")
+        };
+        self.status = child.title.clone();
+        self.composer = super::ComposerMode::Picker(child.with_parent(parent));
+    }
+
+    pub(super) fn pop_picker_level(&mut self) -> bool {
+        let parent = match &mut self.composer {
+            super::ComposerMode::Picker(picker) => picker.take_parent(),
+            _ => None,
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        self.status = parent.title.clone();
+        self.composer = super::ComposerMode::Picker(parent);
+        true
+    }
 }
 
 fn is_word_boundary(ch: char) -> bool {

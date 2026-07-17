@@ -13,16 +13,14 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::{
-    credentials::load_xai_tokens,
-    provider::{self, ProviderId},
-};
+use crate::{credentials::load_xai_tokens, provider};
 
 const REFRESH_SKEW_SECONDS: i64 = 120;
 static REFRESH_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum XaiAuthSource {
+    ApiKey,
     Env,
     Store,
 }
@@ -59,7 +57,8 @@ struct XaiRefreshResponse {
 impl XaiAuthManager {
     #[cfg(test)]
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
-        let descriptor = provider::provider_descriptor_by_id(ProviderId::Xai);
+        let descriptor =
+            provider::provider_descriptor("xai-oauth").expect("xAI OAuth provider must exist");
         let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
             Ok(access_token) if !access_token.trim().is_empty() => (
                 XaiAuthSource::Env,
@@ -106,7 +105,7 @@ impl XaiAuthManager {
         &self,
         failed_access_token: &str,
     ) -> Result<Option<XaiAuthMaterial>, ModelError> {
-        if self.source == XaiAuthSource::Env {
+        if self.source != XaiAuthSource::Store {
             return Ok(None);
         }
         self.refresh_if_current(failed_access_token).await.map(Some)

@@ -8,7 +8,7 @@ openai_codex_models = [
   "gpt-5.3-codex-spark",
 ]
 
-xai_oauth_models = [
+xai_models = [
   "grok-4.5",
   "grok-build-0.1",
   "grok-composer-2.5-fast",

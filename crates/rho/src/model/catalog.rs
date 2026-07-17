@@ -16,6 +16,19 @@ pub struct ModelCatalogEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginGroup {
+    pub id: String,
+    pub prompt: String,
+    pub methods: Vec<LoginMethod>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginMethod {
+    pub prompt: String,
+    pub target: LoginTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoginTarget {
     pub provider: String,
     pub auth: String,
@@ -49,7 +62,7 @@ pub enum ModelSelectionError {
 #[derive(Deserialize)]
 struct ModelCatalogFile {
     openai_codex_models: Vec<String>,
-    xai_oauth_models: Vec<String>,
+    xai_models: Vec<String>,
 }
 
 const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
@@ -68,6 +81,50 @@ pub fn model_catalog() -> &'static [ModelCatalogEntry] {
 
 pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
     available_models_for_auths_from(model_catalog(), auths)
+}
+
+pub fn login_groups() -> Vec<LoginGroup> {
+    [
+        (
+            "openai",
+            "OpenAI",
+            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
+        ),
+        ("anthropic", "Anthropic", &[("API Key", "anthropic")][..]),
+        (
+            "github-copilot",
+            "GitHub Copilot",
+            &[("OAuth", "github-copilot")][..],
+        ),
+        (
+            "moonshot",
+            "Moonshot AI",
+            &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
+        ),
+        (
+            "xai",
+            "xAI",
+            &[("API Key", "xai"), ("OAuth", "xai-oauth")][..],
+        ),
+    ]
+    .into_iter()
+    .map(|(id, prompt, methods)| LoginGroup {
+        id: id.into(),
+        prompt: prompt.into(),
+        methods: methods
+            .iter()
+            .map(|(prompt, provider)| LoginMethod {
+                prompt: (*prompt).into(),
+                target: login_target_for_provider(provider)
+                    .expect("login group targets must reference registered providers"),
+            })
+            .collect(),
+    })
+    .collect()
+}
+
+pub fn login_group(id: &str) -> Option<LoginGroup> {
+    login_groups().into_iter().find(|group| group.id == id)
 }
 
 pub fn login_targets() -> Vec<LoginTarget> {
@@ -133,7 +190,9 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
     let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
-    entries.extend(model_entries("xai", "xai-oauth", file.xai_oauth_models));
+    let xai_models = file.xai_models;
+    entries.extend(model_entries("xai", "xai-api-key", xai_models.clone()));
+    entries.extend(model_entries("xai-oauth", "xai-oauth", xai_models));
     entries
 }
 
@@ -425,7 +484,7 @@ mod tests {
     fn available_models_includes_xai_static_catalog() {
         let models = available_models_for_auths(&["xai-oauth".into()]);
 
-        assert!(models.iter().all(|entry| entry.provider == "xai"));
+        assert!(models.iter().all(|entry| entry.provider == "xai-oauth"));
         assert_eq!(
             models
                 .iter()
@@ -447,7 +506,7 @@ mod tests {
     #[test]
     fn resolves_xai_static_catalog_selection() {
         let selection = resolve_model_selection_for_auths(
-            "xai/grok-4.5",
+            "xai-oauth/grok-4.5",
             "openai",
             "api-key",
             &["xai-oauth".into()],
@@ -457,7 +516,7 @@ mod tests {
         assert_eq!(
             selection,
             ModelSelection {
-                provider: "xai".into(),
+                provider: "xai-oauth".into(),
                 model: "grok-4.5".into(),
                 auth: "xai-oauth".into(),
                 from_catalog: true,
@@ -505,11 +564,13 @@ mod tests {
         assert!(providers.contains(&("github-copilot", "github-copilot")));
         assert!(providers.contains(&("moonshot", "moonshot-api-key")));
         assert!(providers.contains(&("kimi-code", "kimi-oauth")));
-        assert!(providers.contains(&("xai", "xai-oauth")));
+        assert!(providers.contains(&("xai", "xai-api-key")));
+        assert!(providers.contains(&("xai-oauth", "xai-oauth")));
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());
-        assert!(login_target_for_provider("xai-oauth").is_none());
+        assert!(login_target_for_provider("xai-api-key").is_none());
+        assert!(login_target_for_provider("xai-oauth").is_some());
     }
 
     #[test]
