@@ -1,15 +1,19 @@
-use ratatui::{layout::Position, style::Style, text::Line};
+use ratatui::{
+    layout::Position,
+    style::Style,
+    text::{Line, Span},
+};
 
 use crate::questionnaire::QuestionnaireQuestionKind;
 
 use super::{
-    choice_count, questionnaire_default_display, FieldSelection, QuestionnaireComposer,
-    QuestionnaireFieldState, QuestionnaireQuestion,
+    answer_is_empty, choice_count, normalize_questionnaire_answer, questionnaire_answer_display,
+    FieldSelection, QuestionnaireComposer, QuestionnaireFieldState, QuestionnaireQuestion,
 };
 use crate::tui::{
     render::{
-        display_width, input_cursor_position, input_visual_lines, push_wrapped_text,
-        push_wrapped_text_with, styled_line, truncate_one_line, wrap_line_at_whitespace, LineFill,
+        display_width, input_cursor_position, input_visual_lines, styled_line, truncate_one_line,
+        wrap_line_at_whitespace, LineFill,
     },
     theme::Theme,
 };
@@ -21,168 +25,310 @@ pub(in crate::tui) fn questionnaire_lines(
     questionnaire_frame(questionnaire, width).0
 }
 
+pub(in crate::tui) fn questionnaire_cursor_position(
+    questionnaire: &QuestionnaireComposer,
+    width: usize,
+) -> Position {
+    questionnaire_frame(questionnaire, width).1
+}
+
 pub(super) fn questionnaire_frame(
     questionnaire: &QuestionnaireComposer,
     width: usize,
 ) -> (Vec<Line<'static>>, Position) {
+    let width = width.max(1);
+    let questions = &questionnaire.request.questions;
     let mut lines = Vec::new();
-    if let Some(title) = &questionnaire.request.title {
-        push_wrapped_text(
-            &mut lines,
-            title,
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
-    } else {
-        push_wrapped_text(
-            &mut lines,
-            &format!(
-                "answer {} question(s)",
-                questionnaire.request.questions.len()
-            ),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        );
+
+    push_header_lines(&mut lines, questionnaire, width);
+    if questions.len() > 1 {
+        push_tab_lines(&mut lines, questionnaire, width);
+        lines.push(Line::raw(""));
     }
-    if let Some(reason) = &questionnaire.request.reason {
-        push_wrapped_text(
-            &mut lines,
-            &format!("reason: {reason}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
-    }
+
+    let active = questionnaire.active_index;
+    let cursor = push_active_question(
+        &mut lines,
+        &questions[active],
+        &questionnaire.fields[active],
+        active,
+        questions.len(),
+        width,
+    );
+
+    lines.push(Line::raw(""));
     lines.push(styled_line(
-        truncate_one_line(
-            "enter submit · up/down choose · space toggle · tab next · type only for other",
-            width,
-        ),
+        truncate_one_line(&footer_hint(questionnaire), width),
         width,
         Theme::dim(),
         LineFill::Natural,
     ));
+    (lines, cursor)
+}
 
-    let mut cursor = Position { x: 0, y: 0 };
-    for (index, (question, field)) in questionnaire
+fn push_header_lines(
+    lines: &mut Vec<Line<'static>>,
+    questionnaire: &QuestionnaireComposer,
+    width: usize,
+) {
+    let request = &questionnaire.request;
+    if let Some(title) = &request.title {
+        push_hanging_text(lines, "", title, width, Theme::input_prompt());
+    }
+    if let Some(reason) = &request.reason {
+        push_hanging_text(lines, "", reason, width, Theme::dim_italic());
+    }
+    if !lines.is_empty() {
+        lines.push(Line::raw(""));
+    }
+}
+
+const TAB_LABEL_MAX: usize = 16;
+const TAB_SEPARATOR: &str = " │ ";
+const TAB_OVERFLOW_LEFT: &str = "… ";
+const TAB_OVERFLOW_RIGHT: &str = " …";
+
+/// A single-row tab bar with one chip per question. When the chips do not all
+/// fit, the bar scrolls: a contiguous window around the active chip is shown
+/// and hidden chips are indicated with dim ellipses. The active chip is
+/// highlighted; answered chips carry a check mark.
+fn push_tab_lines(
+    lines: &mut Vec<Line<'static>>,
+    questionnaire: &QuestionnaireComposer,
+    width: usize,
+) {
+    let chips = questionnaire
         .request
         .questions
         .iter()
         .zip(questionnaire.fields.iter())
         .enumerate()
-    {
-        let active = questionnaire.active_index == index;
-        let before = lines.len();
-        questionnaire_push_question_lines(&mut lines, question, field, index, active, width);
-        if active {
-            cursor = questionnaire_question_cursor(question, field, before, width);
-        }
+        .map(|(index, (question, field))| {
+            let answered = field_answer_summary(question, field).is_some();
+            let label = question.header.as_deref().unwrap_or(&question.question);
+            format!(
+                "{} {}{}",
+                index + 1,
+                truncate_one_line(label, TAB_LABEL_MAX),
+                if answered { " ✓" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>();
+    let chip_widths = chips
+        .iter()
+        .map(|chip| display_width(chip))
+        .collect::<Vec<_>>();
+    let (start, end) = tab_window(&chip_widths, questionnaire.active_index, width);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if start > 0 {
+        spans.push(Span::styled(TAB_OVERFLOW_LEFT, Theme::dim()));
     }
-    (lines, cursor)
+    for (index, chip) in chips.into_iter().enumerate().take(end).skip(start) {
+        if index > start {
+            spans.push(Span::styled(TAB_SEPARATOR, Theme::dim()));
+        }
+        let style = if index == questionnaire.active_index {
+            Theme::input_prompt()
+        } else {
+            Theme::dim()
+        };
+        spans.push(Span::styled(chip, style));
+    }
+    if end < chip_widths.len() {
+        spans.push(Span::styled(TAB_OVERFLOW_RIGHT, Theme::dim()));
+    }
+    lines.push(Line::from(spans));
 }
 
-fn questionnaire_push_question_lines(
+/// Pick the contiguous chip window `[start, end)` to display: the earliest
+/// start whose fitting window still contains the active chip, so the bar only
+/// scrolls once the active chip would otherwise fall off the right edge.
+fn tab_window(chip_widths: &[usize], active: usize, width: usize) -> (usize, usize) {
+    let separator_width = display_width(TAB_SEPARATOR);
+    let left_overflow_width = display_width(TAB_OVERFLOW_LEFT);
+    let right_overflow_width = display_width(TAB_OVERFLOW_RIGHT);
+    for start in 0..=active {
+        let mut used = if start > 0 { left_overflow_width } else { 0 };
+        let mut end = start;
+        while end < chip_widths.len() {
+            let mut needed = used + chip_widths[end];
+            if end > start {
+                needed += separator_width;
+            }
+            if end + 1 < chip_widths.len() {
+                needed += right_overflow_width;
+            }
+            if needed > width && end > start {
+                break;
+            }
+            used += chip_widths[end] + if end > start { separator_width } else { 0 };
+            end += 1;
+        }
+        if end > active {
+            return (start, end);
+        }
+    }
+    (active, active + 1)
+}
+
+fn push_active_question(
     lines: &mut Vec<Line<'static>>,
     question: &QuestionnaireQuestion,
     field: &QuestionnaireFieldState,
     index: usize,
-    active: bool,
+    total: usize,
     width: usize,
-) {
-    let marker = if active { ">" } else { " " };
-    let required = if question.required { "" } else { " optional" };
-    push_wrapped_text(
+) -> Position {
+    push_hanging_text(
         lines,
-        &format!("{marker} {}. {}{required}", index + 1, question.question),
+        "▸ ",
+        &format!("{}{}", question_number(index, total), question.question),
         width,
-        if active {
-            Theme::input_prompt()
-        } else {
-            Theme::dim()
-        },
-        LineFill::Natural,
+        Theme::input_prompt(),
     );
-    if let Some(help) = &question.help {
-        push_wrapped_text(
-            lines,
-            &format!("  help: {help}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
+
+    let mut meta = Vec::new();
+    if !question.required {
+        meta.push("optional".to_string());
     }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        push_wrapped_text(
-            lines,
-            &format!("  {answer_hint}"),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        );
+    if let Some(help) = &question.help {
+        meta.push(help.clone());
+    }
+    if !meta.is_empty() {
+        push_hanging_text(lines, "  ", &meta.join(" · "), width, Theme::dim());
     }
 
     match question.kind {
         QuestionnaireQuestionKind::Text => {
+            let start = lines.len();
             push_prefixed_input_lines(lines, "  ", &field.other_value, width, Theme::text());
+            prefixed_input_cursor(&field.other_value, field.other_cursor, "  ", start, width)
         }
         QuestionnaireQuestionKind::Choice
         | QuestionnaireQuestionKind::MultiSelect
         | QuestionnaireQuestionKind::Confirm => {
+            let mut cursor = Position { x: 0, y: 0 };
             for choice_index in 0..choice_count(question) {
-                let highlighted = active && field.choice_cursor == choice_index;
-                let line_marker = if highlighted { " >" } else { "  " };
-                let selection_marker =
-                    questionnaire_selection_marker(question, field, choice_index);
-                let label = questionnaire_choice_label(question, choice_index);
-                push_wrapped_text(
-                    lines,
-                    &format!("{line_marker} {selection_marker} {label}"),
-                    width,
+                let highlighted = field.choice_cursor == choice_index;
+                let is_other = question.allow_other && choice_index == question.choices.len();
+                let marker = questionnaire_selection_marker(question, field, choice_index);
+                let arrow = if highlighted { "→" } else { " " };
+                let style = questionnaire_choice_style(question, field, choice_index, highlighted);
+                let row_start = lines.len();
+                if is_other && questionnaire_other_selected(field) {
+                    let prefix = format!("  {arrow} {marker} other: ");
+                    push_prefixed_input_lines(lines, &prefix, &field.other_value, width, style);
                     if highlighted {
-                        Theme::input_prompt()
+                        cursor = if field.text_entry_active(question) {
+                            prefixed_input_cursor(
+                                &field.other_value,
+                                field.other_cursor,
+                                &prefix,
+                                row_start,
+                                width,
+                            )
+                        } else {
+                            Position {
+                                x: 2,
+                                y: row_start as u16,
+                            }
+                        };
+                    }
+                } else {
+                    let label = if is_other {
+                        "other…".to_string()
                     } else {
-                        Theme::text()
-                    },
-                    LineFill::Natural,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    push_prefixed_input_lines(
-                        lines,
-                        "      other: ",
-                        &field.other_value,
-                        width,
-                        Theme::text(),
-                    );
+                        questionnaire_choice_label(question, choice_index)
+                    };
+                    push_hanging_text(lines, &format!("  {arrow} {marker} "), &label, width, style);
+                    if highlighted {
+                        cursor = Position {
+                            x: 2,
+                            y: row_start as u16,
+                        };
+                    }
                 }
             }
+            cursor
         }
     }
 }
 
-fn questionnaire_answer_hint(question: &QuestionnaireQuestion) -> String {
-    let mut hints = Vec::new();
-    match question.kind {
-        QuestionnaireQuestionKind::Text => hints.push("free text only when needed".into()),
-        QuestionnaireQuestionKind::Choice => hints.push("select one".into()),
-        QuestionnaireQuestionKind::MultiSelect => hints.push("select one or more".into()),
-        QuestionnaireQuestionKind::Confirm => hints.push("select yes or no".into()),
+fn field_answer_summary(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+) -> Option<String> {
+    let value = normalize_questionnaire_answer(question, field).ok()?;
+    if answer_is_empty(&value) {
+        return None;
     }
-    if !question.choices.is_empty() && question.allow_other {
-        hints.push("other available".into());
+    Some(questionnaire_answer_display(Some(question), &value))
+}
+
+fn question_number(index: usize, total: usize) -> String {
+    if total > 1 {
+        format!("{}. ", index + 1)
+    } else {
+        String::new()
     }
-    if let Some(default) = &question.default {
-        hints.push(format!(
-            "default: {}",
-            questionnaire_default_display(question, default)
-        ));
+}
+
+fn footer_hint(questionnaire: &QuestionnaireComposer) -> String {
+    let question = questionnaire.active_question();
+    let mut parts = Vec::new();
+    if matches!(question.kind, QuestionnaireQuestionKind::Text) {
+        parts.push("type your answer");
+    } else {
+        parts.push("↑↓ choose");
+        if matches!(question.kind, QuestionnaireQuestionKind::MultiSelect) {
+            parts.push("space toggle");
+        }
+        if question.allow_other {
+            parts.push("type for other");
+        }
     }
-    hints.join(" · ")
+    if questionnaire.on_last_question() {
+        parts.push("enter submit");
+    } else {
+        parts.push("enter next");
+    }
+    parts.push("esc cancel");
+    parts.join(" · ")
+}
+
+fn questionnaire_choice_style(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    choice_index: usize,
+    highlighted: bool,
+) -> Style {
+    if highlighted {
+        return Theme::accent();
+    }
+    if questionnaire_choice_selected(question, field, choice_index) {
+        return Theme::text_strong();
+    }
+    Theme::text()
+}
+
+fn questionnaire_choice_selected(
+    question: &QuestionnaireQuestion,
+    field: &QuestionnaireFieldState,
+    choice_index: usize,
+) -> bool {
+    match &field.selection {
+        FieldSelection::Multi { selected, other } => {
+            if choice_index < question.choices.len() {
+                selected.contains(&choice_index)
+            } else {
+                *other
+            }
+        }
+        FieldSelection::Single(index) => *index == choice_index,
+        FieldSelection::Other => question.allow_other && choice_index == question.choices.len(),
+        FieldSelection::Text | FieldSelection::None => false,
+    }
 }
 
 fn questionnaire_selection_marker(
@@ -190,28 +336,22 @@ fn questionnaire_selection_marker(
     field: &QuestionnaireFieldState,
     choice_index: usize,
 ) -> &'static str {
-    match (&question.kind, &field.selection) {
-        (QuestionnaireQuestionKind::MultiSelect, FieldSelection::Multi { selected, other }) => {
-            if choice_index < question.choices.len() {
-                if selected.contains(&choice_index) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                }
-            } else if *other {
-                "[x]"
+    let selected = questionnaire_choice_selected(question, field, choice_index);
+    match question.kind {
+        QuestionnaireQuestionKind::MultiSelect => {
+            if selected {
+                "■"
             } else {
-                "[ ]"
+                "□"
             }
         }
-        (_, FieldSelection::Single(index)) if *index == choice_index => "(x)",
-        (_, FieldSelection::Other)
-            if question.allow_other && choice_index == question.choices.len() =>
-        {
-            "(x)"
+        _ => {
+            if selected {
+                "●"
+            } else {
+                "○"
+            }
         }
-        (_, FieldSelection::None) => "( )",
-        _ => "( )",
     }
 }
 
@@ -226,7 +366,7 @@ fn questionnaire_choice_label(question: &QuestionnaireQuestion, choice_index: us
             .choices
             .get(choice_index)
             .map(|choice| choice.label().to_string())
-            .unwrap_or_else(|| "Other".into()),
+            .unwrap_or_else(|| "other…".into()),
         QuestionnaireQuestionKind::Text => String::new(),
     }
 }
@@ -236,6 +376,45 @@ fn questionnaire_other_selected(field: &QuestionnaireFieldState) -> bool {
         FieldSelection::Other => true,
         FieldSelection::Multi { other, .. } => *other,
         FieldSelection::Text | FieldSelection::None | FieldSelection::Single(_) => false,
+    }
+}
+
+fn push_hanging_text(
+    lines: &mut Vec<Line<'static>>,
+    prefix: &str,
+    text: &str,
+    width: usize,
+    style: Style,
+) {
+    let prefix_width = display_width(prefix);
+    let inner_width = width.saturating_sub(prefix_width).max(1);
+    let continuation = " ".repeat(prefix_width);
+    let mut first = true;
+    for raw_line in text.lines() {
+        let chunks = wrap_line_at_whitespace(raw_line, inner_width);
+        let chunks = if chunks.is_empty() {
+            vec![String::new()]
+        } else {
+            chunks
+        };
+        for chunk in chunks {
+            let prefix = if first { prefix } else { continuation.as_str() };
+            first = false;
+            lines.push(styled_line(
+                format!("{prefix}{chunk}"),
+                width,
+                style,
+                LineFill::Natural,
+            ));
+        }
+    }
+    if first {
+        lines.push(styled_line(
+            prefix.to_string(),
+            width,
+            style,
+            LineFill::Natural,
+        ));
     }
 }
 
@@ -263,80 +442,6 @@ fn push_prefixed_input_lines(
     }
 }
 
-pub(in crate::tui) fn questionnaire_cursor_position(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> Position {
-    questionnaire_frame(questionnaire, width).1
-}
-
-pub(super) fn questionnaire_question_cursor(
-    question: &QuestionnaireQuestion,
-    field: &QuestionnaireFieldState,
-    start_y: usize,
-    width: usize,
-) -> Position {
-    let prefix_height = questionnaire_question_prefix_line_count(question, width);
-    match question.kind {
-        QuestionnaireQuestionKind::Text => prefixed_input_cursor(
-            &field.other_value,
-            field.other_cursor,
-            "  ",
-            start_y + prefix_height,
-            width,
-        ),
-        QuestionnaireQuestionKind::Choice
-        | QuestionnaireQuestionKind::MultiSelect
-        | QuestionnaireQuestionKind::Confirm => {
-            let mut y = start_y + prefix_height;
-            for choice_index in 0..choice_count(question) {
-                if field.choice_cursor == choice_index {
-                    if question.allow_other
-                        && choice_index == question.choices.len()
-                        && field.text_entry_active(question)
-                    {
-                        let option_lines = wrapped_line_count(
-                            format!(
-                                " > {} {}",
-                                questionnaire_selection_marker(question, field, choice_index),
-                                questionnaire_choice_label(question, choice_index)
-                            ),
-                            width,
-                        );
-                        return prefixed_input_cursor(
-                            &field.other_value,
-                            field.other_cursor,
-                            "      other: ",
-                            y + option_lines,
-                            width,
-                        );
-                    }
-                    return Position { x: 1, y: y as u16 };
-                }
-                y += wrapped_line_count(
-                    format!(
-                        "   {} {}",
-                        questionnaire_selection_marker(question, field, choice_index),
-                        questionnaire_choice_label(question, choice_index)
-                    ),
-                    width,
-                );
-                if question.allow_other
-                    && choice_index == question.choices.len()
-                    && questionnaire_other_selected(field)
-                {
-                    y += input_visual_lines(
-                        &field.other_value,
-                        width.saturating_sub(display_width("      other: ")).max(1),
-                    )
-                    .len();
-                }
-            }
-            Position { x: 1, y: y as u16 }
-        }
-    }
-}
-
 fn prefixed_input_cursor(
     value: &str,
     cursor: usize,
@@ -350,33 +455,4 @@ fn prefixed_input_cursor(
     position.x = position.x.saturating_add(prefix_width as u16);
     position.y = position.y.saturating_add(start_y as u16);
     position
-}
-
-fn questionnaire_question_prefix_line_count(
-    question: &QuestionnaireQuestion,
-    width: usize,
-) -> usize {
-    let required = if question.required { "" } else { " optional" };
-    let mut count = wrapped_line_count(format!("> 1. {}{required}", question.question), width);
-    if let Some(help) = &question.help {
-        count += wrapped_line_count(format!("  help: {help}"), width);
-    }
-    let answer_hint = questionnaire_answer_hint(question);
-    if !answer_hint.is_empty() {
-        count += wrapped_line_count(format!("  {answer_hint}"), width);
-    }
-    count
-}
-
-fn wrapped_line_count(text: String, width: usize) -> usize {
-    let mut lines = Vec::new();
-    push_wrapped_text_with(
-        &mut lines,
-        &text,
-        width,
-        Theme::text(),
-        LineFill::Natural,
-        wrap_line_at_whitespace,
-    );
-    lines.len()
 }

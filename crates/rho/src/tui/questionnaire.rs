@@ -2,9 +2,9 @@ use tokio::sync::oneshot;
 
 mod render;
 
-pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 #[cfg(test)]
-use render::{questionnaire_frame, questionnaire_question_cursor};
+use render::questionnaire_frame;
+pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
 use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse};
 
@@ -19,6 +19,7 @@ pub(super) struct QuestionnaireRequest {
 pub(super) struct QuestionnaireQuestion {
     pub(super) id: String,
     pub(super) question: String,
+    pub(super) header: Option<String>,
     pub(super) help: Option<String>,
     pub(super) default: Option<serde_json::Value>,
     pub(super) kind: QuestionnaireQuestionKind,
@@ -135,6 +136,12 @@ pub(super) struct QuestionnaireComposer {
     active_index: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum QuestionnaireEnterAction {
+    Advance,
+    Submit,
+}
+
 #[derive(Debug)]
 struct QuestionnaireFieldState {
     selection: FieldSelection,
@@ -202,6 +209,32 @@ impl QuestionnaireComposer {
     pub(super) fn move_active_choice_next(&mut self) {
         let question = self.active_question().clone();
         self.active_field_mut().move_choice_next(&question);
+    }
+
+    /// Move up within the active question's choices, flowing to the previous
+    /// question once the cursor is already on the first choice.
+    pub(super) fn move_up(&mut self) {
+        if self.active_choice_navigable() && self.active_field().choice_cursor > 0 {
+            self.move_active_choice_previous();
+        } else {
+            self.move_to_previous_field();
+        }
+    }
+
+    /// Move down within the active question's choices, flowing to the next
+    /// question once the cursor is already on the last choice.
+    pub(super) fn move_down(&mut self) {
+        let count = choice_count(self.active_question());
+        if self.active_choice_navigable() && self.active_field().choice_cursor + 1 < count {
+            self.move_active_choice_next();
+        } else {
+            self.move_to_next_field();
+        }
+    }
+
+    fn active_choice_navigable(&self) -> bool {
+        !matches!(self.active_field().selection, FieldSelection::Text)
+            && choice_count(self.active_question()) > 0
     }
 
     pub(super) fn toggle_active_choice(&mut self) {
@@ -313,8 +346,36 @@ impl QuestionnaireComposer {
         }
     }
 
+    pub(super) fn on_last_question(&self) -> bool {
+        self.active_index + 1 >= self.fields.len()
+    }
+
+    pub(super) fn confirm_active_question(&mut self) -> QuestionnaireEnterAction {
+        let question = self.active_question().clone();
+        if matches!(
+            question.kind,
+            QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::Confirm
+        ) {
+            self.active_field_mut().toggle_highlighted(&question);
+        }
+        if self.on_last_question() {
+            QuestionnaireEnterAction::Submit
+        } else {
+            self.move_to_next_field();
+            QuestionnaireEnterAction::Advance
+        }
+    }
+
     pub(super) fn submit(&mut self) -> Result<SubmittedQuestionnaire, String> {
-        let answers = questionnaire_answers(self)?;
+        let answers = match questionnaire_answers(self) {
+            Ok(answers) => answers,
+            Err((index, error)) => {
+                // Jump to the offending question so the user sees what the
+                // status message refers to.
+                self.active_index = index;
+                return Err(format!("question {}: {error}", index + 1));
+            }
+        };
         let response = QuestionnaireResponse { answers };
         let display = submitted_questionnaire_entry(&self.request, &response);
         self.response.send_response(response);
@@ -621,13 +682,6 @@ fn questionnaire_default_string(default: &serde_json::Value) -> String {
     }
 }
 
-fn questionnaire_default_display(
-    question: &QuestionnaireQuestion,
-    default: &serde_json::Value,
-) -> String {
-    questionnaire_answer_display(Some(question), default)
-}
-
 fn choice_count(question: &QuestionnaireQuestion) -> usize {
     match question.kind {
         QuestionnaireQuestionKind::Text => 0,
@@ -640,7 +694,7 @@ fn choice_count(question: &QuestionnaireQuestion) -> usize {
 
 pub(super) fn questionnaire_answers(
     questionnaire: &QuestionnaireComposer,
-) -> Result<Vec<QuestionnaireAnswer>, String> {
+) -> Result<Vec<QuestionnaireAnswer>, (usize, String)> {
     questionnaire
         .request
         .questions
@@ -648,8 +702,8 @@ pub(super) fn questionnaire_answers(
         .zip(questionnaire.fields.iter())
         .enumerate()
         .map(|(index, (question, field))| {
-            let answer = normalize_questionnaire_answer(question, field)
-                .map_err(|error| format!("question {}: {error}", index + 1))?;
+            let answer =
+                normalize_questionnaire_answer(question, field).map_err(|error| (index, error))?;
             Ok((question, answer))
         })
         .filter_map(|result| match result {
