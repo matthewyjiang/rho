@@ -144,20 +144,21 @@ fn master_detail_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'stat
     }
 
     let mut lines = vec![picker_filter_line(picker, width), Line::raw("")];
-    let start = visible_picker_match_start(picker, &matching_indices);
-    let visible = matching_indices
-        .iter()
-        .copied()
-        .skip(start)
-        .take(MAX_PICKER_ITEMS)
-        .collect::<Vec<_>>();
     let detail = picker
         .selected_item()
         .and_then(|item| item.detail.as_deref())
         .unwrap_or_default();
 
     if width < TWO_COLUMN_MIN_WIDTH {
-        for index in visible {
+        lines.extend(detail_lines(detail, width.saturating_sub(2), "  "));
+        lines.push(Line::raw(""));
+        let start = visible_picker_match_start(picker, &matching_indices);
+        for index in matching_indices
+            .iter()
+            .copied()
+            .skip(start)
+            .take(MAX_PICKER_ITEMS)
+        {
             let item = &picker.items[index];
             lines.push(picker_item_line(
                 item,
@@ -166,9 +167,14 @@ fn master_detail_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'stat
                 width,
             ));
         }
-        lines.push(Line::raw(""));
-        lines.extend(detail_lines(detail, width.saturating_sub(2), "  "));
     } else {
+        let start = visible_picker_match_start(picker, &matching_indices);
+        let visible = matching_indices
+            .iter()
+            .copied()
+            .skip(start)
+            .take(MAX_PICKER_ITEMS)
+            .collect::<Vec<_>>();
         let left_width = picker_label_width(picker, width)
             .saturating_add(2)
             .clamp(18, 32);

@@ -149,6 +149,47 @@ fn master_detail_picker_stacks_details_at_narrow_widths() {
 }
 
 #[test]
+fn narrow_master_detail_picker_keeps_selected_detail_above_long_list() {
+    let items = (0..16)
+        .map(|index| PickerItem {
+            label: format!("agent-{index:02}"),
+            detail: Some(format!(
+                "Description\nagent {index:02} handles investigation across many files and subsystems"
+            )),
+            preview: None,
+            badge: None,
+            value: format!("agent-{index:02}"),
+        })
+        .collect();
+    let mut picker = UiPicker::new(
+        "agents",
+        "enter close",
+        items,
+        crate::tui::PickerAction::ViewAgent,
+    )
+    .with_layout(crate::tui::PickerLayout::MasterDetail);
+    for _ in 0..15 {
+        picker.select_next();
+    }
+
+    let lines = picker_lines(&picker, 30)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let detail_row = lines
+        .iter()
+        .position(|line| line.contains("agent 15 handles"))
+        .unwrap();
+    let selected_row = lines
+        .iter()
+        .position(|line| line.contains("agent-15"))
+        .unwrap();
+
+    assert!(detail_row < selected_row, "{lines:#?}");
+    assert!(detail_row < MAX_PICKER_ITEMS, "{lines:#?}");
+}
+
+#[test]
 fn assistant_markdown_styles_inline_code_bold_and_italic() {
     let lines = entry_lines(
         &Entry::Assistant("use `cargo test`, then **ship** the *fix*".into()),
