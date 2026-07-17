@@ -6,5 +6,5 @@ pub(crate) use super::openai_shared::{
 };
 pub(crate) use types::{
     ChatRequest, ChatResponse, ChatStreamOptions, OpenAiFunctionCall, OpenAiMessage,
-    OpenAiThinking, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
+    OpenAiReasoning, OpenAiThinking, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };

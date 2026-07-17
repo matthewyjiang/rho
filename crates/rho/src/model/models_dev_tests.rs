@@ -7,6 +7,35 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]
+fn openrouter_resolves_models_dev_identity_from_model_prefix() {
+    let api = json!({
+        "anthropic": {
+            "models": {
+                "claude-sonnet-4": {
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
+                    "limit": {"context": 200_000, "output": 64_000}
+                }
+            }
+        }
+    });
+
+    let metadata =
+        upstream_metadata_from_api(&api, "openrouter", "anthropic/claude-sonnet-4").unwrap();
+
+    assert_eq!(metadata.advertised_context_window, Some(200_000));
+    assert_eq!(metadata.max_output_tokens, Some(64_000));
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::Low,
+            ReasoningLevel::High
+        ])
+    );
+}
+
+#[test]
 fn kimi_code_resolves_k3_models_dev_identity() {
     let api = json!({
         "moonshotai": {

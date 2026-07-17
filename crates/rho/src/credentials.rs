@@ -749,6 +749,7 @@ mod tests {
         for (provider, key) in [
             ("openai", "sk-test"),
             ("anthropic", "sk-ant-test"),
+            ("openrouter", "sk-or-test"),
             ("xai", "xai-test"),
         ] {
             assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);

@@ -21,7 +21,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--provider <PROVIDER>` | Select the provider for the current session or run. |
 | `--model <MODEL>` | Select a model. A provider/model name can be used when switching providers. |
 | `--config <CONFIG>` | Read and save configuration at a specific path instead of `~/.rho/config.toml`. |
-| `--auth <AUTH>` | Select an auth mode: `api-key`, `codex`, `anthropic-api-key`, `github-copilot`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, or `kimi-oauth`. |
+| `--auth <AUTH>` | Select an auth mode: `api-key`, `codex`, `anthropic-api-key`, `github-copilot`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, `openrouter-api-key`, or `kimi-oauth`. |
 | `--reasoning <LEVEL>` | Select a reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
 | `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. |
 | `--no-tools` | Do not expose tools to the model. Current invocation only. |

@@ -34,7 +34,11 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         save_config = true;
     }
     if let Some(model) = &cli.model {
-        apply_model_override(config, model)?;
+        let provider = match cli.provider.as_deref() {
+            Some(provider) => ModelOverrideProvider::Explicit(provider),
+            None => ModelOverrideProvider::InferFromConfig,
+        };
+        apply_model_override(config, model, provider)?;
         save_config = true;
     }
     if let Some(auth) = &cli.auth {
@@ -88,13 +92,27 @@ pub(super) fn apply_provider_override(
     Ok(())
 }
 
-fn apply_model_override(config: &mut Config, model: &str) -> anyhow::Result<()> {
-    let selection = catalog::resolve_model_selection_for_auths(
-        model,
-        &config.provider,
-        &config.auth,
-        std::slice::from_ref(&config.auth),
-    )?;
+enum ModelOverrideProvider<'a> {
+    Explicit(&'a str),
+    InferFromConfig,
+}
+
+fn apply_model_override(
+    config: &mut Config,
+    model: &str,
+    provider: ModelOverrideProvider<'_>,
+) -> anyhow::Result<()> {
+    let selection = match provider {
+        ModelOverrideProvider::Explicit(provider) => {
+            catalog::resolve_model_selection_for_provider(provider, model)?
+        }
+        ModelOverrideProvider::InferFromConfig => catalog::resolve_model_selection_for_auths(
+            model,
+            &config.provider,
+            &config.auth,
+            std::slice::from_ref(&config.auth),
+        )?,
+    };
     config.provider = selection.provider;
     config.model = selection.model;
     config.auth = selection.auth;

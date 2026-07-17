@@ -228,6 +228,7 @@ fn chat_completions_request_does_not_serialize_prompt_cache_key() {
         tool_choice: None,
         stream: false,
         stream_options: None,
+        reasoning: None,
         reasoning_effort: Some("high".into()),
         thinking: None,
     })

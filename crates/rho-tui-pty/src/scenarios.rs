@@ -283,6 +283,10 @@ const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("return_bottom"),
     Step::Key(Key::Ctrl('g')),
     Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
+    },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(250),
         timeout: SETTLE,

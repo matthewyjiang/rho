@@ -7,15 +7,26 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenAiCompatibleDialect {
+    OpenRouter,
     Moonshot,
 }
 
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
-        if self == Self::Moonshot {
-            normalize_moonshot_parameters(&mut tool.function.parameters);
+        match self {
+            Self::OpenRouter => tool,
+            Self::Moonshot => {
+                normalize_moonshot_parameters(&mut tool.function.parameters);
+                tool
+            }
         }
-        tool
+    }
+
+    pub(crate) fn reasoning(self, reasoning: ReasoningLevel) -> Option<String> {
+        match self {
+            Self::OpenRouter => Some(reasoning.effort().unwrap_or("none").to_string()),
+            Self::Moonshot => None,
+        }
     }
 
     pub(crate) fn thinking(
@@ -99,5 +110,5 @@ fn normalize_moonshot_schema(schema: &mut Value) {
 }
 
 #[cfg(test)]
-#[path = "moonshot_tests.rs"]
+#[path = "dialect_tests.rs"]
 mod tests;

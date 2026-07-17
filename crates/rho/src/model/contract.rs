@@ -19,6 +19,8 @@ pub enum ModelError {
     MissingGithubCopilotAuth,
     #[error("missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override")]
     MissingMoonshotApiKey,
+    #[error("missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override")]
+    MissingOpenRouterApiKey,
     #[error("missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override")]
     MissingKimiAuth,
     #[error(

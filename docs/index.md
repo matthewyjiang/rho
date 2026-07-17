@@ -36,6 +36,8 @@ features:
   - [OpenAI (Codex OAuth)](/providers/openai-codex)
   - [Anthropic](/providers/anthropic)
   - [GitHub Copilot](/providers/github-copilot)
+  - [OpenRouter](/providers/openrouter)
+  - [Moonshot and Kimi Code](/providers/moonshot-kimi)
   - [xAI](/providers/xai)
 - [Interactive TUI](/interactive-tui)
 - [Inline shell](/inline-shell)

@@ -26,6 +26,7 @@ const OPENAI_CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const XAI_API_BASE: &str = "https://api.x.ai/v1";
 const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
 
 /// Provider construction values derived explicitly from application config.
@@ -210,6 +211,16 @@ impl ProviderBuilder {
                     OpenAiCompatibleDialect::Moonshot,
                     auth,
                     endpoint.unwrap_or_else(|| MOONSHOT_API_BASE.into()),
+                )))
+            }
+            (ProviderRuntime::OpenRouter, ProviderCredential::OpenAiCompatible(auth)) => {
+                Ok(Arc::new(OpenAiCompatibleProvider::new(
+                    client,
+                    "openrouter",
+                    self.options.model,
+                    OpenAiCompatibleDialect::OpenRouter,
+                    auth,
+                    endpoint.unwrap_or_else(|| OPENROUTER_API_BASE.into()),
                 )))
             }
             (ProviderRuntime::KimiCode, ProviderCredential::OpenAiCompatible(auth)) => {

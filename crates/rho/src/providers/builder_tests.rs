@@ -5,7 +5,9 @@ use url::Url;
 
 use super::{ProviderBuildOptions, ProviderBuilder, ProviderCredential};
 use crate::{
-    credentials::MemoryCredentialStore, providers::openai::auth::Auth, reasoning::ReasoningLevel,
+    credentials::MemoryCredentialStore,
+    providers::{openai::auth::Auth, openai_compatible::CompatibleAuth},
+    reasoning::ReasoningLevel,
 };
 
 #[test]
@@ -69,6 +71,23 @@ fn explicit_builder_constructs_provider_without_environment_or_keychain_lookup()
 
     assert_eq!(provider.identity().provider, "openai");
     assert_eq!(provider.identity().model, "gpt-test");
+}
+
+#[test]
+fn explicit_builder_constructs_openrouter_provider() {
+    let options = ProviderBuildOptions::new(
+        "openrouter",
+        "anthropic/claude-sonnet-4",
+        ReasoningLevel::Medium,
+    )
+    .unwrap();
+    let credential =
+        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
+
+    let provider = ProviderBuilder::new(options, credential).build().unwrap();
+
+    assert_eq!(provider.identity().provider, "openrouter");
+    assert_eq!(provider.identity().model, "anthropic/claude-sonnet-4");
 }
 
 #[test]

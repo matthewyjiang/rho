@@ -6,7 +6,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 [model]
 provider = "openai"
 model = "gpt-5.6-sol"
-auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", or "kimi-oauth"
+auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", or "kimi-oauth"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
 

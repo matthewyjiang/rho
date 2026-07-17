@@ -12,9 +12,16 @@ pub(crate) struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream_options: Option<ChatStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning: Option<OpenAiReasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) thinking: Option<OpenAiThinking>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct OpenAiReasoning {
+    pub(crate) effort: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

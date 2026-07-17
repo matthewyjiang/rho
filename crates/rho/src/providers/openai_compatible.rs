@@ -1,10 +1,10 @@
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
-#[path = "openai_compatible/moonshot.rs"]
-mod moonshot;
+#[path = "openai_compatible/dialect.rs"]
+mod dialect;
 
-pub(crate) use moonshot::OpenAiCompatibleDialect;
+pub(crate) use dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,
@@ -12,7 +12,7 @@ use crate::{
     protocol::openai_chat::{
         convert_openai_response, convert_streamed_response, handle_openai_stream_line,
         invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest,
-        ChatResponse, ChatStreamOptions,
+        ChatResponse, ChatStreamOptions, OpenAiReasoning,
     },
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -135,6 +135,10 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            reasoning: self
+                .dialect
+                .reasoning(request.reasoning_level)
+                .map(|effort| OpenAiReasoning { effort }),
             reasoning_effort: None,
             thinking: self
                 .dialect
