@@ -340,8 +340,20 @@ impl QuestionnaireComposer {
         }
     }
 
+    pub(super) fn on_last_question(&self) -> bool {
+        self.active_index + 1 >= self.fields.len()
+    }
+
     pub(super) fn submit(&mut self) -> Result<SubmittedQuestionnaire, String> {
-        let answers = questionnaire_answers(self)?;
+        let answers = match questionnaire_answers(self) {
+            Ok(answers) => answers,
+            Err((index, error)) => {
+                // Jump to the offending question so the user sees what the
+                // status message refers to.
+                self.active_index = index;
+                return Err(format!("question {}: {error}", index + 1));
+            }
+        };
         let response = QuestionnaireResponse { answers };
         let display = submitted_questionnaire_entry(&self.request, &response);
         self.response.send_response(response);
@@ -660,7 +672,7 @@ fn choice_count(question: &QuestionnaireQuestion) -> usize {
 
 pub(super) fn questionnaire_answers(
     questionnaire: &QuestionnaireComposer,
-) -> Result<Vec<QuestionnaireAnswer>, String> {
+) -> Result<Vec<QuestionnaireAnswer>, (usize, String)> {
     questionnaire
         .request
         .questions
@@ -668,8 +680,8 @@ pub(super) fn questionnaire_answers(
         .zip(questionnaire.fields.iter())
         .enumerate()
         .map(|(index, (question, field))| {
-            let answer = normalize_questionnaire_answer(question, field)
-                .map_err(|error| format!("question {}: {error}", index + 1))?;
+            let answer =
+                normalize_questionnaire_answer(question, field).map_err(|error| (index, error))?;
             Ok((question, answer))
         })
         .filter_map(|result| match result {

@@ -51,7 +51,18 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_questionnaire_answer()?;
+                // Enter confirms the current question and moves on; only the
+                // last question submits the whole form.
+                let on_last_question = match &self.composer {
+                    ComposerMode::Questionnaire(questionnaire) => questionnaire.on_last_question(),
+                    _ => true,
+                };
+                if on_last_question {
+                    self.submit_questionnaire_answer()?;
+                } else if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
+                    questionnaire.move_to_next_field();
+                    self.paste_burst.clear();
+                }
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }

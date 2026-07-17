@@ -288,10 +288,11 @@ fn footer_hint(questionnaire: &QuestionnaireComposer) -> String {
             parts.push("type for other");
         }
     }
-    if questionnaire.request.questions.len() > 1 {
-        parts.push("tab next");
+    if questionnaire.on_last_question() {
+        parts.push("enter submit");
+    } else {
+        parts.push("enter next");
     }
-    parts.push("enter submit");
     parts.push("esc cancel");
     parts.join(" · ")
 }

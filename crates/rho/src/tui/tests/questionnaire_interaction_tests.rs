@@ -7,6 +7,49 @@ use crate::{
 
 use super::*;
 
+fn confirm_question(id: &str) -> QuestionnaireQuestion {
+    QuestionnaireQuestion {
+        id: id.into(),
+        question: format!("{id}?"),
+        header: None,
+        help: None,
+        default: Some(serde_json::json!("yes")),
+        kind: QuestionnaireQuestionKind::Confirm,
+        required: true,
+        choices: Vec::new(),
+        allow_other: false,
+    }
+}
+
+#[test]
+fn enter_advances_questions_and_submits_only_on_the_last() {
+    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+    let mut app = test_app();
+    app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+        QuestionnaireRequest {
+            title: None,
+            reason: None,
+            questions: vec![confirm_question("first"), confirm_question("second")],
+        },
+        QuestionnaireResponseChannel::new(reply_tx),
+    ));
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+    assert!(app.handle_questionnaire_key(enter).unwrap());
+    assert!(
+        matches!(app.composer, ComposerMode::Questionnaire(_)),
+        "enter on the first question must not submit the form"
+    );
+    assert!(reply_rx.try_recv().is_err());
+
+    assert!(app.handle_questionnaire_key(enter).unwrap());
+    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(
+        reply_rx.try_recv(),
+        Ok(QuestionnaireReply::Answer(_))
+    ));
+}
+
 #[test]
 fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();

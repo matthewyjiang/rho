@@ -367,6 +367,43 @@ fn tab_bar_stays_on_one_row() {
 }
 
 #[test]
+fn footer_offers_next_before_the_last_question_and_submit_on_it() {
+    let mut composer = form_composer();
+
+    let (lines, _) = questionnaire_frame(&composer, 80);
+    let footer = line_text(lines.last().unwrap());
+    assert!(footer.contains("enter next"), "{footer}");
+    assert!(!footer.contains("enter submit"), "{footer}");
+
+    composer.active_index = 1;
+    let (lines, _) = questionnaire_frame(&composer, 80);
+    let footer = line_text(lines.last().unwrap());
+    assert!(footer.contains("enter submit"), "{footer}");
+}
+
+#[test]
+fn failed_submit_jumps_to_the_offending_question() {
+    let mut composer = form_composer();
+    // Question 1 has a default answer; question 2 (multi_select, required)
+    // is unanswered. Submit from the last question.
+    composer.active_index = 1;
+
+    let error = composer.submit().unwrap_err();
+
+    assert!(error.starts_with("question 2:"), "{error}");
+    assert_eq!(composer.active_index, 1);
+
+    // Clear question 1's answer as well: the jump targets the first failure.
+    composer.active_index = 0;
+    composer.clear_active_answer();
+    composer.active_index = 1;
+    let error = composer.submit().unwrap_err();
+
+    assert!(error.starts_with("question 1:"), "{error}");
+    assert_eq!(composer.active_index, 0);
+}
+
+#[test]
 fn tab_chips_prefer_question_headers() {
     let mut composer = form_composer();
     composer.request.questions[0].header = Some("Branch".into());
