@@ -10,6 +10,9 @@ pub enum CommandId {
     RefreshModelList,
     Resume,
     Config,
+    Auto,
+    Plan,
+    Supervised,
     Info,
     Compact,
     Goal,
@@ -120,6 +123,27 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Auto,
+        name: "auto",
+        usage: "/auto",
+        description: "allow tools without permission checks",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Plan,
+        name: "plan",
+        usage: "/plan",
+        description: "investigate only; deny writes and processes",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Supervised,
+        name: "supervised",
+        usage: "/supervised",
+        description: "ask before writes and processes",
         argument_choices: &[],
     },
     CommandSpec {
@@ -371,6 +395,20 @@ mod tests {
         assert_eq!(invocation.id, CommandId::Goal);
         assert_eq!(invocation.name, "goal");
         assert_eq!(invocation.args, "all tests pass");
+    }
+
+    #[test]
+    fn parses_permission_mode_commands() {
+        for (name, id) in [
+            ("auto", CommandId::Auto),
+            ("plan", CommandId::Plan),
+            ("supervised", CommandId::Supervised),
+        ] {
+            let invocation = parse_command(&format!("/{name}")).unwrap().unwrap();
+            assert_eq!(invocation.id, id);
+            assert_eq!(invocation.args, "");
+            assert_eq!(matching_commands(name)[0].id, id);
+        }
     }
 
     #[test]

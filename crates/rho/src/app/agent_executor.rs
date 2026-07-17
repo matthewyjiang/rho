@@ -81,6 +81,21 @@ impl AgentExecutor {
         config.reasoning = reasoning;
     }
 
+    pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
+        self.config
+            .write()
+            .expect("delegated config lock")
+            .permission_mode = mode;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
+        self.config
+            .read()
+            .expect("delegated config lock")
+            .permission_mode
+    }
+
     pub(crate) fn spawn(&self, request: AgentLaunchRequest) -> anyhow::Result<AgentRunHandle> {
         let config = self.config.read().expect("delegated config lock").clone();
         let mut capabilities = KNOWN_TOOLS

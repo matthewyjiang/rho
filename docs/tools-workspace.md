@@ -59,7 +59,7 @@ The `process` tool has three actions. `start` launches a background shell comman
 
 Rho owns these processes only within the running instance. It cleans them up when that instance shuts down, and process records do not persist across restarts. The tool does not support stdin writes, process listing, pseudo-terminals, persistent sessions, or pane and session orchestration. Use a dedicated multiplexer such as tmux or Herdr when you need interactive terminals or persistent, orchestrated sessions.
 
-Managed processes use standard output and error pipes, with standard input closed. Commands that require interactive input or terminal emulation will not behave as they do in a foreground terminal. The tool executes shell commands with the same user permissions as Rho and does not add sandboxing or approval prompts.
+Managed processes use standard output and error pipes, with standard input closed. Commands that require interactive input or terminal emulation will not behave as they do in a foreground terminal. The tool executes shell commands with the same user permissions as Rho. Rho's [permission modes](/configuration#permission-modes) can deny or request approval before process execution, but they do not add operating-system sandboxing.
 
 ## File writes and diffs
 
@@ -67,6 +67,8 @@ File write results include a unified diff so the model and transcript can inspec
 
 ## Security and workspace boundaries
 
-Rho does not currently sandbox or prompt for approval before tool calls. Tools run with the current user's permissions and can read or modify files and execute shell commands in the current workspace. Run Rho only in workspaces where you are comfortable allowing those actions.
+Tools run with the current user's permissions and can read or modify files and execute shell commands in the current workspace. The default `auto` [permission mode](/configuration#permission-modes) preserves this unrestricted behavior. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised non-interactive runs fail closed because no approval UI is available.
+
+Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. Run Rho only in workspaces where you are comfortable with the selected mode and these limitations.
 
 For session storage separate from the workspace, see [sessions](/sessions). For output-size settings, see [configuration](/configuration#tool-output-limit).

@@ -1,9 +1,9 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{future::Future, num::NonZeroUsize, path::PathBuf, pin::Pin, sync::Arc};
 
 use rho_sdk::{
-    model::Message, provider::ModelProvider, CapabilityRequest, Error, HostInputId,
-    HostInputResponse, PolicyDecision, Rho, Run, RunEvent, RunOutcome, Session, SessionId,
-    SessionOptions, SystemPrompt, UserInput, Workspace, WorkspacePolicy,
+    model::Message, provider::ModelProvider, ApprovalHandler, ApprovalRequestReceiver, Error,
+    HostInputId, HostInputResponse, Rho, Run, RunEvent, RunOutcome, Session, SessionId,
+    SessionOptions, SystemPrompt, UserInput, Workspace,
 };
 
 use crate::{
@@ -12,6 +12,7 @@ use crate::{
     config::Config,
     credentials::OsCredentialStore,
     diagnostics::RuntimeDiagnostics,
+    permission::PermissionMode,
     prompt,
     providers::{build_sdk_provider_with_source, UnavailableProvider},
     session::Session as StoredSession,
@@ -20,6 +21,7 @@ use crate::{
 
 use super::{
     agent_binding::BoundAgent,
+    policy::AppPolicy,
     runtime_builder::{
         build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
     },
@@ -111,6 +113,9 @@ pub(crate) struct InteractiveRuntime {
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
+    permission_mode: PermissionMode,
+    approval_handler: Option<Arc<dyn ApprovalHandler>>,
+    approval_receiver: Option<ApprovalRequestReceiver>,
     agent_id: String,
     agent_fingerprint: String,
     storage: Option<StoredSession>,
@@ -203,12 +208,15 @@ impl InteractiveRuntime {
         let workspace = Workspace::new(&sdk_options.workspace.root)?;
         let context_window = configured_context_window(config);
         let compaction = sdk_options.runtime.compaction.clone();
+        let permission_mode = config.permission_mode;
+        let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
         diagnostics.update_compaction_config(&compaction);
         let runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(&provider),
             tools: tools.tools(),
             workspace: workspace.clone(),
-            workspace_policy: InteractiveWorkspacePolicy,
+            workspace_policy: AppPolicy::for_mode(permission_mode),
+            approval_handler: approval_handler.clone(),
             system_prompt: system_prompt.clone(),
             reasoning: sdk_options.runtime.reasoning,
             compaction: compaction.clone(),
@@ -261,6 +269,9 @@ impl InteractiveRuntime {
             reasoning: sdk_options.runtime.reasoning,
             compaction,
             context_window,
+            permission_mode,
+            approval_handler,
+            approval_receiver,
             agent_id,
             agent_fingerprint,
             storage,
@@ -273,6 +284,52 @@ impl InteractiveRuntime {
             cumulative_input_tokens: 0,
             step_input_token_baseline: 0,
         })
+    }
+
+    pub(crate) fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode
+    }
+
+    /// Rebuilds the SDK runtime so the requested permission mode applies to the next turn.
+    pub(crate) async fn set_permission_mode(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
+        if self.active_run.is_some() {
+            anyhow::bail!("permission mode cannot change while a run is active");
+        }
+        if self.permission_mode == mode {
+            return Ok(());
+        }
+
+        let snapshot = self.session.snapshot();
+        let (approval_handler, approval_receiver) = approval_channel_for(mode);
+        let replacement_runtime = build_runtime(RuntimeBuildOptions {
+            provider: Arc::clone(&self.provider),
+            tools: self.tools.tools(),
+            workspace: self.workspace.clone(),
+            workspace_policy: AppPolicy::for_mode(mode),
+            approval_handler: approval_handler.clone(),
+            system_prompt: self.system_prompt.clone(),
+            reasoning: self.reasoning,
+            compaction: self.compaction.clone(),
+            context_window: self.context_window,
+        })?;
+        let replacement_session = replacement_runtime
+            .session(SessionOptions::from_snapshot(snapshot))
+            .await?;
+
+        let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
+        self.session = replacement_session;
+        self.permission_mode = mode;
+        self.approval_handler = approval_handler;
+        self.approval_receiver = approval_receiver;
+        if let Some(manager) = self.tools.subagents() {
+            manager.update_permission_mode(mode);
+        }
+        previous_runtime.shutdown();
+        Ok(())
+    }
+
+    pub(crate) fn approval_receiver(&mut self) -> Option<&mut ApprovalRequestReceiver> {
+        self.approval_receiver.as_mut()
     }
 
     pub(crate) fn history(&self) -> Vec<Message> {
@@ -640,7 +697,8 @@ impl InteractiveRuntime {
             provider: Arc::clone(&self.provider),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: InteractiveWorkspacePolicy,
+            workspace_policy: AppPolicy::for_mode(self.permission_mode),
+            approval_handler: self.approval_handler.clone(),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.reasoning,
             compaction: self.compaction.clone(),
@@ -693,6 +751,22 @@ impl InteractiveRuntime {
             storage.save_snapshot(&self.session.snapshot(), &[])?;
         }
         Ok(())
+    }
+}
+
+fn approval_channel_for(
+    mode: PermissionMode,
+) -> (
+    Option<Arc<dyn ApprovalHandler>>,
+    Option<ApprovalRequestReceiver>,
+) {
+    match mode {
+        PermissionMode::Supervised => {
+            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
+            let (handler, receiver) = rho_sdk::approval_channel(capacity);
+            (Some(Arc::new(handler)), Some(receiver))
+        }
+        PermissionMode::Auto | PermissionMode::Plan => (None, None),
     }
 }
 
@@ -756,14 +830,6 @@ fn running_unless_cancelling(current: InteractiveState, phase: RunPhase) -> Inte
         current
     } else {
         InteractiveState::Running(phase)
-    }
-}
-
-struct InteractiveWorkspacePolicy;
-
-impl WorkspacePolicy for InteractiveWorkspacePolicy {
-    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
-        PolicyDecision::Allow
     }
 }
 

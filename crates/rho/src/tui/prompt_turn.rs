@@ -124,6 +124,7 @@ impl App {
             oneshot::Receiver<QuestionnaireReply>,
         )> = None;
         let mut pending_input_request = None;
+        let mut approval_receiver_open = agent.approval_receiver().is_some();
         let mut terminal_event = false;
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
@@ -136,6 +137,8 @@ impl App {
             }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
+            let approval_ready =
+                approval_receiver_open && !matches!(self.composer, ComposerMode::Approval(_));
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
@@ -205,9 +208,20 @@ impl App {
                     self.flush_due_paste_burst();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
-                event = agent.next_event() => {
-                    let Some(event) = event else {
-                        break;
+                event = next_runtime_event(agent, approval_ready) => {
+                    let event = match event {
+                        RuntimeEvent::Approval(pending) => {
+                            self.finish_streams();
+                            self.open_approval(pending);
+                            self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                            continue;
+                        }
+                        RuntimeEvent::ApprovalReceiverClosed => {
+                            approval_receiver_open = false;
+                            continue;
+                        }
+                        RuntimeEvent::Agent(Some(event)) => event,
+                        RuntimeEvent::Agent(None) => break,
                     };
                     let mut changed = false;
                     let mut interaction_ready = false;
@@ -280,6 +294,7 @@ impl App {
             }
         }
 
+        self.cancel_approval();
         self.active_tool_call = false;
         self.pending_tool_call = None;
         tool_call_active.store(false, Ordering::SeqCst);
@@ -382,6 +397,37 @@ impl App {
         self.status = "error".into();
         TurnOutcome::Failed(failed_turn)
     }
+}
+
+enum RuntimeEvent {
+    Approval(rho_sdk::PendingApproval),
+    ApprovalReceiverClosed,
+    Agent(Option<rho_sdk::RunEvent>),
+}
+
+async fn next_runtime_event(
+    agent: &mut InteractiveRuntime,
+    receive_approval: bool,
+) -> RuntimeEvent {
+    std::future::poll_fn(|context| {
+        if receive_approval {
+            if let Some(receiver) = agent.approval_receiver() {
+                let approval = receiver.recv();
+                tokio::pin!(approval);
+                if let std::task::Poll::Ready(approval) = approval.poll(context) {
+                    return std::task::Poll::Ready(match approval {
+                        Some(pending) => RuntimeEvent::Approval(pending),
+                        None => RuntimeEvent::ApprovalReceiverClosed,
+                    });
+                }
+            }
+        }
+
+        let event = agent.next_event();
+        tokio::pin!(event);
+        event.poll(context).map(RuntimeEvent::Agent)
+    })
+    .await
 }
 
 #[cfg(test)]

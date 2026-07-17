@@ -15,6 +15,7 @@ mod herdr;
 mod keybindings;
 mod model;
 mod paths;
+mod permission;
 mod prompt;
 mod prompt_templates;
 mod protocol;

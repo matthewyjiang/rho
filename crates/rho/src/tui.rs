@@ -36,6 +36,7 @@ use ratatui::{
 };
 mod activity;
 mod agent_picker;
+mod approval;
 mod attachment;
 mod command_palette;
 mod config_editor;
@@ -62,6 +63,7 @@ mod mouse;
 mod mouse_capture;
 mod paste_burst;
 mod pending_input;
+mod permission_mode;
 mod picker;
 mod prompt_turn;
 mod provider_attempt;
@@ -86,6 +88,7 @@ mod tool_diff;
 mod turn_prompt;
 
 use activity::{ActivityStatus, LoadingSpinner};
+use approval::{approval_lines, ApprovalComposer};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
@@ -96,6 +99,7 @@ use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
+use login::{PendingOAuthLogin, SecretInput};
 use markdown::{
     push_wrapped_markdown_without_copy_button_from_fence_state, update_code_block_state,
     CodeFenceState,
@@ -150,6 +154,7 @@ use crate::{
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
         ModelResponse, ModelUsage, UnavailableProvider,
     },
+    permission::PermissionMode,
     provider::{self, ProviderAuthKind},
     providers::build_sdk_provider,
     reasoning::ReasoningLevel,
@@ -171,6 +176,7 @@ pub struct TuiInfo {
     pub provider: String,
     pub model: String,
     pub reasoning: ReasoningLevel,
+    pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
     pub auth: String,
     pub title_provider: Option<String>,
@@ -363,19 +369,7 @@ enum ComposerMode {
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
     Questionnaire(QuestionnaireComposer),
-}
-
-#[derive(Clone, Debug)]
-struct SecretInput {
-    target: LoginTarget,
-    value: String,
-    cursor: usize,
-}
-
-#[derive(Debug)]
-struct PendingOAuthLogin {
-    target: LoginTarget,
-    handle: tokio::task::JoinHandle<Result<PendingOAuthResult, String>>,
+    Approval(ApprovalComposer),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -578,60 +572,6 @@ impl StreamKind {
             Self::Assistant => Entry::Assistant(text),
             Self::Reasoning => Entry::Reasoning(text),
         }
-    }
-}
-
-impl SecretInput {
-    fn new(target: LoginTarget) -> Self {
-        Self {
-            target,
-            value: String::new(),
-            cursor: 0,
-        }
-    }
-
-    fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    fn insert_char(&mut self, ch: char) {
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        let sanitized = text.replace('\n', "");
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, &sanitized);
-        self.cursor += sanitized.chars().count();
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
     }
 }
 
@@ -976,7 +916,8 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_char('\n');
             }
-            ComposerMode::SecretInput(_)
+            ComposerMode::Approval(_)
+            | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
@@ -1005,7 +946,8 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.accepts_paste_burst_char(ch)
             }
-            ComposerMode::SecretInput(_)
+            ComposerMode::Approval(_)
+            | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
@@ -1021,7 +963,8 @@ impl App {
                     || (self.paste_burst.has_pending()
                         && questionnaire.accepts_pending_paste_burst_enter())
             }
-            ComposerMode::SecretInput(_)
+            ComposerMode::Approval(_)
+            | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
@@ -2336,7 +2279,8 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }
-            ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {}
+            ComposerMode::Approval(_) | ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {
+            }
         }
     }
 
@@ -2353,7 +2297,9 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_history_key(key, terminal)? {
+        if self.handle_approval_key(key, terminal.size()?.width as usize)?
+            || self.handle_history_key(key, terminal)?
+        {
             return Ok(());
         }
 
@@ -2665,6 +2611,10 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
+            CommandId::Auto | CommandId::Plan | CommandId::Supervised => {
+                self.reject_permission_mode_change();
+                Ok(())
+            }
             CommandId::New
             | CommandId::Compact
             | CommandId::RefreshModelList
@@ -2857,6 +2807,12 @@ impl App {
 
     fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
+            config_picker::PERMISSION_MODE_VALUE => {
+                self.reject_permission_mode_change();
+            }
+            value if value.starts_with(config_picker::PERMISSION_MODE_PREFIX) => {
+                self.reject_permission_mode_change();
+            }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = self.info.config_repository.load()?;
                 self.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -3060,6 +3016,17 @@ impl App {
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.text_selection = None;
+                    if key.code == KeyCode::Esc
+                        && matches!(self.composer, ComposerMode::Approval(_))
+                    {
+                        self.handle_approval_key(key, 1).map_err(|error| {
+                            crate::model::ModelError::InvalidResponse(error.to_string())
+                        })?;
+                        self.cancel_inline_shells();
+                        return Ok(
+                            self.request_running_interrupt(interrupt_requested, tool_call_active)
+                        );
+                    }
                     if key.code == KeyCode::Esc && self.cancel_inline_shells() {
                         continue;
                     }
@@ -3405,6 +3372,18 @@ impl App {
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Auto => {
+                self.apply_permission_mode(PermissionMode::Auto, agent)
+                    .await
+            }
+            CommandId::Plan => {
+                self.apply_permission_mode(PermissionMode::Plan, agent)
+                    .await
+            }
+            CommandId::Supervised => {
+                self.apply_permission_mode(PermissionMode::Supervised, agent)
+                    .await
+            }
             CommandId::Info => self.execute_info_command(),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
@@ -3763,17 +3742,27 @@ impl App {
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
-            PickerAction::Config => self.submit_config_selection(&value, agent),
+            PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::Doctor | PickerAction::ViewAgent => Ok(()),
         }
     }
 
-    fn submit_config_selection(
+    async fn submit_config_selection(
         &mut self,
         value: &str,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match value {
+            config_picker::PERMISSION_MODE_VALUE => {
+                let child = config_picker::permission_mode_picker(self.info.permission_mode);
+                self.open_child_picker(child);
+                Ok(())
+            }
+            value if value.starts_with(config_picker::PERMISSION_MODE_PREFIX) => {
+                let mode = value[config_picker::PERMISSION_MODE_PREFIX.len()..].parse()?;
+                self.apply_permission_mode(mode, agent).await?;
+                self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)
+            }
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
@@ -4516,8 +4505,12 @@ impl App {
     fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.diagnostics.identity();
         self.insert_entry(&Entry::Notice(format!(
-            "rho {}\nprovider: {}\nmodel: {}\nreasoning: {}",
-            identity.rho_version, identity.provider, identity.model, identity.reasoning
+            "rho {}\nprovider: {}\nmodel: {}\nreasoning: {}\npermission mode: {}",
+            identity.rho_version,
+            identity.provider,
+            identity.model,
+            identity.reasoning,
+            self.info.permission_mode.as_str()
         )));
         self.status = "runtime info".into();
         Ok(())
@@ -5017,7 +5010,9 @@ impl App {
                 Some(InlineShellMode::ExcludeFromContext) => Theme::shell_local(),
                 None => Theme::reasoning_input_border(self.info.reasoning),
             },
-            ComposerMode::Picker(_) | ComposerMode::Questionnaire(_) => Theme::input_prompt(),
+            ComposerMode::Picker(_)
+            | ComposerMode::Questionnaire(_)
+            | ComposerMode::Approval(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
@@ -5372,6 +5367,7 @@ impl App {
             ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
+            ComposerMode::Approval(approval) => approval_lines(approval, width),
         }
     }
 
@@ -5424,7 +5420,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire_cursor_position(questionnaire, width)
             }
-            ComposerMode::OAuthPending(_) => Position { x: 0, y: 0 },
+            ComposerMode::OAuthPending(_) | ComposerMode::Approval(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
                 x: display_width(&picker.filter)
                     .saturating_add(2)
@@ -6155,6 +6151,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                permission_mode: PermissionMode::Auto,
                 show_reasoning_output: true,
                 auth: "api-key".into(),
                 title_provider: None,
@@ -6191,6 +6188,7 @@ mod tests {
                     && message.contains("provider: openai")
                     && message.contains("model: gpt-test")
                     && message.contains("reasoning: medium")
+                    && message.contains("permission mode: auto")
         ));
         assert_eq!(app.status, "runtime info");
     }
@@ -7310,6 +7308,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                permission_mode: PermissionMode::Auto,
                 show_reasoning_output: true,
                 auth: "api-key".into(),
                 title_provider: None,

@@ -15,6 +15,24 @@ fn model_updates_are_shared_with_executor_clones() {
     assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
 }
 
+#[test]
+fn permission_mode_updates_are_shared_with_executor_clones() {
+    let executor = AgentExecutor::new(Config::default(), PathBuf::new(), PathBuf::new());
+    let cloned = executor.clone();
+
+    executor.update_permission_mode(crate::permission::PermissionMode::Plan);
+    assert_eq!(
+        cloned.launch_permission_mode(),
+        crate::permission::PermissionMode::Plan
+    );
+
+    cloned.update_permission_mode(crate::permission::PermissionMode::Supervised);
+    assert_eq!(
+        executor.launch_permission_mode(),
+        crate::permission::PermissionMode::Supervised
+    );
+}
+
 #[tokio::test]
 async fn cancellation_interrupts_concurrency_queue() {
     let permits = Arc::new(tokio::sync::Semaphore::new(0));

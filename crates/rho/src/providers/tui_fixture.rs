@@ -17,6 +17,7 @@ use rho_sdk::{
 const MODE_ENV: &str = "RHO_TUI_TEST_MODE";
 const MATRIX_MODE: &str = "matrix";
 const TOOL_CALL_ID: &str = "tui-fixture-tool";
+const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
@@ -114,6 +115,19 @@ async fn fixture_stream(
                 fixture_sleep(&request.cancellation, Duration::from_millis(40)).await?;
             }
             completed(response)
+        }
+        "fixture approval long" if tool_result(&request, LONG_APPROVAL_CALL_ID).is_none() => {
+            let command = concat!(
+                "printf 'reviewing harmless fixture'; ",
+                "printf 'segment-01 segment-02 segment-03 segment-04 segment-05 segment-06 ",
+                "segment-07 segment-08 segment-09 segment-10'; ",
+                "echo DANGEROUS_SUFFIX_INSPECTABLE"
+            );
+            completed_tool_call(
+                LONG_APPROVAL_CALL_ID,
+                "bash",
+                serde_json::json!({ "command": command }),
+            )
         }
         "fixture tool" if tool_result(&request, TOOL_CALL_ID).is_none() => {
             let arguments = serde_json::json!({

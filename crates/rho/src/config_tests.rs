@@ -1,4 +1,58 @@
 use super::{Config, LegacyWebSearchCredentials};
+use crate::permission::PermissionMode;
+
+#[test]
+fn permission_mode_defaults_to_auto_when_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "provider = \"openai\"\n").unwrap();
+
+    let config =
+        Config::load_with_store(path, &crate::credentials::MemoryCredentialStore::default())
+            .unwrap();
+
+    assert_eq!(config.permission_mode, PermissionMode::Auto);
+}
+
+#[test]
+fn permission_mode_round_trips_known_values() {
+    for mode in [
+        PermissionMode::Auto,
+        PermissionMode::Plan,
+        PermissionMode::Supervised,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let config = Config {
+            permission_mode: mode,
+            ..Config::default()
+        };
+        let store = crate::credentials::MemoryCredentialStore::default();
+
+        config.save_with_store(path.clone(), &store).unwrap();
+        let loaded = Config::load_with_store(path, &store).unwrap();
+
+        assert_eq!(loaded.permission_mode, mode);
+    }
+}
+
+#[test]
+fn unknown_permission_mode_is_a_config_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "permission_mode = \"unrestricted\"\n").unwrap();
+
+    let error =
+        Config::load_with_store(path, &crate::credentials::MemoryCredentialStore::default())
+            .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("unknown permission mode \"unrestricted\""),
+        "{error:#}"
+    );
+}
 
 #[test]
 fn config_debug_redacts_legacy_credentials() {

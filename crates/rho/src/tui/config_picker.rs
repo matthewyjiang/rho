@@ -4,7 +4,10 @@ use crate::{
     credentials::{
         load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
     },
+    permission::PermissionMode,
 };
+pub(super) const PERMISSION_MODE_VALUE: &str = "permission_mode";
+pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
@@ -28,6 +31,16 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
         "Config",
         "type regex filter, enter change, esc cancel",
         vec![
+            PickerItem {
+                label: "Permission mode".into(),
+                detail: Some(permission_mode_description(info.permission_mode).into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: info.permission_mode.label().into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: PERMISSION_MODE_VALUE.into(),
+            },
             PickerItem {
                 label: "Reasoning".into(),
                 detail: Some(format!(
@@ -183,6 +196,39 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
         ],
         PickerAction::Config,
     )
+}
+
+pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
+    UiPicker::new(
+        "Permission mode",
+        "enter select, esc back",
+        [
+            PermissionMode::Auto,
+            PermissionMode::Plan,
+            PermissionMode::Supervised,
+        ]
+        .into_iter()
+        .map(|candidate| PickerItem {
+            label: candidate.label().into(),
+            detail: Some(permission_mode_description(candidate).into()),
+            preview: None,
+            badge: (candidate == mode).then_some(PickerBadge {
+                text: "selected".into(),
+                tone: PickerBadgeTone::Selected,
+            }),
+            value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
+        })
+        .collect(),
+        PickerAction::Config,
+    )
+}
+
+fn permission_mode_description(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Auto => "No permission checks (current behavior).",
+        PermissionMode::Plan => "Investigate only; writes and processes are denied.",
+        PermissionMode::Supervised => "Ask before writes and processes.",
+    }
 }
 
 pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {

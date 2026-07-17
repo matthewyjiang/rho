@@ -1,22 +1,27 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     CompactionFuture, CompactionOutput, CompactionRequest, Compactor, HostChoice, HostInputRequest,
-    HostQuestion, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId, SelectionMode,
-    SessionId, SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
+    HostQuestion, PolicyDecision, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
+    SelectionMode, SessionId, SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
 };
 
 use super::{
     active_run_disposition, begin_provider_switch, build_runtime, state_after_event,
-    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState,
-    InteractiveWorkspacePolicy, RunPhase, RuntimeBuildOptions,
+    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState, RunPhase,
+    RuntimeBuildOptions,
 };
 use crate::{
-    compaction::CompactionConfig, session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    app::policy::AppPolicy,
+    compaction::CompactionConfig,
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    permission::PermissionMode,
+    session::Session as StoredSession,
+    tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
 fn questionnaire_event() -> RunEvent {
@@ -170,7 +175,8 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         provider: shared_provider,
         tools: tools.tools(),
         workspace,
-        workspace_policy: InteractiveWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig {
@@ -299,7 +305,8 @@ async fn new_sessions_seed_prompt_cache_keys() {
         provider: Arc::clone(&provider) as Arc<dyn ModelProvider>,
         tools: tools.tools(),
         workspace: workspace.clone(),
-        workspace_policy: InteractiveWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
@@ -349,6 +356,9 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: None,
+        permission_mode: PermissionMode::Auto,
+        approval_handler: None,
+        approval_receiver: None,
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
         storage: None,
@@ -368,6 +378,112 @@ async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
         vec![ContentBlock::Text(response.into())],
     ))])
     .await
+}
+
+async fn permission_mode_runtime() -> InteractiveRuntime {
+    let mut interactive = pending_compaction_runtime("done").await;
+    let config = Config::default();
+    let allowed = ["agent", "agents"]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default()
+            .delegation_tools(Some(std::env::current_dir().unwrap()), &allowed),
+    );
+    interactive
+}
+
+#[tokio::test]
+async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_policy() {
+    let mut interactive = permission_mode_runtime().await;
+    interactive
+        .session
+        .append_message(Message::user_text("preserved history"))
+        .unwrap();
+    let session_id = interactive.session.id().clone();
+    let history = interactive.session.history();
+
+    interactive
+        .set_permission_mode(PermissionMode::Plan)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Plan);
+    assert_eq!(
+        interactive
+            .tools
+            .subagents()
+            .unwrap()
+            .launch_permission_mode()
+            .decision_for(rho_sdk::CapabilityKind::Write),
+        PolicyDecision::Deny {
+            reason: "capability is not allowed in plan mode".into()
+        }
+    );
+    assert!(interactive.approval_handler.is_none());
+    assert!(interactive.approval_receiver().is_none());
+    assert_eq!(interactive.session.id(), &session_id);
+    assert_eq!(interactive.session.history(), history);
+
+    interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Supervised);
+    assert_eq!(
+        interactive
+            .tools
+            .subagents()
+            .unwrap()
+            .launch_permission_mode()
+            .decision_for(rho_sdk::CapabilityKind::Write),
+        PolicyDecision::RequireApproval {
+            reason: "host approval is required".into()
+        }
+    );
+    assert!(interactive.approval_handler.is_some());
+    assert!(interactive.approval_receiver().is_some());
+    assert_eq!(interactive.session.id(), &session_id);
+    assert_eq!(interactive.session.history(), history);
+    let supervised_handler = interactive.approval_handler.clone().unwrap();
+    interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        interactive.approval_handler.as_ref().unwrap(),
+        &supervised_handler
+    ));
+
+    interactive
+        .set_permission_mode(PermissionMode::Auto)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert!(interactive.approval_handler.is_none());
+    assert!(interactive.approval_receiver().is_none());
+    assert_eq!(interactive.session.id(), &session_id);
+    assert_eq!(interactive.session.history(), history);
+}
+
+#[tokio::test]
+async fn permission_mode_switch_rejects_an_active_run_without_mutation() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive
+        .start(UserInput::text("start"), None)
+        .await
+        .unwrap();
+
+    let error = interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("while a run is active"));
+    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert!(interactive.approval_receiver().is_none());
 }
 
 #[tokio::test]
