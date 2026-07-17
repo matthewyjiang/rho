@@ -682,7 +682,7 @@ mod tests {
                     _ => ("500 Internal Server Error", String::new()),
                 };
                 let reply = format!(
-                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                     body.len(), body
                 );
                 stream.write_all(reply.as_bytes()).await.unwrap();
