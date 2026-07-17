@@ -63,7 +63,7 @@ impl App {
             }
             (_, KeyCode::Up) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_active_choice_previous();
+                    questionnaire.move_up();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -71,7 +71,7 @@ impl App {
             }
             (_, KeyCode::Down) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_active_choice_next();
+                    questionnaire.move_down();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;

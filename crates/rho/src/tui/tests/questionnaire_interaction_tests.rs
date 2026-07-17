@@ -18,6 +18,7 @@ fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
             questions: vec![QuestionnaireQuestion {
                 id: "answer".into(),
                 question: "Continue?".into(),
+                header: None,
                 help: None,
                 default: None,
                 kind: QuestionnaireQuestionKind::Confirm,

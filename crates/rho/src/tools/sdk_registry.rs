@@ -400,6 +400,9 @@ fn host_question(
     if question.allow_other || matches!(question.kind, QuestionnaireQuestionKind::Text) {
         host = host.allow_other();
     }
+    if let Some(header) = &question.header {
+        host = host.header(header);
+    }
     if let Some(help) = &question.help {
         host = host.help(help);
     }

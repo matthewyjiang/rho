@@ -171,6 +171,7 @@ pub(super) fn questionnaire_request(request: &HostInputRequest) -> Questionnaire
                 QuestionnaireQuestion {
                     id: question.id().to_string(),
                     question: question.prompt().to_string(),
+                    header: question.header_text().map(str::to_string),
                     help: question.help_text().map(str::to_string),
                     default: question.default_value_ref().cloned(),
                     kind: questionnaire_kind(question),
