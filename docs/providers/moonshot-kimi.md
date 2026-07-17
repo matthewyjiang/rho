@@ -53,4 +53,4 @@ For automation after a prior login or with `KIMI_ACCESS_TOKEN`:
 rho --provider kimi-code --auth kimi-oauth --model <model-id>
 ```
 
-Remove stored OAuth tokens with `/logout kimi-code`. An active `KIMI_ACCESS_TOKEN` override remains available after logout.
+Use `/limits` in the TUI to inspect the weekly and rolling usage windows reported by Kimi Code. Remove stored OAuth tokens with `/logout kimi-code`. An active `KIMI_ACCESS_TOKEN` override remains available after logout.

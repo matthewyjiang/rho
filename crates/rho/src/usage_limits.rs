@@ -4,16 +4,17 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    auth::xai_token::refresh_xai_tokens,
+    auth::{kimi_oauth::refresh_kimi_tokens, xai_token::refresh_xai_tokens},
     credentials::{
-        load_codex_tokens, load_xai_tokens, save_xai_tokens, CodexTokens, CredentialStore,
-        XaiTokens,
+        load_codex_tokens, load_kimi_tokens, load_xai_tokens, save_kimi_tokens, save_xai_tokens,
+        CodexTokens, CredentialStore, KimiTokens, XaiTokens,
     },
     providers::openai::auth::{refresh_codex_token, CodexAuthSource},
 };
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_ACCOUNT_HEADER: &str = "ChatGPT-Account-Id";
+const KIMI_USAGE_URL: &str = "https://api.kimi.com/coding/v1/usages";
 const XAI_BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
 const XAI_CLIENT_VERSION: &str = "0.2.93";
@@ -200,6 +201,137 @@ impl UsageLimitsSource for CodexUsageLimitsSource {
     }
 }
 
+pub struct KimiUsageLimitsSource {
+    client: reqwest::Client,
+    endpoint: String,
+}
+
+impl KimiUsageLimitsSource {
+    pub fn new(client: reqwest::Client) -> Self {
+        Self {
+            client,
+            endpoint: KIMI_USAGE_URL.into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_endpoint(endpoint: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint,
+        }
+    }
+
+    fn configured_tokens(
+        store: &dyn CredentialStore,
+    ) -> Result<Option<(KimiTokens, KimiAuthSource)>, UsageLimitsError> {
+        Self::configured_tokens_from(store, std::env::var("KIMI_ACCESS_TOKEN").ok())
+    }
+
+    fn configured_tokens_from(
+        store: &dyn CredentialStore,
+        env_access_token: Option<String>,
+    ) -> Result<Option<(KimiTokens, KimiAuthSource)>, UsageLimitsError> {
+        if let Some(access_token) = env_access_token.filter(|token| !token.trim().is_empty()) {
+            return Ok(Some((
+                KimiTokens {
+                    access_token,
+                    refresh_token: None,
+                    expires_at_unix: None,
+                    scope: String::new(),
+                    token_type: "Bearer".into(),
+                    expires_in: None,
+                },
+                KimiAuthSource::Env,
+            )));
+        }
+        Ok(load_kimi_tokens(store)?.map(|tokens| (tokens, KimiAuthSource::Store)))
+    }
+
+    async fn request(&self, tokens: &KimiTokens) -> Result<reqwest::Response, reqwest::Error> {
+        self.client
+            .get(&self.endpoint)
+            .bearer_auth(&tokens.access_token)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+    }
+
+    async fn fetch_with_tokens(
+        &self,
+        store: &dyn CredentialStore,
+        mut tokens: KimiTokens,
+        source: KimiAuthSource,
+    ) -> Result<ProviderUsageLimits, UsageLimitsError> {
+        let mut response =
+            self.request(&tokens)
+                .await
+                .map_err(|source| UsageLimitsError::Request {
+                    provider: "Kimi Code",
+                    source,
+                })?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED && source == KimiAuthSource::Store
+        {
+            if let Some(refresh_token) = tokens.refresh_token.as_deref() {
+                tokens = refresh_kimi_tokens(&self.client, refresh_token)
+                    .await
+                    .map_err(|error| UsageLimitsError::Refresh {
+                        provider: "Kimi Code",
+                        detail: error.to_string(),
+                    })?;
+                save_kimi_tokens(store, &tokens)?;
+                response =
+                    self.request(&tokens)
+                        .await
+                        .map_err(|source| UsageLimitsError::Request {
+                            provider: "Kimi Code",
+                            source,
+                        })?;
+            }
+        }
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(UsageLimitsError::Unauthorized {
+                provider: "Kimi Code",
+                login: "/login kimi-code",
+            });
+        }
+        let payload = response
+            .error_for_status()
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "Kimi Code",
+                source,
+            })?
+            .json::<KimiUsagePayload>()
+            .await
+            .map_err(|source| UsageLimitsError::Request {
+                provider: "Kimi Code",
+                source,
+            })?;
+        Ok(ProviderUsageLimits {
+            provider: "Kimi Code".into(),
+            windows: payload.windows(),
+        })
+    }
+}
+
+impl UsageLimitsSource for KimiUsageLimitsSource {
+    fn fetch<'a>(
+        &'a self,
+        store: &'a dyn CredentialStore,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let Some((tokens, source)) = Self::configured_tokens(store)? else {
+                return Ok(None);
+            };
+            self.fetch_with_tokens(store, tokens, source)
+                .await
+                .map(Some)
+        })
+    }
+}
+
 pub struct XaiUsageLimitsSource {
     client: reqwest::Client,
     endpoint: String,
@@ -346,10 +478,13 @@ pub async fn fetch_connected_usage_limits(
     client: reqwest::Client,
 ) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
     let codex = CodexUsageLimitsSource::new(client.clone());
+    let kimi = KimiUsageLimitsSource::new(client.clone());
     let xai = XaiUsageLimitsSource::new(client);
-    fetch_usage_limits_from_sources(store, &codex, &xai).await
+    let (codex, kimi, xai) = tokio::join!(codex.fetch(store), kimi.fetch(store), xai.fetch(store));
+    aggregate_usage_limits([codex, kimi, xai])
 }
 
+#[cfg(test)]
 async fn fetch_usage_limits_from_sources(
     store: &dyn CredentialStore,
     first: &(dyn UsageLimitsSource + Sync),
@@ -360,7 +495,7 @@ async fn fetch_usage_limits_from_sources(
 }
 
 fn aggregate_usage_limits(
-    results: [Result<Option<ProviderUsageLimits>, UsageLimitsError>; 2],
+    results: impl IntoIterator<Item = Result<Option<ProviderUsageLimits>, UsageLimitsError>>,
 ) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
     let mut providers = Vec::new();
     let mut errors = Vec::new();
@@ -378,6 +513,11 @@ fn aggregate_usage_limits(
             }
         }
     }
+    providers.sort_by(|left, right| {
+        left.provider
+            .to_ascii_lowercase()
+            .cmp(&right.provider.to_ascii_lowercase())
+    });
     if !saw_connected {
         return Ok((ProviderLimits { providers }, errors));
     }
@@ -389,6 +529,12 @@ fn aggregate_usage_limits(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum XaiAuthSource {
+    Env,
+    Store,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KimiAuthSource {
     Env,
     Store,
 }
@@ -418,6 +564,111 @@ impl From<CodexLimitWindow> for UsageLimitWindow {
             remaining_percent: (100.0 - window.used_percent).clamp(0.0, 100.0),
             resets_at_unix: window.reset_at,
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct KimiUsagePayload {
+    usage: Option<KimiUsageDetail>,
+    #[serde(default)]
+    limits: Vec<KimiUsageLimit>,
+}
+
+#[derive(Deserialize)]
+struct KimiUsageLimit {
+    window: Option<KimiUsageWindow>,
+    detail: KimiUsageDetail,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KimiUsageWindow {
+    duration: i64,
+    time_unit: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KimiUsageDetail {
+    limit: KimiNumber,
+    used: Option<KimiNumber>,
+    remaining: Option<KimiNumber>,
+    reset_time: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KimiNumber {
+    Number(f64),
+    String(String),
+}
+
+impl KimiNumber {
+    fn value(&self) -> Option<f64> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::String(value) => value.parse().ok(),
+        }
+    }
+}
+
+impl KimiUsagePayload {
+    fn windows(self) -> Vec<UsageLimitWindow> {
+        self.limits
+            .into_iter()
+            .filter_map(|limit| {
+                let label = limit
+                    .window
+                    .as_ref()
+                    .and_then(KimiUsageWindow::label)
+                    .unwrap_or_else(|| "Usage".into());
+                limit.detail.into_window(label)
+            })
+            .chain(
+                self.usage
+                    .into_iter()
+                    .filter_map(|detail| detail.into_window("Weekly".into())),
+            )
+            .collect()
+    }
+}
+
+impl KimiUsageWindow {
+    fn label(&self) -> Option<String> {
+        let seconds = if self.time_unit.contains("MINUTE") {
+            self.duration.checked_mul(60)?
+        } else if self.time_unit.contains("HOUR") {
+            self.duration.checked_mul(60 * 60)?
+        } else if self.time_unit.contains("DAY") {
+            self.duration.checked_mul(24 * 60 * 60)?
+        } else {
+            return None;
+        };
+        Some(window_label(seconds))
+    }
+}
+
+impl KimiUsageDetail {
+    fn into_window(self, label: String) -> Option<UsageLimitWindow> {
+        let limit = self.limit.value()?;
+        if limit <= 0.0 {
+            return None;
+        }
+        let remaining = self
+            .remaining
+            .as_ref()
+            .and_then(KimiNumber::value)
+            .or_else(|| {
+                self.used
+                    .as_ref()
+                    .and_then(KimiNumber::value)
+                    .map(|used| limit - used)
+            })?;
+        Some(UsageLimitWindow {
+            label,
+            remaining_percent: (remaining / limit * 100.0).clamp(0.0, 100.0),
+            resets_at_unix: parse_unix_timestamp(&self.reset_time)?,
+        })
     }
 }
 
