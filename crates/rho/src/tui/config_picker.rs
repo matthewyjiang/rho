@@ -225,7 +225,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
 
 fn permission_mode_description(mode: PermissionMode) -> &'static str {
     match mode {
-        PermissionMode::Auto => "No permission checks (current behavior).",
+        PermissionMode::Auto => "No permission checks.",
         PermissionMode::Plan => "Investigate only; writes and processes are denied.",
         PermissionMode::Supervised => "Ask before writes and processes.",
     }
