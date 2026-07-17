@@ -84,6 +84,10 @@ impl SubagentManager {
         *self.session_id.lock().expect("delegated session lock") = Some(session_id);
     }
 
+    pub fn update_model(&self, provider: &str, model: &str, reasoning: rho_sdk::ReasoningLevel) {
+        self.executor.update_model(provider, model, reasoning);
+    }
+
     pub async fn spawn(
         &self,
         definition: &AgentDefinition,

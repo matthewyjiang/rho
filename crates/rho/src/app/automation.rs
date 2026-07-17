@@ -118,6 +118,8 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 path.clone(),
                 Some(startup.agent.id().to_string()),
                 Some(startup.agent.fingerprint().to_string()),
+                Some(startup.config.provider.clone()),
+                Some(startup.config.model.clone()),
                 startup.cwd.clone(),
                 &prompt_text,
                 /* stream_output */ true,
@@ -317,6 +319,8 @@ impl RunReporter {
         path: PathBuf,
         agent_id: Option<String>,
         agent_fingerprint: Option<String>,
+        provider: Option<String>,
+        model: Option<String>,
         cwd: PathBuf,
         prompt: &str,
         stream_output: bool,
@@ -326,6 +330,8 @@ impl RunReporter {
             state: RunState::Starting,
             agent_id,
             agent_fingerprint,
+            provider,
+            model,
             ..RunStatus::default()
         };
         subagent::write_status(&path, &status)?;
