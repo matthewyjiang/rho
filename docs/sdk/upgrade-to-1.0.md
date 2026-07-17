@@ -59,7 +59,7 @@ Do not point the SDK at Rho's application SQLite database. There is no automatic
 
 ### Working directory and instructions
 
-The SDK does not infer a workspace from process current directory. Construct `Workspace` with an absolute existing path. `AGENTS.md`, skills, coding-prompt presets, and prompt discovery are host/application policy and must remain scoped and diagnosable.
+The SDK does not infer a workspace from process current directory. Construct `Workspace` with an absolute existing path. `AGENTS.md`, skills, coding prompt templates, and prompt discovery are host/application policy and must remain scoped and diagnosable.
 
 ### Shutdown and errors
 

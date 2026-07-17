@@ -7,6 +7,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    agent::PromptPolicy,
     compaction::CompactionConfig,
     config::Config,
     credentials::OsCredentialStore,
@@ -17,8 +18,11 @@ use crate::{
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
-use super::runtime_builder::{
-    build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
+use super::{
+    agent_binding::BoundAgent,
+    runtime_builder::{
+        build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
+    },
 };
 
 pub(crate) type SteeringAcceptanceFuture =
@@ -80,6 +84,7 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) session_id: Option<String>,
     pub(crate) storage: Option<StoredSession>,
     pub(crate) diagnostics: RuntimeDiagnostics,
+    pub(crate) agent: BoundAgent,
     pub(crate) unavailable_error: Option<crate::model::ModelError>,
 }
 
@@ -106,6 +111,8 @@ pub(crate) struct InteractiveRuntime {
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
+    agent_id: String,
+    agent_fingerprint: String,
     storage: Option<StoredSession>,
     pending_model_user: Option<Message>,
     pending_display_user: Option<Message>,
@@ -131,8 +138,11 @@ impl InteractiveRuntime {
             session_id,
             storage,
             diagnostics,
+            agent,
             unavailable_error,
         } = options;
+        let agent_id = agent.id().to_string();
+        let agent_fingerprint = agent.fingerprint().to_string();
         let sdk_options = super::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
         let provider: Arc<dyn ModelProvider> = match unavailable_error {
             Some(error) => Arc::new(UnavailableProvider::new(error)),
@@ -144,32 +154,50 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
-        let subagents_enabled = config.enable_subagents && !no_subagents;
-        let tools = if no_tools {
+        let delegation_available = config.enable_subagents && !no_subagents;
+        let launch_delegation_enabled = delegation_available && agent.tools().contains("agent");
+        let delegation_enabled =
+            launch_delegation_enabled || (delegation_available && agent.tools().contains("agents"));
+        let mut tools = if no_tools {
             AppToolSet::disabled()
         } else {
-            let subagents = subagents_enabled.then(|| cwd.clone());
+            let delegation_cwd = delegation_enabled.then(|| cwd.clone());
             AppToolSet::new(
                 config,
                 diagnostics.clone(),
                 ToolSetOptions::new()
                     .questionnaire(questionnaire_enabled)
-                    .subagents(subagents)
+                    .delegation_tools(delegation_cwd, agent.tools())
                     .subagent_config_path(config_path)
                     .background_subagents(true),
             )
         };
+        let allowed = agent.tools().iter().cloned().collect::<Vec<_>>();
+        tools.retain_named(&allowed);
         let specs = tools.specs();
         let system_prompt = if no_system_prompt {
             diagnostics.update_prompt_sources(Vec::new());
             SystemPrompt::None
         } else {
-            let mut built = prompt::system_prompt(&specs, &cwd);
-            if !subagents_enabled {
-                prompt::append_subagents_disabled_instruction(&mut built.text);
+            let mut text = match agent.prompt() {
+                PromptPolicy::Replace(text) => text.clone(),
+                PromptPolicy::Extend(extra) => {
+                    let mut built = prompt::system_prompt(&specs, &cwd);
+                    diagnostics.update_prompt_sources(built.sources);
+                    if !launch_delegation_enabled {
+                        prompt::append_subagents_disabled_instruction(&mut built.text);
+                    }
+                    if !extra.is_empty() {
+                        built.text.push_str("\n\n# Agent instructions\n\n");
+                        built.text.push_str(extra);
+                    }
+                    built.text
+                }
+            };
+            if text.is_empty() {
+                text = "You are a coding agent.".into();
             }
-            diagnostics.update_prompt_sources(built.sources);
-            SystemPrompt::Custom(built.text)
+            SystemPrompt::Custom(text)
         };
         diagnostics.update_tools(&specs);
         let workspace = Workspace::new(&sdk_options.workspace.root)?;
@@ -233,6 +261,8 @@ impl InteractiveRuntime {
             reasoning: sdk_options.runtime.reasoning,
             compaction,
             context_window,
+            agent_id,
+            agent_fingerprint,
             storage,
             pending_model_user: None,
             pending_display_user: None,
@@ -269,6 +299,10 @@ impl InteractiveRuntime {
     /// Warnings queued while the TUI owns the terminal (e.g. resume omissions).
     pub(crate) fn take_notices(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_notices)
+    }
+
+    pub(crate) fn agent_identity(&self) -> (&str, &str) {
+        (&self.agent_id, &self.agent_fingerprint)
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {

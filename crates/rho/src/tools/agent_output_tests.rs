@@ -8,7 +8,7 @@ use crate::subagent::{RunState, RunStatus};
 fn snapshot(done: bool) -> SubagentSnapshot {
     SubagentSnapshot {
         id: "abc123".into(),
-        preset: "explorer".into(),
+        agent_id: "explorer".into(),
         background: true,
         elapsed: Duration::from_secs(90),
         status: RunStatus {
@@ -32,12 +32,12 @@ fn snapshot(done: bool) -> SubagentSnapshot {
 fn formats_agent_start_output() {
     assert_eq!(
         format_background_start("abc123", "explorer"),
-        "subagent abc123 (explorer) started in background\n\
+        "agent abc123 (explorer) started in background\n\
          attach: rho attach abc123"
     );
     assert_eq!(
         format_running("abc123"),
-        "subagent abc123 running\nattach: rho attach abc123"
+        "agent abc123 running\nattach: rho attach abc123"
     );
 }
 
@@ -53,7 +53,7 @@ fn formats_list_entries_as_single_lines() {
 fn formats_status_with_runtime_details() {
     assert_eq!(
         format_snapshot(&snapshot(false), SnapshotFormat::Status),
-        "subagent abc123 (explorer): running\n\
+        "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
          attach: rho attach abc123"
@@ -64,7 +64,7 @@ fn formats_status_with_runtime_details() {
 fn formats_completion_with_result() {
     assert_eq!(
         format_snapshot(&snapshot(true), SnapshotFormat::Completion),
-        "subagent abc123 (explorer): ok\n\
+        "agent abc123 (explorer): ok\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
          \n\
          found it"

@@ -27,6 +27,7 @@ pub enum ScenarioId {
     RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
+    LoginProviderGroups,
     GoalBlockedAndResumed,
 }
 
@@ -46,6 +47,7 @@ impl ScenarioId {
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
+            Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
         }
     }
@@ -65,6 +67,7 @@ impl ScenarioId {
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
+            "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
             _ => None,
         }
@@ -452,6 +455,58 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
+    Step::Phase("open_group_picker"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("OpenAI"),
+    Step::AssertText("Anthropic"),
+    Step::AssertText("Moonshot AI"),
+    Step::AssertText("xAI"),
+    Step::Phase("open_openai_methods"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::AssertText("API Key"),
+    Step::AssertText("OAuth"),
+    Step::AssertText("Esc to back"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Esc to cancel"),
+    Step::Phase("close_group_picker"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Phase("single_method_provider"),
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Anthropic"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "enter Anthropic API key",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -599,6 +654,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
             steps: OPEN_MODEL_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "login_provider_groups",
+            description: "Group login providers and open readable authentication methods",
+            size: DEFAULT_SIZE,
+            steps: LOGIN_PROVIDER_GROUPS_STEPS,
             smoke: false,
         },
         Scenario {

@@ -9,7 +9,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
-            self.open_provider_picker("login", PickerAction::LoginProvider);
+            self.open_login_picker();
             return Ok(());
         }
         self.start_login_for_provider(&invocation.args, terminal, agent)
@@ -37,9 +37,9 @@ impl App {
         self.logout_provider(&invocation.args, agent).await
     }
 
-    pub(super) fn open_provider_picker(&mut self, verb: &str, action: PickerAction) {
-        self.composer = ComposerMode::Picker(provider_picker::provider_picker(verb, action));
-        self.status = format!("select provider to {verb}");
+    pub(super) fn open_login_picker(&mut self) {
+        self.composer = ComposerMode::Picker(provider_picker::login_group_picker());
+        self.status = "select provider to login".into();
     }
 
     pub(super) async fn start_login_for_provider(

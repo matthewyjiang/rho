@@ -83,7 +83,7 @@ impl App {
         match result {
             Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
                 self.insert_entry(&Entry::Notice(
-                    "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai"
+                    "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
                         .into(),
                 ));
                 self.status = "no supported OAuth providers connected".into();

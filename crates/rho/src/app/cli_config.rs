@@ -60,13 +60,6 @@ pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
     true
 }
 
-pub(super) async fn refresh_model_cache_for_provider(
-    provider: &str,
-    store: &dyn CredentialStore,
-) -> anyhow::Result<()> {
-    refresh_model_list_for_provider(provider, store).await
-}
-
 pub(super) fn apply_provider_override(
     config: &mut Config,
     provider: &str,

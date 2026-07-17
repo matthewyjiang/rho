@@ -19,7 +19,7 @@ fn running_limits_query_does_not_queue_model_context() {
     assert!(matches!(
         app.transcript.last(),
         Some(Entry::Notice(notice))
-            if notice == "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai"
+            if notice == "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
     ));
 }
 

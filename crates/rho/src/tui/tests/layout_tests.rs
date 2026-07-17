@@ -250,7 +250,7 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
 }
 
 #[test]
-fn activity_background_fills_every_row_below_the_spinner() {
+fn activity_rail_has_a_solid_full_width_background() {
     let mut app = test_app();
     let width = 40;
     let height = 12;
@@ -271,7 +271,6 @@ fn activity_background_fills_every_row_below_the_spinner() {
         ],
     ));
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
-    let background = layout.activity_background.unwrap();
     let rail = layout.activity_rail.unwrap();
     let activity = layout.activity.unwrap();
     let scrollbar = layout.history_scrollbar.unwrap();
@@ -281,19 +280,18 @@ fn activity_background_fills_every_row_below_the_spinner() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     assert_eq!(rail, Rect::new(0, rail.y, width, 1));
-    assert_eq!(
-        background,
-        Rect::new(0, rail.y, width, height.saturating_sub(rail.y))
-    );
     let buffer = terminal.backend().buffer();
     let rail_background = Theme::activity_rail().bg.unwrap();
     assert_ne!(
         buffer[(rail.x, rail.y.saturating_sub(1))].bg,
         rail_background
     );
-    for row in background.y..background.bottom() {
-        for column in background.x..background.right() {
-            assert_eq!(buffer[(column, row)].bg, rail_background);
+    for column in rail.x..rail.right() {
+        assert_eq!(buffer[(column, rail.y)].bg, rail_background);
+    }
+    for row in rail.bottom()..height {
+        for column in rail.x..rail.right() {
+            assert_ne!(buffer[(column, row)].bg, rail_background);
         }
     }
     for column in activity.right()..scrollbar.rect.x {
@@ -663,4 +661,32 @@ fn started_tool_display_ignores_late_argument_previews() {
             .map(|tool| tool.display_lines.as_slice()),
         Some(["edit_file src/main.rs".to_string()].as_slice())
     );
+}
+
+#[test]
+fn web_search_api_key_editor_preserves_parent_picker() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.config_repository = ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let config = app.info.config_repository.load().unwrap();
+    let mut parent = config_picker::config_picker(&app.info, &config);
+    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
+    app.composer = ComposerMode::Picker(parent);
+    let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
+    app.open_child_picker(child);
+
+    app.open_web_search_api_key_editor(ConfigTextKey::Exa)
+        .unwrap();
+    app.handle_config_text_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
+
+    let ComposerMode::Picker(picker) = &app.composer else {
+        panic!("expected parent picker after API-key editor escape");
+    };
+    assert_eq!(
+        picker.selected_item().unwrap().value,
+        config_picker::WEB_SEARCH_VALUE
+    );
+    assert_eq!(picker.filter, "web");
 }

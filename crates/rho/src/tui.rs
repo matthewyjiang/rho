@@ -2115,7 +2115,9 @@ impl App {
     fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         if self.info.session_id.is_none() {
             let session_id = agent.session_id().to_string();
-            let session = Session::create_with_id(&self.info.cwd, &session_id)?;
+            let (agent_id, agent_fingerprint) = agent.agent_identity();
+            let session =
+                Session::create_with_id(&self.info.cwd, &session_id, agent_id, agent_fingerprint)?;
             self.info.session_id = Some(session_id);
             agent.attach_storage(session);
         }
@@ -2838,7 +2840,8 @@ impl App {
                     }
                 }
             }
-            PickerAction::LoginProvider
+            PickerAction::LoginGroup
+            | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::ResumeSession => {
                 self.insert_entry(&Entry::Notice(
@@ -3688,7 +3691,7 @@ impl App {
             return Ok(());
         };
 
-        if !matches!(action, PickerAction::Config) {
+        if !matches!(action, PickerAction::Config | PickerAction::LoginGroup) {
             self.composer = ComposerMode::Input;
         }
         match action {
@@ -3723,6 +3726,24 @@ impl App {
                         self.status = "title model switch failed".into();
                         Ok(())
                     }
+                }
+            }
+            PickerAction::LoginGroup => {
+                let Some(mut group) = catalog::login_group(&value) else {
+                    self.insert_entry(&Entry::Error(format!(
+                        "unsupported login provider group '{value}'"
+                    )));
+                    self.status = "login failed".into();
+                    return Ok(());
+                };
+                if group.methods.len() == 1 {
+                    let target = group.methods.remove(0).target;
+                    self.start_login_for_provider(&target.provider, terminal, agent)
+                        .await
+                } else {
+                    let child = provider_picker::login_method_picker(group);
+                    self.open_child_picker(child);
+                    Ok(())
                 }
             }
             PickerAction::LoginProvider => {
@@ -3793,8 +3814,8 @@ impl App {
             }
             config_picker::INLINE_SHELL_VALUE => {
                 let config = self.info.config_repository.load()?;
-                self.composer = ComposerMode::Picker(config_picker::inline_shell_picker(&config));
-                self.status = "select inline shell".into();
+                let child = config_picker::inline_shell_picker(&config);
+                self.open_child_picker(child);
                 Ok(())
             }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
@@ -3808,18 +3829,20 @@ impl App {
             }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.config_repository.load()?;
-                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                let child = config_picker::web_search_config_picker(
                     &config,
                     self.credential_store.as_ref(),
-                ));
-                self.status = "web search config".into();
+                );
+                self.open_child_picker(child);
                 Ok(())
             }
             config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = self.info.config_repository.load()?;
-                self.composer =
-                    ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
-                self.status = "config".into();
+                if !self.pop_picker_level() {
+                    let config = self.info.config_repository.load()?;
+                    self.composer =
+                        ComposerMode::Picker(config_picker::config_picker(&self.info, &config));
+                    self.status = "config".into();
+                }
                 Ok(())
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
@@ -3849,7 +3872,18 @@ impl App {
                 key.label()
             )));
         }
-        self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(key, value));
+        let return_picker = match std::mem::replace(&mut self.composer, ComposerMode::Input) {
+            ComposerMode::Picker(picker) => Some(picker),
+            composer => {
+                self.composer = composer;
+                None
+            }
+        };
+        let mut input = ConfigTextInput::new(key, value);
+        if let Some(picker) = return_picker {
+            input = input.with_return_picker(picker);
+        }
+        self.composer = ComposerMode::ConfigTextInput(input);
         self.status = format!("edit {}", key.label());
         Ok(())
     }
@@ -3880,31 +3914,31 @@ impl App {
     }
 
     fn refresh_web_search_config_picker(&mut self, selected_value: &str) -> anyhow::Result<()> {
-        let filter = match &self.composer {
-            ComposerMode::Picker(picker) => picker.filter.clone(),
-            _ => String::new(),
-        };
         let config = self.info.config_repository.load()?;
+        let (filter, parent) = match &mut self.composer {
+            ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
+            ComposerMode::ConfigTextInput(input) => match input.take_return_picker() {
+                Some(mut picker) => (picker.filter.clone(), picker.take_parent()),
+                None => (String::new(), None),
+            },
+            _ => (String::new(), None),
+        };
         let mut picker =
             config_picker::web_search_config_picker(&config, self.credential_store.as_ref());
         Self::restore_picker_position(&mut picker, selected_value, filter);
+        if let Some(parent) = parent {
+            picker = picker.with_parent(parent);
+        }
         self.composer = ComposerMode::Picker(picker);
         Ok(())
     }
 
     fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
-        if self.web_search_config_picker_is_open() || self.inline_shell_picker_is_open() {
-            let selected = if self.web_search_config_picker_is_open() {
-                config_picker::WEB_SEARCH_VALUE
-            } else {
-                config_picker::INLINE_SHELL_VALUE
-            };
-            self.open_main_config_picker_selected(selected)
-        } else {
+        if !self.pop_picker_level() {
             self.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
-            Ok(())
         }
+        Ok(())
     }
 
     fn model_picker_is_open(&self) -> bool {
@@ -3975,7 +4009,8 @@ impl App {
                     &self.available_auths,
                 )
             }
-            PickerAction::LoginProvider
+            PickerAction::LoginGroup
+            | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
@@ -3988,17 +4023,6 @@ impl App {
         self.insert_entry(&Entry::Notice(format!("{action} {value}")));
         self.status = format!("{action} model");
         Ok(())
-    }
-
-    fn web_search_config_picker_is_open(&self) -> bool {
-        matches!(
-            &self.composer,
-            ComposerMode::Picker(picker)
-                if picker
-                    .items
-                    .iter()
-                    .any(|item| item.value == config_picker::WEB_SEARCH_BACK_VALUE)
-        )
     }
 
     fn picker_space_confirms_selection(&self) -> bool {
@@ -4427,6 +4451,8 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let (session, histories) = Session::open_by_id_with_histories(&self.info.cwd, session_id)?;
+        let (agent_id, agent_fingerprint) = agent.agent_identity();
+        session.validate_agent_identity(agent_id, agent_fingerprint)?;
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
@@ -4759,11 +4785,11 @@ impl App {
                 }
             }
         }
-        if let Some(activity_background) = layout.activity_background {
-            frame.render_widget(Clear, activity_background);
+        if let Some(activity_rail) = layout.activity_rail {
+            frame.render_widget(Clear, activity_rail);
             frame.render_widget(
                 Paragraph::new("").style(Theme::activity_rail()),
-                activity_background,
+                activity_rail,
             );
         }
         if let Some(scrollbar) = layout
@@ -5746,10 +5772,7 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
     vec![
         styled_line(
             truncate_one_line(
-                &format!(
-                    "enter API key for {}  enter save, esc cancel",
-                    secret.target.provider
-                ),
+                &format!("enter {}  enter save, esc cancel", secret.target.label),
                 width,
             ),
             width,
@@ -7193,15 +7216,15 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("enter API key for openai"), "{rendered}");
+        assert!(rendered.contains("enter OpenAI API key"), "{rendered}");
         assert!(rendered.contains("••••"), "{rendered}");
         assert!(!rendered.contains("sk-secret-value"), "{rendered}");
     }
 
     #[test]
-    fn login_provider_picker_uses_provider_names_only() {
+    fn login_provider_picker_uses_readable_group_prompts() {
         let mut app = test_app();
-        app.open_provider_picker("login", PickerAction::LoginProvider);
+        app.open_login_picker();
 
         let rendered = app
             .active_lines(80)
@@ -7210,11 +7233,30 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(rendered.contains("openai"), "{rendered}");
-        assert!(rendered.contains("openai-codex"), "{rendered}");
-        assert!(rendered.contains("anthropic"), "{rendered}");
-        assert!(!rendered.contains("api-key"), "{rendered}");
-        assert!(!rendered.contains("> codex"), "{rendered}");
+        for prompt in [
+            "OpenAI",
+            "Anthropic",
+            "GitHub Copilot",
+            "Moonshot AI",
+            "xAI",
+        ] {
+            assert!(rendered.contains(prompt), "{rendered}");
+        }
+        for internal_name in ["openai-codex", "kimi-code", "xai-oauth", "api-key"] {
+            assert!(!rendered.contains(internal_name), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn login_method_picker_uses_readable_auth_prompts() {
+        let picker = provider_picker::login_method_picker(catalog::login_group("xai").unwrap());
+        let labels = picker
+            .items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, vec!["API Key", "OAuth"]);
     }
 
     #[test]
@@ -7481,10 +7523,11 @@ mod tests {
         app.info.config_repository =
             ConfigRepository::new(Some(config_dir.path().join("config.toml")));
         let config = app.info.config_repository.load().unwrap();
-        app.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
-            &config,
-            app.credential_store.as_ref(),
-        ));
+        let mut parent = config_picker::config_picker(&app.info, &config);
+        App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
+        app.composer = ComposerMode::Picker(parent);
+        let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
+        app.open_child_picker(child);
 
         app.handle_picker_escape(/*running*/ false).unwrap();
 
@@ -7495,8 +7538,8 @@ mod tests {
             picker.selected_item().unwrap().value,
             config_picker::WEB_SEARCH_VALUE
         );
-        assert!(!app.web_search_config_picker_is_open());
-        assert_eq!(app.status, "config");
+        assert_eq!(picker.filter, "web");
+        assert_eq!(app.status, picker.title);
     }
 
     #[test]

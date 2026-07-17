@@ -222,7 +222,7 @@ impl ProviderBuilder {
                     endpoint.unwrap_or_else(|| KIMI_CODE_API_BASE.into()),
                 )))
             }
-            (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
+            (ProviderRuntime::Xai { .. }, ProviderCredential::Xai(auth)) => {
                 Ok(Arc::new(XaiProvider::new_with_transport(
                     self.options.model,
                     auth,

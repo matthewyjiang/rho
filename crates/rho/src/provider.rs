@@ -7,6 +7,7 @@ pub const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
 pub const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
+pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
@@ -18,6 +19,7 @@ pub enum ProviderId {
     Anthropic,
     GithubCopilot,
     Xai,
+    XaiOAuth,
     Moonshot,
     KimiCode,
 }
@@ -110,6 +112,7 @@ pub enum MissingCredential {
     OpenAi,
     Anthropic,
     Moonshot,
+    Xai,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +226,22 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
         id: ProviderId::Xai,
         name: "xai",
+        display_name: "xAI",
+        auth: "xai-api-key",
+        login_label: "xAI API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "XAI_API_KEY",
+            account: XAI_API_KEY_ACCOUNT,
+            entry_label: "xAI API key",
+            missing: MissingCredential::Xai,
+        },
+        model_source: ProviderModelSource::StaticCatalog,
+        model_refresh: None,
+        metadata_upstream: "xai",
+    },
+    ProviderDescriptor {
+        id: ProviderId::XaiOAuth,
+        name: "xai-oauth",
         display_name: "xAI",
         auth: "xai-oauth",
         login_label: "xAI OAuth",

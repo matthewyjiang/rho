@@ -24,6 +24,15 @@ pub(super) struct Startup<'a> {
     pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
+    pub(super) agent: super::agent_binding::BoundAgent,
+}
+
+fn validate_resume_agent(
+    session: &Session,
+    selected_id: &str,
+    selected_fingerprint: &str,
+) -> anyhow::Result<()> {
+    session.validate_agent_identity(selected_id, selected_fingerprint)
 }
 
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
@@ -38,12 +47,16 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         pending_update_notice,
         diagnostics,
         herdr,
+        agent,
     } = startup;
+    let selected_agent_id = agent.id().to_string();
+    let selected_agent_fingerprint = agent.fingerprint().to_string();
     let mut open_resume_picker = false;
     let mut recovered_messages = Vec::new();
     let (session_id, history, storage) = match &cli.resume {
         Some(Some(id)) => {
             let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
+            validate_resume_agent(&session, &selected_agent_id, &selected_agent_fingerprint)?;
             let session_id = Some(session.id().to_string());
             recovered_messages = histories.display;
             (session_id, histories.model, Some(session))
@@ -68,6 +81,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         session_id: session_id.clone(),
         storage,
         diagnostics: diagnostics.clone(),
+        agent,
         unavailable_error: missing_auth_model_error,
     })
     .await?;
@@ -106,3 +120,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "interactive_tests.rs"]
+mod tests;

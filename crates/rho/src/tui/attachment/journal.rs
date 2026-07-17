@@ -62,7 +62,7 @@ impl AttachmentWriter {
             ViewEvent::Update(update) => attachment_update(update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
             ViewEvent::Questionnaire(request) => Some(AttachmentEvent::Notice(format!(
-                "input requested but unavailable in a subagent: {}",
+                "input requested but unavailable in a delegated agent: {}",
                 request.title()
             ))),
             ViewEvent::Completed => Some(AttachmentEvent::Completed),
