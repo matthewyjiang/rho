@@ -3870,7 +3870,18 @@ impl App {
                 key.label()
             )));
         }
-        self.composer = ComposerMode::ConfigTextInput(ConfigTextInput::new(key, value));
+        let return_picker = match std::mem::replace(&mut self.composer, ComposerMode::Input) {
+            ComposerMode::Picker(picker) => Some(picker),
+            composer => {
+                self.composer = composer;
+                None
+            }
+        };
+        let mut input = ConfigTextInput::new(key, value);
+        if let Some(picker) = return_picker {
+            input = input.with_return_picker(picker);
+        }
+        self.composer = ComposerMode::ConfigTextInput(input);
         self.status = format!("edit {}", key.label());
         Ok(())
     }
@@ -3904,6 +3915,10 @@ impl App {
         let config = self.info.config_repository.load()?;
         let (filter, parent) = match &mut self.composer {
             ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
+            ComposerMode::ConfigTextInput(input) => match input.take_return_picker() {
+                Some(mut picker) => (picker.filter.clone(), picker.take_parent()),
+                None => (String::new(), None),
+            },
             _ => (String::new(), None),
         };
         let mut picker =

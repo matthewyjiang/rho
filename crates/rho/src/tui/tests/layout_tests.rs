@@ -666,7 +666,7 @@ fn started_tool_display_ignores_late_argument_previews() {
 }
 
 #[test]
-fn refreshing_nested_web_search_config_preserves_parent_picker() {
+fn web_search_api_key_editor_preserves_parent_picker() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut app = test_app();
     app.info.config_repository = ConfigRepository::new(Some(config_dir.path().join("config.toml")));
@@ -677,12 +677,14 @@ fn refreshing_nested_web_search_config_preserves_parent_picker() {
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
     app.open_child_picker(child);
 
-    app.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)
+    app.open_web_search_api_key_editor(ConfigTextKey::Exa)
+        .unwrap();
+    app.handle_config_text_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         .unwrap();
     app.handle_picker_escape(/*running*/ false).unwrap();
 
     let ComposerMode::Picker(picker) = &app.composer else {
-        panic!("expected parent picker after refreshed child escape");
+        panic!("expected parent picker after API-key editor escape");
     };
     assert_eq!(
         picker.selected_item().unwrap().value,

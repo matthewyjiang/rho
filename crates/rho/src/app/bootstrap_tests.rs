@@ -33,6 +33,13 @@ fn provider_only_preset_selects_the_provider_default_model() {
 }
 
 #[test]
+fn missing_xai_api_key_is_nonfatal_for_interactive_startup() {
+    assert!(is_interactive_startup_unavailable_error(
+        &ModelError::MissingXaiApiKey
+    ));
+}
+
+#[test]
 fn unsupported_provider_is_nonfatal_for_interactive_startup() {
     assert!(is_interactive_startup_unavailable_error(
         &ModelError::UnsupportedProvider("anthropic".into())

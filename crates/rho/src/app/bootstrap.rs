@@ -176,6 +176,7 @@ fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
             | ModelError::MissingCodexAuth
             | ModelError::MissingAnthropicApiKey
             | ModelError::MissingGithubCopilotAuth
+            | ModelError::MissingXaiApiKey
             | ModelError::MissingXaiAuth
             | ModelError::Credentials(_)
             | ModelError::UnsupportedProvider(_)

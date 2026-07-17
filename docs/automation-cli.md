@@ -49,7 +49,7 @@ Log in to a provider from the command line. Browser-based providers open a local
 ```bash
 rho login openai-codex
 rho login openai-codex --device-auth
-rho login xai --device-auth
+rho login xai-oauth --device-auth
 ```
 
 API-key providers are usually easier to configure interactively with `/login` in the TUI or with their documented environment-variable override. See [authentication and models](/authentication-and-models) for provider-specific details.

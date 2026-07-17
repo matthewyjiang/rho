@@ -71,7 +71,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
                 }
                 xai_oauth::complete_xai_device_login(login).await?
             } else {
-                eprintln!("Opening browser for xAI login. On a remote or headless session, use `rho login xai --device-auth` instead.");
+                eprintln!("Opening browser for xAI login. On a remote or headless session, use `rho login xai-oauth --device-auth` instead.");
                 xai_oauth::run_xai_oauth_flow().await?
             };
             save_xai_tokens(&store, &tokens)?;
