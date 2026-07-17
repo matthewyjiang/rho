@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation::{self, RunReporter},
+    automation::{self, RunArtifactIdentity, RunReporter},
 };
 
 #[derive(Clone)]
@@ -152,10 +152,12 @@ impl AgentExecutor {
             diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
             let mut reporter = RunReporter::new(
                 output_file,
-                Some(bound.id().to_string()),
-                Some(bound.fingerprint().to_string()),
-                Some(config.provider.clone()),
-                Some(config.model.clone()),
+                RunArtifactIdentity {
+                    agent_id: bound.id().to_string(),
+                    agent_fingerprint: bound.fingerprint().to_string(),
+                    provider: config.provider.clone(),
+                    model: config.model.clone(),
+                },
                 cwd.clone(),
                 &prompt,
                 /* stream_output */ false,
