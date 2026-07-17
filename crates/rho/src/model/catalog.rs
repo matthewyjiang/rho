@@ -393,6 +393,7 @@ mod tests {
             provider: provider.into(),
             model: model.into(),
             display_name: model.into(),
+            context_window: None,
             max_output_tokens: None,
         }
     }

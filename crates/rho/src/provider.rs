@@ -62,6 +62,27 @@ pub enum ProviderAuthKind {
     },
 }
 
+impl ProviderDescriptor {
+    /// Resolves a provider-facing model ID to its models.dev catalog ID.
+    ///
+    /// Provider model discovery remains authoritative. This only bridges model
+    /// names when the provider API and metadata catalog use different IDs.
+    pub fn metadata_model<'a>(&self, model: &'a str) -> &'a str {
+        match (self.id, model) {
+            (ProviderId::KimiCode, "k3") => "kimi-k3",
+            _ => model,
+        }
+    }
+
+    /// Returns a safe effective context when account-scoped model metadata is unavailable.
+    pub fn effective_context_fallback(&self, model: &str) -> Option<u64> {
+        match (self.id, model) {
+            (ProviderId::KimiCode, "k3") => Some(262_144),
+            _ => None,
+        }
+    }
+}
+
 impl ProviderAuthKind {
     pub fn env_var(self) -> &'static str {
         match self {

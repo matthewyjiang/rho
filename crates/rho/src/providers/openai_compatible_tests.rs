@@ -1,5 +1,8 @@
 use super::*;
-use crate::model::{ContentBlock, Message};
+use crate::{
+    model::{ContentBlock, Message},
+    tool::Tool,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -18,7 +21,17 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         assert!(request
             .to_ascii_lowercase()
             .contains("authorization: bearer moonshot-secret"));
-        assert!(request.contains("\"model\":\"kimi-k2.5\""));
+        assert!(request.contains("\"model\":\"kimi-k3\""));
+        let request_body = request.split("\r\n\r\n").nth(1).unwrap();
+        let body: serde_json::Value = serde_json::from_str(request_body).unwrap();
+        assert_eq!(body["thinking"]["type"], "enabled");
+        let schema = &body["tools"][0]["function"]["parameters"];
+        assert!(schema.get("type").is_none());
+        assert!(schema["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|branch| branch["type"] == "object"));
 
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
         let response = format!(
@@ -31,16 +44,18 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
     let provider = OpenAiCompatibleProvider::new(
         reqwest::Client::new(),
         "moonshot",
-        "kimi-k2.5".into(),
+        "kimi-k3".into(),
+        OpenAiCompatibleDialect::Moonshot,
         CompatibleAuth::ApiKey("moonshot-secret".into()),
         api_base,
     );
+    let tool = crate::tools::edit_file::EditFile.spec();
     let response = provider
         .complete_turn(ModelRequest {
             messages: &[Message::user_text("hello")],
-            tools: &[],
+            tools: &[tool],
             cancellation: Default::default(),
-            reasoning_level: Default::default(),
+            reasoning_level: crate::reasoning::ReasoningLevel::Max,
             prompt_cache_key: None,
         })
         .await
@@ -58,7 +73,8 @@ fn identities_keep_custom_provider_names() {
     let moonshot = OpenAiCompatibleProvider::new(
         reqwest::Client::new(),
         "moonshot",
-        "kimi-k2.5".into(),
+        "kimi-k3".into(),
+        OpenAiCompatibleDialect::Moonshot,
         CompatibleAuth::ApiKey("secret".into()),
         "https://api.moonshot.ai/v1".into(),
     );

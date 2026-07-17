@@ -98,6 +98,7 @@ impl GitHubCopilotProvider {
                 include_usage: true,
             }),
             reasoning_effort: None,
+            thinking: None,
         })
     }
 

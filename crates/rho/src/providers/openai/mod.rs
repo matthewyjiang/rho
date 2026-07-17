@@ -189,6 +189,7 @@ impl OpenAiProvider {
                 include_usage: true,
             }),
             reasoning_effort: reasoning.effort,
+            thinking: None,
         })
     }
 

@@ -13,6 +13,14 @@ pub(crate) struct ChatRequest {
     pub(crate) stream_options: Option<ChatStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thinking: Option<OpenAiThinking>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct OpenAiThinking {
+    #[serde(rename = "type")]
+    pub(crate) kind: &'static str,
 }
 
 #[derive(Serialize)]

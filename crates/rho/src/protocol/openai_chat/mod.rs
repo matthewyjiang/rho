@@ -5,6 +5,6 @@ pub(crate) use super::openai_shared::{
     stream::{convert_streamed_response, handle_openai_stream_line, invalid_stream_utf8},
 };
 pub(crate) use types::{
-    ChatRequest, ChatResponse, ChatStreamOptions, OpenAiFunctionCall, OpenAiMessage, OpenAiTool,
-    OpenAiToolCall, OpenAiToolFunction,
+    ChatRequest, ChatResponse, ChatStreamOptions, OpenAiFunctionCall, OpenAiMessage,
+    OpenAiThinking, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
