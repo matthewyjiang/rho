@@ -27,6 +27,8 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) compaction: CompactionConfig,
     pub(crate) context_window: Option<u64>,
     pub(crate) usage_purpose: &'static str,
+    pub(crate) usage_parent_session_id: Option<rho_sdk::SessionId>,
+    pub(crate) usage_recording: rho_sdk::ProviderRequestUsageRecording,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -44,14 +46,16 @@ where
         compaction,
         context_window,
         usage_purpose,
+        usage_parent_session_id,
+        usage_recording,
     } = options;
-    let usage_recorder = crate::usage::default_recorder();
     let (compactor, policy) = build_compaction(
         Arc::clone(&provider),
         tools,
         reasoning,
         compaction,
         context_window,
+        usage_recording.clone(),
     );
     let mut builder = Rho::builder()
         .provider_shared(provider)
@@ -61,9 +65,10 @@ where
         .reasoning_level(reasoning)
         .max_steps(super::sdk_config::run_step_limit())
         .usage_purpose(usage_purpose)
+        .usage_recording(usage_recording)
         .compactor(compactor);
-    if let Some(recorder) = usage_recorder {
-        builder = builder.usage_recorder_shared(recorder);
+    if let Some(parent_session_id) = usage_parent_session_id {
+        builder = builder.usage_parent_session_id(parent_session_id);
     }
     if let Some(handler) = approval_handler {
         builder = builder.approval_handler_shared(handler);
@@ -83,11 +88,12 @@ pub(crate) fn build_compaction(
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
 ) -> (ModelCompactor, Option<CompactionPolicy>) {
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
         provider,
-        recorder: crate::usage::default_recorder(),
+        usage_recording,
         tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
         reasoning,
         config: compaction,
@@ -113,7 +119,7 @@ pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
 
 pub(crate) struct ModelCompactor {
     provider: Arc<dyn ModelProvider>,
-    recorder: Option<Arc<crate::usage::SqliteUsageRecorder>>,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
     tool_specs: Vec<rho_sdk::model::ToolSpec>,
     reasoning: rho_sdk::ReasoningLevel,
     config: CompactionConfig,
@@ -123,6 +129,25 @@ pub(crate) struct ModelCompactor {
 impl Compactor for ModelCompactor {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
         Box::pin(async move {
+            let mut usage_context = rho_sdk::ProviderRequestUsageContext::for_purpose(
+                self.provider.identity(),
+                "compaction",
+            );
+            if let Some(session_id) = request.session_id() {
+                usage_context = usage_context.with_session_id(session_id.clone());
+            }
+            if let Some(parent_session_id) = request.parent_session_id() {
+                usage_context = usage_context.with_parent_session_id(parent_session_id.clone());
+            }
+            if let Some(run_id) = request.run_id() {
+                usage_context = usage_context.with_run_id(run_id.clone());
+            }
+            if let Some(step_index) = request.step_index() {
+                usage_context = usage_context.with_step_index(step_index);
+            }
+            if let Some(workspace_path) = request.workspace_path() {
+                usage_context = usage_context.with_workspace_path(workspace_path.to_path_buf());
+            }
             let cancellation = request.cancellation().clone();
             let messages = request.messages().to_vec();
             let target_tokens = self
@@ -145,8 +170,8 @@ impl Compactor for ModelCompactor {
             let (response, usage) = match crate::usage::send_recorded(
                 self.provider.as_ref(),
                 model_request,
-                "compaction",
-                self.recorder.clone(),
+                usage_context,
+                self.usage_recording.clone(),
             )
             .await
             {

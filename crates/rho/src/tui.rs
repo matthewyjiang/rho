@@ -121,7 +121,7 @@ use render::{
     LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
-use session_title::generate_session_title;
+use session_title::{generate_session_title, PendingSessionTitle};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
@@ -342,7 +342,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
-    pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
+    pending_session_title: Option<PendingSessionTitle>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
     history_scrollbar_visible_until: Option<Instant>,
@@ -784,6 +784,10 @@ impl App {
             }
         }
         self.cancel_limits_command().await;
+        if let Some(mut pending) = self.pending_session_title.take() {
+            pending.cancel();
+            let _ = (&mut pending).await;
+        }
         Ok(TuiResult {
             resume_session_id: self.info.session_id.clone(),
             exit_summary: self.exit_summary(),
@@ -1266,7 +1270,7 @@ impl App {
         };
         let waker = noop_waker_ref();
         let mut context = std::task::Context::from_waker(waker);
-        let std::task::Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+        let std::task::Poll::Ready(result) = Pin::new(future).poll(&mut context) else {
             return Ok(false);
         };
         self.pending_session_title = None;
@@ -2087,16 +2091,43 @@ impl App {
         )
     }
 
-    fn start_session_title_generation(&mut self, first_user_message: String) {
-        let Some(session_id) = self.info.session_id.clone() else {
+    fn start_session_title_generation(
+        &mut self,
+        first_user_message: String,
+        agent: &InteractiveRuntime,
+    ) {
+        if self.info.session_id.is_none() {
             return;
-        };
+        }
+        let session_id = agent.session_id().clone();
+        let workspace_path = agent.workspace_path().to_path_buf();
+        let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
         let (provider, model, _auth) = self.title_model_selection();
-        self.pending_session_title = Some(Box::pin(async move {
-            let title = generate_session_title(provider, model, first_user_message).await;
-            SessionTitleResult { session_id, title }
-        }));
+        let cancellation = rho_sdk::CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let task_session_id = session_id.clone();
+        let handle = tokio::spawn(async move {
+            let title = generate_session_title(
+                provider,
+                model,
+                first_user_message,
+                task_session_id.clone(),
+                workspace_path,
+                usage_recording,
+                task_cancellation,
+            )
+            .await;
+            SessionTitleResult {
+                session_id: task_session_id.to_string(),
+                title,
+            }
+        });
+        self.pending_session_title = Some(PendingSessionTitle::new(
+            session_id.to_string(),
+            cancellation,
+            handle,
+        ));
     }
 
     async fn submit(

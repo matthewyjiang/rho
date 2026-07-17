@@ -491,12 +491,22 @@ impl Session {
             run_id.clone(),
             Arc::clone(&runtime.lifecycle),
         );
-        runtime.lifecycle.register(run_id, cancellation.clone())?;
+        runtime
+            .lifecycle
+            .register(run_id.clone(), cancellation.clone())?;
         let history = self.history();
         let previous = HistoryMetrics::from_history(&history);
-        let output = compactor
-            .compact(crate::CompactionRequest::new(history, cancellation))
-            .await?;
+        let request = crate::CompactionRequest::new(history, cancellation).with_request_context(
+            self.core.id().clone(),
+            runtime.usage_parent_session_id.clone(),
+            run_id,
+            None,
+            runtime
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.root().to_path_buf()),
+        );
+        let output = compactor.compact(request).await?;
         let (replacement, usage) = output.into_parts();
         let outcome = self.core.commit_compaction(previous, replacement, usage)?;
         self.core.set_state(SessionState::Completed);

@@ -67,6 +67,15 @@ pub fn provider_event_channel(
     )
 }
 
+/// How provider cancellation is finalized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderCancellationMode {
+    /// The SDK must drop the provider future to guarantee cancellation.
+    External,
+    /// The provider cooperatively stops after forwarding already accepted events.
+    Cooperative,
+}
+
 /// Extension point for provider-neutral model backends.
 ///
 /// Implementors must not mutate session history. They receive an immutable
@@ -74,6 +83,11 @@ pub fn provider_event_channel(
 /// provider-native replay data scoped to [`ModelIdentity`]. Returned futures
 /// must be `Send` so hosts may drive them on multithreaded executors.
 pub trait ModelProvider: Send + Sync {
+    /// Declares whether cancellation must drop the future or await cooperative cleanup.
+    fn cancellation_mode(&self) -> ProviderCancellationMode {
+        ProviderCancellationMode::External
+    }
+
     /// Exact identity used to scope provider-native replay data.
     fn identity(&self) -> ModelIdentity;
 

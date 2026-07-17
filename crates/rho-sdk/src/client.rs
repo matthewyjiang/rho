@@ -171,8 +171,9 @@ pub struct RhoBuilder {
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
     reasoning_level: crate::ReasoningLevel,
-    usage_recorder: Option<Arc<dyn crate::ProviderRequestUsageRecorder>>,
+    usage_recording: Option<crate::ProviderRequestUsageRecording>,
     usage_purpose: Option<String>,
+    usage_parent_session_id: Option<crate::SessionId>,
 }
 
 impl RhoBuilder {
@@ -267,7 +268,7 @@ impl RhoBuilder {
     where
         R: crate::ProviderRequestUsageRecorder + 'static,
     {
-        self.usage_recorder = Some(Arc::new(recorder));
+        self.usage_recording = Some(crate::ProviderRequestUsageRecording::new(recorder));
         self
     }
 
@@ -275,13 +276,24 @@ impl RhoBuilder {
         mut self,
         recorder: Arc<dyn crate::ProviderRequestUsageRecorder>,
     ) -> Self {
-        self.usage_recorder = Some(recorder);
+        self.usage_recording = Some(crate::ProviderRequestUsageRecording::new_shared(recorder));
+        self
+    }
+
+    /// Uses a shared recorder and diagnostic store for all runtime-owned model requests.
+    pub fn usage_recording(mut self, recording: crate::ProviderRequestUsageRecording) -> Self {
+        self.usage_recording = Some(recording);
         self
     }
 
     /// Labels provider requests for host accounting. Defaults to `"agent"`.
     pub fn usage_purpose(mut self, purpose: impl Into<String>) -> Self {
         self.usage_purpose = Some(purpose.into());
+        self
+    }
+
+    pub fn usage_parent_session_id(mut self, session_id: crate::SessionId) -> Self {
+        self.usage_parent_session_id = Some(session_id);
         self
     }
 
@@ -328,9 +340,9 @@ impl RhoBuilder {
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
-            usage_recorder: self.usage_recorder,
+            usage_recording: self.usage_recording.unwrap_or_default(),
             usage_purpose,
-            usage_recorder_diagnostics: Arc::default(),
+            usage_parent_session_id: self.usage_parent_session_id,
             approval_audit: Arc::default(),
             lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
@@ -351,9 +363,9 @@ pub struct Rho {
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
-    pub(crate) usage_recorder: Option<Arc<dyn crate::ProviderRequestUsageRecorder>>,
+    pub(crate) usage_recording: crate::ProviderRequestUsageRecording,
     pub(crate) usage_purpose: String,
-    pub(crate) usage_recorder_diagnostics: Arc<crate::usage::UsageRecorderDiagnostics>,
+    pub(crate) usage_parent_session_id: Option<crate::SessionId>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
@@ -410,9 +422,13 @@ impl Rho {
                     }
                 }),
                 reasoning_level: self.reasoning_level,
-                usage_recorder_diagnostics: self.usage_recorder_diagnostics.snapshot(),
+                usage_recorder_diagnostics: self.usage_recording.diagnostics(),
             },
         )
+    }
+
+    pub fn usage_recording(&self) -> crate::ProviderRequestUsageRecording {
+        self.usage_recording.clone()
     }
 
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
@@ -452,7 +468,7 @@ impl std::fmt::Debug for Rho {
             .field("compactor", &self.compactor.is_some())
             .field("compaction_policy", &self.compaction_policy)
             .field("reasoning_level", &self.reasoning_level)
-            .field("usage_recorder", &self.usage_recorder.is_some())
+            .field("usage_recorder", &self.usage_recording.is_enabled())
             .field("usage_purpose", &self.usage_purpose)
             .finish()
     }

@@ -308,6 +308,7 @@ fn chat_stream_usage_normalizes_prompt_cached_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
+                | ModelEvent::RequestAttemptFailed { .. }
                 | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
@@ -337,6 +338,7 @@ fn codex_response_usage_normalizes_input_cached_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
+                | ModelEvent::RequestAttemptFailed { .. }
                 | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
@@ -366,7 +368,7 @@ fn codex_sse_line_emits_output_delta() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         }),
@@ -393,7 +395,7 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         }),
@@ -419,7 +421,7 @@ fn codex_sse_line_emits_reasoning_text_delta() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         }),
@@ -496,7 +498,7 @@ fn codex_sse_line_emits_web_search_detail() {
                 ModelEvent::ReasoningSummaryDelta(_) => {}
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         }),
@@ -523,7 +525,7 @@ fn parses_chat_completion_stream_line_as_output_delta() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         },
@@ -580,7 +582,7 @@ fn parses_chat_completion_stream_line_as_reasoning_delta() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
+                ModelEvent::Usage(_) | ModelEvent::RequestAttemptFailed { .. } => {}
             }
             Ok(())
         },

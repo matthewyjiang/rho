@@ -40,6 +40,7 @@ pub struct UsageEvent {
     pub rho_version: Option<String>,
 }
 
+#[cfg(test)]
 impl UsageEvent {
     /// Creates an event with a random stable identity and the current UTC time.
     pub fn new(

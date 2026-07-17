@@ -25,7 +25,7 @@ use reasoning::openai_reasoning_config;
 
 use crate::{
     credentials::{load_codex_tokens, CodexTokens, CredentialStore},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
 
@@ -267,7 +267,7 @@ impl OpenAiProvider {
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
-            CodexWsTurn::FullSseFallback => {}
+            CodexWsTurn::FullSseFallback { .. } => {}
         }
 
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
@@ -362,10 +362,17 @@ impl OpenAiProvider {
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
-            CodexWsTurn::FullSseFallback => {
-                // The WebSocket transport has already reset stale continuation
-                // state and withheld stream events, so replaying the full body
-                // over SSE cannot duplicate caller-visible deltas.
+            CodexWsTurn::FullSseFallback { request_submitted } => {
+                if request_submitted {
+                    // The submitted WebSocket request may have reached the model
+                    // before the transport failed, so account for it separately.
+                    if let Some(on_event) = on_event.as_deref_mut() {
+                        on_event(ModelEvent::RequestAttemptFailed {
+                            kind: rho_sdk::ProviderErrorKind::Unavailable,
+                            usage: ModelUsage::default(),
+                        })?;
+                    }
+                }
             }
         }
 
@@ -411,6 +418,12 @@ impl OpenAiProvider {
                 )
                 .await?;
                 self.remember_refreshed_codex_tokens(refreshed.clone());
+                if let Some(on_event) = on_event.as_deref_mut() {
+                    on_event(ModelEvent::RequestAttemptFailed {
+                        kind: rho_sdk::ProviderErrorKind::Authentication,
+                        usage: ModelUsage::default(),
+                    })?;
+                }
                 let mut req = make_request(&refreshed.access_token);
                 if let Some(account_id) = refreshed.account_id.as_deref() {
                     req = req.header("ChatGPT-Account-ID", account_id);

@@ -9,7 +9,9 @@ use std::{
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
+    },
     provider::{provider_event_channel, ModelProvider as SdkModelProvider},
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
@@ -135,6 +137,34 @@ impl YieldingProvider {
 
 crate::impl_sdk_model_provider!(YieldingProvider);
 
+#[derive(Clone)]
+struct CancellingUsageProvider;
+
+impl CancellingUsageProvider {
+    fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("fake", "test", "cancelling-usage")
+    }
+
+    async fn complete_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        unreachable!("test uses streaming")
+    }
+
+    async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        on_event(ModelEvent::Usage(ModelUsage {
+            output_tokens: Some(7),
+            ..ModelUsage::default()
+        }))?;
+        request.cancellation.cancel();
+        std::future::pending().await
+    }
+}
+
+crate::impl_sdk_model_provider!(CancellingUsageProvider);
+
 fn request<'a>(
     messages: &'a [Message],
     cancellation: CancellationToken,
@@ -147,6 +177,29 @@ fn request<'a>(
         reasoning_level,
         prompt_cache_key: Some("session-1"),
     }
+}
+
+#[tokio::test]
+async fn callback_events_accepted_before_cancellation_are_forwarded() {
+    let provider = CancellingUsageProvider;
+    let cancellation = CancellationToken::new();
+    let messages = [Message::user_text("hello")];
+    let (sender, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let mut provider_future = provider.send_turn_stream(
+        request(&messages, cancellation, ReasoningLevel::Off),
+        sender,
+    );
+
+    let (result, event) = tokio::join!(&mut provider_future, receiver.recv());
+
+    assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
+    assert_eq!(
+        event,
+        Some(ModelEvent::Usage(ModelUsage {
+            output_tokens: Some(7),
+            ..ModelUsage::default()
+        }))
+    );
 }
 
 #[test]

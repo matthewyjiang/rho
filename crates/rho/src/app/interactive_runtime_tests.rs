@@ -186,6 +186,8 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         },
         context_window: Some(1_000),
         usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));
@@ -313,6 +315,8 @@ async fn new_sessions_seed_prompt_cache_keys() {
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
     })
     .unwrap();
     let id = SessionId::new();
@@ -358,6 +362,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: None,
+        usage_recording: Default::default(),
         permission_mode: PermissionMode::Auto,
         approval_handler: None,
         approval_receiver: None,

@@ -1,6 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 
 use pretty_assertions::assert_eq;
+use tokio::sync::oneshot;
 
 use super::*;
 use crate::{
@@ -39,6 +43,106 @@ impl ProviderRequestUsageRecorder for CapturingRecorder {
 
 fn identity() -> ModelIdentity {
     ModelIdentity::new("provider-exact", "api-exact", "model-exact")
+}
+
+struct QueuedUsageBeforeCancellationProvider {
+    usage: ModelUsage,
+    queue_observed: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl ModelProvider for QueuedUsageBeforeCancellationProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            request.cancellation.cancelled().await;
+            Err(crate::ProviderError::interrupted("cancelled"))
+        })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        let usage = self.usage.clone();
+        let queue_observed = self
+            .queue_observed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .unwrap();
+        tokio::spawn(async move {
+            events
+                .send(ModelEvent::OutputDelta("partial".into()))
+                .await
+                .unwrap();
+            events.send(ModelEvent::Usage(usage)).await.unwrap();
+            for index in 0..14 {
+                events
+                    .send(ModelEvent::WebSearch(format!("queued {index}")))
+                    .await
+                    .unwrap();
+            }
+            // The channel is full. This send can finish only after orchestration
+            // has received OutputDelta and blocked publishing it to the host.
+            events
+                .send(ModelEvent::WebSearch("capacity probe".into()))
+                .await
+                .unwrap();
+            let _ = queue_observed.send(());
+        });
+        Box::pin(async move {
+            request.cancellation.cancelled().await;
+            Err(crate::ProviderError::interrupted("cancelled"))
+        })
+    }
+}
+
+#[tokio::test]
+async fn cancellation_records_queued_usage_before_usage_updated_is_emitted() {
+    let usage = ModelUsage {
+        output_tokens: Some(5),
+        cost_usd_micros: Some(17),
+        ..ModelUsage::default()
+    };
+    let recorder = CapturingRecorder::default();
+    let (queue_observed, queued) = oneshot::channel();
+    let rho = Rho::builder()
+        .provider(QueuedUsageBeforeCancellationProvider {
+            usage: usage.clone(),
+            queue_observed: Mutex::new(Some(queue_observed)),
+        })
+        .usage_recorder(recorder.clone())
+        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = rho.session(SessionOptions::new()).await.unwrap();
+    let mut run = session.start(UserInput::text("go")).await.unwrap();
+
+    assert!(matches!(
+        run.next_event().await,
+        Some(RunEvent::Started { .. })
+    ));
+    queued.await.unwrap();
+    run.cancel();
+
+    let mut usage_updated = false;
+    while let Some(event) = run.next_event().await {
+        usage_updated |= matches!(event, RunEvent::UsageUpdated { .. });
+        if matches!(event, RunEvent::Cancelled { .. }) {
+            break;
+        }
+    }
+    assert!(!usage_updated);
+    assert!(matches!(run.outcome().await, Err(crate::Error::Cancelled)));
+
+    let events = recorder.events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].outcome(), ProviderRequestOutcome::Cancelled);
+    assert_eq!(events[0].usage(), &usage);
 }
 
 struct UsageThenWaitProvider {
@@ -126,9 +230,11 @@ async fn records_each_invalid_response_attempt_with_request_context() {
     let workspace = Workspace::new(workspace_dir.path()).unwrap();
     let workspace_path = workspace.root().to_path_buf();
     let session_id = SessionId::from_string("session-for-usage").unwrap();
+    let parent_session_id = SessionId::from_string("parent-session").unwrap();
     let rho = Rho::builder()
         .provider(provider)
         .workspace(workspace)
+        .usage_parent_session_id(parent_session_id.clone())
         .usage_recorder(recorder.clone())
         .usage_purpose("agent-test")
         .build()
@@ -151,16 +257,71 @@ async fn records_each_invalid_response_attempt_with_request_context() {
         assert!(!event.event_id().is_empty());
         assert!(event.timestamp_utc_ms() > 0);
         assert_eq!(event.context().identity(), &identity());
-        assert_eq!(event.context().session_id(), &session_id);
-        assert!(!event.context().run_id().as_str().is_empty());
-        assert_eq!(event.context().step_index(), 1);
-        assert_eq!(event.context().attempt_index(), index + 1);
+        assert_eq!(event.context().session_id(), Some(&session_id));
+        assert_eq!(
+            event.context().parent_session_id(),
+            Some(&parent_session_id)
+        );
+        assert!(!event
+            .context()
+            .run_id()
+            .expect("agent request has a run ID")
+            .as_str()
+            .is_empty());
+        assert_eq!(event.context().step_index(), Some(1));
+        assert_eq!(event.context().attempt_index(), Some(index + 1));
         assert_eq!(
             event.context().workspace_path(),
             Some(workspace_path.as_path())
         );
         assert_eq!(event.context().purpose(), "agent-test");
     }
+}
+
+#[tokio::test]
+async fn records_provider_internal_retries_as_distinct_physical_attempts() {
+    let final_usage = ModelUsage {
+        output_tokens: Some(5),
+        ..ModelUsage::default()
+    };
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            vec![
+                ModelEvent::RequestAttemptFailed {
+                    kind: ProviderErrorKind::Unavailable,
+                    usage: ModelUsage::default(),
+                },
+                ModelEvent::Usage(final_usage.clone()),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        )],
+    );
+    let recorder = CapturingRecorder::default();
+    let rho = Rho::builder()
+        .provider(provider)
+        .usage_recorder(recorder.clone())
+        .build()
+        .unwrap();
+
+    rho.session(SessionOptions::new())
+        .await
+        .unwrap()
+        .complete("go")
+        .await
+        .unwrap();
+
+    let events = recorder.events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0].outcome(),
+        ProviderRequestOutcome::Failed(ProviderErrorKind::Unavailable)
+    );
+    assert_eq!(events[0].usage(), &ModelUsage::default());
+    assert_eq!(events[0].context().attempt_index(), Some(1));
+    assert_eq!(events[1].outcome(), ProviderRequestOutcome::Completed);
+    assert_eq!(events[1].usage(), &final_usage);
+    assert_eq!(events[1].context().attempt_index(), Some(2));
 }
 
 #[tokio::test]

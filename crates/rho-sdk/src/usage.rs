@@ -28,6 +28,55 @@ pub trait ProviderRequestUsageRecorder: Send + Sync {
     fn record(&self, event: ProviderRequestUsageEvent) -> ProviderRequestUsageRecorderFuture<'_>;
 }
 
+/// Shared recorder and bounded diagnostics for every model request owned by a host.
+#[derive(Clone, Default)]
+pub struct ProviderRequestUsageRecording {
+    recorder: Option<std::sync::Arc<dyn ProviderRequestUsageRecorder>>,
+    diagnostics: std::sync::Arc<UsageRecorderDiagnostics>,
+}
+
+impl ProviderRequestUsageRecording {
+    pub fn new<R>(recorder: R) -> Self
+    where
+        R: ProviderRequestUsageRecorder + 'static,
+    {
+        Self::new_shared(std::sync::Arc::new(recorder))
+    }
+
+    pub fn new_shared(recorder: std::sync::Arc<dyn ProviderRequestUsageRecorder>) -> Self {
+        Self {
+            recorder: Some(recorder),
+            diagnostics: std::sync::Arc::default(),
+        }
+    }
+
+    pub async fn record(&self, event: ProviderRequestUsageEvent) {
+        let Some(recorder) = &self.recorder else {
+            return;
+        };
+        if let Err(error) = recorder.record(event).await {
+            self.diagnostics.push(error);
+        }
+    }
+
+    pub fn diagnostics(&self) -> Vec<UsageRecorderDiagnostic> {
+        self.diagnostics.snapshot()
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.recorder.is_some()
+    }
+}
+
+impl std::fmt::Debug for ProviderRequestUsageRecording {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderRequestUsageRecording")
+            .field("enabled", &self.is_enabled())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A bounded failure returned by a usage recorder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderRequestUsageRecorderError {
@@ -58,10 +107,11 @@ impl std::error::Error for ProviderRequestUsageRecorderError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderRequestUsageContext {
     identity: ModelIdentity,
-    session_id: SessionId,
-    run_id: RunId,
-    step_index: usize,
-    attempt_index: usize,
+    session_id: Option<SessionId>,
+    parent_session_id: Option<SessionId>,
+    run_id: Option<RunId>,
+    step_index: Option<usize>,
+    attempt_index: Option<usize>,
     workspace_path: Option<PathBuf>,
     purpose: String,
 }
@@ -78,34 +128,83 @@ impl ProviderRequestUsageContext {
     ) -> Self {
         Self {
             identity,
-            session_id,
-            run_id,
-            step_index,
-            attempt_index,
+            session_id: Some(session_id),
+            parent_session_id: None,
+            run_id: Some(run_id),
+            step_index: Some(step_index),
+            attempt_index: Some(attempt_index),
             workspace_path,
             purpose,
         }
+    }
+
+    /// Creates context for a model request outside the agent loop.
+    pub fn for_purpose(identity: ModelIdentity, purpose: impl Into<String>) -> Self {
+        Self {
+            identity,
+            session_id: None,
+            parent_session_id: None,
+            run_id: None,
+            step_index: None,
+            attempt_index: None,
+            workspace_path: None,
+            purpose: purpose.into(),
+        }
+    }
+
+    pub fn with_session_id(mut self, session_id: SessionId) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
+    pub fn with_parent_session_id(mut self, parent_session_id: SessionId) -> Self {
+        self.parent_session_id = Some(parent_session_id);
+        self
+    }
+
+    pub fn with_run_id(mut self, run_id: RunId) -> Self {
+        self.run_id = Some(run_id);
+        self
+    }
+
+    pub fn with_step_index(mut self, step_index: usize) -> Self {
+        self.step_index = Some(step_index);
+        self
+    }
+
+    pub fn with_attempt_index(mut self, attempt_index: usize) -> Self {
+        self.attempt_index = Some(attempt_index);
+        self
+    }
+
+    pub fn with_workspace_path(mut self, workspace_path: impl Into<PathBuf>) -> Self {
+        self.workspace_path = Some(workspace_path.into());
+        self
     }
 
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
     }
 
-    pub fn session_id(&self) -> &SessionId {
-        &self.session_id
+    pub fn session_id(&self) -> Option<&SessionId> {
+        self.session_id.as_ref()
     }
 
-    pub fn run_id(&self) -> &RunId {
-        &self.run_id
+    pub fn parent_session_id(&self) -> Option<&SessionId> {
+        self.parent_session_id.as_ref()
     }
 
-    /// One-based agent loop step containing this request.
-    pub fn step_index(&self) -> usize {
+    pub fn run_id(&self) -> Option<&RunId> {
+        self.run_id.as_ref()
+    }
+
+    /// One-based agent loop step containing this request, when applicable.
+    pub fn step_index(&self) -> Option<usize> {
         self.step_index
     }
 
-    /// One-based physical request attempt within the step.
-    pub fn attempt_index(&self) -> usize {
+    /// One-based physical request attempt within the step, when applicable.
+    pub fn attempt_index(&self) -> Option<usize> {
         self.attempt_index
     }
 
@@ -139,7 +238,7 @@ pub struct ProviderRequestUsageEvent {
 }
 
 impl ProviderRequestUsageEvent {
-    pub(crate) fn observed(
+    pub fn observed(
         context: ProviderRequestUsageContext,
         usage: ModelUsage,
         outcome: ProviderRequestOutcome,

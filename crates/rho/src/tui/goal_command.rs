@@ -319,11 +319,16 @@ impl App {
                 let tool_call_active = AtomicBool::new(false);
                 let cancellation = CancellationToken::new();
                 let mut evaluation = Box::pin(goal::evaluate(
-                    &provider,
-                    &model,
-                    &condition,
-                    &history,
-                    cancellation.clone(),
+                    goal::EvaluationRequest {
+                        provider_name: &provider,
+                        model: &model,
+                        condition: &condition,
+                        messages: &history,
+                        cancellation: cancellation.clone(),
+                        session_id: agent.session_id(),
+                        workspace_path: agent.workspace_path(),
+                    },
+                    agent.usage_recording(),
                 ));
                 let deadline = tokio::time::Instant::now() + goal::EVALUATION_TIMEOUT;
                 loop {

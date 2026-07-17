@@ -171,7 +171,7 @@ pub use steering::SteeringRetraction;
 pub use usage::{
     ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecorder, ProviderRequestUsageRecorderError,
-    ProviderRequestUsageRecorderFuture, UsageRecorderDiagnostic,
+    ProviderRequestUsageRecorderFuture, ProviderRequestUsageRecording, UsageRecorderDiagnostic,
 };
 pub use workspace::{
     approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,

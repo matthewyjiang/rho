@@ -1,11 +1,12 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::ErrorKind,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
-use rusqlite::{params, Connection, ErrorCode, OpenFlags};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags, TransactionBehavior};
 
 use super::{
     migrations::{self, EVENT_SCHEMA_VERSION},
@@ -13,6 +14,12 @@ use super::{
 };
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+enum ParentDirectoryPrivacy {
+    #[cfg(test)]
+    PreserveExisting,
+    EnforcePrivate,
+}
 
 /// Durable SQLite recorder. It opens a short-lived connection for each write,
 /// allowing clones and independent Rho processes to write concurrently.
@@ -23,19 +30,27 @@ pub struct SqliteUsageRecorder {
 
 impl SqliteUsageRecorder {
     /// Opens or creates a ledger at `path` and applies all migrations.
-    pub fn new(path: impl Into<PathBuf>) -> Result<Self, UsageLedgerError> {
-        let recorder = Self { path: path.into() };
-        recorder.initialize()?;
-        set_private_file_permissions(&recorder.path)?;
-        set_sidecar_permissions(&recorder.path)?;
-        Ok(recorder)
+    #[cfg(test)]
+    pub(crate) fn new(path: impl Into<PathBuf>) -> Result<Self, UsageLedgerError> {
+        Self::new_with_parent_privacy(path.into(), ParentDirectoryPrivacy::PreserveExisting)
     }
 
     /// Opens or creates the ledger under Rho's configured data root.
     pub fn at_default_path() -> Result<Self, UsageLedgerError> {
         let path =
             crate::paths::usage_database_path().map_err(|_| UsageLedgerError::DataDirectory)?;
-        Self::new(path)
+        Self::new_with_parent_privacy(path, ParentDirectoryPrivacy::EnforcePrivate)
+    }
+
+    fn new_with_parent_privacy(
+        path: PathBuf,
+        parent_privacy: ParentDirectoryPrivacy,
+    ) -> Result<Self, UsageLedgerError> {
+        prepare_parent_directory(&path, parent_privacy)?;
+        prepare_database_file(&path)?;
+        let recorder = Self { path };
+        recorder.initialize()?;
+        Ok(recorder)
     }
 
     #[cfg(test)]
@@ -48,7 +63,10 @@ impl SqliteUsageRecorder {
         loop {
             let result = self.open_write_connection().and_then(|mut connection| {
                 connection.pragma_update(None, "journal_mode", "WAL")?;
-                migrations::migrate(&mut connection)
+                set_sidecar_permissions(&self.path)?;
+                migrations::migrate(&mut connection)?;
+                set_sidecar_permissions(&self.path)?;
+                Ok(())
             });
             match result {
                 Err(error) if is_lock_contention(&error) && Instant::now() < deadline => {
@@ -60,15 +78,9 @@ impl SqliteUsageRecorder {
     }
 
     fn open_write_connection(&self) -> Result<Connection, UsageLedgerError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-            set_private_directory_permissions(parent)?;
-        }
         let connection = Connection::open_with_flags(
             &self.path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         connection.busy_timeout(BUSY_TIMEOUT)?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
@@ -78,9 +90,6 @@ impl SqliteUsageRecorder {
 
 impl UsageRecorder for SqliteUsageRecorder {
     fn record(&self, event: &UsageEvent) -> Result<RecordOutcome, UsageLedgerError> {
-        let mut connection = self.open_write_connection()?;
-        migrations::migrate(&mut connection)?;
-
         let step_index = sqlite_integer("step_index", event.step_index)?;
         let attempt_index = sqlite_integer("attempt_index", event.attempt_index)?;
         let input_tokens = sqlite_integer("input_tokens", event.usage.input_tokens)?;
@@ -91,7 +100,10 @@ impl UsageRecorder for SqliteUsageRecorder {
         let total_tokens = sqlite_integer("total_tokens", event.usage.total_tokens)?;
         let cost_usd_micros = sqlite_integer("cost_usd_micros", event.usage.cost_usd_micros)?;
 
-        let changed = connection.execute(
+        let mut connection = self.open_write_connection()?;
+        set_sidecar_permissions(&self.path)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
             "INSERT OR IGNORE INTO usage_events (
                 event_id, schema_version, occurred_at_ms, session_id, parent_session_id,
                 run_id, step_index, attempt_index, workspace_path, provider, model,
@@ -124,6 +136,7 @@ impl UsageRecorder for SqliteUsageRecorder {
                 event.rho_version,
             ],
         )?;
+        transaction.commit()?;
         set_sidecar_permissions(&self.path)?;
         Ok(if changed == 1 {
             RecordOutcome::Inserted
@@ -150,6 +163,48 @@ fn sqlite_integer(
             i64::try_from(value).map_err(|_| UsageLedgerError::IntegerOverflow { field, value })
         })
         .transpose()
+}
+
+fn prepare_parent_directory(
+    path: &Path,
+    privacy: ParentDirectoryPrivacy,
+) -> Result<(), std::io::Error> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
+    };
+
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(parent)?;
+
+    if matches!(privacy, ParentDirectoryPrivacy::EnforcePrivate) {
+        set_private_directory_permissions(parent)?;
+    }
+    Ok(())
+}
+
+fn prepare_database_file(path: &Path) -> Result<(), std::io::Error> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    set_private_file_permissions(path)
 }
 
 fn set_private_directory_permissions(path: &Path) -> Result<(), std::io::Error> {
@@ -179,8 +234,10 @@ fn set_sidecar_permissions(path: &Path) -> Result<(), std::io::Error> {
         let mut sidecar = path.as_os_str().to_os_string();
         sidecar.push(suffix);
         let sidecar = PathBuf::from(sidecar);
-        if sidecar.exists() {
-            set_private_file_permissions(&sidecar)?;
+        match set_private_file_permissions(&sidecar) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
     }
     Ok(())

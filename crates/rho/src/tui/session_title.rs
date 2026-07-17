@@ -1,16 +1,70 @@
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
 use rho_sdk::{
     model::{ContentBlock, Message, ModelRequest, ModelResponse},
-    CancellationToken, ReasoningLevel,
+    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, ReasoningLevel,
+    SessionId,
 };
 
+use super::SessionTitleResult;
 use crate::providers::build_sdk_provider;
+
+pub(super) struct PendingSessionTitle {
+    session_id: String,
+    cancellation: CancellationToken,
+    handle: tokio::task::JoinHandle<SessionTitleResult>,
+}
+
+impl PendingSessionTitle {
+    pub(super) fn new(
+        session_id: String,
+        cancellation: CancellationToken,
+        handle: tokio::task::JoinHandle<SessionTitleResult>,
+    ) -> Self {
+        Self {
+            session_id,
+            cancellation,
+            handle,
+        }
+    }
+
+    pub(super) fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
+
+impl Future for PendingSessionTitle {
+    type Output = SessionTitleResult;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match Pin::new(&mut self.handle).poll(context) {
+            std::task::Poll::Ready(Ok(result)) => std::task::Poll::Ready(result),
+            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(SessionTitleResult {
+                session_id: self.session_id.clone(),
+                title: Err(anyhow::anyhow!("title generation task failed: {error}")),
+            }),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+impl Drop for PendingSessionTitle {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
 
 pub(super) async fn generate_session_title(
     provider_name: String,
     model: String,
     first_user_message: String,
+    session_id: SessionId,
+    workspace_path: std::path::PathBuf,
+    usage_recording: ProviderRequestUsageRecording,
+    cancellation: CancellationToken,
 ) -> anyhow::Result<String> {
     let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
     let request_messages = vec![
@@ -20,33 +74,32 @@ pub(super) async fn generate_session_title(
         ),
         Message::user_text(format!("First user message:\n\n{first_user_message}")),
     ];
-    let cancellation = CancellationToken::new();
-    let request_cancellation = cancellation.clone();
-    let request = tokio::spawn(async move {
-        crate::usage::send_recorded(
-            provider.as_ref(),
-            ModelRequest {
-                messages: &request_messages,
-                tools: &[],
-                cancellation: request_cancellation,
-                reasoning_level: ReasoningLevel::Low,
-                prompt_cache_key: None,
-            },
-            "title",
-            crate::usage::default_recorder(),
-        )
-        .await
-    });
-    let (response, _) = match tokio::time::timeout(Duration::from_secs(20), request).await {
-        Ok(result) => {
-            result.map_err(|error| anyhow::anyhow!("title generation task failed: {error}"))??
-        }
-        Err(_) => {
-            // Dropping the join handle detaches the task so it can finish recording
-            // the cancelled request without extending the interactive deadline.
+    let usage_context = ProviderRequestUsageContext::for_purpose(provider.identity(), "title")
+        .with_session_id(session_id)
+        .with_workspace_path(workspace_path);
+    let request = crate::usage::send_recorded(
+        provider.as_ref(),
+        ModelRequest {
+            messages: &request_messages,
+            tools: &[],
+            cancellation: cancellation.clone(),
+            reasoning_level: ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+        usage_context,
+        usage_recording,
+    );
+    tokio::pin!(request);
+    let (result, timed_out) = tokio::select! {
+        result = &mut request => (result, false),
+        () = tokio::time::sleep(Duration::from_secs(20)) => {
             cancellation.cancel();
-            return Err(anyhow::anyhow!("title generation timed out"));
+            (request.await, true)
         }
+    };
+    let (response, _) = match result {
+        Err(_) if timed_out => return Err(anyhow::anyhow!("title generation timed out")),
+        result => result?,
     };
     let ModelResponse::Assistant(blocks) = response;
     let title = blocks
@@ -80,3 +133,7 @@ pub(super) fn sanitize_session_title(title: &str) -> Option<String> {
     }
     Some(title)
 }
+
+#[cfg(test)]
+#[path = "session_title_tests.rs"]
+mod tests;

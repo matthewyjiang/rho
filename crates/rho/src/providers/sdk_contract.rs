@@ -213,9 +213,6 @@ where
             let Some(event) = next else {
                 break;
             };
-            if cancellation.is_cancelled() {
-                return Err(ProviderError::interrupted("provider stream interrupted"));
-            }
             events.send(event).await?;
         }
 
@@ -255,6 +252,10 @@ where
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
         impl ::rho_sdk::provider::ModelProvider for $provider {
+            fn cancellation_mode(&self) -> ::rho_sdk::provider::ProviderCancellationMode {
+                ::rho_sdk::provider::ProviderCancellationMode::Cooperative
+            }
+
             fn identity(&self) -> ::rho_sdk::model::ModelIdentity {
                 self.model_identity()
             }
