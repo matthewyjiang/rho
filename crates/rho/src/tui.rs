@@ -1953,6 +1953,15 @@ impl App {
     }
 
     fn backspace_input(&mut self) {
+        if let Some(segment) = self
+            .paste_segments
+            .iter()
+            .find(|segment| segment.start < self.input_cursor && self.input_cursor <= segment.end())
+            .cloned()
+        {
+            self.replace_input_range(segment.start, segment.end(), "");
+            return;
+        }
         if self.input_cursor == 0 {
             if self.input.is_empty() && self.pending_images.pop().is_some() {
                 self.status = format!("attached images: {}", self.pending_images.len());
@@ -1970,6 +1979,15 @@ impl App {
     }
 
     fn delete_input(&mut self) {
+        if let Some(segment) = self
+            .paste_segments
+            .iter()
+            .find(|segment| segment.start <= self.input_cursor && self.input_cursor < segment.end())
+            .cloned()
+        {
+            self.replace_input_range(segment.start, segment.end(), "");
+            return;
+        }
         if self.input_cursor >= self.input_char_len() {
             return;
         }
@@ -6018,6 +6036,8 @@ mod tests {
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
 
+    #[path = "input_editing_tests.rs"]
+    mod input_editing_tests;
     #[path = "layout_tests.rs"]
     mod layout_tests;
     #[path = "mouse_tests.rs"]
@@ -6391,18 +6411,6 @@ mod tests {
         let expanded_input = app.expanded_input();
         assert_eq!(slash_command_args(&expanded_input).trim(), "alpha\nbeta");
         assert_eq!(slash_command_args(&app.input).trim(), "[ pasted: 2 lines ]");
-    }
-
-    #[test]
-    fn paste_segment_is_removed_when_marker_is_edited() {
-        let mut app = test_app();
-        app.insert_pasted_input_text("alpha\nbeta");
-        app.input_cursor = 1;
-        app.delete_input();
-
-        assert_eq!(app.input, "[pasted: 2 lines ]");
-        assert!(app.paste_segments.is_empty());
-        assert_eq!(app.expanded_input(), "[pasted: 2 lines ]");
     }
 
     #[test]
