@@ -1,11 +1,25 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
-    questionnaire::QuestionnaireQuestionKind,
+    questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
     tui::questionnaire::{QuestionnaireQuestion, QuestionnaireRequest},
 };
 
 use super::*;
+
+fn choice_question(id: &str) -> QuestionnaireQuestion {
+    QuestionnaireQuestion {
+        id: id.into(),
+        question: format!("{id}?"),
+        header: None,
+        help: None,
+        default: None,
+        kind: QuestionnaireQuestionKind::Choice,
+        required: true,
+        choices: vec!["alpha".into(), "beta".into()],
+        allow_other: false,
+    }
+}
 
 fn confirm_question(id: &str) -> QuestionnaireQuestion {
     QuestionnaireQuestion {
@@ -13,7 +27,7 @@ fn confirm_question(id: &str) -> QuestionnaireQuestion {
         question: format!("{id}?"),
         header: None,
         help: None,
-        default: Some(serde_json::json!("yes")),
+        default: None,
         kind: QuestionnaireQuestionKind::Confirm,
         required: true,
         choices: Vec::new(),
@@ -29,7 +43,7 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
         QuestionnaireRequest {
             title: None,
             reason: None,
-            questions: vec![confirm_question("first"), confirm_question("second")],
+            questions: vec![choice_question("first"), confirm_question("second")],
         },
         QuestionnaireResponseChannel::new(reply_tx),
     ));
@@ -44,10 +58,21 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
 
     assert!(app.handle_questionnaire_key(enter).unwrap());
     assert!(matches!(app.composer, ComposerMode::Input));
-    assert!(matches!(
+    assert_eq!(
         reply_rx.try_recv(),
-        Ok(QuestionnaireReply::Answer(_))
-    ));
+        Ok(QuestionnaireReply::Answer(QuestionnaireResponse {
+            answers: vec![
+                QuestionnaireAnswer {
+                    id: "first".into(),
+                    answer: serde_json::json!("alpha"),
+                },
+                QuestionnaireAnswer {
+                    id: "second".into(),
+                    answer: serde_json::json!("yes"),
+                },
+            ],
+        }))
+    );
 }
 
 #[test]

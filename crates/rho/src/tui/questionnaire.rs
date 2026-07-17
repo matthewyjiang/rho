@@ -136,6 +136,12 @@ pub(super) struct QuestionnaireComposer {
     active_index: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum QuestionnaireEnterAction {
+    Advance,
+    Submit,
+}
+
 #[derive(Debug)]
 struct QuestionnaireFieldState {
     selection: FieldSelection,
@@ -342,6 +348,22 @@ impl QuestionnaireComposer {
 
     pub(super) fn on_last_question(&self) -> bool {
         self.active_index + 1 >= self.fields.len()
+    }
+
+    pub(super) fn confirm_active_question(&mut self) -> QuestionnaireEnterAction {
+        let question = self.active_question().clone();
+        if matches!(
+            question.kind,
+            QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::Confirm
+        ) {
+            self.active_field_mut().toggle_highlighted(&question);
+        }
+        if self.on_last_question() {
+            QuestionnaireEnterAction::Submit
+        } else {
+            self.move_to_next_field();
+            QuestionnaireEnterAction::Advance
+        }
     }
 
     pub(super) fn submit(&mut self) -> Result<SubmittedQuestionnaire, String> {
