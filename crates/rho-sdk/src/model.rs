@@ -267,6 +267,7 @@ pub enum ModelEvent {
     ///
     /// `usage` contains any usage not already emitted through [`Self::Usage`]
     /// for the failed attempt. Consumers reset their per-attempt usage after this event.
+    #[doc(hidden)]
     RequestAttemptFailed {
         kind: crate::ProviderErrorKind,
         usage: ModelUsage,
