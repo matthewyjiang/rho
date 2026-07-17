@@ -33,12 +33,18 @@ use super::{
     sdk_support::{check_cancelled, required_string, workspace, workspace_root},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DelegationToolOptions {
+    cwd: std::path::PathBuf,
+    launch: bool,
+    manage: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolSetOptions {
     questionnaire: bool,
-    /// Working directory used to discover delegated agent definitions; `None`
-    /// disables the agent/agents tools.
-    subagents: Option<std::path::PathBuf>,
+    /// Delegation tool selection and its agent discovery working directory.
+    delegation: Option<DelegationToolOptions>,
     subagent_config_path: Option<std::path::PathBuf>,
     background_subagents: bool,
 }
@@ -53,8 +59,19 @@ impl ToolSetOptions {
         self
     }
 
-    pub fn subagents(mut self, cwd: Option<std::path::PathBuf>) -> Self {
-        self.subagents = cwd;
+    pub fn delegation_tools(
+        mut self,
+        cwd: Option<std::path::PathBuf>,
+        allowed_tools: &std::collections::BTreeSet<String>,
+    ) -> Self {
+        self.delegation = cwd.and_then(|cwd| {
+            let options = DelegationToolOptions {
+                cwd,
+                launch: allowed_tools.contains("agent"),
+                manage: allowed_tools.contains("agents"),
+            };
+            (options.launch || options.manage).then_some(options)
+        });
         self
     }
 
@@ -131,31 +148,35 @@ impl AppToolSet {
         tools.push(adapt(super::web::GetSearchContent, config.max_output_bytes));
 
         let subagents = options
-            .subagents
+            .delegation
             .filter(|_| config.enable_subagents)
-            .as_deref()
-            .map(|cwd| {
+            .map(|delegation| {
+                let cwd = delegation.cwd;
                 let manager = SubagentManager::new(AgentExecutor::new(
                     config.clone(),
                     options.subagent_config_path.clone().unwrap_or_default(),
-                    cwd.to_path_buf(),
+                    cwd.clone(),
                 ));
-                tools.push(adapt(
-                    super::agent::AgentTool::new(
-                        manager.clone(),
-                        cwd,
-                        if options.background_subagents {
-                            BackgroundSubagents::Enabled
-                        } else {
-                            BackgroundSubagents::Disabled
-                        },
-                    ),
-                    config.max_output_bytes,
-                ));
-                tools.push(adapt(
-                    super::agent::AgentsTool::new(manager.clone()),
-                    config.max_output_bytes,
-                ));
+                if delegation.launch {
+                    tools.push(adapt(
+                        super::agent::AgentTool::new(
+                            manager.clone(),
+                            &cwd,
+                            if options.background_subagents {
+                                BackgroundSubagents::Enabled
+                            } else {
+                                BackgroundSubagents::Disabled
+                            },
+                        ),
+                        config.max_output_bytes,
+                    ));
+                }
+                if delegation.manage {
+                    tools.push(adapt(
+                        super::agent::AgentsTool::new(manager.clone()),
+                        config.max_output_bytes,
+                    ));
+                }
                 manager
             });
 

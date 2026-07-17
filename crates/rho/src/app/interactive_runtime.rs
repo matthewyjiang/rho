@@ -154,20 +154,20 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
-        let subagents_enabled = config.enable_subagents
-            && !no_subagents
-            && agent.tools().contains("agent")
-            && agent.tools().contains("agents");
+        let delegation_available = config.enable_subagents && !no_subagents;
+        let launch_delegation_enabled = delegation_available && agent.tools().contains("agent");
+        let delegation_enabled =
+            launch_delegation_enabled || (delegation_available && agent.tools().contains("agents"));
         let mut tools = if no_tools {
             AppToolSet::disabled()
         } else {
-            let subagents = subagents_enabled.then(|| cwd.clone());
+            let delegation_cwd = delegation_enabled.then(|| cwd.clone());
             AppToolSet::new(
                 config,
                 diagnostics.clone(),
                 ToolSetOptions::new()
                     .questionnaire(questionnaire_enabled)
-                    .subagents(subagents)
+                    .delegation_tools(delegation_cwd, agent.tools())
                     .subagent_config_path(config_path)
                     .background_subagents(true),
             )
@@ -184,7 +184,7 @@ impl InteractiveRuntime {
                 PromptPolicy::Extend(extra) => {
                     let mut built = prompt::system_prompt(&specs, &cwd);
                     diagnostics.update_prompt_sources(built.sources);
-                    if !subagents_enabled {
+                    if !launch_delegation_enabled {
                         prompt::append_subagents_disabled_instruction(&mut built.text);
                     }
                     if !extra.is_empty() {

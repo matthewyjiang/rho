@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -21,16 +24,56 @@ fn disabled_subagents_are_not_registered() {
     };
     let root = tempfile::tempdir().unwrap();
 
+    let allowed = ["agent", "agents"]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
     let tool_set = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),
-        ToolSetOptions::default().subagents(Some(root.path().to_path_buf())),
+        ToolSetOptions::default().delegation_tools(Some(root.path().to_path_buf()), &allowed),
     );
     let names: Vec<_> = tool_set.specs().into_iter().map(|spec| spec.name).collect();
 
     assert!(!names.contains(&"agent".to_string()));
     assert!(!names.contains(&"agents".to_string()));
     assert!(tool_set.subagents().is_none());
+}
+
+#[test]
+fn delegation_tools_are_registered_independently() {
+    for (allowed, expected) in [
+        (["agent"].as_slice(), ["agent"].as_slice()),
+        (["agents"].as_slice(), ["agents"].as_slice()),
+        (
+            ["agent", "agents"].as_slice(),
+            ["agent", "agents"].as_slice(),
+        ),
+    ] {
+        let config = Config::default();
+        let root = tempfile::tempdir().unwrap();
+        let allowed = allowed
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<BTreeSet<_>>();
+        let tool_set = AppToolSet::new(
+            &config,
+            RuntimeDiagnostics::new(&config),
+            ToolSetOptions::default().delegation_tools(Some(root.path().to_path_buf()), &allowed),
+        );
+        let names = tool_set
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .filter(|name| name == "agent" || name == "agents")
+            .collect::<Vec<_>>();
+        let expected = expected
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(names, expected);
+        assert!(tool_set.subagents().is_some());
+    }
 }
 
 #[derive(Debug)]

@@ -152,19 +152,19 @@ pub(crate) async fn run_session(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let subagents_enabled = startup.config.enable_subagents
-        && !startup.no_subagents
-        && startup.agent.tools().contains("agent")
-        && startup.agent.tools().contains("agents");
+    let delegation_available = startup.config.enable_subagents && !startup.no_subagents;
+    let launch_delegation_enabled = delegation_available && startup.agent.tools().contains("agent");
+    let delegation_enabled = launch_delegation_enabled
+        || (delegation_available && startup.agent.tools().contains("agents"));
     let mut tool_set = if startup.no_tools {
         AppToolSet::disabled()
     } else {
-        let subagents = subagents_enabled.then(|| startup.cwd.clone());
+        let delegation_cwd = delegation_enabled.then(|| startup.cwd.clone());
         AppToolSet::new(
             startup.config,
             startup.diagnostics.clone(),
             ToolSetOptions::default()
-                .subagents(subagents)
+                .delegation_tools(delegation_cwd, startup.agent.tools())
                 .subagent_config_path(startup.config_path.clone()),
         )
     };
@@ -181,7 +181,7 @@ pub(crate) async fn run_session(
                 let built = prompt::system_prompt(&tool_specs, &startup.cwd);
                 startup.diagnostics.update_prompt_sources(built.sources);
                 let mut text = built.text;
-                if !subagents_enabled {
+                if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut text);
                 }
                 if !extra.is_empty() {

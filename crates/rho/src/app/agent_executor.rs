@@ -109,10 +109,28 @@ impl AgentExecutor {
 
         let task_status_tx = status_tx.clone();
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-            let _permit = permits.acquire_owned().await.map_err(|_| {
-                anyhow::anyhow!("agent executor shut down before the run could start")
-            })?;
-            let config = bound.config().clone();
+            let Some(_permit) = acquire_permit_or_cancel(permits, &task_cancellation).await? else {
+                let stopped = RunStatus {
+                    state: RunState::Stopped,
+                    agent_id: Some(bound.id().to_string()),
+                    agent_fingerprint: Some(bound.fingerprint().to_string()),
+                    last_activity: Some("cancelled before execution".into()),
+                    ..RunStatus::default()
+                };
+                task_status_tx.send_replace(stopped.clone());
+                subagent::write_status(&output_file, &stopped)?;
+                return Ok(());
+            };
+            let mut config = bound.config().clone();
+            if config.provider == "anthropic"
+                && crate::model::models_dev::cached_model_metadata(&config.provider, &config.model)
+                    .is_none()
+            {
+                let _ =
+                    crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
+                        .await;
+            }
+            super::cli_config::normalize_reasoning(&mut config);
             let diagnostics = RuntimeDiagnostics::new(&config);
             diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
             let mut reporter = RunReporter::new(
@@ -174,3 +192,27 @@ impl AgentExecutor {
         })
     }
 }
+
+async fn acquire_permit_or_cancel(
+    permits: Arc<tokio::sync::Semaphore>,
+    cancellation: &RunCancellation,
+) -> anyhow::Result<Option<tokio::sync::OwnedSemaphorePermit>> {
+    tokio::select! {
+        biased;
+        () = cancellation.cancelled() => Ok(None),
+        permit = permits.acquire_owned() => {
+            let permit = permit.map_err(|_| {
+                anyhow::anyhow!("agent executor shut down before the run could start")
+            })?;
+            if cancellation.is_cancelled() {
+                Ok(None)
+            } else {
+                Ok(Some(permit))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "agent_executor_tests.rs"]
+mod tests;

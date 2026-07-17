@@ -162,7 +162,7 @@ fn host_capabilities(
     tools.remove("bash");
     #[cfg(not(windows))]
     tools.remove("powershell");
-    if cli.no_subagents {
+    if cli.no_subagents || !config.enable_subagents {
         tools.remove("agent");
         tools.remove("agents");
     }
