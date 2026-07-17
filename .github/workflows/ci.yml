@@ -29,6 +29,8 @@ jobs:
         run: python3 scripts/check_sdk_compatibility.py
       - name: Test SDK redaction evidence schema
         run: python3 scripts/audit_sdk_redaction_tests.py
+      - name: Test shell installer release parsing
+        run: sh scripts/install_tests.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
