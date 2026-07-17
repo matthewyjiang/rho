@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     reasoning::ReasoningLevel,
 };
 
@@ -55,6 +55,10 @@ impl XaiProvider {
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
     ) -> Result<reqwest::Response, ModelError> {
         let body = build_xai_responses_body(&self.model, request)?;
         let auth = self.auth.auth_material().await?;
@@ -67,6 +71,14 @@ impl XaiProvider {
         let Some(refreshed) = self.auth.force_refresh(&auth.access_token).await? else {
             return Ok(response);
         };
+        if let Some(on_request_event) = on_request_event {
+            on_request_event(
+                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                    kind: rho_sdk::ProviderErrorKind::Authentication,
+                    usage: ModelUsage::default(),
+                },
+            )?;
+        }
         self.send_request_with_token(&body, &refreshed.access_token)
             .await
     }
@@ -90,8 +102,12 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request).await?;
+        let response = self.send_request(request, on_request_event).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_codex_sse_response(response, &mut on_event)
             .await
@@ -109,7 +125,7 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request).await?;
+        let response = self.send_request(request, None).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         crate::providers::send_stream::collect_codex_model_response_silent(response).await
     }
@@ -119,10 +135,12 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
-            result = self.send_responses_turn(request, Some(on_event)) => result,
+            result = self.send_responses_turn(request, Some(on_event), Some(on_request_event)) => result,
             () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }

@@ -1,6 +1,9 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use rho_sdk::{
+    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
+};
 use serde::Deserialize;
 
 use crate::{
@@ -164,12 +167,29 @@ impl GoalEvaluation {
     }
 }
 
+pub(super) struct EvaluationRequest<'a> {
+    pub provider_name: &'a str,
+    pub model: &'a str,
+    pub condition: &'a str,
+    pub messages: &'a [Message],
+    pub cancellation: CancellationToken,
+    pub session_id: &'a SessionId,
+    pub workspace_path: &'a std::path::Path,
+}
+
 pub(super) async fn evaluate(
-    provider_name: &str,
-    model: &str,
-    condition: &str,
-    messages: &[Message],
+    request: EvaluationRequest<'_>,
+    usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<GoalEvaluation> {
+    let EvaluationRequest {
+        provider_name,
+        model,
+        condition,
+        messages,
+        cancellation,
+        session_id,
+        workspace_path,
+    } = request;
     let provider = build_sdk_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
     let request_messages = vec![
@@ -181,16 +201,23 @@ pub(super) async fn evaluate(
             "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
         )),
     ];
-    let response = provider
-        .send_turn(ModelRequest {
+    let usage_context = ProviderRequestUsageContext::for_purpose(provider.identity(), "goal")
+        .with_session_id(session_id.clone())
+        .with_workspace_path(workspace_path);
+    let (response, _) = crate::usage::send_recorded(
+        provider.as_ref(),
+        ModelRequest {
             messages: &request_messages,
             tools: &[],
-            cancellation: Default::default(),
+            cancellation,
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!(error))?;
+        },
+        usage_context,
+        usage_recording,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))?;
     let ModelResponse::Assistant(blocks) = response;
     let text = blocks
         .into_iter()

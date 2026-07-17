@@ -7,7 +7,7 @@ use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -140,12 +140,24 @@ impl GitHubCopilotProvider {
         &self,
         body: ChatRequest,
         auth: GitHubCopilotAuthMaterial,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
     ) -> Result<reqwest::Response, ModelError> {
         let response = self.send_chat_once(&body, &auth).await?;
         if response.status() != StatusCode::UNAUTHORIZED {
             return Ok(response);
         }
         if let Some(refreshed) = self.auth.force_refresh(&self.client).await? {
+            if let Some(on_request_event) = on_request_event {
+                on_request_event(
+                    rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                        kind: rho_sdk::ProviderErrorKind::Authentication,
+                        usage: ModelUsage::default(),
+                    },
+                )?;
+            }
             return self.send_chat_once(&body, &refreshed).await;
         }
         Ok(response)
@@ -164,7 +176,7 @@ impl GitHubCopilotProvider {
     ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, false)?;
         let auth = self.auth.auth_material(&self.client).await?;
-        let response = self.send_chat_with_retry(body, auth).await?;
+        let response = self.send_chat_with_retry(body, auth, None).await?;
         let response = error_for_status(response).await?;
         let response: ChatResponse = response.json().await?;
         convert_openai_response(response)
@@ -175,10 +187,12 @@ impl GitHubCopilotProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
-            result = self.send_turn_stream_inner(request, on_event) => result,
+            result = self.send_turn_stream_inner(request, on_event, on_request_event) => result,
             () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }
@@ -191,10 +205,14 @@ impl GitHubCopilotProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.chat_request(request, true)?;
         let auth = self.auth.auth_material(&self.client).await?;
-        let response = self.send_chat_with_retry(body, auth).await?;
+        let response = self
+            .send_chat_with_retry(body, auth, Some(on_request_event))
+            .await?;
         let response = error_for_status(response).await?;
 
         let mut text = String::new();

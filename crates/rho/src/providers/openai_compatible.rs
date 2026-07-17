@@ -8,7 +8,7 @@ pub(crate) use dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
         convert_openai_response, convert_streamed_response, handle_openai_stream_line,
         invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest,
@@ -59,7 +59,7 @@ impl OpenAiCompatibleProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
-        let response = self.send(&body).await?;
+        let response = self.send(&body, None).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         convert_openai_response(response.json::<ChatResponse>().await?)
     }
@@ -68,10 +68,12 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
-            result = self.stream_inner(request, on_event) => result,
+            result = self.stream_inner(request, on_event, on_request_event) => result,
             () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }
@@ -80,9 +82,11 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
-        let response = self.send(&body).await?;
+        let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let mut text = String::new();
         let mut tool_calls = Vec::new();
@@ -146,7 +150,14 @@ impl OpenAiCompatibleProvider {
         })
     }
 
-    async fn send(&self, body: &ChatRequest) -> Result<reqwest::Response, ModelError> {
+    async fn send(
+        &self,
+        body: &ChatRequest,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
+    ) -> Result<reqwest::Response, ModelError> {
         let token = match &self.auth {
             CompatibleAuth::ApiKey(key) => key.clone(),
             CompatibleAuth::KimiOAuth(auth) => auth.access_token().await?,
@@ -161,6 +172,14 @@ impl OpenAiCompatibleProvider {
         let Some(refreshed) = auth.force_refresh(&token).await? else {
             return Ok(response);
         };
+        if let Some(on_request_event) = on_request_event {
+            on_request_event(
+                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                    kind: rho_sdk::ProviderErrorKind::Authentication,
+                    usage: ModelUsage::default(),
+                },
+            )?;
+        }
         self.send_with_token(body, &refreshed).await
     }
 

@@ -95,6 +95,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
                 no_subagents: cli.no_subagents,
+                usage_purpose: "agent",
+                parent_session_id: None,
                 agent: bound_agent,
                 output_file,
                 diagnostics,

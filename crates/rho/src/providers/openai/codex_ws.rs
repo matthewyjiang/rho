@@ -46,7 +46,9 @@ pub(super) enum CodexWsTurn {
     /// The WebSocket transport could not complete the turn before emitting any
     /// caller-visible stream events. Continuation state has already been reset,
     /// so the caller can safely retry the same full Responses body over SSE.
-    FullSseFallback,
+    FullSseFallback {
+        request_submitted: bool,
+    },
 }
 
 struct CodexWsCompleted {
@@ -56,6 +58,9 @@ struct CodexWsCompleted {
 
 #[derive(Debug)]
 enum CodexWsFailure {
+    BeforeRequest {
+        _message: String,
+    },
     Transport {
         message: String,
         events_emitted: bool,
@@ -115,13 +120,22 @@ impl CodexWsTransport {
                     .record_success(&candidate, continuation_response);
                 Ok(CodexWsTurn::Completed(response.response))
             }
+            Err(CodexWsFailure::BeforeRequest { .. }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: false,
+                })
+            }
             Err(CodexWsFailure::Transport {
                 events_emitted: false,
                 ..
             }) => {
                 state.connection = None;
                 state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback)
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: true,
+                })
             }
             Err(CodexWsFailure::Transport {
                 message,
@@ -174,13 +188,22 @@ impl CodexWsTransport {
                     .record_success(&candidate, continuation_response);
                 Ok(CodexWsTurn::Completed(response.response))
             }
+            Err(CodexWsFailure::BeforeRequest { .. }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: false,
+                })
+            }
             Err(CodexWsFailure::Transport {
                 events_emitted: false,
                 ..
             }) => {
                 state.connection = None;
                 state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback)
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: true,
+                })
             }
             Err(CodexWsFailure::Transport {
                 message,
@@ -241,13 +264,11 @@ impl CodexWsState {
             idle_timeout,
         )
         .await
-        .map_err(|err| CodexWsFailure::Transport {
-            message: err.to_string(),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: err.to_string(),
         })?
-        .map_err(|err| CodexWsFailure::Transport {
-            message: format!("websocket send failed: {err}"),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: format!("websocket send failed: {err}"),
         })?;
 
         collect_codex_ws_response(socket, idle_timeout, on_event).await
@@ -269,13 +290,11 @@ impl CodexWsState {
             idle_timeout,
         )
         .await
-        .map_err(|err| CodexWsFailure::Transport {
-            message: err.to_string(),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: err.to_string(),
         })?
-        .map_err(|err| CodexWsFailure::Transport {
-            message: format!("websocket send failed: {err}"),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: format!("websocket send failed: {err}"),
         })?;
 
         collect_codex_ws_response_silent(socket, idle_timeout).await
@@ -287,12 +306,12 @@ async fn connect_codex_ws(
     tokens: &CodexTokens,
     idle_timeout: std::time::Duration,
 ) -> Result<CodexSocket, CodexWsFailure> {
-    let mut request = ws_url
-        .into_client_request()
-        .map_err(|err| CodexWsFailure::Transport {
-            message: format!("invalid websocket url: {err}"),
-            events_emitted: false,
-        })?;
+    let mut request =
+        ws_url
+            .into_client_request()
+            .map_err(|err| CodexWsFailure::BeforeRequest {
+                _message: format!("invalid websocket url: {err}"),
+            })?;
     let headers = request.headers_mut();
     headers.insert(USER_AGENT, HeaderValue::from_static("codex-cli"));
     headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
@@ -302,30 +321,26 @@ async fn connect_codex_ws(
     );
     let authorization =
         HeaderValue::from_str(&format!("Bearer {}", tokens.access_token)).map_err(|err| {
-            CodexWsFailure::Transport {
-                message: format!("invalid bearer token header: {err}"),
-                events_emitted: false,
+            CodexWsFailure::BeforeRequest {
+                _message: format!("invalid bearer token header: {err}"),
             }
         })?;
     headers.insert(AUTHORIZATION, authorization);
     if let Some(account_id) = tokens.account_id.as_deref() {
         let account_id =
-            HeaderValue::from_str(account_id).map_err(|err| CodexWsFailure::Transport {
-                message: format!("invalid ChatGPT account header: {err}"),
-                events_emitted: false,
+            HeaderValue::from_str(account_id).map_err(|err| CodexWsFailure::BeforeRequest {
+                _message: format!("invalid ChatGPT account header: {err}"),
             })?;
         headers.insert("ChatGPT-Account-ID", account_id);
     }
 
     let (socket, _) = wait_for_stream_activity_for(connect_async(request), idle_timeout)
         .await
-        .map_err(|err| CodexWsFailure::Transport {
-            message: err.to_string(),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: err.to_string(),
         })?
-        .map_err(|err| CodexWsFailure::Transport {
-            message: format!("websocket connect failed: {err}"),
-            events_emitted: false,
+        .map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: format!("websocket connect failed: {err}"),
         })?;
     Ok(socket)
 }

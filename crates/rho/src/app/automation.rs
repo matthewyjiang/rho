@@ -89,6 +89,8 @@ pub(super) struct Startup<'a> {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
+    pub usage_purpose: &'static str,
+    pub parent_session_id: Option<rho_sdk::SessionId>,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub diagnostics: RuntimeDiagnostics,
@@ -204,6 +206,7 @@ pub(crate) async fn run_session(
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
+    let usage_recording = crate::usage::default_recording().await;
     let runtime = build_runtime(RuntimeBuildOptions {
         provider,
         tools: tool_set.tools(),
@@ -214,8 +217,14 @@ pub(crate) async fn run_session(
         reasoning: sdk_options.runtime.reasoning,
         compaction,
         context_window,
+        usage_purpose: startup.usage_purpose,
+        usage_parent_session_id: startup.parent_session_id.clone(),
+        usage_recording,
     })?;
     let session = runtime.session(SessionOptions::default()).await?;
+    if let Some(manager) = tool_set.subagents() {
+        manager.set_session(session.id().to_string());
+    }
 
     startup
         .herdr

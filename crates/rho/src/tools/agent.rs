@@ -108,16 +108,19 @@ impl SubagentManager {
     ) -> anyhow::Result<(String, PathBuf)> {
         let (id, directory) = create_run_directory()?;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
-        let handle = self.executor.spawn(AgentLaunchRequest {
-            definition: Arc::new(definition.clone()),
-            prompt: prompt.to_string(),
-            output_file,
-        })?;
         let session_id = self
             .session_id
             .lock()
             .expect("delegated session lock")
             .clone();
+        let handle = self.executor.spawn(AgentLaunchRequest {
+            definition: Arc::new(definition.clone()),
+            prompt: prompt.to_string(),
+            parent_session_id: session_id
+                .as_deref()
+                .and_then(|id| rho_sdk::SessionId::from_string(id.to_owned()).ok()),
+            output_file,
+        })?;
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),
             AgentEntry {

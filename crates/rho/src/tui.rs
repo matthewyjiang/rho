@@ -75,6 +75,7 @@ mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
 mod session_picker;
+mod session_title;
 mod skill_picker;
 #[cfg(debug_assertions)]
 mod smoke_injection;
@@ -120,6 +121,7 @@ use render::{
     LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
+use session_title::{generate_session_title, PendingSessionTitle};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
@@ -151,8 +153,8 @@ use crate::{
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
-        ModelResponse, ModelUsage, UnavailableProvider,
+        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
+        UnavailableProvider,
     },
     permission::PermissionMode,
     provider::{self, ProviderAuthKind},
@@ -340,7 +342,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
-    pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
+    pending_session_title: Option<PendingSessionTitle>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
     history_scrollbar_visible_until: Option<Instant>,
@@ -782,6 +784,10 @@ impl App {
             }
         }
         self.cancel_limits_command().await;
+        if let Some(mut pending) = self.pending_session_title.take() {
+            pending.cancel();
+            let _ = (&mut pending).await;
+        }
         Ok(TuiResult {
             resume_session_id: self.info.session_id.clone(),
             exit_summary: self.exit_summary(),
@@ -1264,7 +1270,7 @@ impl App {
         };
         let waker = noop_waker_ref();
         let mut context = std::task::Context::from_waker(waker);
-        let std::task::Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+        let std::task::Poll::Ready(result) = Pin::new(future).poll(&mut context) else {
             return Ok(false);
         };
         self.pending_session_title = None;
@@ -2085,16 +2091,43 @@ impl App {
         )
     }
 
-    fn start_session_title_generation(&mut self, first_user_message: String) {
-        let Some(session_id) = self.info.session_id.clone() else {
+    fn start_session_title_generation(
+        &mut self,
+        first_user_message: String,
+        agent: &InteractiveRuntime,
+    ) {
+        if self.info.session_id.is_none() {
             return;
-        };
+        }
+        let session_id = agent.session_id().clone();
+        let workspace_path = agent.workspace_path().to_path_buf();
+        let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
         let (provider, model, _auth) = self.title_model_selection();
-        self.pending_session_title = Some(Box::pin(async move {
-            let title = generate_session_title(provider, model, first_user_message).await;
-            SessionTitleResult { session_id, title }
-        }));
+        let cancellation = rho_sdk::CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let task_session_id = session_id.clone();
+        let handle = tokio::spawn(async move {
+            let title = generate_session_title(
+                provider,
+                model,
+                first_user_message,
+                task_session_id.clone(),
+                workspace_path,
+                usage_recording,
+                task_cancellation,
+            )
+            .await;
+            SessionTitleResult {
+                session_id: task_session_id.to_string(),
+                title,
+            }
+        });
+        self.pending_session_title = Some(PendingSessionTitle::new(
+            session_id.to_string(),
+            cancellation,
+            handle,
+        ));
     }
 
     async fn submit(
@@ -5705,64 +5738,6 @@ fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-async fn generate_session_title(
-    provider_name: String,
-    model: String,
-    first_user_message: String,
-) -> anyhow::Result<String> {
-    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let request_messages = vec![
-                Message::System(
-                    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
-                        .into(),
-                ),
-                Message::user_text(format!("First user message:\n\n{first_user_message}")),
-            ];
-    let response = tokio::time::timeout(
-        Duration::from_secs(20),
-        provider.send_turn(ModelRequest {
-            messages: &request_messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        }),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("title generation timed out"))??;
-    let ModelResponse::Assistant(blocks) = response;
-    let title = blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    sanitize_session_title(&title)
-        .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
-}
-
-fn sanitize_session_title(title: &str) -> Option<String> {
-    let title = title
-        .lines()
-        .find(|line| !line.trim().is_empty())?
-        .trim()
-        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '*' | '#'))
-        .trim()
-        .trim_end_matches(['.', ':', ';'])
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    let mut title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.chars().count() > 80 {
-        title = title.chars().take(79).collect();
-        title.push('…');
-    }
-    Some(title)
-}
-
 fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
     let masked = "•".repeat(secret.value.chars().count());
     vec![
@@ -6205,10 +6180,10 @@ mod tests {
     #[test]
     fn sanitizes_generated_session_title() {
         assert_eq!(
-            sanitize_session_title("\"Implement resume picker.\""),
+            session_title::sanitize_session_title("\"Implement resume picker.\""),
             Some("Implement resume picker".into())
         );
-        assert_eq!(sanitize_session_title("\n\n"), None);
+        assert_eq!(session_title::sanitize_session_title("\n\n"), None);
     }
 
     #[test]

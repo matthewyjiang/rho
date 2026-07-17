@@ -25,6 +25,7 @@ pub(crate) struct AgentExecutor {
 pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) prompt: String,
+    pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) output_file: PathBuf,
 }
 
@@ -134,6 +135,7 @@ impl AgentExecutor {
         let cwd = self.cwd.clone();
         let permits = Arc::clone(&self.permits);
         let output_file = request.output_file;
+        let parent_session_id = request.parent_session_id;
         let persisted_output = output_file.clone();
         let prompt = request.prompt;
 
@@ -185,6 +187,8 @@ impl AgentExecutor {
                 no_system_prompt: false,
                 no_tools: false,
                 no_subagents: true,
+                usage_purpose: "subagent",
+                parent_session_id,
                 agent: bound,
                 output_file: None,
                 diagnostics,

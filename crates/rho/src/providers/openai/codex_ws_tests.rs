@@ -321,6 +321,29 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
 }
 
 #[tokio::test]
+async fn websocket_connection_failure_reports_that_no_model_request_was_submitted() {
+    let transport = CodexWsTransport::new_with_url("not a websocket url".into());
+    let mut on_event = None;
+
+    let outcome = transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: false
+        }
+    ));
+}
+
+#[tokio::test]
 async fn stalled_websocket_falls_back_instead_of_blocking_the_turn() {
     let url = ws_server_stalls_after_request().await;
     let mut transport = CodexWsTransport::new_with_url(url);
@@ -337,7 +360,12 @@ async fn stalled_websocket_falls_back_instead_of_blocking_the_turn() {
         .await
         .unwrap();
 
-    assert!(matches!(outcome, CodexWsTurn::FullSseFallback));
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: true
+        }
+    ));
 }
 
 #[tokio::test]
@@ -357,7 +385,12 @@ async fn websocket_keep_alive_frames_do_not_reset_the_idle_timeout() {
         .await
         .unwrap();
 
-    assert!(matches!(outcome, CodexWsTurn::FullSseFallback));
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: true
+        }
+    ));
 }
 
 #[tokio::test]
@@ -388,7 +421,12 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
         .await
         .unwrap();
 
-    assert!(matches!(outcome, CodexWsTurn::FullSseFallback));
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: true
+        }
+    ));
 
     transport
         .send_responses_turn(

@@ -114,6 +114,8 @@ impl AnthropicProvider {
         &self,
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         tokio::select! {
