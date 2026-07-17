@@ -5,6 +5,13 @@ use crate::{cli::Cli, config::Config, model::ModelError};
 use super::{host_capabilities, is_interactive_startup_unavailable_error, AgentRole};
 
 #[test]
+fn missing_xai_api_key_is_nonfatal_for_interactive_startup() {
+    assert!(is_interactive_startup_unavailable_error(
+        &ModelError::MissingXaiApiKey
+    ));
+}
+
+#[test]
 fn unsupported_provider_is_nonfatal_for_interactive_startup() {
     assert!(is_interactive_startup_unavailable_error(
         &ModelError::UnsupportedProvider("anthropic".into())

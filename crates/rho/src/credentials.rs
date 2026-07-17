@@ -746,7 +746,11 @@ mod tests {
     fn provider_api_keys_round_trip_through_memory_store() {
         let store = MemoryCredentialStore::default();
 
-        for (provider, key) in [("openai", "sk-test"), ("anthropic", "sk-ant-test")] {
+        for (provider, key) in [
+            ("openai", "sk-test"),
+            ("anthropic", "sk-ant-test"),
+            ("xai", "xai-test"),
+        ] {
             assert_eq!(load_provider_api_key(&store, provider).unwrap(), None);
             save_provider_api_key(&store, provider, key).unwrap();
             assert_eq!(
@@ -777,10 +781,10 @@ mod tests {
 
         assert!(provider_has_stored_credentials(&store, "openai-codex").unwrap());
         assert!(provider_has_stored_credentials(&store, "github-copilot").unwrap());
-        assert!(provider_has_stored_credentials(&store, "xai").unwrap());
+        assert!(provider_has_stored_credentials(&store, "xai-oauth").unwrap());
         assert!(provider_has_credentials(&store, "openai-codex").is_err());
         assert!(provider_has_credentials(&store, "github-copilot").is_err());
-        assert!(provider_has_credentials(&store, "xai").is_err());
+        assert!(provider_has_credentials(&store, "xai-oauth").is_err());
     }
 
     #[test]
@@ -829,9 +833,9 @@ mod tests {
         save_xai_tokens(&store, &tokens).unwrap();
 
         assert_eq!(load_xai_tokens(&store).unwrap(), Some(tokens));
-        assert!(provider_has_credentials(&store, "xai").unwrap());
+        assert!(provider_has_credentials(&store, "xai-oauth").unwrap());
         assert!(available_auth_modes(&store).contains(&"xai-oauth".into()));
-        assert!(delete_provider_credentials(&store, "xai").unwrap());
+        assert!(delete_provider_credentials(&store, "xai-oauth").unwrap());
         assert_eq!(load_xai_tokens(&store).unwrap(), None);
     }
 

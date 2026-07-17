@@ -662,3 +662,31 @@ fn started_tool_display_ignores_late_argument_previews() {
         Some(["edit_file src/main.rs".to_string()].as_slice())
     );
 }
+
+#[test]
+fn web_search_api_key_editor_preserves_parent_picker() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.config_repository = ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let config = app.info.config_repository.load().unwrap();
+    let mut parent = config_picker::config_picker(&app.info, &config);
+    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
+    app.composer = ComposerMode::Picker(parent);
+    let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
+    app.open_child_picker(child);
+
+    app.open_web_search_api_key_editor(ConfigTextKey::Exa)
+        .unwrap();
+    app.handle_config_text_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
+
+    let ComposerMode::Picker(picker) = &app.composer else {
+        panic!("expected parent picker after API-key editor escape");
+    };
+    assert_eq!(
+        picker.selected_item().unwrap().value,
+        config_picker::WEB_SEARCH_VALUE
+    );
+    assert_eq!(picker.filter, "web");
+}

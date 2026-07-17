@@ -21,7 +21,11 @@ pub enum ModelError {
     MissingMoonshotApiKey,
     #[error("missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override")]
     MissingKimiAuth,
-    #[error("missing xAI OAuth credentials; run /login xai in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override")]
+    #[error(
+        "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override"
+    )]
+    MissingXaiApiKey,
+    #[error("missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override")]
     MissingXaiAuth,
     #[error("credential store error: {0}")]
     Credentials(String),

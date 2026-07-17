@@ -149,6 +149,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         super::PickerAction::ResumeSession => 36,
         super::PickerAction::Config
         | super::PickerAction::Doctor
+        | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand => 30,
@@ -224,6 +225,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         super::PickerAction::Doctor => "close",
         super::PickerAction::SelectModel
         | super::PickerAction::SelectTitleModel
+        | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
@@ -239,8 +241,13 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     } else {
         ""
     };
+    let escape = if picker.has_parent() {
+        "back"
+    } else {
+        "cancel"
+    };
     format!(
-        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to cancel",
+        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to {escape}",
         picker.title
     )
 }

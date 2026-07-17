@@ -455,15 +455,6 @@ impl super::App {
         self.input_cursor = 0;
         self.clamp_command_selection();
     }
-
-    pub(super) fn inline_shell_picker_is_open(&self) -> bool {
-        matches!(
-            &self.composer,
-            super::ComposerMode::Picker(picker)
-                if picker.action == super::PickerAction::Config
-                    && picker.items.iter().any(|item| item.value.starts_with(super::config_picker::INLINE_SHELL_PREFIX))
-        )
-    }
 }
 
 impl PendingShellTask {
