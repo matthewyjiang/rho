@@ -250,7 +250,7 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
 }
 
 #[test]
-fn activity_rail_has_a_solid_full_width_background() {
+fn activity_background_fills_every_row_below_the_spinner() {
     let mut app = test_app();
     let width = 40;
     let height = 12;
@@ -271,6 +271,7 @@ fn activity_rail_has_a_solid_full_width_background() {
         ],
     ));
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let background = layout.activity_background.unwrap();
     let rail = layout.activity_rail.unwrap();
     let activity = layout.activity.unwrap();
     let scrollbar = layout.history_scrollbar.unwrap();
@@ -280,14 +281,20 @@ fn activity_rail_has_a_solid_full_width_background() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     assert_eq!(rail, Rect::new(0, rail.y, width, 1));
+    assert_eq!(
+        background,
+        Rect::new(0, rail.y, width, height.saturating_sub(rail.y))
+    );
     let buffer = terminal.backend().buffer();
     let rail_background = Theme::activity_rail().bg.unwrap();
     assert_ne!(
         buffer[(rail.x, rail.y.saturating_sub(1))].bg,
         rail_background
     );
-    for column in rail.x..rail.right() {
-        assert_eq!(buffer[(column, rail.y)].bg, rail_background);
+    for row in background.y..background.bottom() {
+        for column in background.x..background.right() {
+            assert_eq!(buffer[(column, row)].bg, rail_background);
+        }
     }
     for column in activity.right()..scrollbar.rect.x {
         assert_eq!(buffer[(column, rail.y)].symbol(), " ");
