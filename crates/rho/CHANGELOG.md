@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.3.0...rho-coding-agent-v1.4.0) (2026-07-17)
+
+
+### Features
+
+* **tui:** render Mermaid diagrams in transcripts ([#348](https://github.com/matthewyjiang/rho/issues/348)) ([f91c478](https://github.com/matthewyjiang/rho/commit/f91c478b339534cc282b7d12615ff91d9af29d30))
+
+
+### Bug Fixes
+
+* **subagents:** improve background delegation flow ([#351](https://github.com/matthewyjiang/rho/issues/351)) ([80d0aff](https://github.com/matthewyjiang/rho/commit/80d0aff044d266295f80ba490b471018fb0e4af1))
+* **tui:** preserve selection and delete paste markers atomically ([#352](https://github.com/matthewyjiang/rho/issues/352)) ([c1e699e](https://github.com/matthewyjiang/rho/commit/c1e699ed4da860dc4de7ea3cc6dce4e16234854f))
+* **tui:** unify activity rail background ([#349](https://github.com/matthewyjiang/rho/issues/349)) ([a16f24e](https://github.com/matthewyjiang/rho/commit/a16f24e5e62629ca4ec8aafc842b6d27b0c947cc))
+
 ## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.2.0...rho-coding-agent-v1.3.0) (2026-07-16)
 
 
