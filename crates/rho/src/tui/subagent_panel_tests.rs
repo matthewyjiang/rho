@@ -141,6 +141,19 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
     assert!(activity.right() < jump.x);
     assert!(row.contains("working  ·  2 agents"), "{row:?}");
     assert!(row.contains("jump to bottom"), "{row:?}");
+
+    let buffer = terminal.backend().buffer();
+    let activity_background = Theme::activity_rail().bg.unwrap();
+    for y in activity.y..layout.subagents.bottom() {
+        for x in 0..80 {
+            assert_eq!(buffer[(x, y)].bg, activity_background);
+        }
+    }
+    for y in layout.top_divider.y..layout.statusline.bottom() {
+        for x in 0..80 {
+            assert_ne!(buffer[(x, y)].bg, activity_background);
+        }
+    }
 }
 
 #[test]

@@ -4836,7 +4836,7 @@ impl App {
                     self.subagent_panel
                         .lines(width, layout.subagents.height as usize),
                 )
-                .style(Style::default()),
+                .style(Theme::activity_rail()),
                 layout.subagents,
             );
         }
