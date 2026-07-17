@@ -35,14 +35,14 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     }
     let directory = subagent::directory(id)?;
     if !directory.is_dir() {
-        anyhow::bail!("unknown subagent '{id}'");
+        anyhow::bail!("unknown delegated run '{id}'");
     }
     subagent::secure_directory(&directory)?;
 
     let mut terminal = ratatui::init();
     let _restore_terminal = RestoreTerminal;
     Theme::initialize_from_terminal();
-    let message = format!("attached to subagent {id}");
+    let message = format!("attached to agent run {id}");
     herdr
         .report_state(HerdrState::Working, Some(&message), Some(id))
         .await;
@@ -200,8 +200,7 @@ impl AttachmentApp {
             }
             AttachmentEvent::Cancelled => {
                 self.pending_tool = None;
-                self.transcript
-                    .push(Entry::Notice("subagent stopped".into()));
+                self.transcript.push(Entry::Notice("agent stopped".into()));
             }
             AttachmentEvent::Failed(message) => {
                 self.pending_tool = None;
@@ -271,17 +270,17 @@ impl AttachmentApp {
         let width = area.width as usize;
         let status = self.status.as_ref();
         let state = status.map_or("starting", |status| status.state.as_str());
-        let preset = status
-            .and_then(|status| status.preset.as_deref())
-            .unwrap_or("subagent");
+        let agent_id = status
+            .and_then(|status| status.agent_id.as_deref())
+            .unwrap_or("agent");
         let activity = status
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
         let metrics = status.map_or_else(
-            || format!("{preset}  |  {activity}"),
+            || format!("{agent_id}  |  {activity}"),
             |status| {
                 format!(
-                    "{preset}  |  {activity}  |  turn {}  |  tokens {}/{}",
+                    "{agent_id}  |  {activity}  |  turn {}  |  tokens {}/{}",
                     status.turns, status.input_tokens, status.output_tokens
                 )
             },
@@ -366,7 +365,7 @@ impl AttachmentApp {
             ));
         }
         if lines.is_empty() {
-            lines.push(Line::styled("waiting for subagent output...", Theme::dim()));
+            lines.push(Line::styled("waiting for agent output...", Theme::dim()));
         }
 
         self.viewport_height = chunks[1].height as usize;
@@ -420,7 +419,7 @@ fn herdr_status(id: &str, status: &RunStatus) -> (HerdrState, String) {
         .last_activity
         .as_deref()
         .unwrap_or_else(|| status.state.as_str());
-    (state, format!("subagent {id}: {detail}"))
+    (state, format!("agent run {id}: {detail}"))
 }
 
 fn state_style(status: Option<&RunStatus>) -> ratatui::style::Style {

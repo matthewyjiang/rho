@@ -29,9 +29,9 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
         ActivityStatus::Subagents(count) | ActivityStatus::WorkingWithSubagents(count) => count,
     };
     let agents = if subagent_count == 1 {
-        "1 subagent".into()
+        "1 agent".into()
     } else {
-        format!("{subagent_count} subagents")
+        format!("{subagent_count} agents")
     };
     match status {
         ActivityStatus::Working => vec![WORKING_LABEL.into(), "⠋".into()],

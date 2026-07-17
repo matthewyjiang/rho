@@ -78,7 +78,7 @@ fn attach_is_read_only_and_updates_live() {
         directory.join("result.json"),
         r#"{
             "state": "running",
-            "preset": "explorer",
+            "agent_id": "explorer",
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,
@@ -153,7 +153,7 @@ fn attach_is_read_only_and_updates_live() {
         directory.join("result.json"),
         r#"{
             "state": "ok",
-            "preset": "explorer",
+            "agent_id": "explorer",
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,

@@ -19,6 +19,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    app::agent_executor::AgentExecutor,
     config::Config,
     diagnostics::RuntimeDiagnostics,
     tool::{truncate, Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError},
@@ -35,8 +36,8 @@ use super::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolSetOptions {
     questionnaire: bool,
-    /// Working directory to discover subagent presets from; `None` disables
-    /// the agent/agents tools.
+    /// Working directory used to discover delegated agent definitions; `None`
+    /// disables the agent/agents tools.
     subagents: Option<std::path::PathBuf>,
     subagent_config_path: Option<std::path::PathBuf>,
     background_subagents: bool,
@@ -134,8 +135,11 @@ impl AppToolSet {
             .filter(|_| config.enable_subagents)
             .as_deref()
             .map(|cwd| {
-                let manager =
-                    SubagentManager::with_config_path(options.subagent_config_path.clone());
+                let manager = SubagentManager::new(AgentExecutor::new(
+                    config.clone(),
+                    options.subagent_config_path.clone().unwrap_or_default(),
+                    cwd.to_path_buf(),
+                ));
                 tools.push(adapt(
                     super::agent::AgentTool::new(
                         manager.clone(),
@@ -174,7 +178,7 @@ impl AppToolSet {
         self.subagents.as_ref()
     }
 
-    /// Restricts the set to the named tools (a subagent preset's allowlist).
+    /// Restricts the set to the named capabilities before model exposure.
     pub fn retain_named(&mut self, names: &[String]) {
         self.tools
             .retain(|tool| names.iter().any(|name| name == &tool.spec().name));

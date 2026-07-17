@@ -1,13 +1,8 @@
-//! Subagent spawn (`agent`) and lifecycle (`agents`) tools.
-//!
-//! A subagent is a directly owned child `rho run --preset <name>` process.
-//! Its output is teed to a log file and its structured status and display
-//! events are persisted so any terminal can watch it with `rho attach <id>`.
+//! Delegated agent tools backed by in-process SDK runtimes.
 
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -17,8 +12,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
+    agent::{AgentCatalog, AgentDefinition},
+    app::agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
     cancellation::RunCancellation,
-    subagent::{self, Preset, RunState, RunStatus},
+    subagent::{self, RunState, RunStatus},
     tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
@@ -26,23 +23,13 @@ use super::agent_output::{
     format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
 };
 
-const POLL_INTERVAL: Duration = Duration::from_millis(300);
-const STOP_GRACE: Duration = Duration::from_secs(5);
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-
-type ForceKillRequest = tokio::sync::oneshot::Sender<Result<(), String>>;
-type ForceKillSender = tokio::sync::mpsc::UnboundedSender<ForceKillRequest>;
-
-enum StatusWatchOutcome {
-    Continue,
-    Finished,
-    StartupTimedOut(ForceKillSender),
-}
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct SubagentSnapshot {
     pub id: String,
-    pub preset: String,
+    pub agent_id: String,
     pub background: bool,
     pub elapsed: Duration,
     pub status: RunStatus,
@@ -50,381 +37,182 @@ pub struct SubagentSnapshot {
 }
 
 struct AgentEntry {
-    preset: String,
+    agent_id: String,
     background: bool,
     started: Instant,
-    output_file: PathBuf,
-    force_kill: ForceKillSender,
+    handle: AgentRunHandle,
     session_id: Option<String>,
-    status: RunStatus,
-    done: bool,
-    process_exited: bool,
     notified: bool,
 }
 
 impl AgentEntry {
     fn snapshot(&self, id: &str) -> SubagentSnapshot {
+        let status = self.handle.status();
         SubagentSnapshot {
             id: id.to_string(),
-            preset: self.preset.clone(),
+            agent_id: self.agent_id.clone(),
             background: self.background,
             elapsed: self.started.elapsed(),
-            status: self.status.clone(),
-            done: self.done,
+            done: status.state.is_terminal(),
+            status,
         }
-    }
-
-    fn finish_with_error(&mut self, error: String) {
-        self.status.state = RunState::Error;
-        self.status.error = Some(error);
-        let _ = subagent::write_status(&self.output_file, &self.status);
-        self.done = true;
     }
 }
 
-/// Notification delivered to the host when a background subagent finishes.
 #[derive(Clone, Debug)]
 pub struct SubagentNotification {
     pub snapshot: SubagentSnapshot,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
-    config_path: Option<PathBuf>,
+    executor: AgentExecutor,
     session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl SubagentManager {
-    #[cfg(test)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_config_path(config_path: Option<PathBuf>) -> Self {
+    pub fn new(executor: AgentExecutor) -> Self {
         Self {
-            config_path,
-            ..Self::default()
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            executor,
+            session_id: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn set_session(&self, session_id: String) {
-        *self.session_id.lock().expect("subagent session lock") = Some(session_id);
+        *self.session_id.lock().expect("delegated session lock") = Some(session_id);
     }
 
     pub async fn spawn(
         &self,
-        preset: &Preset,
+        definition: &AgentDefinition,
         prompt: &str,
         background: bool,
-        cwd: &Path,
+        _cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
-        let (id, dir) = create_run_directory()?;
-        let output_file = dir.join(subagent::RESULT_FILE_NAME);
-        let log_file = dir.join(subagent::LOG_FILE_NAME);
-
-        let exe = std::env::current_exe()?;
-        let args = run_args(
-            &preset.name,
-            &output_file,
-            prompt,
-            self.config_path.as_deref(),
-        );
+        let (id, directory) = create_run_directory()?;
+        let output_file = directory.join(subagent::RESULT_FILE_NAME);
+        let handle = self.executor.spawn(AgentLaunchRequest {
+            definition: Arc::new(definition.clone()),
+            prompt: prompt.to_string(),
+            output_file,
+        })?;
         let session_id = self
             .session_id
             .lock()
-            .expect("subagent session lock")
+            .expect("delegated session lock")
             .clone();
-
-        let child = spawn_headless(&exe, &args, cwd, &log_file)?;
-        let force_kill = self.watch_child(&id, child);
-
-        let entry = AgentEntry {
-            preset: preset.name.clone(),
-            background,
-            started: Instant::now(),
-            output_file: output_file.clone(),
-            force_kill,
-            session_id,
-            status: RunStatus {
-                preset: Some(preset.name.clone()),
-                ..RunStatus::default()
+        self.inner.lock().expect("delegated registry lock").insert(
+            id.clone(),
+            AgentEntry {
+                agent_id: definition.id.to_string(),
+                background,
+                started: Instant::now(),
+                handle,
+                session_id,
+                notified: false,
             },
-            done: false,
-            process_exited: false,
-            notified: false,
-        };
-        self.inner
-            .lock()
-            .expect("subagent registry lock")
-            .insert(id.clone(), entry);
-        self.watch_status_file(&id, output_file);
-        Ok((id, log_file))
-    }
-
-    /// Polls the status file until it reaches a terminal state.
-    fn watch_status_file(&self, id: &str, output_file: PathBuf) {
-        let manager = self.clone();
-        let id = id.to_string();
-        tokio::spawn(async move {
-            let started = Instant::now();
-            let mut seen_status = false;
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                let status = subagent::read_status(&output_file);
-                let outcome = {
-                    let mut agents = manager.inner.lock().expect("subagent registry lock");
-                    let Some(entry) = agents.get_mut(&id) else {
-                        return;
-                    };
-                    if entry.done {
-                        return;
-                    }
-                    if let Some(status) = status {
-                        seen_status = true;
-                        entry.status = status;
-                    }
-                    if !seen_status && started.elapsed() > STARTUP_TIMEOUT {
-                        entry.finish_with_error(
-                            "subagent never wrote its status file; it likely failed to start"
-                                .into(),
-                        );
-                        StatusWatchOutcome::StartupTimedOut(entry.force_kill.clone())
-                    } else if entry.status.state.is_terminal() {
-                        entry.done = true;
-                        StatusWatchOutcome::Finished
-                    } else {
-                        StatusWatchOutcome::Continue
-                    }
-                };
-                match outcome {
-                    StatusWatchOutcome::Continue => {}
-                    StatusWatchOutcome::Finished => return,
-                    StatusWatchOutcome::StartupTimedOut(force_kill) => {
-                        let (ack, _killed) = tokio::sync::oneshot::channel();
-                        let _ = force_kill.send(ack);
-                        return;
-                    }
-                }
-            }
-        });
-    }
-
-    /// Marks the entry failed if the headless child exits without ever
-    /// writing a terminal state.
-    fn watch_child(&self, id: &str, mut child: tokio::process::Child) -> ForceKillSender {
-        let (force_kill, mut force_kill_requests) =
-            tokio::sync::mpsc::unbounded_channel::<ForceKillRequest>();
-        let manager = self.clone();
-        let id = id.to_string();
-        tokio::spawn(async move {
-            let (exit, force_kill_ack) = tokio::select! {
-                exit = child.wait() => (exit, None),
-                request = force_kill_requests.recv() => {
-                    if let Some(ack) = request {
-                        (kill_child_process_group(&mut child).await, Some(ack))
-                    } else {
-                        (child.wait().await, None)
-                    }
-                }
-            };
-            if let Some(ack) = force_kill_ack {
-                let result = exit
-                    .as_ref()
-                    .map(|_| ())
-                    .map_err(std::string::ToString::to_string);
-                let _ = ack.send(result);
-            }
-            // Give the status-file watcher one poll interval to observe the
-            // final write before synthesizing a failure.
-            tokio::time::sleep(POLL_INTERVAL * 2).await;
-            let mut agents = manager.inner.lock().expect("subagent registry lock");
-            let Some(entry) = agents.get_mut(&id) else {
-                return;
-            };
-            entry.process_exited = true;
-            if entry.done || entry.status.state.is_terminal() {
-                return;
-            }
-            if let Some(status) = subagent::read_status(&entry.output_file) {
-                entry.status = status;
-                if entry.status.state.is_terminal() {
-                    entry.done = true;
-                    return;
-                }
-            }
-            let error = match exit {
-                Ok(status) => format!("subagent exited ({status}) without writing a result"),
-                Err(error) => format!("failed to wait for subagent: {error}"),
-            };
-            entry.finish_with_error(error);
-        });
-        force_kill
+        );
+        Ok((id, directory.join(subagent::LOG_FILE_NAME)))
     }
 
     pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {
-        let agents = self.inner.lock().expect("subagent registry lock");
-        agents.get(id).map(|entry| entry.snapshot(id))
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .get(id)
+            .map(|entry| entry.snapshot(id))
     }
 
     pub fn list(&self) -> Vec<SubagentSnapshot> {
-        let agents = self.inner.lock().expect("subagent registry lock");
-        let mut list: Vec<_> = agents
+        let entries = self.inner.lock().expect("delegated registry lock");
+        let mut snapshots = entries
             .iter()
             .map(|(id, entry)| entry.snapshot(id))
-            .collect();
-        list.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
-        list
+            .collect::<Vec<_>>();
+        snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
+        snapshots
     }
 
-    /// Checks active work and pending notifications under one lock so the TUI
-    /// cannot miss a completion between two separate observations.
     pub fn has_active_or_pending_notification(&self, session_id: &str) -> bool {
-        let agents = self.inner.lock().expect("subagent registry lock");
-        agents.values().any(|entry| {
-            !entry.done
-                || (entry.background
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .iter()
+            .any(|(id, entry)| {
+                let snapshot = entry.snapshot(id);
+                !snapshot.done
+                    || (entry.background
+                        && !entry.notified
+                        && entry.session_id.as_deref() == Some(session_id))
+            })
+    }
+
+    pub fn take_notifications(&self, session_id: &str) -> Vec<SubagentNotification> {
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .iter_mut()
+            .filter_map(|(id, entry)| {
+                let snapshot = entry.snapshot(id);
+                (entry.background
+                    && snapshot.done
                     && !entry.notified
                     && entry.session_id.as_deref() == Some(session_id))
-        })
-    }
-
-    /// Returns finished background subagents for the current chat session that
-    /// have not been announced yet, marking them announced.
-    pub fn take_notifications(&self, session_id: &str) -> Vec<SubagentNotification> {
-        let mut agents = self.inner.lock().expect("subagent registry lock");
-        agents
-            .iter_mut()
-            .filter(|(_, entry)| {
-                entry.background
-                    && entry.done
-                    && !entry.notified
-                    && entry.session_id.as_deref() == Some(session_id)
-            })
-            .map(|(id, entry)| {
-                entry.notified = true;
-                SubagentNotification {
-                    snapshot: entry.snapshot(id),
-                }
+                .then(|| {
+                    entry.notified = true;
+                    SubagentNotification { snapshot }
+                })
             })
             .collect()
     }
 
     pub async fn wait_done(&self, id: &str) -> Option<SubagentSnapshot> {
-        loop {
-            let snapshot = self.status(id)?;
-            if snapshot.done {
-                return Some(snapshot);
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-    }
-
-    /// Graceful stop: request cancellation through the run directory, wait
-    /// up to [`STOP_GRACE`], then force-kill the child process.
-    pub async fn stop(&self, id: &str) -> anyhow::Result<SubagentSnapshot> {
-        let snapshot = self
-            .status(id)
-            .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?;
-        let (output_file, process_exited) = {
-            let agents = self.inner.lock().expect("subagent registry lock");
-            let entry = agents
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?;
-            (entry.output_file.clone(), entry.process_exited)
-        };
-        if process_exited {
-            return Ok(snapshot);
-        }
-        if !snapshot.done {
-            subagent::request_cancel(&output_file)?;
-        }
-
-        let grace = if snapshot.done {
-            POLL_INTERVAL * 2
-        } else {
-            STOP_GRACE
-        };
-        let deadline = Instant::now() + grace;
-        while Instant::now() < deadline {
-            tokio::time::sleep(POLL_INTERVAL).await;
-            let agents = self.inner.lock().expect("subagent registry lock");
-            if let Some(entry) = agents.get(id).filter(|entry| entry.process_exited) {
-                return Ok(entry.snapshot(id));
-            }
-        }
-
-        let force_kill = {
-            let agents = self.inner.lock().expect("subagent registry lock");
-            agents
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?
-                .force_kill
-                .clone()
-        };
-        let (ack, killed) = tokio::sync::oneshot::channel();
-        force_kill
-            .send(ack)
-            .map_err(|_| anyhow::anyhow!("subagent '{id}' process watcher stopped"))?;
-        killed
-            .await
-            .map_err(|_| anyhow::anyhow!("subagent '{id}' kill was not acknowledged"))?
-            .map_err(anyhow::Error::msg)?;
-
-        let (snapshot, status) = {
-            let mut agents = self.inner.lock().expect("subagent registry lock");
-            let entry = agents
-                .get_mut(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown subagent '{id}'"))?;
-            if !entry.done {
-                entry.status.state = RunState::Stopped;
-                entry.status.error = Some("killed after stop grace period".into());
-                entry.done = true;
-            }
-            entry.process_exited = true;
-            (entry.snapshot(id), entry.status.clone())
-        };
-        let _ = subagent::write_status(&output_file, &status);
-        Ok(snapshot)
-    }
-
-    /// Gracefully stops still-running children on shutdown.
-    pub async fn shutdown(&self) {
-        let ids: Vec<String> = self
+        let mut handle = self
             .inner
             .lock()
-            .expect("subagent registry lock")
-            .iter()
-            .filter(|(_, entry)| !entry.process_exited)
-            .map(|(id, _)| id.clone())
-            .collect();
-        let stops = ids.into_iter().map(|id| {
-            let manager = self.clone();
-            async move {
-                let _ = manager.stop(&id).await;
-            }
-        });
-        futures_util::future::join_all(stops).await;
+            .expect("delegated registry lock")
+            .get(id)?
+            .handle
+            .clone();
+        handle.wait().await;
+        self.status(id)
     }
-}
 
-async fn kill_child_process_group(
-    child: &mut tokio::process::Child,
-) -> std::io::Result<std::process::ExitStatus> {
-    #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        let result = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                return Err(error);
-            }
+    pub async fn stop(&self, id: &str) -> anyhow::Result<SubagentSnapshot> {
+        let mut handle = self
+            .inner
+            .lock()
+            .expect("delegated registry lock")
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown delegated run '{id}'"))?
+            .handle
+            .clone();
+        handle.cancel();
+        tokio::time::timeout(SHUTDOWN_TIMEOUT, handle.wait())
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out stopping delegated run '{id}'"))?;
+        self.status(id)
+            .ok_or_else(|| anyhow::anyhow!("delegated run '{id}' disappeared"))
+    }
+
+    pub async fn shutdown(&self) {
+        let handles = self
+            .inner
+            .lock()
+            .expect("delegated registry lock")
+            .values()
+            .map(|entry| entry.handle.clone())
+            .collect::<Vec<_>>();
+        for handle in &handles {
+            handle.cancel();
         }
-        return child.wait().await;
+        let waits = handles.into_iter().map(|mut handle| async move {
+            handle.wait().await;
+        });
+        let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, futures_util::future::join_all(waits)).await;
     }
-
-    child.kill().await?;
-    child.wait().await
 }
 
 fn new_agent_id() -> String {
@@ -447,70 +235,19 @@ fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
             Err(error) => return Err(error.into()),
         }
     }
-    anyhow::bail!("could not allocate a unique subagent id")
-}
-
-fn run_args(
-    preset: &str,
-    output_file: &Path,
-    prompt: &str,
-    config_path: Option<&Path>,
-) -> Vec<String> {
-    let mut args = vec!["--no-subagents".into()];
-    if let Some(config_path) = config_path {
-        args.extend([
-            "--config".into(),
-            config_path.to_string_lossy().into_owned(),
-        ]);
-    }
-    args.extend([
-        "run".into(),
-        "--preset".into(),
-        preset.into(),
-        "--output-file".into(),
-        output_file.to_string_lossy().into_owned(),
-        "--".into(),
-        prompt.into(),
-    ]);
-    args
-}
-
-fn spawn_headless(
-    exe: &Path,
-    args: &[String],
-    cwd: &Path,
-    log_file: &Path,
-) -> anyhow::Result<tokio::process::Child> {
-    let log = subagent::create_private_file(log_file)?;
-    let stderr_log = log.try_clone()?;
-    let mut command = tokio::process::Command::new(exe);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(log)
-        .stderr(stderr_log)
-        // The child is not occupying the parent's terminal, so it must not
-        // report agent state against the parent's Herdr pane.
-        .env_remove("HERDR_ENV")
-        .env_remove("HERDR_SOCKET_PATH")
-        .env_remove("HERDR_PANE_ID")
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    command.process_group(0);
-    Ok(command.spawn()?)
+    anyhow::bail!("could not allocate a unique delegated run ID")
 }
 
 pub fn notification_prompts(notification: &SubagentNotification) -> (String, String) {
     let snapshot = &notification.snapshot;
     let model = format!(
-        "[subagent notification]\n\n{}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
+        "[agent notification]\n\n{}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
         format_snapshot(snapshot, SnapshotFormat::Completion)
     );
     let display = format!(
-        "subagent {} ({}) finished - {}",
+        "agent {} ({}) finished - {}",
         snapshot.id,
-        snapshot.preset,
+        snapshot.agent_id,
         snapshot.status.state.as_str()
     );
     (model, display)
@@ -529,7 +266,8 @@ impl BackgroundSubagents {
 
 pub struct AgentTool {
     manager: SubagentManager,
-    preset_summaries: Vec<(String, String)>,
+    catalog: Arc<AgentCatalog>,
+    agent_summaries: Vec<(String, String)>,
     background_subagents: BackgroundSubagents,
 }
 
@@ -539,13 +277,22 @@ impl AgentTool {
         cwd: &Path,
         background_subagents: BackgroundSubagents,
     ) -> Self {
-        let preset_summaries = subagent::discover(cwd)
-            .into_iter()
-            .map(|preset| (preset.name, preset.description))
+        let catalog =
+            Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"));
+        let agent_summaries = catalog
+            .iter()
+            .filter(|entry| entry.definition.id.as_str() != "default")
+            .map(|entry| {
+                (
+                    entry.definition.id.to_string(),
+                    entry.definition.description.clone(),
+                )
+            })
             .collect();
         Self {
             manager,
-            preset_summaries,
+            catalog,
+            agent_summaries,
             background_subagents,
         }
     }
@@ -553,7 +300,7 @@ impl AgentTool {
 
 #[derive(Deserialize)]
 struct AgentArgs {
-    preset: String,
+    agent_id: String,
     prompt: String,
     #[serde(default)]
     background: bool,
@@ -563,21 +310,21 @@ struct AgentArgs {
 impl Tool for AgentTool {
     fn spec(&self) -> ToolSpec {
         let names: Vec<&str> = self
-            .preset_summaries
+            .agent_summaries
             .iter()
             .map(|(name, _)| name.as_str())
             .collect();
         let summaries = self
-            .preset_summaries
+            .agent_summaries
             .iter()
             .map(|(name, description)| format!("{name}: {description}"))
             .collect::<Vec<_>>()
             .join("\n");
         let mut properties = json!({
-            "preset": {
+            "agent_id": {
                 "type": "string",
                 "enum": names,
-                "description": "Agent preset"
+                "description": "Agent ID"
             },
             "prompt": {
                 "type": "string",
@@ -593,12 +340,12 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. Do not poll or wait when no foreground work remains. Use `rho attach <id>` to watch the returned subagent ID.\n\nPresets:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. Do not poll or wait when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
                 "properties": properties,
-                "required": ["preset", "prompt"],
+                "required": ["agent_id", "prompt"],
                 "additionalProperties": false
             }),
         }
@@ -624,31 +371,37 @@ impl Tool for AgentTool {
         let args: AgentArgs = serde_json::from_value(args)?;
         if args.background && !self.background_subagents.is_enabled() {
             return Err(ToolError::Message(
-                "background subagents are unavailable in non-interactive runs".into(),
+                "background agents are unavailable in non-interactive runs".into(),
             ));
         }
-        let preset = subagent::find(&ctx.cwd, &args.preset)
-            .map_err(|error| ToolError::Message(error.to_string()))?;
-        let (agent_id, _log_file) = self
+        let definition = self
+            .catalog
+            .find(&args.agent_id)
+            .map_err(|error| ToolError::Message(error.to_string()))?
+            .definition
+            .clone();
+        let definition_id = definition.id.to_string();
+        let (run_id, _log_file) = self
             .manager
-            .spawn(&preset, &args.prompt, args.background, &ctx.cwd)
+            .spawn(&definition, &args.prompt, args.background, &ctx.cwd)
             .await
-            .map_err(|error| ToolError::Message(format!("failed to spawn subagent: {error}")))?;
+            .map_err(|error| {
+                ToolError::Message(format!("failed to start delegated agent: {error}"))
+            })?;
 
         if args.background {
             return Ok(ToolResult {
                 id,
                 ok: true,
-                content: format_background_start(&agent_id, &preset.name),
+                content: format_background_start(&run_id, &definition_id),
             });
         }
 
-        on_update(vec![format_running(&agent_id)]);
-        let snapshot = self
-            .manager
-            .wait_done(&agent_id)
-            .await
-            .ok_or_else(|| ToolError::Message(format!("subagent '{agent_id}' disappeared")))?;
+        on_update(vec![format_running(&run_id)]);
+        let snapshot =
+            self.manager.wait_done(&run_id).await.ok_or_else(|| {
+                ToolError::Message(format!("delegated run '{run_id}' disappeared"))
+            })?;
         Ok(ToolResult {
             id,
             ok: snapshot.status.state == RunState::Ok,
@@ -664,7 +417,7 @@ impl Tool for AgentTool {
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        // Blocking spawns must stop their subagent when the run is
+        // Foreground delegated runs must stop when the parent run is
         // interrupted instead of leaving an orphan behind.
         let background = args
             .get("background")
@@ -677,7 +430,7 @@ impl Tool for AgentTool {
             () = cancellation.cancelled() => {
                 if background {
                     // Let an in-flight spawn finish registration so the
-                    // manager retains ownership of the child process.
+                    // manager retains ownership of the delegated task.
                     let _ = call.await;
                 } else {
                     loop {
@@ -728,7 +481,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check or stop background subagents.".into(),
+            description: "Check or stop background agents.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -739,7 +492,7 @@ impl Tool for AgentsTool {
                     },
                     "id": {
                         "type": "string",
-                        "description": "Subagent id (required for status and stop)"
+                        "description": "Delegated run ID (required for status and stop)"
                     }
                 },
                 "required": ["action"],
@@ -759,7 +512,7 @@ impl Tool for AgentsTool {
             "list" => {
                 let agents = self.manager.list();
                 if agents.is_empty() {
-                    "no subagents".to_string()
+                    "no delegated agents".to_string()
                 } else {
                     agents
                         .iter()
@@ -773,7 +526,7 @@ impl Tool for AgentsTool {
                 let snapshot = self
                     .manager
                     .status(id)
-                    .ok_or_else(|| ToolError::Message(format!("unknown subagent '{id}'")))?;
+                    .ok_or_else(|| ToolError::Message(format!("unknown delegated run '{id}'")))?;
                 format_snapshot(&snapshot, SnapshotFormat::Status)
             }
             "stop" => {
@@ -803,7 +556,7 @@ fn required_id(args: &AgentsArgs) -> Result<&str, ToolError> {
     args.id
         .as_deref()
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| ToolError::Message("this action requires a subagent id".into()))
+        .ok_or_else(|| ToolError::Message("this action requires a delegated run id".into()))
 }
 
 #[cfg(test)]
