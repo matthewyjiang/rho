@@ -102,12 +102,11 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     )),
                 ))
             }
-            ProviderRuntime::Moonshot => Ok(ProviderCredential::OpenAiCompatible(
-                CompatibleAuth::ApiKey(load_provider_api_key_auth(
-                    "moonshot",
-                    self.store.as_ref(),
-                )?),
-            )),
+            ProviderRuntime::Moonshot | ProviderRuntime::OpenRouter => Ok(
+                ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(
+                    load_provider_api_key_auth(provider, self.store.as_ref())?,
+                )),
+            ),
             ProviderRuntime::Xai { auth_mode } => {
                 let (source, tokens) = match auth_mode {
                     XaiAuthMode::ApiKey => (

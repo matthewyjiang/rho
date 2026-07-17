@@ -10,6 +10,7 @@ pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens"
 pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
+pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +22,7 @@ pub enum ProviderId {
     Xai,
     XaiOAuth,
     Moonshot,
+    OpenRouter,
     KimiCode,
 }
 
@@ -72,7 +74,22 @@ impl ProviderDescriptor {
     pub fn metadata_model<'a>(&self, model: &'a str) -> &'a str {
         match (self.id, model) {
             (ProviderId::KimiCode, "k3") => "kimi-k3",
+            (ProviderId::OpenRouter, model) => model
+                .split_once('/')
+                .map(|(_, upstream_model)| upstream_model)
+                .unwrap_or(model),
             _ => model,
+        }
+    }
+
+    /// Resolves an aggregator model ID to its models.dev provider.
+    pub fn metadata_upstream_for_model<'a>(&self, model: &'a str) -> &'a str {
+        match self.id {
+            ProviderId::OpenRouter => model
+                .split_once('/')
+                .map(|(upstream, _)| upstream)
+                .unwrap_or(self.metadata_upstream),
+            _ => self.metadata_upstream,
         }
     }
 
@@ -112,6 +129,7 @@ pub enum MissingCredential {
     OpenAi,
     Anthropic,
     Moonshot,
+    OpenRouter,
     Xai,
 }
 
@@ -206,6 +224,24 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             api_base: "https://api.moonshot.ai/v1",
         }),
         metadata_upstream: "moonshotai",
+    },
+    ProviderDescriptor {
+        id: ProviderId::OpenRouter,
+        name: "openrouter",
+        display_name: "OpenRouter",
+        auth: "openrouter-api-key",
+        login_label: "OpenRouter API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "OPENROUTER_API_KEY",
+            account: OPENROUTER_API_KEY_ACCOUNT,
+            entry_label: "OpenRouter API key",
+            missing: MissingCredential::OpenRouter,
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
+            api_base: "https://openrouter.ai/api/v1",
+        }),
+        metadata_upstream: "openrouter",
     },
     ProviderDescriptor {
         id: ProviderId::KimiCode,

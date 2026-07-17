@@ -31,6 +31,7 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
         | ModelError::MissingAnthropicApiKey
         | ModelError::MissingGithubCopilotAuth
         | ModelError::MissingMoonshotApiKey
+        | ModelError::MissingOpenRouterApiKey
         | ModelError::MissingKimiAuth
         | ModelError::MissingXaiApiKey
         | ModelError::MissingXaiAuth => ProviderError::new(

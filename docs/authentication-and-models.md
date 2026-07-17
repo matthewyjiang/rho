@@ -16,10 +16,11 @@ Rho's implemented providers are:
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
 | `xai` | `xai-api-key` | [xAI](/providers/xai) |
 | `xai-oauth` | `xai-oauth` | [xAI](/providers/xai) |
+| `openrouter` | `openrouter-api-key` | [OpenRouter](/providers/openrouter) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 
-OpenAI, Anthropic, GitHub Copilot, Moonshot, and Kimi Code expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched with `/refresh-model-list`.
+OpenAI, Anthropic, GitHub Copilot, OpenRouter, Moonshot, and Kimi Code expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched with `/refresh-model-list`.
 
 Each provider page documents its `/login` flow, `/logout` behavior, environment override, and how to select its models.
 
@@ -48,13 +49,14 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model openai-codex/gpt-5.6-sol
 /model anthropic/claude-sonnet-4-5
 /model github-copilot/gpt-4.1
+/model openrouter/anthropic/claude-sonnet-4
 /model xai/grok-4.5
 /model xai-oauth/grok-4.5
 ```
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, GitHub Copilot, Moonshot, and Kimi Code can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
+OpenAI, Anthropic, GitHub Copilot, OpenRouter, Moonshot, and Kimi Code can refresh their provider model lists with `/refresh-model-list [provider]`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
 
 ## Model metadata
 

@@ -48,6 +48,14 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         super::MOONSHOT_API_KEY_ACCOUNT
     );
 
+    let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
+    assert_eq!(openrouter.auth, "openrouter-api-key");
+    assert_eq!(openrouter.auth_kind.env_var(), "OPENROUTER_API_KEY");
+    assert_eq!(
+        openrouter.auth_kind.account(),
+        super::OPENROUTER_API_KEY_ACCOUNT
+    );
+
     let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode);
     assert_eq!(kimi.auth, "kimi-oauth");
     assert_eq!(kimi.auth_kind.env_var(), "KIMI_ACCESS_TOKEN");

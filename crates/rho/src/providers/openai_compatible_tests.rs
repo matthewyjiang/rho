@@ -64,6 +64,54 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
     server.await.unwrap();
 }
 
+#[tokio::test]
+async fn openrouter_posts_reasoning_to_chat_completions() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        let bytes = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..bytes]);
+        assert!(request.starts_with("POST /chat/completions HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer openrouter-secret"));
+        let body: serde_json::Value =
+            serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["model"], "anthropic/claude-sonnet-4");
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert!(body.get("reasoning_effort").is_none());
+
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "openrouter",
+        "anthropic/claude-sonnet-4".into(),
+        OpenAiCompatibleDialect::OpenRouter,
+        CompatibleAuth::ApiKey("openrouter-secret".into()),
+        api_base,
+    );
+    provider
+        .complete_turn(ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: crate::reasoning::ReasoningLevel::High,
+            prompt_cache_key: None,
+        })
+        .await
+        .unwrap();
+    server.await.unwrap();
+}
+
 #[test]
 fn identities_keep_custom_provider_names() {
     let moonshot = OpenAiCompatibleProvider::new(
@@ -76,4 +124,18 @@ fn identities_keep_custom_provider_names() {
     );
     assert_eq!(moonshot.model_identity().provider, "moonshot");
     assert_eq!(moonshot.model_identity().api, "openai-chat-completions");
+
+    let openrouter = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "openrouter",
+        "anthropic/claude-sonnet-4".into(),
+        OpenAiCompatibleDialect::OpenRouter,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://openrouter.ai/api/v1".into(),
+    );
+    assert_eq!(openrouter.model_identity().provider, "openrouter");
+    assert_eq!(
+        openrouter.model_identity().model,
+        "anthropic/claude-sonnet-4"
+    );
 }

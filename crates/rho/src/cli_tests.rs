@@ -4,7 +4,13 @@ use super::*;
 
 #[test]
 fn parses_new_provider_auth_modes() {
-    for auth in ["moonshot-api-key", "kimi-oauth", "xai-api-key", "xai-oauth"] {
+    for auth in [
+        "moonshot-api-key",
+        "openrouter-api-key",
+        "kimi-oauth",
+        "xai-api-key",
+        "xai-oauth",
+    ] {
         let cli = Cli::try_parse_from(["rho", "--auth", auth]).unwrap();
         assert_eq!(cli.auth.as_deref(), Some(auth));
     }

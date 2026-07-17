@@ -122,7 +122,7 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
     model_metadata_from_api(
         api,
-        upstream_provider(provider),
+        upstream_provider(provider, model),
         upstream_model(provider, model),
     )
 }
@@ -205,7 +205,7 @@ fn write_cached_api(value: &Value) {
 const MODEL_METADATA_CACHE_VERSION: i64 = 3;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    let upstream_provider = upstream_provider(provider);
+    let upstream_provider = upstream_provider(provider, model);
     let upstream_model = upstream_model(provider, model);
     let connection = open_models_dev_cache().ok()?;
     let (contents, cache_version): (String, i64) = connection
@@ -246,7 +246,7 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
-    let upstream_provider = upstream_provider(provider);
+    let upstream_provider = upstream_provider(provider, model);
     let upstream_model = upstream_model(provider, model);
     let Ok(connection) = open_models_dev_cache() else {
         return;
@@ -293,9 +293,9 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-fn upstream_provider(provider: &str) -> &str {
+fn upstream_provider<'a>(provider: &'a str, model: &'a str) -> &'a str {
     crate::provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.metadata_upstream)
+        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
         .unwrap_or(provider)
 }
 

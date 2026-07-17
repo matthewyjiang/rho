@@ -21,6 +21,7 @@ pub enum ProviderRuntime {
     Anthropic,
     GithubCopilot,
     Moonshot,
+    OpenRouter,
     KimiCode,
     Xai { auth_mode: XaiAuthMode },
 }
@@ -38,6 +39,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
         provider::ProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
         provider::ProviderId::KimiCode => ProviderRuntime::KimiCode,
         provider::ProviderId::Moonshot => ProviderRuntime::Moonshot,
+        provider::ProviderId::OpenRouter => ProviderRuntime::OpenRouter,
         provider::ProviderId::Xai => ProviderRuntime::Xai {
             auth_mode: XaiAuthMode::ApiKey,
         },
@@ -52,6 +54,7 @@ pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
         MissingCredential::OpenAi => ModelError::MissingApiKey,
         MissingCredential::Anthropic => ModelError::MissingAnthropicApiKey,
         MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
+        MissingCredential::OpenRouter => ModelError::MissingOpenRouterApiKey,
         MissingCredential::Xai => ModelError::MissingXaiApiKey,
     }
 }

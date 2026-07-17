@@ -402,6 +402,7 @@ struct OpenAiModelsResponse {
 #[derive(Deserialize)]
 struct OpenAiModel {
     id: String,
+    #[serde(alias = "name")]
     display_name: Option<String>,
     context_length: Option<u64>,
 }
@@ -626,8 +627,7 @@ mod tests {
             assert!(request
                 .to_ascii_lowercase()
                 .contains("authorization: bearer moonshot-secret"));
-            let body =
-                r#"{"data":[{"id":"kimi-k3","display_name":"Kimi K3","context_length":1048576}]}"#;
+            let body = r#"{"data":[{"id":"kimi-k3","name":"Kimi K3","context_length":1048576}]}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
