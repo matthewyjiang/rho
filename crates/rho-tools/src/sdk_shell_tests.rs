@@ -143,9 +143,6 @@ mod windows {
         };
         assert_eq!(executable, std::path::Path::new("powershell.exe"));
         assert_eq!(arguments, ["-NoProfile", "-NonInteractive", "-Command"]);
-        assert_eq!(
-            planned_command,
-            crate::tools::powershell::wrapped_command(command)
-        );
+        assert_eq!(planned_command, crate::powershell::wrapped_command(command));
     }
 }
