@@ -20,6 +20,35 @@ def load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def check_internal_dependency_versions() -> None:
+    package_versions: dict[Path, str] = {}
+    for cargo_manifest in PACKAGES.values():
+        with cargo_manifest.open("rb") as file:
+            package_versions[cargo_manifest.resolve()] = tomllib.load(file)["package"]["version"]
+
+    dependency_tables = ("dependencies", "dev-dependencies", "build-dependencies")
+    for cargo_manifest in PACKAGES.values():
+        with cargo_manifest.open("rb") as file:
+            manifest = tomllib.load(file)
+        for table_name in dependency_tables:
+            for dependency_name, dependency in manifest.get(table_name, {}).items():
+                if not isinstance(dependency, dict) or "path" not in dependency:
+                    continue
+                dependency_manifest = (
+                    cargo_manifest.parent / dependency["path"] / "Cargo.toml"
+                ).resolve()
+                expected_version = package_versions.get(dependency_manifest)
+                if expected_version is None:
+                    continue
+                actual_version = dependency.get("version")
+                if actual_version != expected_version:
+                    raise RuntimeError(
+                        f"{cargo_manifest.relative_to(ROOT)} {dependency_name} dependency "
+                        f"requires {actual_version!r}, but the workspace package version is "
+                        f"{expected_version}"
+                    )
+
+
 def main() -> None:
     config = load_json(ROOT / ".release-please-config.json")
     manifest = load_json(ROOT / ".release-please-manifest.json")
@@ -49,7 +78,8 @@ def main() -> None:
                 f"release-please manifest version {release_version}"
             )
 
-    print("Release Please and Cargo package versions are consistent")
+    check_internal_dependency_versions()
+    print("Release Please, Cargo package, and internal dependency versions are consistent")
 
 
 if __name__ == "__main__":

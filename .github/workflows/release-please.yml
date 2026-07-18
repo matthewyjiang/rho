@@ -33,7 +33,18 @@ permissions:
   pull-requests: write
 
 jobs:
+  release-preflight:
+    name: validate release candidate versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate-sha || github.sha }}
+      - name: Check release version consistency
+        run: python3 scripts/check_release_versions.py
+
   release:
+    needs: release-preflight
     runs-on: ubuntu-latest
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created || steps.recovery.outputs.releases_created }}
