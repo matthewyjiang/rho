@@ -173,7 +173,7 @@ async fn fetch_models_dev_api() -> Option<Value> {
         .build()
         .ok()?
         .get("https://models.dev/api.json")
-        .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
+        .header("User-Agent", crate::rho_user_agent())
         .send()
         .await
         .ok()?

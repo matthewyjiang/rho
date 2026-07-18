@@ -24,7 +24,7 @@ path = "src/main.rs"
 
 [dependencies]
 rho-sdk = { version = "1.2.0", path = "../rho-sdk" }
-rho-providers = { version = "0.1.0", path = "../rho-providers" }
+rho-providers = { version = "0.1.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "0.1.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -72,7 +72,7 @@ windows-sys = { version = "0.61", features = [
 
 [features]
 default = ["bundled-sqlite"]
-bundled-sqlite = ["rusqlite/bundled"]
+bundled-sqlite = ["rusqlite/bundled", "rho-providers/bundled-sqlite"]
 
 [dev-dependencies]
 pretty_assertions = "1"

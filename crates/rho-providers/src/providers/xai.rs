@@ -92,7 +92,7 @@ impl XaiProvider {
             .client
             .post(format!("{}/responses", self.api_base.trim_end_matches('/')))
             .bearer_auth(access_token)
-            .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
+            .header("User-Agent", crate::rho_user_agent())
             .json(body)
             .send()
             .await?)

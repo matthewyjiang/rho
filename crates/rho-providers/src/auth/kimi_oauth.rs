@@ -134,7 +134,7 @@ fn refresh_backoff(attempt: u32) -> Duration {
 fn client() -> Result<reqwest::Client, KimiOAuthError> {
     Ok(reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
-        .user_agent(concat!("rho/", env!("CARGO_PKG_VERSION")))
+        .user_agent(crate::rho_user_agent())
         .build()?)
 }
 

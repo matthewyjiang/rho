@@ -16,9 +16,6 @@ use crate::{
 use crate::provider_backend::stream_timeout::provider_client;
 
 const DEFAULT_COPILOT_CHAT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
-const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
-const EDITOR_VERSION: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
-const EDITOR_PLUGIN_VERSION: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
 
 pub struct GitHubCopilotProvider {
@@ -111,9 +108,9 @@ impl GitHubCopilotProvider {
         builder
             .bearer_auth(&auth.token)
             .header("Accept", "application/json")
-            .header("User-Agent", USER_AGENT)
-            .header("Editor-Version", EDITOR_VERSION)
-            .header("Editor-Plugin-Version", EDITOR_PLUGIN_VERSION)
+            .header("User-Agent", crate::rho_user_agent())
+            .header("Editor-Version", crate::rho_user_agent())
+            .header("Editor-Plugin-Version", crate::rho_user_agent())
             .header("Copilot-Integration-Id", COPILOT_INTEGRATION_ID)
     }
 

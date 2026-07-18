@@ -12,7 +12,6 @@ const DEFAULT_SCOPE: &str = "read:user";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
 pub struct GitHubCopilotDeviceLogin {
@@ -109,7 +108,7 @@ async fn start_github_copilot_device_login_with_endpoint(
     let response: DeviceCodeResponse = client
         .post(endpoint)
         .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", crate::rho_user_agent())
         .form(&[("client_id", CLIENT_ID), ("scope", DEFAULT_SCOPE)])
         .send()
         .await?
@@ -163,7 +162,7 @@ async fn complete_github_copilot_device_login_with_endpoint(
         let response: TokenResponse = client
             .post(endpoint)
             .header("Accept", "application/json")
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", crate::rho_user_agent())
             .form(&[
                 ("client_id", CLIENT_ID),
                 ("device_code", login.device_code.as_str()),
@@ -227,7 +226,7 @@ async fn refresh_github_copilot_github_token_with_endpoint(
     let response: TokenResponse = client
         .post(endpoint)
         .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", crate::rho_user_agent())
         .form(&[
             ("client_id", CLIENT_ID),
             ("refresh_token", refresh_token),

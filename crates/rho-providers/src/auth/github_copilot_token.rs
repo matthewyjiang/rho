@@ -20,7 +20,6 @@ pub(crate) const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_inter
 pub(crate) const COPILOT_CHAT_COMPLETIONS_URL: &str =
     "https://api.githubcopilot.com/chat/completions";
 pub(crate) const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
-const USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 60;
 const GITHUB_TOKEN_EXPIRY_SKEW_SECONDS: i64 = 300;
 
@@ -251,7 +250,7 @@ async fn request_copilot_token(
         .get(endpoint)
         .header("Authorization", format!("token {github_access_token}"))
         .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", crate::rho_user_agent())
         .send()
         .await?)
 }

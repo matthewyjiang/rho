@@ -12,6 +12,27 @@
 //! - [`protocol`] translates between the canonical contract and provider
 //!   wire formats.
 
+use std::sync::OnceLock;
+
+static RHO_VERSION: OnceLock<&'static str> = OnceLock::new();
+
+/// Configures the application version used in provider request headers.
+///
+/// Embedders should call this once, before creating providers. If no version is
+/// configured, request headers use this crate's package version.
+pub fn set_rho_version(version: &'static str) -> Result<(), &'static str> {
+    RHO_VERSION.set(version).map_err(|_| rho_version())
+}
+
+/// Returns the application version used in provider request headers.
+pub fn rho_version() -> &'static str {
+    RHO_VERSION.get_or_init(|| env!("CARGO_PKG_VERSION"))
+}
+
+pub(crate) fn rho_user_agent() -> String {
+    format!("rho/{}", rho_version())
+}
+
 pub mod auth;
 pub mod credentials;
 pub mod model;

@@ -221,7 +221,7 @@ fn pkce_challenge(verifier: &str) -> String {
 fn http_client() -> Result<reqwest::Client, XaiOAuthError> {
     reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
-        .user_agent(concat!("rho/", env!("CARGO_PKG_VERSION")))
+        .user_agent(crate::rho_user_agent())
         .build()
         .map_err(XaiOAuthError::Request)
 }

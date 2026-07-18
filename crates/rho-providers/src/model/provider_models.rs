@@ -318,12 +318,9 @@ async fn send_github_copilot_models_request(
         .get(&auth.models_endpoint)
         .bearer_auth(&auth.token)
         .header("Accept", "application/json")
-        .header("User-Agent", concat!("rho/", env!("CARGO_PKG_VERSION")))
-        .header("Editor-Version", concat!("rho/", env!("CARGO_PKG_VERSION")))
-        .header(
-            "Editor-Plugin-Version",
-            concat!("rho/", env!("CARGO_PKG_VERSION")),
-        )
+        .header("User-Agent", crate::rho_user_agent())
+        .header("Editor-Version", crate::rho_user_agent())
+        .header("Editor-Plugin-Version", crate::rho_user_agent())
         .header("Copilot-Integration-Id", "vscode-chat")
         .send()
         .await?)
