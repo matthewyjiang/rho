@@ -6,7 +6,7 @@ use rho_sdk::{
     ToolCallId, ToolCompletion,
 };
 
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
 #[path = "interactive_presenter_format.rs"]
 mod format;

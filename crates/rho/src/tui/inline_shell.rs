@@ -332,7 +332,7 @@ impl super::App {
             self.insert_entry(&super::Entry::Tool(super::ToolEntry {
                 state: super::ToolEntryState::Finished {
                     ok: false,
-                    display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+                    display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
                 },
                 display_lines: display_lines(&output, task.mode.included_in_context()),
                 expanded: true,
@@ -382,8 +382,11 @@ impl super::App {
         if task.mode.included_in_context() {
             self.deferred_inline_shell_context
                 .push(DeferredShellContext {
-                    context: crate::tool::truncate(context_text(&output), task.max_output_bytes),
-                    persisted_display: crate::tool::truncate(
+                    context: rho_tools::tool::truncate(
+                        context_text(&output),
+                        task.max_output_bytes,
+                    ),
+                    persisted_display: rho_tools::tool::truncate(
                         format!(
                             "!{}\n\n{}",
                             output.command,
@@ -393,7 +396,7 @@ impl super::App {
                     ),
                 });
         }
-        let display_text = crate::tool::truncate(
+        let display_text = rho_tools::tool::truncate(
             display_text(&output, task.mode.included_in_context()),
             task.max_output_bytes,
         );
@@ -401,7 +404,7 @@ impl super::App {
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
             state: super::ToolEntryState::Finished {
                 ok: output.ok,
-                display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
             },
             display_lines: display_text.lines().map(str::to_string).collect(),
             expanded: true,

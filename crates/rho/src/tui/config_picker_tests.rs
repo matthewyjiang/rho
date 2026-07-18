@@ -3,7 +3,7 @@ use super::{
     PERMISSION_MODE_PREFIX, PERMISSION_MODE_VALUE, PROVIDER_LOGIN_VALUE, PROVIDER_LOGOUT_VALUE,
     REFRESH_MODEL_LIST_VALUE, TITLE_MODEL_VALUE,
 };
-use crate::{credentials::CredentialError, permission::PermissionMode};
+use {crate::permission::PermissionMode, rho_providers::credentials::CredentialError};
 
 #[test]
 fn config_picker_includes_model_and_provider_settings() {

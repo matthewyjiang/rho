@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::reasoning::ReasoningLevel;
+use rho_providers::reasoning::ReasoningLevel;
 
 /// Tool capabilities understood by the Rho host.
 ///

@@ -14,10 +14,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    model::{ContentBlock, ImageContent, Message},
-    session::{ExportedMessage, Session, SessionExport},
-    tool::{ToolCall, ToolResult},
+use {
+    crate::session::{ExportedMessage, Session, SessionExport},
+    rho_providers::model::{ContentBlock, ImageContent, Message},
+    rho_tools::tool::{ToolCall, ToolResult},
 };
 
 #[cfg(test)]

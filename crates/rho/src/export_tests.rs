@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::model::{ContentBlock, ImageContent, Message};
+use rho_providers::model::{ContentBlock, ImageContent, Message};
 
 const SESSION_ID: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 

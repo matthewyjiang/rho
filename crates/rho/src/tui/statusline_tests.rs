@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::models_dev::ModelCost;
+use rho_providers::model::models_dev::ModelCost;
 
 fn priced_metadata() -> ModelMetadata {
     ModelMetadata {

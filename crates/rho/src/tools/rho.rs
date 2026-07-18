@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::{
-    diagnostics::RuntimeDiagnostics,
-    tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+use {
+    crate::diagnostics::RuntimeDiagnostics,
+    rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 pub struct Rho {

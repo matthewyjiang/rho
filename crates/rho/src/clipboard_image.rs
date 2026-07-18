@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crate::model::ImageContent;
+use rho_providers::model::ImageContent;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClipboardImageError {

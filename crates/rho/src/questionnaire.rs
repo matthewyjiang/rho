@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::tool::ToolSpec;
+use rho_tools::tool::ToolSpec;
 
 pub const TOOL_NAME: &str = "questionnaire";
 const MAX_QUESTIONS: usize = 8;

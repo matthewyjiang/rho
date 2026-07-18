@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::tool::truncate;
+use rho_tools::tool::truncate;
 
 use super::{
     fetch::{self, github, FetchedTarget},
@@ -444,13 +444,13 @@ fn map_workspace_path_error(error: WorkspacePathError) -> ToolError {
     ToolError::new(kind, error.to_string())
 }
 
-fn map_app_tool_error(error: crate::tool::ToolError) -> ToolError {
+fn map_app_tool_error(error: rho_tools::tool::ToolError) -> ToolError {
     let message = error.to_string();
     let kind = match error {
-        crate::tool::ToolError::InvalidArguments(_) => ToolErrorKind::InvalidArguments,
-        crate::tool::ToolError::Io(_)
-        | crate::tool::ToolError::Utf8(_)
-        | crate::tool::ToolError::Message(_) => ToolErrorKind::Execution,
+        rho_tools::tool::ToolError::InvalidArguments(_) => ToolErrorKind::InvalidArguments,
+        rho_tools::tool::ToolError::Io(_)
+        | rho_tools::tool::ToolError::Utf8(_)
+        | rho_tools::tool::ToolError::Message(_) => ToolErrorKind::Execution,
     };
     ToolError::new(kind, message)
 }

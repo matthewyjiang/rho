@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::{cli::Cli, config::Config, model::ModelError};
+use {crate::cli::Cli, crate::config::Config, rho_providers::model::ModelError};
 
 use super::{host_capabilities, is_interactive_startup_unavailable_error, AgentRole};
 

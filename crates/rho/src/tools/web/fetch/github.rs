@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::tool::{truncate, ToolError};
+use rho_tools::tool::{truncate, ToolError};
 
 use super::{FetchedTarget, PREVIEW_BYTES};
 use crate::tools::web::util::to_pretty_json;

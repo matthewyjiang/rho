@@ -7,18 +7,18 @@ use std::{
 
 use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
-use crate::{
-    agent::PromptPolicy,
-    cli::Command,
-    config::Config,
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    herdr::{HerdrReporter, HerdrState},
-    prompt,
-    providers::build_automation_provider,
-    subagent::{self, RunState, RunStatus},
-    tools::sdk_registry::{AppToolSet, ToolSetOptions},
-    tui::AttachmentWriter,
+use {
+    crate::agent::PromptPolicy,
+    crate::cli::Command,
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::{HerdrReporter, HerdrState},
+    crate::prompt,
+    crate::subagent::{self, RunState, RunStatus},
+    crate::tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    crate::tui::AttachmentWriter,
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::providers::build_automation_provider,
 };
 
 use super::{
@@ -149,10 +149,10 @@ pub(crate) async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
     reporter: Option<&mut RunReporter>,
-    cancellation: Option<crate::cancellation::RunCancellation>,
+    cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
-    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
@@ -247,7 +247,7 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     reporter: Option<&mut RunReporter>,
-    external_cancellation: Option<crate::cancellation::RunCancellation>,
+    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();

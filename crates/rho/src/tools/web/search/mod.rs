@@ -2,10 +2,10 @@ pub(super) mod brave;
 mod exa;
 pub(super) mod openai;
 
-use crate::{
-    config::{Config, SearchProvider},
-    credentials::{load_web_search_api_key, OsCredentialStore, WebSearchCredential},
-    tool::ToolError,
+use {
+    crate::config::{Config, SearchProvider},
+    rho_providers::credentials::{load_web_search_api_key, OsCredentialStore, WebSearchCredential},
+    rho_tools::tool::ToolError,
 };
 
 use super::fetch::fetch_url_text;

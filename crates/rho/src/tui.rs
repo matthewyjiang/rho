@@ -133,22 +133,24 @@ use text_selection::{
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
-use crate::{
-    app::config_repository::ConfigRepository,
-    app::interactive_runtime::InteractiveRuntime,
-    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
-    clipboard_image::read_clipboard_image,
-    commands::{self, CommandId, CommandInvocation, CommandSpec},
-    credentials::{
+use {
+    crate::app::config_repository::ConfigRepository,
+    crate::app::interactive_runtime::InteractiveRuntime,
+    crate::clipboard_image::read_clipboard_image,
+    crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
+    crate::herdr::{HerdrReporter, HerdrState},
+    crate::keybindings::Keybindings,
+    crate::permission::PermissionMode,
+    crate::session::Session,
+    rho_providers::auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
+    rho_providers::credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
         save_github_copilot_tokens, save_kimi_tokens, save_provider_api_key, save_xai_tokens,
         CodexTokens, CredentialStore, GitHubCopilotTokens, KimiTokens, OsCredentialStore,
         XaiTokens,
     },
-    herdr::{HerdrReporter, HerdrState},
-    keybindings::Keybindings,
-    model::{
+    rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
@@ -156,12 +158,10 @@ use crate::{
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
         UnavailableProvider,
     },
-    permission::PermissionMode,
-    provider::{self, ProviderAuthKind},
-    providers::build_sdk_provider,
-    reasoning::ReasoningLevel,
-    session::Session,
-    tool::ToolDisplayStyle,
+    rho_providers::provider::{self, ProviderAuthKind},
+    rho_providers::providers::build_sdk_provider,
+    rho_providers::reasoning::ReasoningLevel,
+    rho_tools::tool::ToolDisplayStyle,
 };
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
@@ -583,7 +583,7 @@ impl App {
         if smoke_injection::matrix_enabled() {
             return Self::new_with_credentials(
                 info,
-                Arc::new(crate::credentials::MemoryCredentialStore::default()),
+                Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
             );
         }
         Self::new_with_credentials(info, Arc::new(OsCredentialStore))
@@ -3012,7 +3012,7 @@ impl App {
         &mut self,
         event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
-    ) -> Result<bool, crate::model::ModelError> {
+    ) -> Result<bool, rho_providers::model::ModelError> {
         Ok(self.handle_agent_event(event, terminal)?)
     }
 
@@ -3041,7 +3041,7 @@ impl App {
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
         input_mode: RunningInputMode,
-    ) -> Result<StreamControl, crate::model::ModelError> {
+    ) -> Result<StreamControl, rho_providers::model::ModelError> {
         let mut control = StreamControl::Continue;
         let mut next_event = Some(first_event);
         for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
@@ -3066,7 +3066,7 @@ impl App {
                         && matches!(self.composer, ComposerMode::Approval(_))
                     {
                         self.handle_approval_key(key, 1).map_err(|error| {
-                            crate::model::ModelError::InvalidResponse(error.to_string())
+                            rho_providers::model::ModelError::InvalidResponse(error.to_string())
                         })?;
                         self.cancel_inline_shells();
                         return Ok(
@@ -3083,7 +3083,7 @@ impl App {
                     }
                     if input_mode == RunningInputMode::Turn {
                         self.handle_key_during_turn(key, terminal).map_err(|err| {
-                            crate::model::ModelError::InvalidResponse(err.to_string())
+                            rho_providers::model::ModelError::InvalidResponse(err.to_string())
                         })?;
                         if self.pending_input_action.is_some() {
                             break;
@@ -4054,7 +4054,7 @@ impl App {
     }
 
     fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        let supported_reasoning = crate::model::models_dev::cached_reasoning_levels(
+        let supported_reasoning = rho_providers::model::models_dev::cached_reasoning_levels(
             &self.info.provider,
             &self.info.model,
         );
@@ -4296,7 +4296,7 @@ impl App {
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
         let supported_reasoning =
-            crate::model::models_dev::cached_reasoning_levels(&provider, &model);
+            rho_providers::model::models_dev::cached_reasoning_levels(&provider, &model);
         let reasoning = self
             .info
             .reasoning
@@ -6055,11 +6055,11 @@ enum HistoryDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{
-        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
-    };
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use rho_providers::credentials::{
+        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
+    };
 
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
@@ -6199,7 +6199,7 @@ mod tests {
     #[test]
     fn estimated_usage_cost_uses_normalized_input_and_cache_read() {
         let metadata = ModelMetadata {
-            cost_default: Some(crate::model::models_dev::ModelCost {
+            cost_default: Some(rho_providers::model::models_dev::ModelCost {
                 input_micros_per_m: Some(1_000_000),
                 output_micros_per_m: Some(2_000_000),
                 cache_read_micros_per_m: Some(100_000),
@@ -6458,12 +6458,12 @@ mod tests {
                     }),
                 ]),
                 Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-                Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+                Message::Assistant(vec![ContentBlock::ToolCall(rho_tools::tool::ToolCall {
                     id: "call_1".into(),
                     name: "read_file".into(),
                     arguments: serde_json::json!({"path": "src/main.rs"}),
                 })]),
-                Message::ToolResult(crate::tool::ToolResult {
+                Message::ToolResult(rho_tools::tool::ToolResult {
                     id: "call_1".into(),
                     ok: false,
                     content: "missing file".into(),
@@ -7264,7 +7264,7 @@ mod tests {
         save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         save_codex_tokens(
             store.as_ref(),
-            &crate::credentials::CodexTokens {
+            &rho_providers::credentials::CodexTokens {
                 access_token: "access".into(),
                 refresh_token: Some("refresh".into()),
                 id_token: None,

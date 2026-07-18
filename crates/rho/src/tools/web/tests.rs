@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
-use crate::{
-    config::{Config, SearchProvider},
-    tool::{Tool, ToolContext},
+use {
+    crate::config::{Config, SearchProvider},
+    rho_tools::tool::{Tool, ToolContext},
 };
 
 use super::{

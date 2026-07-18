@@ -6,17 +6,17 @@ use rho_sdk::{
     SessionOptions, SystemPrompt, UserInput, Workspace,
 };
 
-use crate::{
-    agent::PromptPolicy,
-    compaction::CompactionConfig,
-    config::Config,
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    permission::PermissionMode,
-    prompt,
-    providers::{build_sdk_provider_with_source, UnavailableProvider},
-    session::Session as StoredSession,
-    tools::sdk_registry::{AppToolSet, ToolSetOptions},
+use {
+    crate::agent::PromptPolicy,
+    crate::compaction::CompactionConfig,
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::permission::PermissionMode,
+    crate::prompt,
+    crate::session::Session as StoredSession,
+    crate::tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
 use super::{
@@ -87,7 +87,7 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) storage: Option<StoredSession>,
     pub(crate) diagnostics: RuntimeDiagnostics,
     pub(crate) agent: BoundAgent,
-    pub(crate) unavailable_error: Option<crate::model::ModelError>,
+    pub(crate) unavailable_error: Option<rho_providers::model::ModelError>,
 }
 
 enum ReplacementSessionSource<'a> {
@@ -154,9 +154,9 @@ impl InteractiveRuntime {
             Some(error) => Arc::new(UnavailableProvider::new(error)),
             None => {
                 let credentials =
-                    crate::auth::provider_credentials::ApplicationCredentialSource::new(Arc::new(
-                        OsCredentialStore,
-                    ));
+                    rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+                        Arc::new(OsCredentialStore),
+                    );
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
@@ -629,7 +629,7 @@ impl InteractiveRuntime {
         skill: &crate::skills::Skill,
         max_bytes: usize,
     ) -> anyhow::Result<()> {
-        let content = crate::tool::truncate(skill.contents.clone(), max_bytes);
+        let content = rho_tools::tool::truncate(skill.contents.clone(), max_bytes);
         let message = Message::user_text(format!(
             "Loaded skill `{}` from {}:\n\n{}",
             skill.name, skill.source, content
@@ -792,7 +792,7 @@ fn approval_channel_for(
 }
 
 fn prompt_cache_key(id: &str) -> String {
-    crate::providers::openai::prompt_cache_key_from_session_id(id)
+    rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
         .unwrap_or_else(|| format!("rho:{id}"))
 }
 

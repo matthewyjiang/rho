@@ -1,9 +1,11 @@
 use std::{fs, path::Path, process::Command};
 
-use crate::{
-    credentials::{provider_has_credentials, provider_has_env_override, CredentialStore},
-    model::catalog,
-    provider::{self, ProviderModelSource},
+use {
+    rho_providers::credentials::{
+        provider_has_credentials, provider_has_env_override, CredentialStore,
+    },
+    rho_providers::model::catalog,
+    rho_providers::provider::{self, ProviderModelSource},
 };
 
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -95,7 +97,8 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     for descriptor in provider::providers() {
         if descriptor.model_source == ProviderModelSource::CachedProviderModels {
             let count =
-                crate::model::provider_models::cached_provider_models(descriptor.name).len();
+                rho_providers::model::provider_models::cached_provider_models(descriptor.name)
+                    .len();
             items.push(item(
                 format!("{} model cache", descriptor.display_name),
                 if count > 0 { "populated" } else { "empty" },
@@ -120,7 +123,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
             format!("Detected: {}", helpers.join(", "))
         },
     ));
-    let rtk = crate::tools::rtk::is_available();
+    let rtk = rho_tools::rtk::is_available();
     items.push(item(
         "rtk",
         if rtk { "available" } else { "unavailable" },

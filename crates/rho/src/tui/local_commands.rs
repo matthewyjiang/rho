@@ -1,4 +1,4 @@
-use crate::{commands::CommandInvocation, export, tool::ToolDisplayStyle};
+use {crate::commands::CommandInvocation, crate::export, rho_tools::tool::ToolDisplayStyle};
 
 use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
 

@@ -7,13 +7,13 @@ use rho_sdk::{
     SystemPrompt, Workspace, WorkspacePolicy,
 };
 
-use crate::{
-    compaction::{
+use {
+    crate::compaction::{
         build_summary_request_messages, partition_messages_for_compaction,
         replacement_history_from_summary, CompactionConfig,
     },
-    config::Config,
-    model::models_dev::cached_model_metadata,
+    crate::config::Config,
+    rho_providers::model::models_dev::cached_model_metadata,
 };
 
 pub(crate) struct RuntimeBuildOptions<'a, P> {

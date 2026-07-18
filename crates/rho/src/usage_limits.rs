@@ -3,13 +3,13 @@ use std::{future::Future, pin::Pin, time::SystemTime};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{
-    auth::{kimi_oauth::refresh_kimi_tokens, xai_token::refresh_xai_tokens},
-    credentials::{
+use {
+    rho_providers::auth::{kimi_oauth::refresh_kimi_tokens, xai_token::refresh_xai_tokens},
+    rho_providers::credentials::{
         load_codex_tokens, load_kimi_tokens, load_xai_tokens, save_kimi_tokens, save_xai_tokens,
         CodexTokens, CredentialStore, KimiTokens, XaiTokens,
     },
-    providers::openai::auth::{refresh_codex_token, CodexAuthSource},
+    rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
 };
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
@@ -40,7 +40,7 @@ pub struct UsageLimitWindow {
 #[derive(Debug, Error)]
 pub enum UsageLimitsError {
     #[error("could not load credentials: {0}")]
-    Credentials(#[from] crate::credentials::CredentialError),
+    Credentials(#[from] rho_providers::credentials::CredentialError),
     #[error("{provider} usage request failed: {source}")]
     Request {
         provider: &'static str,

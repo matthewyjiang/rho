@@ -9,7 +9,7 @@ async fn info_returns_live_runtime_identity() {
     diagnostics.update_identity(
         "openai-codex",
         "gpt-current",
-        crate::reasoning::ReasoningLevel::High,
+        rho_providers::reasoning::ReasoningLevel::High,
     );
 
     let result = tool

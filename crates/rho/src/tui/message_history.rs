@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::{
-    app::interactive_presenter::InteractiveToolPresenter,
-    model::{ContentBlock, Message, ToolCall},
-    tool::ToolDisplayStyle,
+use {
+    crate::app::interactive_presenter::InteractiveToolPresenter,
+    rho_providers::model::{ContentBlock, Message, ToolCall},
+    rho_tools::tool::ToolDisplayStyle,
 };
 
 use super::{Entry, ToolEntry, ToolEntryState};

@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs, path::PathBuf, str::FromStr};
 
-use crate::{
-    compaction::CompactionConfig,
-    credentials::{
+use {
+    crate::compaction::CompactionConfig,
+    crate::keybindings::Keybindings,
+    crate::paths,
+    crate::permission::PermissionMode,
+    rho_providers::credentials::{
         load_web_search_api_key, save_web_search_api_key, CredentialStore, OsCredentialStore,
         WebSearchCredential,
     },
-    keybindings::Keybindings,
-    model::favorites::{favorite_model_values, normalized_favorite_models},
-    paths,
-    permission::PermissionMode,
-    reasoning::ReasoningLevel,
+    rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
+    rho_providers::reasoning::ReasoningLevel,
 };
 
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
@@ -549,7 +549,7 @@ impl Config {
     fn migrate_legacy_web_search_credentials(
         &mut self,
         store: &dyn CredentialStore,
-    ) -> crate::credentials::CredentialResult<bool> {
+    ) -> rho_providers::credentials::CredentialResult<bool> {
         let mut changed = false;
         for credential in WebSearchCredential::ALL {
             let Some(secret) = self

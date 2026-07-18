@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use uuid::Uuid;
 
-use crate::model::{ContentBlock, Message, ModelIdentity};
+use rho_providers::model::{ContentBlock, Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
 mod index;
@@ -750,8 +750,9 @@ fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
         let tool_call_ids = blocks
             .iter()
             .filter_map(|block| match block {
-                crate::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                crate::model::ContentBlock::Text(_) | crate::model::ContentBlock::Image(_) => None,
+                rho_providers::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+                rho_providers::model::ContentBlock::Text(_)
+                | rho_providers::model::ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
         if tool_call_ids.is_empty() {

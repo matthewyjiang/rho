@@ -1,5 +1,8 @@
 use super::*;
-use crate::{model::registry, provider, providers::build_sdk_provider};
+use {
+    rho_providers::model::registry, rho_providers::provider,
+    rho_providers::providers::build_sdk_provider,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct SecretInput {

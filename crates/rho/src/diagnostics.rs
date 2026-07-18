@@ -2,8 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
 
-use crate::{
-    compaction::CompactionConfig, config::Config, model::ContextUsage, reasoning::ReasoningLevel,
+use {
+    crate::compaction::CompactionConfig, crate::config::Config, rho_providers::model::ContextUsage,
+    rho_providers::reasoning::ReasoningLevel,
 };
 
 #[cfg(test)]
@@ -143,7 +144,7 @@ impl RuntimeDiagnostics {
         self.write().prompt_sources = sources;
     }
 
-    pub fn update_tools(&self, tools: &[crate::tool::ToolSpec]) {
+    pub fn update_tools(&self, tools: &[rho_tools::tool::ToolSpec]) {
         let mut tools = tools
             .iter()
             .map(|tool| tool.name.clone())

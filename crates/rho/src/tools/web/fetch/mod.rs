@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::tool::{truncate, ToolError};
+use rho_tools::tool::{truncate, ToolError};
 
 use super::util::{extract_title, html_to_text, is_video_extension};
 

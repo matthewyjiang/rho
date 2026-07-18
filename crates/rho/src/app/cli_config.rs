@@ -1,9 +1,9 @@
-use crate::{
-    cli::Cli,
-    config::Config,
-    credentials::{self, CredentialStore},
-    model::{catalog, provider_models::refresh_provider_models_with_store},
-    provider::{self, ProviderModelSource},
+use {
+    crate::cli::Cli,
+    crate::config::Config,
+    rho_providers::credentials::{self, CredentialStore},
+    rho_providers::model::{catalog, provider_models::refresh_provider_models_with_store},
+    rho_providers::provider::{self, ProviderModelSource},
 };
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
@@ -55,7 +55,7 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
 
 pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
     let supported_reasoning =
-        crate::model::models_dev::cached_reasoning_levels(&config.provider, &config.model);
+        rho_providers::model::models_dev::cached_reasoning_levels(&config.provider, &config.model);
     let reasoning = config.reasoning.normalize(supported_reasoning.as_deref());
     if reasoning == config.reasoning {
         return false;
