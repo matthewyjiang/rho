@@ -53,14 +53,27 @@ async fn reads_supported_images_without_retaining_the_source_decode() {
 }
 
 #[tokio::test]
-async fn keeps_image_reads_successful_when_preview_decoding_fails() {
+async fn falls_back_to_text_when_an_ascii_signature_is_not_a_decodable_image() {
     let (_dir, ctx) = test_context();
-    let path = ctx.cwd.join("fixture.gif");
+    let path = ctx.cwd.join("fixture.txt");
     fs::write(&path, "GIF89a ordinary fixture text").unwrap();
 
     let output = read_file_content(&path, None, None).await.unwrap();
 
-    assert_eq!(output.content, "image/gif image (28 bytes)");
+    assert_eq!(output.content, "GIF89a ordinary fixture text");
+    assert!(output.image.is_none());
+    assert!(output.preview_error.is_none());
+}
+
+#[tokio::test]
+async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("broken.png");
+    fs::write(&path, b"\x89PNG\r\n\x1a\n\xffbroken").unwrap();
+
+    let output = read_file_content(&path, None, None).await.unwrap();
+
+    assert_eq!(output.content, "image/png image (15 bytes)");
     assert!(output.image.is_none());
     assert!(output
         .preview_error

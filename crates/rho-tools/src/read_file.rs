@@ -140,11 +140,18 @@ pub(super) async fn read_file_content(
                     }),
                     preview_error: None,
                 }),
-                Ok(Err(error)) => Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: Some(format!("image preview unavailable: {error}")),
-                }),
+                Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
+                    Ok(content) => Ok(ReadFileContent {
+                        content,
+                        image: None,
+                        preview_error: None,
+                    }),
+                    Err(_) => Ok(ReadFileContent {
+                        content,
+                        image: None,
+                        preview_error: Some(format!("image preview unavailable: {error}")),
+                    }),
+                },
                 Err(error) => Ok(ReadFileContent {
                     content,
                     image: None,
@@ -170,19 +177,22 @@ pub(super) async fn read_file_content(
     })
 }
 
-fn thumbnail_png(bytes: Vec<u8>) -> image::ImageResult<Vec<u8>> {
-    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_DECODE_DIMENSION);
-    limits.max_image_height = Some(MAX_DECODE_DIMENSION);
-    limits.max_alloc = Some(MAX_DECODE_ALLOCATION);
-    reader.limits(limits);
-    let thumbnail = reader
-        .decode()?
-        .thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
-    let mut encoded = Cursor::new(Vec::new());
-    thumbnail.write_to(&mut encoded, ImageFormat::Png)?;
-    Ok(encoded.into_inner())
+fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {
+    let result = (|| {
+        let mut reader = ImageReader::new(Cursor::new(bytes.as_slice())).with_guessed_format()?;
+        let mut limits = Limits::default();
+        limits.max_image_width = Some(MAX_DECODE_DIMENSION);
+        limits.max_image_height = Some(MAX_DECODE_DIMENSION);
+        limits.max_alloc = Some(MAX_DECODE_ALLOCATION);
+        reader.limits(limits);
+        let thumbnail = reader
+            .decode()?
+            .thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+        let mut encoded = Cursor::new(Vec::new());
+        thumbnail.write_to(&mut encoded, ImageFormat::Png)?;
+        Ok(encoded.into_inner())
+    })();
+    result.map_err(|error| (error, bytes))
 }
 
 fn supported_image_mime_type(header: &[u8]) -> Option<&'static str> {
