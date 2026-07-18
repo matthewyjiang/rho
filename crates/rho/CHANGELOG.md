@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.6.1...rho-coding-agent-v1.7.0) (2026-07-18)
+
+
+### Features
+
+* **tui:** render read file image previews ([#393](https://github.com/matthewyjiang/rho/issues/393)) ([52165ec](https://github.com/matthewyjiang/rho/commit/52165eccb9429cbfe80c6ec1390aa5e97be19df8))
+
+
+### Bug Fixes
+
+* **ci:** sync released tool dependency versions ([#391](https://github.com/matthewyjiang/rho/issues/391)) ([fc78948](https://github.com/matthewyjiang/rho/commit/fc78948953a790dcf6a8f783e67748cae0dd61dc))
+* **tui:** render markdown in reasoning traces ([#394](https://github.com/matthewyjiang/rho/issues/394)) ([3a88542](https://github.com/matthewyjiang/rho/commit/3a88542608fc383e6de12ea29b193e071a83f824))
+* **tui:** show shell prompt during tool streaming ([#390](https://github.com/matthewyjiang/rho/issues/390)) ([6e6b39d](https://github.com/matthewyjiang/rho/commit/6e6b39ddaf2b7337e12bb5d7a11bce97d971f10c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.2.0 to 1.3.0
+    * rho-providers bumped from 0.2.0 to 0.2.1
+
 ## [1.6.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.6.0...rho-coding-agent-v1.6.1) (2026-07-18)
 
 
