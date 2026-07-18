@@ -5,7 +5,8 @@ use ratatui::text::Line;
 use super::{
     is_tool_entry,
     markdown::incremental_markdown_tail_start,
-    render::{pad_entry_line, render_assistant_content, render_entry},
+    message_render::render_assistant_content,
+    render::{pad_entry_line, render_entry},
     Entry,
 };
 

@@ -18,6 +18,39 @@ fn line_styles(line: &Line<'_>) -> Vec<Style> {
 }
 
 #[test]
+fn reasoning_entry_renders_inline_markdown_and_remains_dim() {
+    let rendered = render_entry(
+        &Entry::Reasoning("thinking with **bold** and *emphasis*".into()),
+        80,
+        10,
+    );
+    let content_line = rendered
+        .lines
+        .iter()
+        .find(|line| line_text(line).contains("thinking with"))
+        .expect("reasoning content line");
+
+    assert_eq!(
+        line_text(content_line).trim(),
+        "thinking with bold and emphasis"
+    );
+    let bold = content_line
+        .spans
+        .iter()
+        .find(|span| span.content == "bold")
+        .expect("bold span");
+    let italic = content_line
+        .spans
+        .iter()
+        .find(|span| span.content == "emphasis")
+        .expect("italic span");
+    assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+    assert!(bold.style.add_modifier.contains(Modifier::DIM));
+    assert!(italic.style.add_modifier.contains(Modifier::ITALIC));
+    assert!(italic.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
 fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\tright"), 9);
     assert_eq!(display_width("left\rright"), 9);
