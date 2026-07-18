@@ -21,6 +21,20 @@
       "component": "rho-sdk",
       "changelog-path": "CHANGELOG.md",
       "draft": true
+    },
+    "crates/rho-tools": {
+      "release-type": "rust",
+      "package-name": "rho-tools",
+      "component": "rho-tools",
+      "changelog-path": "CHANGELOG.md",
+      "draft": true
+    },
+    "crates/rho-providers": {
+      "release-type": "rust",
+      "package-name": "rho-providers",
+      "component": "rho-providers",
+      "changelog-path": "CHANGELOG.md",
+      "draft": true
     }
   },
   "plugins": ["cargo-workspace"]

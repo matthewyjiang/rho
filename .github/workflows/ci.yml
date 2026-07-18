@@ -150,6 +150,15 @@ jobs:
         run: cargo package --locked -p rho-sdk
       - name: Verify SDK publish preparation
         run: cargo publish --dry-run --locked -p rho-sdk
+      - name: Verify rho-tools publish preparation
+        run: >-
+          cargo publish --dry-run --locked -p rho-tools
+          --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+      - name: Verify rho-providers publish preparation
+        run: >-
+          cargo publish --dry-run --locked -p rho-providers
+          --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+          --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
       - name: Build application package contents
         run: >-
           cargo package --locked --no-verify -p rho-coding-agent

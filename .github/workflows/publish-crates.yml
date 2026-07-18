@@ -12,6 +12,8 @@ on:
         type: choice
         options:
           - rho-sdk
+          - rho-tools
+          - rho-providers
           - rho-coding-agent
       candidate-sha:
         description: Exact full commit SHA to publish
@@ -82,9 +84,11 @@ jobs:
         run: |
           set -euo pipefail
           args=(--sha "$CANDIDATE_SHA")
-          if [[ "$PACKAGE" == "rho-sdk" ]]; then
-            args+=(--sdk)
-          else
-            args+=(--app)
-          fi
+          case "$PACKAGE" in
+            rho-sdk) args+=(--sdk) ;;
+            rho-tools) args+=(--tools) ;;
+            rho-providers) args+=(--providers) ;;
+            rho-coding-agent) args+=(--app) ;;
+            *) echo "Unsupported package: $PACKAGE" >&2; exit 1 ;;
+          esac
           ./scripts/publish_workspace_crates.sh "${args[@]}"

@@ -9,10 +9,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--app] [--dry-run]
+Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [--providers] [--app] [--dry-run]
 
   --sha <full-sha>  Exact 40-character commit that must be checked out
   --sdk             Publish rho-sdk
+  --tools           Publish rho-tools
+  --providers       Publish rho-providers
   --app             Publish rho-tools, rho-providers, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
@@ -20,6 +22,8 @@ EOF
 
 sha=""
 publish_sdk=false
+publish_tools=false
+publish_providers=false
 publish_app=false
 dry_run=false
 
@@ -33,7 +37,17 @@ while [[ $# -gt 0 ]]; do
       publish_sdk=true
       shift
       ;;
+    --tools)
+      publish_tools=true
+      shift
+      ;;
+    --providers)
+      publish_providers=true
+      shift
+      ;;
     --app)
+      publish_tools=true
+      publish_providers=true
       publish_app=true
       shift
       ;;
@@ -64,8 +78,8 @@ if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$publish_sdk" != true && "$publish_app" != true ]]; then
-  echo "Select at least one of --sdk or --app" >&2
+if [[ "$publish_sdk" != true && "$publish_tools" != true && "$publish_providers" != true && "$publish_app" != true ]]; then
+  echo "Select at least one of --sdk, --tools, --providers, or --app" >&2
   exit 2
 fi
 
@@ -140,7 +154,7 @@ if [[ "$publish_sdk" == true ]]; then
   fi
 fi
 
-publish_app_crate() {
+publish_crate() {
   local name="$1"
   local version="$2"
   shift 2
@@ -159,27 +173,35 @@ publish_app_crate() {
   fi
 }
 
-if [[ "$publish_app" == true ]]; then
-  if [[ "$publish_sdk" != true && "$dry_run" != true ]]; then
-    # Every application-layer crate requires a published SDK version.
-    wait_for_crate rho-sdk "$sdk_version"
-  fi
-
+if [[ "$publish_tools" == true ]]; then
   tools_validation_flags=()
   if [[ "$dry_run" == true ]]; then
     tools_validation_flags+=(--config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"')
+  elif [[ "$publish_sdk" != true ]]; then
+    wait_for_crate rho-sdk "$sdk_version"
   fi
-  publish_app_crate rho-tools "$tools_version" "${tools_validation_flags[@]}"
+  publish_crate rho-tools "$tools_version" "${tools_validation_flags[@]}"
+fi
 
+if [[ "$publish_providers" == true ]]; then
   providers_validation_flags=()
   if [[ "$dry_run" == true ]]; then
     providers_validation_flags+=(
       --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
       --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
     )
+  else
+    if [[ "$publish_sdk" != true ]]; then
+      wait_for_crate rho-sdk "$sdk_version"
+    fi
+    if [[ "$publish_tools" != true ]]; then
+      wait_for_crate rho-tools "$tools_version"
+    fi
   fi
-  publish_app_crate rho-providers "$providers_version" "${providers_validation_flags[@]}"
+  publish_crate rho-providers "$providers_version" "${providers_validation_flags[@]}"
+fi
 
+if [[ "$publish_app" == true ]]; then
   app_validation_flags=()
   if [[ "$dry_run" == true ]]; then
     app_validation_flags+=(
@@ -187,8 +209,10 @@ if [[ "$publish_app" == true ]]; then
       --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
       --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
     )
+  elif [[ "$publish_sdk" != true ]]; then
+    wait_for_crate rho-sdk "$sdk_version"
   fi
-  publish_app_crate rho-coding-agent "$app_version" "${app_validation_flags[@]}"
+  publish_crate rho-coding-agent "$app_version" "${app_validation_flags[@]}"
 fi
 
 echo "Workspace crate publication finished for ${sha}"
