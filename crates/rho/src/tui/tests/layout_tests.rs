@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn reasoning_stream_preview_renders_markdown() {
+    let mut app = test_app();
+    app.live_stream_preview = Some(LiveStreamPreview {
+        kind: StreamKind::Reasoning,
+        text: "considering **boldly**".into(),
+        include_leading_blank: false,
+    });
+
+    let lines = app.active_lines(80);
+    let content_line = lines
+        .iter()
+        .find(|line| line_text(line).contains("considering"))
+        .expect("reasoning preview line");
+    assert_eq!(line_text(content_line).trim(), "considering boldly");
+    let bold = content_line
+        .spans
+        .iter()
+        .find(|span| span.content == "boldly")
+        .expect("bold reasoning span");
+    assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+    assert!(bold.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
 fn fullscreen_history_starts_at_bottom() {
     let mut app = test_app();
     for index in 0..20 {

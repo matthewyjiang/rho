@@ -1,6 +1,7 @@
 use super::{
     limits_command::usage_limit_lines,
-    markdown::{render_markdown, MarkdownCodeBlock},
+    markdown::MarkdownCodeBlock,
+    message_render::{render_assistant_content, render_reasoning_content},
     theme::{Theme, ToolStyle},
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
@@ -433,12 +434,14 @@ fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'
     std::borrow::Cow::Owned(text[..end].to_string())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct CompleteVisualPrefix {
     pub(super) byte_index: usize,
     pub(super) ends_with_wrap: bool,
 }
 
+#[cfg(test)]
 pub(super) fn complete_visual_prefix(text: &str, width: usize) -> CompleteVisualPrefix {
     complete_visual_line_ends(text, width)
         .last()
@@ -455,6 +458,7 @@ fn complete_visual_prefix_byte_index(text: &str, width: usize) -> usize {
     complete_visual_prefix(text, width).byte_index
 }
 
+#[cfg(test)]
 fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     let width = width.max(1);
     let mut ends = Vec::new();
@@ -483,6 +487,7 @@ fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     ends
 }
 
+#[cfg(test)]
 fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> Vec<(usize, char)> {
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
@@ -668,6 +673,10 @@ pub(super) fn render_entry(
             let rendered = render_assistant_content(text, width);
             (rendered.lines, rendered.code_blocks)
         }
+        Entry::Reasoning(text) => {
+            let rendered = render_reasoning_content(text, width);
+            (rendered.lines, rendered.code_blocks)
+        }
         _ => {
             let mut lines = Vec::new();
             render_non_assistant_entry(&mut lines, entry, inner_width, max_tool_output_lines);
@@ -690,15 +699,6 @@ pub(super) fn render_entry(
     }
 }
 
-pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
-    let mut in_code_block = false;
-    let rendered = render_markdown(text, padded_inner_width(width), &mut in_code_block);
-    RenderedEntry {
-        lines: rendered.lines,
-        code_blocks: rendered.code_blocks,
-    }
-}
-
 fn render_non_assistant_entry(
     lines: &mut Vec<Line<'static>>,
     entry: &Entry,
@@ -713,14 +713,9 @@ fn render_non_assistant_entry(
             Theme::user_message(),
             LineFill::PadToWidth,
         ),
-        Entry::Assistant(_) => unreachable!("assistant entries are rendered as markdown"),
-        Entry::Reasoning(text) => push_wrapped_text(
-            lines,
-            text,
-            width,
-            Theme::dim().add_modifier(Modifier::DIM),
-            LineFill::Natural,
-        ),
+        Entry::Assistant(_) | Entry::Reasoning(_) => {
+            unreachable!("assistant and reasoning entries are rendered as markdown")
+        }
         Entry::Tool(tool) => push_tool_block(
             lines,
             &tool.display_lines,
@@ -878,7 +873,7 @@ pub(super) fn styled_line(
     Line::from(Span::styled(text, style))
 }
 
-fn padded_inner_width(width: usize) -> usize {
+pub(super) fn padded_inner_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 
