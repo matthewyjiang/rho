@@ -358,7 +358,7 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. Do not poll or wait when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. To wait for a background result, end the current turn. Do not call sleep or poll when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -499,7 +499,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check background-agent progress or stop a run. Completed results are delivered automatically; do not poll for completion when no foreground work remains.".into(),
+            description: "Check background-agent progress or stop a run. Completed results are delivered automatically. To wait for a result, end the current turn. Do not call sleep or poll when no foreground work remains.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
