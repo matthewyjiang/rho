@@ -1,7 +1,8 @@
 use super::{
-    feed_image::{reserve_image_rows, RenderedImagePlacement},
+    feed_image::{reserve_entry_image_rows, reserve_optional_image_rows},
     limits_command::usage_limit_lines,
-    markdown::{render_markdown, MarkdownCodeBlock},
+    message_render::{render_assistant_content, render_reasoning_content},
+    rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
@@ -434,12 +435,14 @@ fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'
     std::borrow::Cow::Owned(text[..end].to_string())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct CompleteVisualPrefix {
     pub(super) byte_index: usize,
     pub(super) ends_with_wrap: bool,
 }
 
+#[cfg(test)]
 pub(super) fn complete_visual_prefix(text: &str, width: usize) -> CompleteVisualPrefix {
     complete_visual_line_ends(text, width)
         .last()
@@ -456,6 +459,7 @@ fn complete_visual_prefix_byte_index(text: &str, width: usize) -> usize {
     complete_visual_prefix(text, width).byte_index
 }
 
+#[cfg(test)]
 fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     let width = width.max(1);
     let mut ends = Vec::new();
@@ -484,6 +488,7 @@ fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     ends
 }
 
+#[cfg(test)]
 fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> Vec<(usize, char)> {
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
@@ -618,12 +623,6 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub(super) struct RenderedEntry {
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) code_blocks: Vec<MarkdownCodeBlock>,
-    pub(super) image_placement: Option<RenderedImagePlacement>,
-}
-
 pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
@@ -631,10 +630,15 @@ pub(super) fn tool_entry_lines(
 ) -> Vec<Line<'static>> {
     let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
-    push_tool_block(&mut lines, tool, inner_width, max_tool_output_lines);
-    if let Some(image) = &tool.image {
-        reserve_image_rows(&mut lines, image, width);
-    }
+    push_tool_block(
+        &mut lines,
+        &tool.display_lines,
+        tool.state,
+        inner_width,
+        max_tool_output_lines,
+        tool.expanded,
+    );
+    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -666,6 +670,10 @@ pub(super) fn render_entry(
             let rendered = render_assistant_content(text, width);
             (rendered.lines, rendered.code_blocks)
         }
+        Entry::Reasoning(text) => {
+            let rendered = render_reasoning_content(text, width);
+            (rendered.lines, rendered.code_blocks)
+        }
         _ => {
             let mut lines = Vec::new();
             render_non_assistant_entry(&mut lines, entry, inner_width, max_tool_output_lines);
@@ -673,13 +681,7 @@ pub(super) fn render_entry(
         }
     };
 
-    let image_placement = match entry {
-        Entry::Tool(tool) => tool
-            .image
-            .as_ref()
-            .map(|image| reserve_image_rows(&mut lines, image, width).offset_rows(1)),
-        _ => None,
-    };
+    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
 
     let block_style = lines
         .first()
@@ -697,16 +699,6 @@ pub(super) fn render_entry(
     }
 }
 
-pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
-    let mut in_code_block = false;
-    let rendered = render_markdown(text, padded_inner_width(width), &mut in_code_block);
-    RenderedEntry {
-        lines: rendered.lines,
-        code_blocks: rendered.code_blocks,
-        image_placement: None,
-    }
-}
-
 fn render_non_assistant_entry(
     lines: &mut Vec<Line<'static>>,
     entry: &Entry,
@@ -721,15 +713,17 @@ fn render_non_assistant_entry(
             Theme::user_message(),
             LineFill::PadToWidth,
         ),
-        Entry::Assistant(_) => unreachable!("assistant entries are rendered as markdown"),
-        Entry::Reasoning(text) => push_wrapped_text(
+        Entry::Assistant(_) | Entry::Reasoning(_) => {
+            unreachable!("assistant and reasoning entries are rendered as markdown")
+        }
+        Entry::Tool(tool) => push_tool_block(
             lines,
-            text,
+            &tool.display_lines,
+            tool.state,
             width,
-            Theme::dim().add_modifier(Modifier::DIM),
-            LineFill::Natural,
+            max_tool_output_lines,
+            tool.expanded,
         ),
-        Entry::Tool(tool) => push_tool_block(lines, tool, width, max_tool_output_lines),
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
@@ -742,23 +736,25 @@ fn render_non_assistant_entry(
 
 fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    tool: &super::ToolEntry,
+    display_lines: &[String],
+    state: ToolEntryState,
     width: usize,
     max_tool_output_lines: usize,
+    expanded: bool,
 ) {
-    let style = match tool.state {
+    let style = match state {
         ToolEntryState::Running => Theme::user_message(),
         ToolEntryState::Finished { ok, display_style } => tool_style(display_style).for_result(ok),
     };
     push_tool_block_with_style(
         lines,
-        &tool.display_lines,
+        display_lines,
         width,
         max_tool_output_lines,
-        tool.expanded,
+        expanded,
         style,
         matches!(
-            tool.state,
+            state,
             ToolEntryState::Finished {
                 display_style: ToolDisplayStyle::FileDiff,
                 ..
@@ -877,7 +873,7 @@ pub(super) fn styled_line(
     Line::from(Span::styled(text, style))
 }
 
-fn padded_inner_width(width: usize) -> usize {
+pub(super) fn padded_inner_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 

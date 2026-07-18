@@ -59,6 +59,7 @@ mod local_diff;
 mod login;
 mod markdown;
 mod message_history;
+mod message_render;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
@@ -72,6 +73,7 @@ mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
 mod render;
+mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
@@ -82,6 +84,7 @@ mod skill_picker;
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod stream_preview;
 mod subagent_panel;
 mod terminal_events;
 mod text_selection;
@@ -103,10 +106,7 @@ use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
 use login::{PendingOAuthLogin, SecretInput};
-use markdown::{
-    push_wrapped_markdown_without_copy_button_from_fence_state, update_code_block_state,
-    CodeFenceState,
-};
+use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker};
@@ -119,8 +119,7 @@ use questionnaire::{
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
     input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, tool_entry_lines, truncate_one_line,
-    LineFill,
+    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use session_title::{generate_session_title, PendingSessionTitle};
@@ -285,6 +284,7 @@ struct App {
     assistant_stream: AppendOnlyStream,
     assistant_stream_code_fence: CodeFenceState,
     reasoning_stream: AppendOnlyStream,
+    reasoning_stream_code_fence: CodeFenceState,
     current_stream_kind: Option<StreamKind>,
     stream_preview_deadline: Option<Instant>,
     live_stream_preview: Option<LiveStreamPreview>,
@@ -619,6 +619,7 @@ impl App {
             assistant_stream: AppendOnlyStream::default(),
             assistant_stream_code_fence: CodeFenceState::default(),
             reasoning_stream: AppendOnlyStream::default(),
+            reasoning_stream_code_fence: CodeFenceState::default(),
             current_stream_kind: None,
             stream_preview_deadline: None,
             live_stream_preview: None,
@@ -2978,6 +2979,7 @@ impl App {
         self.assistant_stream.reset();
         self.assistant_stream_code_fence = CodeFenceState::default();
         self.reasoning_stream.reset();
+        self.reasoning_stream_code_fence = CodeFenceState::default();
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
@@ -3228,7 +3230,9 @@ impl App {
             StreamKind::Assistant => self
                 .assistant_stream
                 .drain_renderable_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
+            StreamKind::Reasoning => self
+                .reasoning_stream
+                .drain_renderable_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
         };
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
@@ -3285,7 +3289,9 @@ impl App {
             StreamKind::Assistant => self
                 .assistant_stream
                 .drain_preview_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
+            StreamKind::Reasoning => self
+                .reasoning_stream
+                .drain_preview_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
         };
         self.stream_preview_deadline = None;
         self.update_stream_preview_deadline(kind);
@@ -3328,43 +3334,14 @@ impl App {
         }
     }
 
-    fn render_stream_preview_lines(
-        &self,
-        preview: &LiveStreamPreview,
-        width: usize,
-    ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        if preview.include_leading_blank {
-            lines.push(Line::raw(""));
-        }
-        let mut text_lines = Vec::new();
-        if matches!(preview.kind, StreamKind::Assistant) {
-            let mut code_fence = self.assistant_stream_code_fence;
-            push_wrapped_markdown_without_copy_button_from_fence_state(
-                &mut text_lines,
-                &preview.text,
-                padded_content_width(width),
-                &mut code_fence,
-            );
-        } else {
-            push_wrapped_text(
-                &mut text_lines,
-                &preview.text,
-                padded_content_width(width),
-                preview.kind.style(),
-                LineFill::Natural,
-            );
-        }
-        lines.extend(text_lines.into_iter().map(pad_display_line));
-        lines
-    }
-
     fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            if matches!(kind, StreamKind::Assistant) {
-                update_code_block_state(render_text, &mut self.assistant_stream_code_fence);
-            }
+            let code_fence = match kind {
+                StreamKind::Assistant => &mut self.assistant_stream_code_fence,
+                StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
+            };
+            update_code_block_state(render_text, code_fence);
             self.last_inserted_was_tool = false;
         }
         let text = fragment.into_text();

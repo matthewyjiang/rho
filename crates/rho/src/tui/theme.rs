@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::OnceLock};
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::Line,
+};
 
 use super::markdown::HeadingLevel;
 
@@ -266,6 +269,16 @@ impl Theme {
 
     pub(super) fn user_message() -> Style {
         Self::dim_block(Palette::current().user_background)
+    }
+
+    pub(super) fn reasoning_output(lines: &mut [Line<'static>]) {
+        let reasoning_style = Self::dim().add_modifier(Modifier::DIM);
+        for line in lines {
+            line.style = reasoning_style.patch(line.style);
+            for span in &mut line.spans {
+                span.style = reasoning_style.patch(span.style);
+            }
+        }
     }
 
     pub(super) fn reasoning_input_border(level: rho_providers::reasoning::ReasoningLevel) -> Style {

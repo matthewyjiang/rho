@@ -90,6 +90,30 @@ pub(super) fn reserve_image_rows(
     }
 }
 
+pub(super) fn reserve_optional_image_rows(
+    lines: &mut Vec<Line<'static>>,
+    image: Option<&FeedImage>,
+    width: usize,
+) {
+    if let Some(image) = image {
+        reserve_image_rows(lines, image, width);
+    }
+}
+
+pub(super) fn reserve_entry_image_rows(
+    lines: &mut Vec<Line<'static>>,
+    entry: &super::Entry,
+    width: usize,
+) -> Option<RenderedImagePlacement> {
+    match entry {
+        super::Entry::Tool(tool) => tool
+            .image
+            .as_ref()
+            .map(|image| reserve_image_rows(lines, image, width).offset_rows(1)),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct VisibleImagePlacement {
     pub(super) image: FeedImage,
