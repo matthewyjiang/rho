@@ -19,7 +19,7 @@ on:
         required: false
         type: string
       tools-tag:
-        description: Existing rho-tools tag to resume
+        description: Existing rho-agent-tools tag to resume
         required: false
         type: string
       providers-tag:
@@ -107,7 +107,7 @@ jobs:
             verify_tag "$SDK_TAG" "rho-sdk-v$sdk_version"
           fi
           if [[ -n "$TOOLS_TAG" ]]; then
-            verify_tag "$TOOLS_TAG" "rho-tools-v$tools_version"
+            verify_tag "$TOOLS_TAG" "rho-agent-tools-v$tools_version"
           fi
           if [[ -n "$PROVIDERS_TAG" ]]; then
             verify_tag "$PROVIDERS_TAG" "rho-providers-v$providers_version"
@@ -204,7 +204,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SDK_TAG: ${{ needs.release.outputs.sdk_tag_name }}
         run: gh release edit "$SDK_TAG" --draft=false
-      - name: Publish draft rho-tools release after crates.io success
+      - name: Publish draft rho-agent-tools release after crates.io success
         if: ${{ needs.release.outputs.tools_release_created == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}

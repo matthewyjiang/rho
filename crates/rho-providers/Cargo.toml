@@ -9,7 +9,7 @@ repository = "https://github.com/matthewyjiang/rho"
 
 [dependencies]
 rho-sdk = { version = "1.1.0", path = "../rho-sdk" }
-rho-tools = { version = "0.1.0", path = "../rho-tools" }
+rho-tools = { version = "0.1.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }

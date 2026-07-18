@@ -13,9 +13,9 @@ Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [-
 
   --sha <full-sha>  Exact 40-character commit that must be checked out
   --sdk             Publish rho-sdk
-  --tools           Publish rho-tools
+  --tools           Publish rho-agent-tools
   --providers       Publish rho-providers
-  --app             Publish rho-tools, rho-providers, then rho-coding-agent
+  --app             Publish rho-agent-tools, rho-providers, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
 }
@@ -108,7 +108,7 @@ crate_version() {
 }
 
 sdk_version="$(crate_version rho-sdk)"
-tools_version="$(crate_version rho-tools)"
+tools_version="$(crate_version rho-agent-tools)"
 providers_version="$(crate_version rho-providers)"
 app_version="$(crate_version rho-coding-agent)"
 
@@ -180,7 +180,7 @@ if [[ "$publish_tools" == true ]]; then
   elif [[ "$publish_sdk" != true ]]; then
     wait_for_crate rho-sdk "$sdk_version"
   fi
-  publish_crate rho-tools "$tools_version" "${tools_validation_flags[@]}"
+  publish_crate rho-agent-tools "$tools_version" "${tools_validation_flags[@]}"
 fi
 
 if [[ "$publish_providers" == true ]]; then
@@ -188,14 +188,14 @@ if [[ "$publish_providers" == true ]]; then
   if [[ "$dry_run" == true ]]; then
     providers_validation_flags+=(
       --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
-      --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
+      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
     )
   else
     if [[ "$publish_sdk" != true ]]; then
       wait_for_crate rho-sdk "$sdk_version"
     fi
     if [[ "$publish_tools" != true ]]; then
-      wait_for_crate rho-tools "$tools_version"
+      wait_for_crate rho-agent-tools "$tools_version"
     fi
   fi
   publish_crate rho-providers "$providers_version" "${providers_validation_flags[@]}"
@@ -207,7 +207,7 @@ if [[ "$publish_app" == true ]]; then
     app_validation_flags+=(
       --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
       --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
-      --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
+      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
     )
   elif [[ "$publish_sdk" != true ]]; then
     wait_for_crate rho-sdk "$sdk_version"

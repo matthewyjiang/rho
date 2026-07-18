@@ -12,7 +12,7 @@ on:
         type: choice
         options:
           - rho-sdk
-          - rho-tools
+          - rho-agent-tools
           - rho-providers
           - rho-coding-agent
       candidate-sha:
@@ -86,7 +86,7 @@ jobs:
           args=(--sha "$CANDIDATE_SHA")
           case "$PACKAGE" in
             rho-sdk) args+=(--sdk) ;;
-            rho-tools) args+=(--tools) ;;
+            rho-agent-tools) args+=(--tools) ;;
             rho-providers) args+=(--providers) ;;
             rho-coding-agent) args+=(--app) ;;
             *) echo "Unsupported package: $PACKAGE" >&2; exit 1 ;;

@@ -24,8 +24,8 @@
     },
     "crates/rho-tools": {
       "release-type": "rust",
-      "package-name": "rho-tools",
-      "component": "rho-tools",
+      "package-name": "rho-agent-tools",
+      "component": "rho-agent-tools",
       "changelog-path": "CHANGELOG.md",
       "draft": true
     },
