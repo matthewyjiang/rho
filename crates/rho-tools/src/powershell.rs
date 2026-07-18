@@ -323,7 +323,8 @@ fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
     )
 }
 
-pub(crate) fn wrapped_command(command: &str) -> String {
+/// Wrap a PowerShell command with UTF-8 output and reliable exit-code handling.
+pub fn wrapped_command(command: &str) -> String {
     format!(
         "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
          $OutputEncoding = [Console]::OutputEncoding; \
