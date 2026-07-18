@@ -2,7 +2,7 @@
 
 `rho-agent-tools` provides the workspace coding tools used by the Rho coding
 agent and adapters for registering them with `rho-sdk`. The crate is imported as
-`rho_tools`.
+`rho_agent_tools`.
 
 The built-in tools cover `read_file`, `write_file`, `edit_file`, and `list_dir`,
 with shared diff generation and output limiting. `coding_tools` constructs their
@@ -23,7 +23,7 @@ workspace and opt in to each required capability with a workspace policy.
 use std::{error::Error, sync::Arc};
 
 use rho_sdk::{provider::ModelProvider, Rho, ScopedWorkspacePolicy, Workspace};
-use rho_tools::{coding_tools, shell_tool, CodingToolOptions};
+use rho_agent_tools::{coding_tools, shell_tool, CodingToolOptions};
 
 fn build_runtime(provider: Arc<dyn ModelProvider>) -> Result<Rho, Box<dyn Error>> {
     let workspace = Workspace::new(std::env::current_dir()?)?;
