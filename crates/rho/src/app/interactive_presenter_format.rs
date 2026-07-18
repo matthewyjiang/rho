@@ -38,7 +38,11 @@ pub(super) fn preview_lines(
     cwd: &std::path::Path,
 ) -> Vec<String> {
     let Some(arguments) = arguments else {
-        return vec![name.to_string()];
+        return vec![match kind {
+            ToolKind::Bash => "$".into(),
+            ToolKind::PowerShell => "PS".into(),
+            _ => name.to_string(),
+        }];
     };
     match kind {
         ToolKind::Bash => vec![command_line("$", arguments)],

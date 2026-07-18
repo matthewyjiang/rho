@@ -17,6 +17,20 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
 }
 
 #[test]
+fn shell_preview_uses_prompt_before_arguments_arrive() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+
+    assert_eq!(
+        presenter.preview(0, Some("bash".into()), ""),
+        Some(vec!["$".into()])
+    );
+    assert_eq!(
+        presenter.preview(1, Some("powershell".into()), ""),
+        Some(vec!["PS".into()])
+    );
+}
+
+#[test]
 fn step_boundary_resets_streamed_previews_for_reused_indexes() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     assert_eq!(
