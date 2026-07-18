@@ -45,6 +45,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
+    lines.push(verification_note(snapshot.status.state).into());
     if let Some(error) = &snapshot.status.error {
         lines.push(format!("error: {error}"));
     }
@@ -66,6 +67,20 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         }
     }
     lines.join("\n")
+}
+
+fn verification_note(state: crate::subagent::RunState) -> &'static str {
+    match state {
+        crate::subagent::RunState::Ok => {
+            "verification: delegated run completed; overall task verification is not established"
+        }
+        crate::subagent::RunState::Error | crate::subagent::RunState::Stopped => {
+            "verification: incomplete; do not claim the delegated work or review was verified"
+        }
+        crate::subagent::RunState::Starting | crate::subagent::RunState::Running => {
+            "verification: pending"
+        }
+    }
 }
 
 pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {

@@ -54,6 +54,13 @@ Every invocation goes through the same binder. It resolves model and reasoning p
 
 Delegated invocations do not receive `agent`, `agents`, or interactive questionnaire capabilities, so they cannot recursively delegate. Each delegated run owns a fresh SDK runtime, session, tool registry, cancellation token, event stream, and usage accounting. Immutable configuration and provider infrastructure may be shared.
 
+The delegated run state reports the lifecycle of that subagent, not verification of the
+parent task. `ok` means that the delegated run ended without a runtime error; it does not
+prove that the requested work, acceptance criteria, or review passed. `error` and `stopped`
+states must be treated as incomplete work or review. The parent should report automated
+validation, implementation, and review status separately and must not claim full
+verification from a successful delegated run alone.
+
 ## Delegating work
 
 The `agent` tool accepts an `agent_id`, prompt, and optional `background` flag:

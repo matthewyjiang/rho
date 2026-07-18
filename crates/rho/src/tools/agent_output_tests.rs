@@ -56,6 +56,7 @@ fn formats_status_with_runtime_details() {
         "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
+         verification: pending\n\
          attach: rho attach abc123"
     );
 }
@@ -66,7 +67,24 @@ fn formats_completion_with_result() {
         format_snapshot(&snapshot(true), SnapshotFormat::Completion),
         "agent abc123 (explorer): ok\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
+         verification: delegated run completed; overall task verification is not established\n\
          \n\
          found it"
+    );
+}
+
+#[test]
+fn failed_completion_is_explicitly_unverified() {
+    let mut failed = snapshot(true);
+    failed.status.state = RunState::Error;
+    failed.status.result = None;
+    failed.status.error = Some("provider stream failed after emitting output".into());
+
+    assert_eq!(
+        format_snapshot(&failed, SnapshotFormat::Completion),
+        "agent abc123 (explorer): error\n\
+         turns: 3 · tokens: 1200 in / 300 out\n\
+         verification: incomplete; do not claim the delegated work or review was verified\n\
+         error: provider stream failed after emitting output"
     );
 }

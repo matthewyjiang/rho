@@ -1,5 +1,6 @@
 use super::*;
 use crate::{app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics};
+use std::time::Duration;
 
 fn manager(root: &Path) -> SubagentManager {
     SubagentManager::new(AgentExecutor::new(
@@ -52,4 +53,27 @@ fn lifecycle_tool_schema_is_stable() {
         serde_json::json!(["list", "status", "stop"])
     );
     let _ = test_diagnostics("test", "test");
+}
+
+#[test]
+fn failed_notification_warns_against_claiming_verification() {
+    let notification = SubagentNotification {
+        snapshot: SubagentSnapshot {
+            id: "abc123".into(),
+            agent_id: "reviewer".into(),
+            background: true,
+            elapsed: Duration::from_secs(1),
+            done: true,
+            status: RunStatus {
+                state: RunState::Error,
+                error: Some("provider stream failed after emitting output".into()),
+                ..RunStatus::default()
+            },
+        },
+    };
+
+    let (model, display) = notification_prompts(&notification);
+    assert!(model.contains("Treat `error` and `stopped` states as incomplete work or review"));
+    assert!(model.contains("Do not claim full verification"));
+    assert!(display.contains("finished - error"));
 }

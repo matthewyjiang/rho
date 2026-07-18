@@ -256,7 +256,7 @@ fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
 pub fn notification_prompts(notification: &SubagentNotification) -> (String, String) {
     let snapshot = &notification.snapshot;
     let model = format!(
-        "[agent notification]\n\n{}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
+        "[agent notification]\n\n{}\n\nThis is an automated notification, not a user message. A delegated run's `ok` state means only that the subagent ended without a runtime error; it does not establish that the overall task or its acceptance criteria are verified. Treat `error` and `stopped` states as incomplete work or review. Do not claim full verification from this notification alone. Fold the result into your ongoing work; use the agents tool for details.",
         format_snapshot(snapshot, SnapshotFormat::Completion)
     );
     let display = format!(
