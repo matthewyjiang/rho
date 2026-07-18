@@ -154,16 +154,24 @@ jobs:
         run: >-
           cargo package --locked --no-verify -p rho-coding-agent
           --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+          --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
+          --config 'patch.crates-io.rho-tools.path="crates/rho-tools"'
       - name: Check package file lists
         shell: bash
         run: |
           set -euo pipefail
           cargo package --list -p rho-sdk > /tmp/rho-sdk-package-files
+          cargo package --list -p rho-providers > /tmp/rho-providers-package-files
+          cargo package --list -p rho-tools > /tmp/rho-tools-package-files
           cargo package --list -p rho-coding-agent > /tmp/rho-application-package-files
           grep -Fxq Cargo.toml /tmp/rho-sdk-package-files
           grep -Fxq README.md /tmp/rho-sdk-package-files
           grep -Fxq src/lib.rs /tmp/rho-sdk-package-files
           grep -Fxq examples/simple_completion.rs /tmp/rho-sdk-package-files
+          grep -Fxq Cargo.toml /tmp/rho-providers-package-files
+          grep -Fxq src/lib.rs /tmp/rho-providers-package-files
+          grep -Fxq Cargo.toml /tmp/rho-tools-package-files
+          grep -Fxq src/lib.rs /tmp/rho-tools-package-files
           grep -Fxq Cargo.toml /tmp/rho-application-package-files
           grep -Fxq src/main.rs /tmp/rho-application-package-files
           grep -Fxq tests/automation_cli.rs /tmp/rho-application-package-files
