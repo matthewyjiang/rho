@@ -33,6 +33,37 @@ async fn reads_selected_line_range() {
 }
 
 #[tokio::test]
+async fn reads_supported_images_without_utf8_decoding() {
+    let (_dir, ctx) = test_context();
+    fs::write(
+        ctx.cwd.join("photo.png"),
+        b"\x89PNG\r\n\x1a\nnot-a-complete-image",
+    )
+    .unwrap();
+
+    let result = ReadFile
+        .call(json!({"path": "photo.png"}), ctx, "call_image".into())
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "image/png image (28 bytes)");
+}
+
+#[test]
+fn recognizes_supported_image_signatures() {
+    assert_eq!(
+        supported_image_mime_type(b"\xff\xd8\xffrest"),
+        Some("image/jpeg")
+    );
+    assert_eq!(supported_image_mime_type(b"GIF89arest"), Some("image/gif"));
+    assert_eq!(
+        supported_image_mime_type(b"RIFFxxxxWEBP"),
+        Some("image/webp")
+    );
+    assert_eq!(supported_image_mime_type(b"plain text"), None);
+}
+
+#[tokio::test]
 async fn rejects_offset_past_end_of_file() {
     let (_dir, ctx) = test_context();
     fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();

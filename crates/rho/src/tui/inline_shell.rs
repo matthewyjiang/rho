@@ -336,6 +336,7 @@ impl super::App {
                 },
                 display_lines: display_lines(&output, task.mode.included_in_context()),
                 expanded: true,
+                image: None,
             }));
         }
         self.status = "inline shell cancelled".into();
@@ -408,6 +409,7 @@ impl super::App {
             },
             display_lines: display_text.lines().map(str::to_string).collect(),
             expanded: true,
+            image: None,
         }));
         self.statusline.refresh_git_branch();
         self.status = if output.ok {
@@ -486,6 +488,7 @@ impl PendingShellTask {
             state: super::ToolEntryState::Running,
             display_lines: display_lines(&output, self.mode.included_in_context()),
             expanded: true,
+            image: None,
         }
     }
 }

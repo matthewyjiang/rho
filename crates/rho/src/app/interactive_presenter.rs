@@ -17,6 +17,7 @@ pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
     pub(crate) display_style: ToolDisplayStyle,
     pub(crate) display_lines: Vec<String>,
+    pub(crate) image_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]

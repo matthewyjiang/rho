@@ -193,7 +193,7 @@ impl Tool for ReadFileTool {
             let path =
                 authorize_existing_path(&context, &args.path, PathCapability::Read, "read_file")
                     .await?;
-            let content = read_file_content(&path, args.offset, args.limit)
+            let output = read_file_content(&path, args.offset, args.limit)
                 .await
                 .map_err(map_app_error)?;
             let display = read_file_display_content(
@@ -204,12 +204,15 @@ impl Tool for ReadFileTool {
                     "limit": args.limit,
                 }),
             );
+            let mut metadata = ToolMetadata::new()
+                .operation(OperationKind::Read)
+                .affected_path(display);
+            if output.image_mime_type.is_some() {
+                metadata = metadata.image_path(path);
+            }
             Ok(
-                ToolOutput::text(truncate(content, self.max_output_bytes)).metadata(
-                    ToolMetadata::new()
-                        .operation(OperationKind::Read)
-                        .affected_path(display),
-                ),
+                ToolOutput::text(truncate(output.content, self.max_output_bytes))
+                    .metadata(metadata),
             )
         })
     }

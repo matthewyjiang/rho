@@ -103,6 +103,33 @@ fn retains_structured_tool_metadata_until_completion() {
 }
 
 #[test]
+fn forwards_image_preview_path_on_tool_completion() {
+    let mut adapter = SdkEventAdapter::default();
+    let call_id = ToolCallId::from_string("call-image").unwrap();
+    let _ = adapter.translate(RunEvent::ToolStarted {
+        call_id: call_id.clone(),
+        name: "read_file".into(),
+        metadata: ToolMetadata::new(),
+    });
+    let output = ToolOutput::text("image/png image (4 bytes)")
+        .metadata(ToolMetadata::new().image_path("/workspace/photo.png"));
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { image_path, .. }) =
+        adapter.translate(RunEvent::ToolFinished {
+            call_id,
+            result: ToolCompletion::Success(output),
+        })
+    else {
+        panic!("expected translated tool completion");
+    };
+
+    assert_eq!(
+        image_path.as_deref(),
+        Some(std::path::Path::new("/workspace/photo.png"))
+    );
+}
+
+#[test]
 fn choice_round_trip_renders_label_and_returns_machine_value() {
     let question = HostQuestion::new(
         "language",

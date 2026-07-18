@@ -44,6 +44,7 @@ mod config_picker;
 mod copy_interaction;
 mod doctor;
 mod event_adapter;
+mod feed_image;
 mod file_palette;
 mod file_picker;
 mod frame_scheduler;
@@ -97,6 +98,7 @@ use config_editor::{
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use feed_image::{kitty_picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
@@ -294,6 +296,8 @@ struct App {
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
+    image_picker: Option<ratatui_image::picker::Picker>,
+    next_feed_image_id: u64,
     steering_prompts: VecDeque<QueuedPrompt>,
     accepted_steering: VecDeque<AcceptedSteering>,
     retracting_steering: Option<rho_sdk::SteeringId>,
@@ -494,6 +498,7 @@ struct ToolEntry {
     state: ToolEntryState,
     display_lines: Vec<String>,
     expanded: bool,
+    image: Option<FeedImage>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -626,6 +631,8 @@ impl App {
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
             pending_tool_call: None,
+            image_picker: kitty_picker_from_environment(),
+            next_feed_image_id: 1,
             steering_prompts: VecDeque::new(),
             accepted_steering: VecDeque::new(),
             retracting_steering: None,
@@ -4675,6 +4682,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
+                    image: None,
                 });
                 None
             }
@@ -4687,6 +4695,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded,
+                    image: None,
                 });
                 None
             }
@@ -4695,6 +4704,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
+                    image: None,
                 });
                 None
             }
@@ -4742,7 +4752,8 @@ impl App {
             ViewModelEvent::ToolFinished {
                 ok,
                 display_style,
-                display_lines,
+                mut display_lines,
+                image_path,
             } => {
                 self.statusline.refresh_git_branch();
                 self.active_tool_call = false;
@@ -4751,10 +4762,21 @@ impl App {
                     .as_ref()
                     .is_some_and(|pending| pending.expanded);
                 self.pending_tool_call = None;
+                let image =
+                    image_path
+                        .as_deref()
+                        .and_then(|path| match self.load_feed_image(path) {
+                            Ok(image) => image,
+                            Err(error) => {
+                                display_lines.push(format!("image preview unavailable: {error}"));
+                                None
+                            }
+                        });
                 Some(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
                     expanded,
+                    image,
                 }))
             }
         }
@@ -4778,12 +4800,13 @@ impl App {
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history.height as usize);
-        let history_visible = self.visible_history_lines_with_live(
+        let mut history_visible = self.visible_history_lines_with_live(
             width,
             history_start,
             history_count,
             &live_history,
         );
+        let visible_images = feed_image::take_visible_image_rows(&mut history_visible);
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history,
@@ -4811,6 +4834,7 @@ impl App {
                 }
             }
         }
+        self.render_feed_images(frame, layout.history, &visible_images);
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
             frame.render_widget(
@@ -6110,6 +6134,7 @@ mod tests {
             },
             display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
             expanded: false,
+            image: None,
         })
     }
 
@@ -6530,6 +6555,7 @@ mod tests {
                 },
                 display_lines: vec!["skill caveman".into()],
                 expanded: false,
+                image: None,
             }),
             40,
             10,
@@ -6553,6 +6579,7 @@ mod tests {
                 },
                 display_lines: vec!["unknown skill".into()],
                 expanded: false,
+                image: None,
             }),
             40,
             10,
@@ -6830,6 +6857,7 @@ mod tests {
             state: ToolEntryState::Running,
             display_lines: vec!["bash".into(), "cargo test".into()],
             expanded: false,
+            image: None,
         });
         let width = 40;
         let height = 24;
@@ -7652,6 +7680,7 @@ mod tests {
             state: ToolEntryState::Running,
             display_lines: vec!["bash".into(), "cargo test".into()],
             expanded: false,
+            image: None,
         });
         app.live_stream_preview = Some(LiveStreamPreview {
             kind: StreamKind::Assistant,

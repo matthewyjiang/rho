@@ -19,6 +19,7 @@ impl App {
             },
             display_lines: diff.lines,
             expanded: true,
+            image: None,
         }));
         self.status = if diff.has_changes {
             "worktree diff".into()

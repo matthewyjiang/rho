@@ -629,14 +629,7 @@ pub(super) fn tool_entry_lines(
 ) -> Vec<Line<'static>> {
     let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
-    push_tool_block(
-        &mut lines,
-        &tool.display_lines,
-        tool.state,
-        inner_width,
-        max_tool_output_lines,
-        tool.expanded,
-    );
+    push_tool_block(&mut lines, tool, inner_width, max_tool_output_lines);
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -721,14 +714,7 @@ fn render_non_assistant_entry(
             Theme::dim().add_modifier(Modifier::DIM),
             LineFill::Natural,
         ),
-        Entry::Tool(tool) => push_tool_block(
-            lines,
-            &tool.display_lines,
-            tool.state,
-            width,
-            max_tool_output_lines,
-            tool.expanded,
-        ),
+        Entry::Tool(tool) => push_tool_block(lines, tool, width, max_tool_output_lines),
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
@@ -741,31 +727,32 @@ fn render_non_assistant_entry(
 
 fn push_tool_block(
     lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    state: ToolEntryState,
+    tool: &super::ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
-    expanded: bool,
 ) {
-    let style = match state {
+    let style = match tool.state {
         ToolEntryState::Running => Theme::user_message(),
         ToolEntryState::Finished { ok, display_style } => tool_style(display_style).for_result(ok),
     };
     push_tool_block_with_style(
         lines,
-        display_lines,
+        &tool.display_lines,
         width,
         max_tool_output_lines,
-        expanded,
+        tool.expanded,
         style,
         matches!(
-            state,
+            tool.state,
             ToolEntryState::Finished {
                 display_style: ToolDisplayStyle::FileDiff,
                 ..
             }
         ),
     );
+    if let Some(image) = &tool.image {
+        image.push_placeholder_lines(lines);
+    }
 }
 
 fn push_tool_block_with_style(

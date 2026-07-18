@@ -31,6 +31,10 @@ Web access tools keep normal prompts small. They return concise previews, snippe
 
 These tools can read and modify files, run shell commands in the working directory, and fetch external or local content when invoked. The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.
 
+## Image previews
+
+`read_file` accepts PNG, JPEG, GIF, and WebP files in addition to UTF-8 text. In the interactive TUI, a successful image read renders a bounded preview directly in the feed when Rho is running in Kitty or Ghostty and the Kitty graphics protocol is available. Other terminals keep the normal text tool result without emitting graphics escape sequences. Image previews are presentation-only and are not restored when resuming a saved transcript.
+
 ## Atomic file edits
 
 `edit_file` accepts either the existing single-edit arguments or an `edits` array for several exact replacements across one or more files. Array edits run in order, including when several edits target the same file. Each edit may set `expected_match_count` (default `1`); the edit fails as missing when fewer matches are found or ambiguous when more matches are found. Rho validates every replacement against in-memory file contents before writing any file, so a validation failure leaves all targeted files unchanged.

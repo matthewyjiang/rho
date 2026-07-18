@@ -89,6 +89,7 @@ pub struct ToolMetadata {
     command_summary: Option<String>,
     urls: Vec<String>,
     diff: Option<String>,
+    image_path: Option<PathBuf>,
 }
 
 impl ToolMetadata {
@@ -121,6 +122,12 @@ impl ToolMetadata {
         self
     }
 
+    /// Marks a local image that hosts may preview alongside the tool result.
+    pub fn image_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.image_path = Some(path.into());
+        self
+    }
+
     pub fn operation_kind(&self) -> Option<&OperationKind> {
         self.operation.as_ref()
     }
@@ -139,6 +146,10 @@ impl ToolMetadata {
 
     pub fn unified_diff(&self) -> Option<&str> {
         self.diff.as_deref()
+    }
+
+    pub fn preview_image_path(&self) -> Option<&Path> {
+        self.image_path.as_deref()
     }
 }
 

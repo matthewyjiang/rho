@@ -170,11 +170,16 @@ fn metadata_exposes_structured_paths_commands_urls_and_diffs() {
         .affected_path("Cargo.toml")
         .command_summary("cargo test")
         .url("https://example.com")
-        .diff("+dependency");
+        .diff("+dependency")
+        .image_path("screenshots/result.png");
 
     assert_eq!(metadata.operation_kind(), Some(&OperationKind::Execute));
     assert_eq!(metadata.affected_paths(), [PathBuf::from("Cargo.toml")]);
     assert_eq!(metadata.command_summary_text(), Some("cargo test"));
     assert_eq!(metadata.urls(), ["https://example.com"]);
     assert_eq!(metadata.unified_diff(), Some("+dependency"));
+    assert_eq!(
+        metadata.preview_image_path(),
+        Some(std::path::Path::new("screenshots/result.png"))
+    );
 }

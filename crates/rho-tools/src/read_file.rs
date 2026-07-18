@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 
 pub struct ReadFile;
 #[derive(Deserialize)]
@@ -18,7 +18,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text file.".into(),
+            description: "Reads a UTF-8 text file or a PNG, JPEG, GIF, or WebP image.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -39,11 +39,11 @@ impl Tool for ReadFile {
     ) -> Result<ToolResult, ToolError> {
         let args: Args = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
-        let content = read_file_content(&path, args.offset, args.limit).await?;
+        let output = read_file_content(&path, args.offset, args.limit).await?;
         Ok(ToolResult {
             id,
             ok: true,
-            content: truncate(content, ctx.max_output_bytes),
+            content: truncate(output.content, ctx.max_output_bytes),
         })
     }
 }
@@ -74,16 +74,51 @@ pub(super) fn read_file_display_content(
     format!("{path}:{start}-{end}")
 }
 
+pub(super) struct ReadFileContent {
+    pub(super) content: String,
+    pub(super) image_mime_type: Option<&'static str>,
+}
+
 pub(super) async fn read_file_content(
     path: &Path,
     offset: Option<usize>,
     limit: Option<usize>,
-) -> Result<String, ToolError> {
+) -> Result<ReadFileContent, ToolError> {
     if offset.is_none() && limit.is_none() {
-        return Ok(tokio::fs::read_to_string(path).await?);
+        let mut file = tokio::fs::File::open(path).await?;
+        let mut header = [0_u8; 12];
+        let header_len = file.read(&mut header).await?;
+        if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
+            let bytes = file.metadata().await?.len();
+            return Ok(ReadFileContent {
+                content: format!("{mime_type} image ({bytes} bytes)"),
+                image_mime_type: Some(mime_type),
+            });
+        }
+        return Ok(ReadFileContent {
+            content: tokio::fs::read_to_string(path).await?,
+            image_mime_type: None,
+        });
     }
     let file = tokio::fs::File::open(path).await?;
-    read_line_range(BufReader::new(file), offset, limit).await
+    Ok(ReadFileContent {
+        content: read_line_range(BufReader::new(file), offset, limit).await?,
+        image_mime_type: None,
+    })
+}
+
+fn supported_image_mime_type(header: &[u8]) -> Option<&'static str> {
+    if header.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if header.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else {
+        None
+    }
 }
 
 async fn read_line_range(
