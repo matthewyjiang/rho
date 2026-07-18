@@ -5,11 +5,11 @@ use super::{
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
 };
-use crate::{
-    model::{image_summary, ImageContent},
-    tool::ToolDisplayStyle,
-};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use {
+    rho_providers::model::{image_summary, ImageContent},
+    rho_tools::tool::ToolDisplayStyle,
+};
 
 use ratatui::{
     layout::Position,

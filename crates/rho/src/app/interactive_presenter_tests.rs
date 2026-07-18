@@ -6,7 +6,7 @@ use rho_sdk::{
 };
 
 use super::InteractiveToolPresenter;
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {

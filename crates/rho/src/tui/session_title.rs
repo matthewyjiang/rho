@@ -7,7 +7,7 @@ use rho_sdk::{
 };
 
 use super::SessionTitleResult;
-use crate::providers::build_sdk_provider;
+use rho_providers::providers::build_sdk_provider;
 
 pub(super) struct PendingSessionTitle {
     session_id: String,

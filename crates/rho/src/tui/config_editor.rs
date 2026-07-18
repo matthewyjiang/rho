@@ -1,8 +1,8 @@
 use ratatui::text::Line;
 
-use crate::{
-    app::config_repository::ConfigRepository,
-    credentials::{
+use {
+    crate::app::config_repository::ConfigRepository,
+    rho_providers::credentials::{
         delete_web_search_api_key, save_web_search_api_key, CredentialError, CredentialResult,
         CredentialStore, WebSearchCredential,
     },

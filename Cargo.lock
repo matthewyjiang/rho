@@ -2485,6 +2485,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rho-agent-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "libc",
+ "pretty_assertions",
+ "rho-sdk",
+ "same-file",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rho-coding-agent"
 version = "1.6.0"
 dependencies = [
@@ -2506,6 +2525,8 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "rho-agent-tools",
+ "rho-providers",
  "rho-sdk",
  "rho-tui-pty",
  "rusqlite",
@@ -2527,6 +2548,34 @@ dependencies = [
  "webbrowser",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "rho-providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "futures-util",
+ "keyring",
+ "pretty_assertions",
+ "rand 0.8.6",
+ "reqwest",
+ "rho-agent-tools",
+ "rho-sdk",
+ "rusqlite",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "toml 0.8.23",
+ "url",
+ "webbrowser",
 ]
 
 [[package]]

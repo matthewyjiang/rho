@@ -7,7 +7,7 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use crate::{subagent, tool::ToolDisplayStyle};
+use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
 use super::super::event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 

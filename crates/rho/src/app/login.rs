@@ -1,11 +1,11 @@
-use crate::{
-    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
-    credentials::{
+use {
+    rho_providers::auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
+    rho_providers::credentials::{
         save_codex_tokens, save_github_copilot_tokens, save_kimi_tokens, save_xai_tokens,
         OsCredentialStore,
     },
-    model::catalog,
-    provider::{self, ProviderAuthKind},
+    rho_providers::model::catalog,
+    rho_providers::provider::{self, ProviderAuthKind},
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {

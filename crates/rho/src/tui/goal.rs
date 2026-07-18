@@ -6,10 +6,10 @@ use rho_sdk::{
 };
 use serde::Deserialize;
 
-use crate::{
-    model::{ContentBlock, Message, ModelRequest, ModelResponse},
-    providers::build_sdk_provider,
-    reasoning::ReasoningLevel,
+use {
+    rho_providers::model::{ContentBlock, Message, ModelRequest, ModelResponse},
+    rho_providers::providers::build_sdk_provider,
+    rho_providers::reasoning::ReasoningLevel,
 };
 
 pub(super) const MAX_GOAL_CHARS: usize = 4_000;

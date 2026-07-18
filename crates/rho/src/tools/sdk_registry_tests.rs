@@ -238,9 +238,7 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
         .provider(provider)
         .workspace(Workspace::new(root.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_processes());
-    builder = builder.tool_shared(Arc::new(super::super::sdk_shell::SdkShellTool::bash(
-        12_000,
-    )));
+    builder = builder.tool_shared(rho_tools::shell_tool(12_000));
     let runtime = builder.build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("run it")).await.unwrap();

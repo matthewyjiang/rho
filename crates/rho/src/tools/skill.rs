@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::{
-    skills,
-    tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+use {
+    crate::skills,
+    rho_tools::tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 pub struct Skill;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{AssistantMessage, ProviderContextBlock};
+use rho_providers::model::{AssistantMessage, ProviderContextBlock};
 use serde_json::json;
 
 const SESSION_V1: &str = include_str!("session/fixtures/session-v1.jsonl");

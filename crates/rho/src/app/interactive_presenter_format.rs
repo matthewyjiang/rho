@@ -1,6 +1,6 @@
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 
-use crate::tool::{compact_display_path, ToolDisplayStyle};
+use rho_tools::tool::{compact_display_path, ToolDisplayStyle};
 
 use super::{ToolKind, ToolPresentation, ToolView};
 

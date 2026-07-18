@@ -1,12 +1,12 @@
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
-use crate::{
-    agent::{AgentDefinition, KNOWN_TOOLS},
-    cancellation::RunCancellation,
-    config::Config,
-    diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
-    subagent::{self, RunState, RunStatus},
+use {
+    crate::agent::{AgentDefinition, KNOWN_TOOLS},
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::HerdrReporter,
+    crate::subagent::{self, RunState, RunStatus},
+    rho_tools::cancellation::RunCancellation,
 };
 
 use super::{
@@ -157,12 +157,17 @@ impl AgentExecutor {
             };
             let mut config = bound.config().clone();
             if config.provider == "anthropic"
-                && crate::model::models_dev::cached_model_metadata(&config.provider, &config.model)
-                    .is_none()
+                && rho_providers::model::models_dev::cached_model_metadata(
+                    &config.provider,
+                    &config.model,
+                )
+                .is_none()
             {
-                let _ =
-                    crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
-                        .await;
+                let _ = rho_providers::model::models_dev::fetch_model_metadata(
+                    &config.provider,
+                    &config.model,
+                )
+                .await;
             }
             super::cli_config::normalize_reasoning(&mut config);
             let diagnostics = RuntimeDiagnostics::new(&config);

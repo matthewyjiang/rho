@@ -2,12 +2,12 @@ use super::{
     model_picker, provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone,
     PickerItem, UiPicker,
 };
-use crate::{
-    config::Config,
-    credentials::{
+use {
+    crate::config::Config,
+    crate::permission::PermissionMode,
+    rho_providers::credentials::{
         load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
     },
-    permission::PermissionMode,
 };
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const TITLE_MODEL_VALUE: &str = "title_model";
@@ -100,7 +100,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
                     info.reasoning.next_supported(
-                        crate::model::models_dev::cached_reasoning_levels(
+                        rho_providers::model::models_dev::cached_reasoning_levels(
                             &info.provider,
                             &info.model,
                         )

@@ -1,4 +1,4 @@
-use crate::tool::truncate;
+use rho_tools::tool::truncate;
 
 use super::agent::SubagentSnapshot;
 

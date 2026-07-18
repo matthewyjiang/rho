@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::{credentials::WebSearchCredential, tool::ToolError};
+use {rho_providers::credentials::WebSearchCredential, rho_tools::tool::ToolError};
 
 use super::{SearchBackendConfig, SearchItem};
 

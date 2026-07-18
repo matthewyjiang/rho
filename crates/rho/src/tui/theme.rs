@@ -268,15 +268,15 @@ impl Theme {
         Self::dim_block(Palette::current().user_background)
     }
 
-    pub(super) fn reasoning_input_border(level: crate::reasoning::ReasoningLevel) -> Style {
+    pub(super) fn reasoning_input_border(level: rho_providers::reasoning::ReasoningLevel) -> Style {
         let color = match level {
-            crate::reasoning::ReasoningLevel::Off => return Theme::dim(),
-            crate::reasoning::ReasoningLevel::Minimal => AnsiColor::Blue.color(),
-            crate::reasoning::ReasoningLevel::Low => AnsiColor::Cyan.color(),
-            crate::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
-            crate::reasoning::ReasoningLevel::High => AnsiColor::Yellow.color(),
-            crate::reasoning::ReasoningLevel::Xhigh => AnsiColor::Magenta.color(),
-            crate::reasoning::ReasoningLevel::Max => AnsiColor::Red.color(),
+            rho_providers::reasoning::ReasoningLevel::Off => return Theme::dim(),
+            rho_providers::reasoning::ReasoningLevel::Minimal => AnsiColor::Blue.color(),
+            rho_providers::reasoning::ReasoningLevel::Low => AnsiColor::Cyan.color(),
+            rho_providers::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
+            rho_providers::reasoning::ReasoningLevel::High => AnsiColor::Yellow.color(),
+            rho_providers::reasoning::ReasoningLevel::Xhigh => AnsiColor::Magenta.color(),
+            rho_providers::reasoning::ReasoningLevel::Max => AnsiColor::Red.color(),
         };
         Style::default().fg(color)
     }

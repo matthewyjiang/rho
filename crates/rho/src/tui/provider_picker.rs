@@ -1,8 +1,8 @@
 use super::{PickerAction, PickerItem, UiPicker};
-use crate::{
-    credentials::{provider_has_stored_credentials, CredentialStore},
-    model::catalog,
-    provider,
+use {
+    rho_providers::credentials::{provider_has_stored_credentials, CredentialStore},
+    rho_providers::model::catalog,
+    rho_providers::provider,
 };
 
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
@@ -81,7 +81,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
 
 pub(super) fn logout_provider_picker(
     store: &dyn CredentialStore,
-) -> crate::credentials::CredentialResult<UiPicker> {
+) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let mut targets = Vec::new();
     for target in catalog::login_targets() {
         if provider_has_stored_credentials(store, &target.provider)? {

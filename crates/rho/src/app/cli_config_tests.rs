@@ -1,10 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{
-    cli::{Cli, Command},
-    config::Config,
-    credentials::{save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore},
-    model::provider_models::{
+use {
+    crate::cli::{Cli, Command},
+    crate::config::Config,
+    rho_providers::credentials::{
+        save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore,
+    },
+    rho_providers::model::provider_models::{
         replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
         with_provider_models_cache_dir_for_tests, ProviderModel,
     },
@@ -427,7 +429,7 @@ fn cli_reasoning_override_updates_config() {
         no_tools: false,
         no_subagents: false,
         agent: None,
-        reasoning: Some(crate::reasoning::ReasoningLevel::High),
+        reasoning: Some(rho_providers::reasoning::ReasoningLevel::High),
         resume: None,
         command: None,
     };
@@ -435,5 +437,8 @@ fn cli_reasoning_override_updates_config() {
     let save_config = apply_overrides(&mut cfg, &cli).unwrap();
 
     assert!(save_config);
-    assert_eq!(cfg.reasoning, crate::reasoning::ReasoningLevel::High);
+    assert_eq!(
+        cfg.reasoning,
+        rho_providers::reasoning::ReasoningLevel::High
+    );
 }
