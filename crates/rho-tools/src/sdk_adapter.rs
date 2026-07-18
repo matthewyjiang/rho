@@ -19,8 +19,8 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
+        OperationKind, Tool, ToolAsset, ToolContext, ToolError, ToolErrorKind, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError, WorkspacePathState,
 };
@@ -193,7 +193,7 @@ impl Tool for ReadFileTool {
             let path =
                 authorize_existing_path(&context, &args.path, PathCapability::Read, "read_file")
                     .await?;
-            let content = read_file_content(&path, args.offset, args.limit)
+            let output = read_file_content(&path, args.offset, args.limit)
                 .await
                 .map_err(map_app_error)?;
             let display = read_file_display_content(
@@ -204,12 +204,18 @@ impl Tool for ReadFileTool {
                     "limit": args.limit,
                 }),
             );
+            let mut metadata = ToolMetadata::new()
+                .operation(OperationKind::Read)
+                .affected_path(display);
+            if let Some(image) = output.image {
+                metadata = metadata.asset(ToolAsset::new(image.media_type, image.bytes));
+            }
+            if let Some(error) = output.preview_error {
+                metadata = metadata.presentation_notice(error);
+            }
             Ok(
-                ToolOutput::text(truncate(content, self.max_output_bytes)).metadata(
-                    ToolMetadata::new()
-                        .operation(OperationKind::Read)
-                        .affected_path(display),
-                ),
+                ToolOutput::text(truncate(output.content, self.max_output_bytes))
+                    .metadata(metadata),
             )
         })
     }

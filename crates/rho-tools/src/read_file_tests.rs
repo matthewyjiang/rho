@@ -33,6 +33,69 @@ async fn reads_selected_line_range() {
 }
 
 #[tokio::test]
+async fn reads_supported_images_without_retaining_the_source_decode() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("photo.png");
+    image::RgbaImage::from_pixel(2, 1, image::Rgba([1, 2, 3, 255]))
+        .save(&path)
+        .unwrap();
+    let source_len = fs::metadata(path).unwrap().len();
+
+    let result = ReadFile
+        .call(json!({"path": "photo.png"}), ctx, "call_image".into())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.content,
+        format!("image/png image ({source_len} bytes)")
+    );
+}
+
+#[tokio::test]
+async fn falls_back_to_text_when_an_ascii_signature_is_not_a_decodable_image() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("fixture.txt");
+    fs::write(&path, "GIF89a ordinary fixture text").unwrap();
+
+    let output = read_file_content(&path, None, None).await.unwrap();
+
+    assert_eq!(output.content, "GIF89a ordinary fixture text");
+    assert!(output.image.is_none());
+    assert!(output.preview_error.is_none());
+}
+
+#[tokio::test]
+async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("broken.png");
+    fs::write(&path, b"\x89PNG\r\n\x1a\n\xffbroken").unwrap();
+
+    let output = read_file_content(&path, None, None).await.unwrap();
+
+    assert_eq!(output.content, "image/png image (15 bytes)");
+    assert!(output.image.is_none());
+    assert!(output
+        .preview_error
+        .as_deref()
+        .is_some_and(|error| error.starts_with("image preview unavailable:")));
+}
+
+#[test]
+fn recognizes_supported_image_signatures() {
+    assert_eq!(
+        supported_image_mime_type(b"\xff\xd8\xffrest"),
+        Some("image/jpeg")
+    );
+    assert_eq!(supported_image_mime_type(b"GIF89arest"), Some("image/gif"));
+    assert_eq!(
+        supported_image_mime_type(b"RIFFxxxxWEBP"),
+        Some("image/webp")
+    );
+    assert_eq!(supported_image_mime_type(b"plain text"), None);
+}
+
+#[tokio::test]
 async fn rejects_offset_past_end_of_file() {
     let (_dir, ctx) = test_context();
     fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();

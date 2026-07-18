@@ -100,6 +100,7 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
             ok,
             display_style,
             display_lines,
+            ..
         } => Some(AttachmentEvent::ToolFinished {
             ok,
             display_style,

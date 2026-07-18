@@ -1,7 +1,8 @@
 use super::{
+    feed_image::{reserve_entry_image_rows, reserve_optional_image_rows},
     limits_command::usage_limit_lines,
-    markdown::MarkdownCodeBlock,
     message_render::{render_assistant_content, render_reasoning_content},
+    rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
@@ -622,11 +623,6 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub(super) struct RenderedEntry {
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) code_blocks: Vec<MarkdownCodeBlock>,
-}
-
 pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
@@ -642,6 +638,7 @@ pub(super) fn tool_entry_lines(
         max_tool_output_lines,
         tool.expanded,
     );
+    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -668,7 +665,7 @@ pub(super) fn render_entry(
     max_tool_output_lines: usize,
 ) -> RenderedEntry {
     let inner_width = padded_inner_width(width);
-    let (lines, code_blocks) = match entry {
+    let (mut lines, code_blocks) = match entry {
         Entry::Assistant(text) => {
             let rendered = render_assistant_content(text, width);
             (rendered.lines, rendered.code_blocks)
@@ -684,6 +681,8 @@ pub(super) fn render_entry(
         }
     };
 
+    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
+
     let block_style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -696,6 +695,7 @@ pub(super) fn render_entry(
     RenderedEntry {
         lines: padded,
         code_blocks,
+        image_placement,
     }
 }
 

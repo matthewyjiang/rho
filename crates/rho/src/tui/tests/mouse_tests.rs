@@ -140,6 +140,7 @@ fn clicking_expandable_pending_tool_output_toggles_it() {
         state: ToolEntryState::Running,
         display_lines: vec!["bash".into(), "first\nsecond\nthird".into()],
         expanded: false,
+        image: None,
     });
     let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
     let now = Instant::now();

@@ -171,6 +171,7 @@ impl AttachmentApp {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
+                    image: None,
                 });
             }
             AttachmentEvent::ToolFinished {
@@ -183,6 +184,7 @@ impl AttachmentApp {
                     state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
                     expanded: false,
+                    image: None,
                 }));
             }
             AttachmentEvent::Notice(notice) => self.transcript.push(Entry::Notice(notice)),

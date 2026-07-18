@@ -1,6 +1,5 @@
 use super::{
-    markdown::render_markdown,
-    render::{padded_inner_width, RenderedEntry},
+    markdown::render_markdown, render::padded_inner_width, rendered_entry::RenderedEntry,
     theme::Theme,
 };
 
@@ -10,6 +9,7 @@ pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntr
     RenderedEntry {
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
+        image_placement: None,
     }
 }
 

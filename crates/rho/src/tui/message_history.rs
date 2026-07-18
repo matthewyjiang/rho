@@ -63,6 +63,7 @@ pub(super) fn transcript_entries_from_messages(
                         },
                         display_lines,
                         expanded: false,
+                        image: None,
                     }));
                 }
                 entries.push(Entry::Notice("model interrupted".into()));
@@ -81,6 +82,7 @@ pub(super) fn transcript_entries_from_messages(
                     },
                     display_lines: presented.display_lines,
                     expanded: false,
+                    image: None,
                 }));
             }
         }
