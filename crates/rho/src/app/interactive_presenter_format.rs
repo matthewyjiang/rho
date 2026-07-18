@@ -3,14 +3,19 @@ use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::tool::{compact_display_path, ToolDisplayStyle};
 
 use super::{ToolKind, ToolPresentation, ToolView};
-use std::path::PathBuf;
 
-pub(super) fn presentation(view: &ToolView, display_lines: Vec<String>) -> ToolPresentation {
+pub(super) fn presentation(view: &ToolView, mut display_lines: Vec<String>) -> ToolPresentation {
+    display_lines.extend(view.metadata.presentation_notices().iter().cloned());
     ToolPresentation {
         command: command(view),
         display_style: view.kind.display_style(&view.metadata),
         display_lines,
-        image_path: view.metadata.preview_image_path().map(PathBuf::from),
+        image_asset: view
+            .metadata
+            .assets()
+            .iter()
+            .find(|asset| asset.media_type().starts_with("image/"))
+            .cloned(),
     }
 }
 

@@ -1,4 +1,5 @@
 use super::{
+    feed_image::{reserve_image_rows, RenderedImagePlacement},
     limits_command::usage_limit_lines,
     markdown::{render_markdown, MarkdownCodeBlock},
     theme::{Theme, ToolStyle},
@@ -620,6 +621,7 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
 pub(super) struct RenderedEntry {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) code_blocks: Vec<MarkdownCodeBlock>,
+    pub(super) image_placement: Option<RenderedImagePlacement>,
 }
 
 pub(super) fn tool_entry_lines(
@@ -630,6 +632,9 @@ pub(super) fn tool_entry_lines(
     let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
     push_tool_block(&mut lines, tool, inner_width, max_tool_output_lines);
+    if let Some(image) = &tool.image {
+        reserve_image_rows(&mut lines, image, width);
+    }
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -656,7 +661,7 @@ pub(super) fn render_entry(
     max_tool_output_lines: usize,
 ) -> RenderedEntry {
     let inner_width = padded_inner_width(width);
-    let (lines, code_blocks) = match entry {
+    let (mut lines, code_blocks) = match entry {
         Entry::Assistant(text) => {
             let rendered = render_assistant_content(text, width);
             (rendered.lines, rendered.code_blocks)
@@ -666,6 +671,14 @@ pub(super) fn render_entry(
             render_non_assistant_entry(&mut lines, entry, inner_width, max_tool_output_lines);
             (lines, Vec::new())
         }
+    };
+
+    let image_placement = match entry {
+        Entry::Tool(tool) => tool
+            .image
+            .as_ref()
+            .map(|image| reserve_image_rows(&mut lines, image, width).offset_rows(1)),
+        _ => None,
     };
 
     let block_style = lines
@@ -680,6 +693,7 @@ pub(super) fn render_entry(
     RenderedEntry {
         lines: padded,
         code_blocks,
+        image_placement,
     }
 }
 
@@ -689,6 +703,7 @@ pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntr
     RenderedEntry {
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
+        image_placement: None,
     }
 }
 
@@ -750,9 +765,6 @@ fn push_tool_block(
             }
         ),
     );
-    if let Some(image) = &tool.image {
-        image.push_placeholder_lines(lines);
-    }
 }
 
 fn push_tool_block_with_style(

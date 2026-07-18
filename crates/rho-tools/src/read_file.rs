@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::{io::Cursor, path::Path};
+
+use image::{ImageFormat, ImageReader, Limits};
 
 use crate::tool::*;
 use serde::Deserialize;
@@ -74,9 +76,21 @@ pub(super) fn read_file_display_content(
     format!("{path}:{start}-{end}")
 }
 
+const MAX_IMAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_DECODE_DIMENSION: u32 = 4_096;
+const MAX_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
+const THUMBNAIL_WIDTH: u32 = 1_024;
+const THUMBNAIL_HEIGHT: u32 = 768;
+
+pub(super) struct ImageAsset {
+    pub(super) media_type: &'static str,
+    pub(super) bytes: Vec<u8>,
+}
+
 pub(super) struct ReadFileContent {
     pub(super) content: String,
-    pub(super) image_mime_type: Option<&'static str>,
+    pub(super) image: Option<ImageAsset>,
+    pub(super) preview_error: Option<String>,
 }
 
 pub(super) async fn read_file_content(
@@ -86,25 +100,89 @@ pub(super) async fn read_file_content(
 ) -> Result<ReadFileContent, ToolError> {
     if offset.is_none() && limit.is_none() {
         let mut file = tokio::fs::File::open(path).await?;
+        let source_len = file.metadata().await?.len();
         let mut header = [0_u8; 12];
         let header_len = file.read(&mut header).await?;
         if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
-            let bytes = file.metadata().await?.len();
-            return Ok(ReadFileContent {
-                content: format!("{mime_type} image ({bytes} bytes)"),
-                image_mime_type: Some(mime_type),
-            });
+            let content = format!("{mime_type} image ({source_len} bytes)");
+            if source_len > MAX_IMAGE_FILE_BYTES {
+                return Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: Some(format!(
+                        "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+                    )),
+                });
+            }
+
+            let mut bytes = Vec::with_capacity(source_len as usize);
+            bytes.extend_from_slice(&header[..header_len]);
+            (&mut file)
+                .take(MAX_IMAGE_FILE_BYTES + 1 - header_len as u64)
+                .read_to_end(&mut bytes)
+                .await?;
+            if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
+                return Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: Some(format!(
+                        "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+                    )),
+                });
+            }
+            let content = format!("{mime_type} image ({} bytes)", bytes.len());
+            return match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
+                Ok(Ok(thumbnail)) => Ok(ReadFileContent {
+                    content,
+                    image: Some(ImageAsset {
+                        media_type: "image/png",
+                        bytes: thumbnail,
+                    }),
+                    preview_error: None,
+                }),
+                Ok(Err(error)) => Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: Some(format!("image preview unavailable: {error}")),
+                }),
+                Err(error) => Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: Some(format!("image preview task failed: {error}")),
+                }),
+            };
         }
+
+        let mut bytes = Vec::with_capacity(source_len.min(usize::MAX as u64) as usize);
+        bytes.extend_from_slice(&header[..header_len]);
+        file.read_to_end(&mut bytes).await?;
         return Ok(ReadFileContent {
-            content: tokio::fs::read_to_string(path).await?,
-            image_mime_type: None,
+            content: String::from_utf8(bytes)?,
+            image: None,
+            preview_error: None,
         });
     }
     let file = tokio::fs::File::open(path).await?;
     Ok(ReadFileContent {
         content: read_line_range(BufReader::new(file), offset, limit).await?,
-        image_mime_type: None,
+        image: None,
+        preview_error: None,
     })
+}
+
+fn thumbnail_png(bytes: Vec<u8>) -> image::ImageResult<Vec<u8>> {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_DIMENSION);
+    limits.max_image_height = Some(MAX_DECODE_DIMENSION);
+    limits.max_alloc = Some(MAX_DECODE_ALLOCATION);
+    reader.limits(limits);
+    let thumbnail = reader
+        .decode()?
+        .thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+    let mut encoded = Cursor::new(Vec::new());
+    thumbnail.write_to(&mut encoded, ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 fn supported_image_mime_type(header: &[u8]) -> Option<&'static str> {

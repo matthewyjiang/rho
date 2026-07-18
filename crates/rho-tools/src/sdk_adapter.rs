@@ -19,8 +19,8 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
+        OperationKind, Tool, ToolAsset, ToolContext, ToolError, ToolErrorKind, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError, WorkspacePathState,
 };
@@ -207,8 +207,11 @@ impl Tool for ReadFileTool {
             let mut metadata = ToolMetadata::new()
                 .operation(OperationKind::Read)
                 .affected_path(display);
-            if output.image_mime_type.is_some() {
-                metadata = metadata.image_path(path);
+            if let Some(image) = output.image {
+                metadata = metadata.asset(ToolAsset::new(image.media_type, image.bytes));
+            }
+            if let Some(error) = output.preview_error {
+                metadata = metadata.presentation_notice(error);
             }
             Ok(
                 ToolOutput::text(truncate(output.content, self.max_output_bytes))

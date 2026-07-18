@@ -33,20 +33,39 @@ async fn reads_selected_line_range() {
 }
 
 #[tokio::test]
-async fn reads_supported_images_without_utf8_decoding() {
+async fn reads_supported_images_without_retaining_the_source_decode() {
     let (_dir, ctx) = test_context();
-    fs::write(
-        ctx.cwd.join("photo.png"),
-        b"\x89PNG\r\n\x1a\nnot-a-complete-image",
-    )
-    .unwrap();
+    let path = ctx.cwd.join("photo.png");
+    image::RgbaImage::from_pixel(2, 1, image::Rgba([1, 2, 3, 255]))
+        .save(&path)
+        .unwrap();
+    let source_len = fs::metadata(path).unwrap().len();
 
     let result = ReadFile
         .call(json!({"path": "photo.png"}), ctx, "call_image".into())
         .await
         .unwrap();
 
-    assert_eq!(result.content, "image/png image (28 bytes)");
+    assert_eq!(
+        result.content,
+        format!("image/png image ({source_len} bytes)")
+    );
+}
+
+#[tokio::test]
+async fn keeps_image_reads_successful_when_preview_decoding_fails() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("fixture.gif");
+    fs::write(&path, "GIF89a ordinary fixture text").unwrap();
+
+    let output = read_file_content(&path, None, None).await.unwrap();
+
+    assert_eq!(output.content, "image/gif image (28 bytes)");
+    assert!(output.image.is_none());
+    assert!(output
+        .preview_error
+        .as_deref()
+        .is_some_and(|error| error.starts_with("image preview unavailable:")));
 }
 
 #[test]

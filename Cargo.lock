@@ -2791,6 +2791,7 @@ name = "rho-agent-tools"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "image",
  "libc",
  "pretty_assertions",
  "rho-sdk",

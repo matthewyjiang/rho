@@ -34,7 +34,7 @@ pub(super) enum ViewModelEvent {
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
-        image_path: Option<std::path::PathBuf>,
+        image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
 }
 
@@ -118,7 +118,7 @@ impl SdkEventAdapter {
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
-                    image_path: presented.image_path,
+                    image_asset: presented.image_asset,
                 })
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
@@ -131,7 +131,7 @@ impl SdkEventAdapter {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
-                        image_path: None,
+                        image_asset: None,
                     })
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))

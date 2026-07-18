@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use rho_sdk::{
     model::ToolCall,
-    tool::{ToolMetadata, ToolProgress},
+    tool::{ToolAsset, ToolMetadata, ToolProgress},
     ToolCallId, ToolCompletion,
 };
 
@@ -17,7 +17,7 @@ pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
     pub(crate) display_style: ToolDisplayStyle,
     pub(crate) display_lines: Vec<String>,
-    pub(crate) image_path: Option<PathBuf>,
+    pub(crate) image_asset: Option<ToolAsset>,
 }
 
 #[derive(Clone, Debug)]

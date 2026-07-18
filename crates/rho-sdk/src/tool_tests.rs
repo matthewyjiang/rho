@@ -10,8 +10,9 @@ use crate::{
 };
 
 use super::{
-    tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolContext,
-    ToolError, ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolRegistry,
+    tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolAsset,
+    ToolContext, ToolError, ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolProgress,
+    ToolRegistry,
 };
 
 fn spec(name: &str) -> ToolSpec {
@@ -171,15 +172,16 @@ fn metadata_exposes_structured_paths_commands_urls_and_diffs() {
         .command_summary("cargo test")
         .url("https://example.com")
         .diff("+dependency")
-        .image_path("screenshots/result.png");
+        .asset(ToolAsset::new("image/png", vec![1, 2, 3]))
+        .presentation_notice("preview unavailable");
 
     assert_eq!(metadata.operation_kind(), Some(&OperationKind::Execute));
     assert_eq!(metadata.affected_paths(), [PathBuf::from("Cargo.toml")]);
     assert_eq!(metadata.command_summary_text(), Some("cargo test"));
     assert_eq!(metadata.urls(), ["https://example.com"]);
     assert_eq!(metadata.unified_diff(), Some("+dependency"));
-    assert_eq!(
-        metadata.preview_image_path(),
-        Some(std::path::Path::new("screenshots/result.png"))
-    );
+    assert_eq!(metadata.assets().len(), 1);
+    assert_eq!(metadata.assets()[0].media_type(), "image/png");
+    assert_eq!(metadata.assets()[0].bytes(), [1, 2, 3]);
+    assert_eq!(metadata.presentation_notices(), ["preview unavailable"]);
 }

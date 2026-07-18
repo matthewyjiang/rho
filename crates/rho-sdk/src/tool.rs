@@ -81,6 +81,33 @@ impl Default for ToolSecurity {
     }
 }
 
+/// Immutable binary data produced by a tool.
+///
+/// Hosts may interpret assets according to their media type. The SDK does not
+/// prescribe how, or whether, they are presented.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolAsset {
+    media_type: String,
+    bytes: Arc<[u8]>,
+}
+
+impl ToolAsset {
+    pub fn new(media_type: impl Into<String>, bytes: impl Into<Arc<[u8]>>) -> Self {
+        Self {
+            media_type: media_type.into(),
+            bytes: bytes.into(),
+        }
+    }
+
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 /// Structured presentation metadata for a tool result or progress update.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolMetadata {
@@ -89,7 +116,8 @@ pub struct ToolMetadata {
     command_summary: Option<String>,
     urls: Vec<String>,
     diff: Option<String>,
-    image_path: Option<PathBuf>,
+    assets: Vec<ToolAsset>,
+    presentation_notices: Vec<String>,
 }
 
 impl ToolMetadata {
@@ -122,9 +150,15 @@ impl ToolMetadata {
         self
     }
 
-    /// Marks a local image that hosts may preview alongside the tool result.
-    pub fn image_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.image_path = Some(path.into());
+    /// Attaches immutable binary data produced by the tool.
+    pub fn asset(mut self, asset: ToolAsset) -> Self {
+        self.assets.push(asset);
+        self
+    }
+
+    /// Adds a host-facing notice that is not included in model-visible output.
+    pub fn presentation_notice(mut self, notice: impl Into<String>) -> Self {
+        self.presentation_notices.push(notice.into());
         self
     }
 
@@ -148,8 +182,12 @@ impl ToolMetadata {
         self.diff.as_deref()
     }
 
-    pub fn preview_image_path(&self) -> Option<&Path> {
-        self.image_path.as_deref()
+    pub fn assets(&self) -> &[ToolAsset] {
+        &self.assets
+    }
+
+    pub fn presentation_notices(&self) -> &[String] {
+        &self.presentation_notices
     }
 }
 
