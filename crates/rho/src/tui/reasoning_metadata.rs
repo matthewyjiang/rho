@@ -1,3 +1,6 @@
+use super::{
+    build_sdk_provider, config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
+};
 use rho_providers::{
     model::{
         models_dev, ModelMetadata, ReasoningCapabilities, ReasoningRequestSource,
@@ -81,6 +84,51 @@ pub(super) fn resolve_fetched_reasoning(
     FetchedReasoningResolution {
         effective: resolution.effective().unwrap_or(current),
         rejected: None,
+    }
+}
+
+impl App {
+    pub(super) fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+        let capabilities =
+            models_dev::current_reasoning_capabilities(&self.info.provider, &self.info.model);
+        if capabilities == ReasoningCapabilities::NotConfigurable {
+            return Ok(());
+        }
+        let reasoning = capabilities.next_level(self.info.reasoning);
+        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not update reasoning to {reasoning}: {err}"
+                )));
+                self.status = "reasoning change failed".into();
+                return Ok(());
+            }
+        };
+        agent.replace_provider(provider, reasoning)?;
+        self.info
+            .set_reasoning(reasoning, ReasoningRequestSource::Explicit);
+        let save_result = self.info.config_repository.update(|config| {
+            config.reasoning = reasoning;
+        });
+        if matches!(
+            &self.composer,
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            let config = self.info.config_repository.load().unwrap_or_default();
+            self.info.show_reasoning_output = config.show_reasoning_output;
+            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
+        }
+        match save_result {
+            Ok(()) => self.status = format!("reasoning: {reasoning}"),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(())
     }
 }
 

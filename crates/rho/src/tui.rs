@@ -122,7 +122,7 @@ use render::{
     input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
     session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
-use rho_providers::model::ReasoningRequestSource::{Explicit, PersistedOrDefault};
+use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use session_title::{generate_session_title, PendingSessionTitle};
 use statusline::{GoalStatus, StatusLine};
@@ -4057,53 +4057,6 @@ impl App {
         } else {
             picker.select_first_match();
         }
-    }
-
-    fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
-            &self.info.provider,
-            &self.info.model,
-        );
-        if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
-            return Ok(());
-        }
-        let reasoning = capabilities.next_level(self.info.reasoning);
-        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not update reasoning to {reasoning}: {err}"
-                )));
-                self.status = "reasoning change failed".into();
-                return Ok(());
-            }
-        };
-        agent.replace_provider(provider, reasoning)?;
-        self.info.set_reasoning(reasoning, Explicit);
-        let save_result = self.info.config_repository.update(|config| {
-            config.reasoning = reasoning;
-        });
-        if matches!(
-            &self.composer,
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            let config = self.info.config_repository.load().unwrap_or_default();
-            self.info.show_reasoning_output = config.show_reasoning_output;
-            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
-        }
-        match save_result {
-            Ok(()) => {
-                self.status = format!("reasoning: {reasoning}");
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                        "reasoning set to {reasoning} for this session, but saving config failed: {err}"
-                    )),
-                );
-                self.status = "config save failed".into();
-            }
-        }
-        Ok(())
     }
 
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
