@@ -183,7 +183,7 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
         .collect::<String>();
     assert_eq!(activity.y, jump.y);
     assert!(activity.right() < jump.x);
-    assert!(row.contains("working  ·  2 agents"), "{row:?}");
+    assert!(row.contains("starting  ·  2 agents"), "{row:?}");
     assert!(row.contains("jump to bottom"), "{row:?}");
 
     let buffer = terminal.backend().buffer();

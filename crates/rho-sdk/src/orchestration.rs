@@ -711,7 +711,7 @@ async fn handle_provider_request_event(
         events,
         cancellation,
         RunEvent::ProviderActivity {
-            kind: "provider_request_retry".into(),
+            kind: crate::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
             detail: "retrying after a failed physical provider request".into(),
         },
     )
