@@ -2997,15 +2997,15 @@ impl App {
     }
 
     fn activity_status(&self) -> Option<ActivityStatus> {
-        match (self.loading_active(), self.subagent_panel.count()) {
-            (true, 0) => Some(ActivityStatus::Parent(self.activity_phase)),
-            (true, count) => Some(ActivityStatus::ParentWithSubagents(
-                self.activity_phase,
-                count,
-            )),
-            (false, 0) => None,
-            (false, count) => Some(ActivityStatus::Subagents(count)),
-        }
+        let phase = match self.composer {
+            ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
+            ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,
+            _ => self.activity_phase,
+        };
+        ActivityStatus::from_parent_and_subagents(
+            self.loading_active().then_some(phase),
+            self.subagent_panel.count(),
+        )
     }
 
     fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
@@ -3155,11 +3155,14 @@ impl App {
         StreamControl::Interrupt
     }
 
-    fn handle_agent_event(
+    fn handle_agent_event<B: Backend>(
         &mut self,
         event: ViewModelEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        if let Some(phase) = event.activity_phase() {
+            self.activity_phase = phase;
+        }
         match event {
             ViewModelEvent::ProviderStreamReset => {
                 self.reset_provider_attempt_stream();
@@ -3218,17 +3221,17 @@ impl App {
         inserted
     }
 
-    fn drain_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+    fn drain_streams<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool, B::Error> {
         let reasoning_drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
         let assistant_drained = self.drain_stream(terminal, StreamKind::Assistant)?;
         Ok(reasoning_drained || assistant_drained)
     }
 
-    fn drain_stream(
+    fn drain_stream<B: Backend>(
         &mut self,
-        terminal: &mut DefaultTerminal,
+        terminal: &mut Terminal<B>,
         kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    ) -> Result<bool, B::Error> {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let fragment = match kind {
@@ -3421,6 +3424,7 @@ impl App {
         self.pending_input_changed();
         self.status = "compacting context".into();
         self.running = true;
+        self.activity_phase = ActivityPhase::Compacting;
         self.loading_spinner.start();
         terminal.draw(|frame| self.draw(frame))?;
 
@@ -4631,9 +4635,6 @@ impl App {
     }
 
     fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
-        if let Some(phase) = event.activity_phase() {
-            self.activity_phase = phase;
-        }
         match event {
             ViewModelEvent::RunStarted => {
                 self.usage_before_current_run = self.cumulative_usage.clone();
@@ -4683,7 +4684,6 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
-                self.activity_phase = ActivityPhase::PreparingTool;
                 self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
@@ -4701,14 +4701,15 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
-            ViewModelEvent::CompactionStarted => {
-                Some(Entry::Notice("compacting conversation context".into()))
-            }
+            ViewModelEvent::CompactionStarted => Some(Entry::Notice(
+                event_adapter::COMPACTION_STARTED_NOTICE.into(),
+            )),
             ViewModelEvent::CompactionCompleted {
                 previous_messages,
                 current_messages,
-            } => Some(Entry::Notice(format!(
-                "compacted conversation context ({previous_messages} to {current_messages} messages)"
+            } => Some(Entry::Notice(event_adapter::compaction_completed_notice(
+                previous_messages,
+                current_messages,
             ))),
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());
@@ -6082,6 +6083,8 @@ mod tests {
         save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
     };
 
+    #[path = "activity_phase_tests.rs"]
+    mod activity_phase_tests;
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
     #[path = "layout_tests.rs"]

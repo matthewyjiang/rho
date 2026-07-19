@@ -73,6 +73,19 @@ fn provider_retry_resets_the_current_provider_stream() {
 }
 
 #[test]
+fn physical_provider_retry_maps_to_typed_view_model_event() {
+    let mut adapter = SdkEventAdapter::default();
+
+    assert!(matches!(
+        adapter.translate(RunEvent::ProviderActivity {
+            kind: rho_sdk::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
+            detail: "retrying".into(),
+        }),
+        ViewEvent::Update(ViewModelEvent::ProviderRetry)
+    ));
+}
+
+#[test]
 fn legacy_malformed_response_activity_does_not_reset_twice() {
     let mut adapter = SdkEventAdapter::default();
 

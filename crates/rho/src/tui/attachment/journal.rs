@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
-use super::super::event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::super::event_adapter::{
+    compaction_completed_notice, SdkEventAdapter, ViewEvent, ViewModelEvent,
+    COMPACTION_STARTED_NOTICE,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -112,9 +115,17 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
-        ViewModelEvent::ProviderRetry
-        | ViewModelEvent::CompactionStarted
-        | ViewModelEvent::CompactionCompleted { .. } => None,
+        ViewModelEvent::ProviderRetry => None,
+        ViewModelEvent::CompactionStarted => {
+            Some(AttachmentEvent::Notice(COMPACTION_STARTED_NOTICE.into()))
+        }
+        ViewModelEvent::CompactionCompleted {
+            previous_messages,
+            current_messages,
+        } => Some(AttachmentEvent::Notice(compaction_completed_notice(
+            previous_messages,
+            current_messages,
+        ))),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

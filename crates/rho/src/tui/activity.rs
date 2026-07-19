@@ -43,6 +43,20 @@ pub(super) enum ActivityStatus {
     ParentWithSubagents(ActivityPhase, usize),
 }
 
+impl ActivityStatus {
+    pub(super) fn from_parent_and_subagents(
+        parent: Option<ActivityPhase>,
+        subagent_count: usize,
+    ) -> Option<Self> {
+        match (parent, subagent_count) {
+            (Some(phase), 0) => Some(Self::Parent(phase)),
+            (Some(phase), count) => Some(Self::ParentWithSubagents(phase, count)),
+            (None, 0) => None,
+            (None, count) => Some(Self::Subagents(count)),
+        }
+    }
+}
+
 pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize {
     activity_labels(status)
         .into_iter()

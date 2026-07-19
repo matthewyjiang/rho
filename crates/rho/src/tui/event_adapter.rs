@@ -1,7 +1,7 @@
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH,
+    PROVIDER_ACTIVITY_REQUEST_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
@@ -13,6 +13,15 @@ use super::{
     activity::ActivityPhase,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
+
+pub(super) const COMPACTION_STARTED_NOTICE: &str = "compacting conversation context";
+
+pub(super) fn compaction_completed_notice(
+    previous_messages: usize,
+    current_messages: usize,
+) -> String {
+    format!("compacted conversation context ({previous_messages} to {current_messages} messages)")
+}
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -55,6 +64,7 @@ impl ViewModelEvent {
             }
             Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
             Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
+            Self::ToolCallUpdated { .. } => Some(ActivityPhase::PreparingTool),
             Self::ProviderStreamReset | Self::ProviderRetry => {
                 Some(ActivityPhase::RetryingProvider)
             }
@@ -161,7 +171,7 @@ impl SdkEventAdapter {
                 } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
                     // The following typed reset event drives current hosts.
                     ViewEvent::Ignored
-                } else if kind == "provider_request_retry" {
+                } else if kind == PROVIDER_ACTIVITY_REQUEST_RETRY {
                     ViewEvent::Update(ViewModelEvent::ProviderRetry)
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))
