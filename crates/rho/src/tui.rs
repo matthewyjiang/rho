@@ -92,7 +92,7 @@ mod theme;
 mod tool_diff;
 mod turn_prompt;
 
-use activity::{ActivityStatus, LoadingSpinner};
+use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -293,6 +293,7 @@ struct App {
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     running: bool,
+    activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
@@ -628,6 +629,7 @@ impl App {
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             running: false,
+            activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
             pending_tool_call: None,
@@ -2995,12 +2997,15 @@ impl App {
     }
 
     fn activity_status(&self) -> Option<ActivityStatus> {
-        match (self.loading_active(), self.subagent_panel.count()) {
-            (true, 0) => Some(ActivityStatus::Working),
-            (true, count) => Some(ActivityStatus::WorkingWithSubagents(count)),
-            (false, 0) => None,
-            (false, count) => Some(ActivityStatus::Subagents(count)),
-        }
+        let phase = match self.composer {
+            ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
+            ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,
+            _ => self.activity_phase,
+        };
+        ActivityStatus::from_parent_and_subagents(
+            self.loading_active().then_some(phase),
+            self.subagent_panel.count(),
+        )
     }
 
     fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
@@ -3150,11 +3155,14 @@ impl App {
         StreamControl::Interrupt
     }
 
-    fn handle_agent_event(
+    fn handle_agent_event<B: Backend>(
         &mut self,
         event: ViewModelEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        if let Some(phase) = event.activity_phase() {
+            self.activity_phase = phase;
+        }
         match event {
             ViewModelEvent::ProviderStreamReset => {
                 self.reset_provider_attempt_stream();
@@ -3213,17 +3221,17 @@ impl App {
         inserted
     }
 
-    fn drain_streams(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<bool> {
+    fn drain_streams<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool, B::Error> {
         let reasoning_drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
         let assistant_drained = self.drain_stream(terminal, StreamKind::Assistant)?;
         Ok(reasoning_drained || assistant_drained)
     }
 
-    fn drain_stream(
+    fn drain_stream<B: Backend>(
         &mut self,
-        terminal: &mut DefaultTerminal,
+        terminal: &mut Terminal<B>,
         kind: StreamKind,
-    ) -> std::io::Result<bool> {
+    ) -> Result<bool, B::Error> {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let fragment = match kind {
@@ -3416,6 +3424,7 @@ impl App {
         self.pending_input_changed();
         self.status = "compacting context".into();
         self.running = true;
+        self.activity_phase = ActivityPhase::Compacting;
         self.loading_spinner.start();
         terminal.draw(|frame| self.draw(frame))?;
 
@@ -4684,7 +4693,7 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
-            ViewModelEvent::ProviderStreamReset => {
+            ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
                 self.usage_before_current_attempt = self
                     .current_run_usage
                     .as_ref()
@@ -4692,6 +4701,16 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::CompactionStarted => Some(Entry::Notice(
+                event_adapter::COMPACTION_STARTED_NOTICE.into(),
+            )),
+            ViewModelEvent::CompactionCompleted {
+                previous_messages,
+                current_messages,
+            } => Some(Entry::Notice(event_adapter::compaction_completed_notice(
+                previous_messages,
+                current_messages,
+            ))),
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());
                 self.current_context = Some(usage);
@@ -6064,6 +6083,8 @@ mod tests {
         save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
     };
 
+    #[path = "activity_phase_tests.rs"]
+    mod activity_phase_tests;
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
     #[path = "layout_tests.rs"]
@@ -6745,7 +6766,7 @@ mod tests {
         let lines = app.active_lines(40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(rendered.contains("working"), "{rendered}");
+        assert!(rendered.contains("starting"), "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -6824,8 +6845,8 @@ mod tests {
 ",
             );
 
-        assert!(!small_rendered.contains("working"), "{small_rendered}");
-        assert!(default_rendered.contains("working"), "{default_rendered}");
+        assert!(!small_rendered.contains("starting"), "{small_rendered}");
+        assert!(default_rendered.contains("starting"), "{default_rendered}");
     }
 
     #[test]
@@ -6852,7 +6873,7 @@ mod tests {
         assert_eq!(activity.y.saturating_add(1), layout.top_divider.y);
         assert_eq!(activity.y, layout.history.bottom().saturating_sub(1));
         assert!(activity.width < layout.history.width);
-        assert!(rows[activity.y as usize].contains("working"), "{rows:#?}");
+        assert!(rows[activity.y as usize].contains("starting"), "{rows:#?}");
         assert!(
             rows[..activity.y as usize]
                 .iter()
@@ -6871,7 +6892,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(!rendered.contains("working"), "{rendered}");
+        assert!(!rendered.contains("starting"), "{rendered}");
     }
 
     #[test]
@@ -7680,7 +7701,7 @@ mod tests {
         assert!(rendered.contains("hello"), "{rendered}");
         assert!(rendered.contains("bash"), "{rendered}");
         assert!(rendered.contains("partial answer"), "{rendered}");
-        assert!(!rendered.contains("working"), "{rendered}");
+        assert!(!rendered.contains("starting"), "{rendered}");
     }
 
     #[test]

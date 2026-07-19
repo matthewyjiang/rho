@@ -97,6 +97,7 @@ impl App {
         self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
+        self.activity_phase = ActivityPhase::Starting;
         self.info
             .herdr
             .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
