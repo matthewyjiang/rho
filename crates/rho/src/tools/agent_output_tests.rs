@@ -31,15 +31,26 @@ fn snapshot(done: bool) -> SubagentSnapshot {
 #[test]
 fn formats_agent_start_output() {
     assert_eq!(
-        format_background_start("abc123", "explorer"),
+        format_background_start("abc123", "explorer", None),
         "agent abc123 (explorer) started in background\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
     assert_eq!(
         format_running("abc123"),
         "agent abc123 running\nattach: rho attach abc123"
+    );
+}
+
+#[test]
+fn background_start_includes_first_activity_when_available() {
+    let mut snapshot = snapshot(false);
+    snapshot.status.last_text = Some("I'll inspect the config flow.".into());
+    assert_eq!(
+        format_background_start("abc123", "explorer", Some(&snapshot)),
+        "agent abc123 (explorer) started in background\n\
+         activity: searching files\n\
+         latest: I'll inspect the config flow.\n\
+         attach: rho attach abc123"
     );
 }
 
@@ -58,8 +69,6 @@ fn formats_status_with_runtime_details() {
         "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
 }
