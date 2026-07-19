@@ -228,7 +228,7 @@ impl ProviderBuilder {
                     client,
                     "kimi-code",
                     self.options.model,
-                    OpenAiCompatibleDialect::Moonshot,
+                    OpenAiCompatibleDialect::KimiCode,
                     auth,
                     endpoint.unwrap_or_else(|| KIMI_CODE_API_BASE.into()),
                 )))

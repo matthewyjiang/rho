@@ -10,7 +10,7 @@ use {
     crate::herdr::HerdrReporter,
     crate::update,
     rho_providers::credentials::OsCredentialStore,
-    rho_providers::model::{models_dev::cached_model_metadata, ModelError},
+    rho_providers::model::ModelError,
 };
 
 use super::{
@@ -51,8 +51,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = OsCredentialStore;
-    cli_config::refresh_model_cache(&cli, &store).await?;
-    if cli_config::apply_overrides(&mut config, &cli)? {
+    let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
+    let mut save_config = cli_config::apply_overrides(&mut config, &cli)?;
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    save_config |= cli_config::normalize_reasoning_for_cli(
+        &mut config,
+        /*explicit_choice*/ cli.reasoning.is_some(),
+    );
+    if save_config {
         config_repository.save(&config)?;
     }
     let role = if automation_prompt.is_some() {
@@ -71,15 +77,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     config = bound_agent.config().clone();
 
     validate_terminal_mode(&cli)?;
-    if automation_prompt.is_some()
-        && config.provider == "anthropic"
-        && cached_model_metadata(&config.provider, &config.model).is_none()
-    {
-        let _ =
-            rho_providers::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
-                .await;
-    }
-    cli_config::normalize_reasoning(&mut config);
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    cli_config::normalize_reasoning_for_cli(
+        &mut config,
+        /*explicit_choice*/ cli.reasoning.is_some(),
+    );
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
         let diagnostics = RuntimeDiagnostics::new(&config);

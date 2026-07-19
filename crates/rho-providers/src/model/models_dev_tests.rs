@@ -87,6 +87,7 @@ fn provider_context_length_overrides_generic_effective_context() {
                 display_name: "Kimi K3".into(),
                 context_window: Some(262_144),
                 max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
             }],
         )
         .unwrap();
@@ -471,5 +472,119 @@ fn codex_models_skip_minimal_when_models_dev_omits_it() {
     assert_eq!(
         metadata.reasoning_off_behavior,
         ReasoningOffBehavior::EffortNone
+    );
+}
+
+#[test]
+fn authenticated_provider_levels_replace_generic_catalog_levels() {
+    let cache_dir = std::env::temp_dir().join(format!(
+        "rho-models-dev-provider-reasoning-{}",
+        std::process::id()
+    ));
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(
+                    crate::model::ReasoningLevelSet::new(vec![
+                        ReasoningLevel::Off,
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                        ReasoningLevel::Max,
+                    ]),
+                ),
+            }],
+        )
+        .unwrap();
+
+        let metadata = apply_overrides(
+            "kimi-code",
+            "k3",
+            ModelMetadata {
+                supported_reasoning_levels: Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]),
+                reasoning_capabilities_known: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![
+                ReasoningLevel::Off,
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+                ReasoningLevel::Max,
+            ])
+        );
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn unknown_provider_capabilities_keep_catalog_fallback() {
+    let metadata = apply_provider_capabilities(
+        "missing-provider",
+        "missing-model",
+        ModelMetadata {
+            supported_reasoning_levels: Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]),
+            reasoning_capabilities_known: true,
+            ..ModelMetadata::default()
+        },
+    );
+
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+    );
+}
+
+#[test]
+fn local_reasoning_override_replaces_provider_levels() {
+    let provider_metadata = ModelMetadata {
+        supported_reasoning_levels: Some(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::Low,
+            ReasoningLevel::High,
+            ReasoningLevel::Max,
+        ]),
+        reasoning_capabilities_known: true,
+        ..ModelMetadata::default()
+    };
+    let table =
+        toml::from_str::<toml::Value>(r#"supported_reasoning_levels = ["medium", "xhigh"]"#)
+            .unwrap();
+
+    let metadata = merge_toml_override(provider_metadata, table.as_table().unwrap());
+
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::Medium,
+            ReasoningLevel::Xhigh,
+        ])
+    );
+    assert!(metadata.reasoning_capabilities_known);
+}
+
+#[test]
+fn context_only_override_does_not_hide_unknown_reasoning_capabilities() {
+    let metadata = ModelMetadata {
+        effective_context_window: Some(262_144),
+        ..ModelMetadata::default()
+    };
+
+    assert!(metadata_has_values(&metadata));
+    assert_eq!(
+        ReasoningCapabilities::from_metadata(
+            metadata.supported_reasoning_levels,
+            metadata.reasoning_capabilities_known,
+        ),
+        ReasoningCapabilities::Unknown
     );
 }

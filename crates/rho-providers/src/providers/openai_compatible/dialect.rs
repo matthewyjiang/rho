@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    protocol::openai_chat::{OpenAiThinking, OpenAiTool},
+    protocol::openai_chat::{OpenAiReasoning, OpenAiThinking, OpenAiTool},
     reasoning::ReasoningLevel,
 };
 
@@ -9,45 +9,71 @@ use crate::{
 pub(crate) enum OpenAiCompatibleDialect {
     OpenRouter,
     Moonshot,
+    KimiCode,
+}
+
+pub(crate) struct OpenAiCompatibleReasoningFields {
+    pub(crate) reasoning: Option<OpenAiReasoning>,
+    pub(crate) reasoning_effort: Option<String>,
+    pub(crate) thinking: Option<OpenAiThinking>,
 }
 
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         match self {
             Self::OpenRouter => tool,
-            Self::Moonshot => {
+            Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(&mut tool.function.parameters);
                 tool
             }
         }
     }
 
-    pub(crate) fn reasoning(self, reasoning: ReasoningLevel) -> Option<String> {
-        match self {
-            Self::OpenRouter => Some(reasoning.effort().unwrap_or("none").to_string()),
-            Self::Moonshot => None,
-        }
-    }
-
-    pub(crate) fn thinking(
+    pub(crate) fn reasoning_fields(
         self,
-        provider: &str,
         model: &str,
         reasoning: ReasoningLevel,
-    ) -> Option<OpenAiThinking> {
-        let metadata_model = crate::provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.metadata_model(model))
-            .unwrap_or(model);
-        match (self, metadata_model) {
-            (Self::Moonshot, "kimi-k3") => Some(OpenAiThinking {
-                kind: if reasoning == ReasoningLevel::Off {
-                    "disabled"
-                } else {
-                    "enabled"
-                },
-            }),
-            _ => None,
+    ) -> OpenAiCompatibleReasoningFields {
+        let empty = || OpenAiCompatibleReasoningFields {
+            reasoning: None,
+            reasoning_effort: None,
+            thinking: None,
+        };
+        match (self, model) {
+            (Self::OpenRouter, _) => OpenAiCompatibleReasoningFields {
+                reasoning: Some(OpenAiReasoning {
+                    effort: reasoning.effort().unwrap_or("none").to_string(),
+                }),
+                ..empty()
+            },
+            (Self::Moonshot, "kimi-k3") => OpenAiCompatibleReasoningFields {
+                reasoning_effort: Some(reasoning.effort().unwrap_or("none").to_string()),
+                ..empty()
+            },
+            (Self::KimiCode, "k3") => OpenAiCompatibleReasoningFields {
+                thinking: Some(match reasoning {
+                    ReasoningLevel::Off => OpenAiThinking {
+                        kind: "disabled",
+                        effort: None,
+                    },
+                    ReasoningLevel::Minimal => enabled_thinking("minimal"),
+                    ReasoningLevel::Low => enabled_thinking("low"),
+                    ReasoningLevel::Medium => enabled_thinking("medium"),
+                    ReasoningLevel::High => enabled_thinking("high"),
+                    ReasoningLevel::Xhigh => enabled_thinking("xhigh"),
+                    ReasoningLevel::Max => enabled_thinking("max"),
+                }),
+                ..empty()
+            },
+            (Self::Moonshot | Self::KimiCode, _) => empty(),
         }
+    }
+}
+
+fn enabled_thinking(effort: &str) -> OpenAiThinking {
+    OpenAiThinking {
+        kind: "enabled",
+        effort: Some(effort.to_string()),
     }
 }
 

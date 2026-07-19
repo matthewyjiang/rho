@@ -12,7 +12,7 @@ use crate::{
     protocol::openai_chat::{
         convert_openai_response, convert_streamed_response, handle_openai_stream_line,
         invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest,
-        ChatResponse, ChatStreamOptions, OpenAiReasoning,
+        ChatResponse, ChatStreamOptions,
     },
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -130,6 +130,9 @@ impl OpenAiCompatibleProvider {
             .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
+        let reasoning_fields = self
+            .dialect
+            .reasoning_fields(&self.model, request.reasoning_level);
         Ok(ChatRequest {
             model: self.model.clone(),
             messages,
@@ -139,14 +142,9 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
-            reasoning: self
-                .dialect
-                .reasoning(request.reasoning_level)
-                .map(|effort| OpenAiReasoning { effort }),
-            reasoning_effort: None,
-            thinking: self
-                .dialect
-                .thinking(self.provider, &self.model, request.reasoning_level),
+            reasoning: reasoning_fields.reasoning,
+            reasoning_effort: reasoning_fields.reasoning_effort,
+            thinking: reasoning_fields.thinking,
         })
     }
 

@@ -6,13 +6,19 @@ use {
     rho_providers::credentials::{
         save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore,
     },
-    rho_providers::model::provider_models::{
-        replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
-        with_provider_models_cache_dir_for_tests, ProviderModel,
+    rho_providers::model::{
+        provider_models::{
+            replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
+            with_provider_models_cache_dir_for_tests, ProviderModel,
+        },
+        ReasoningCapabilities, ReasoningLevelSet,
     },
 };
 
-use super::{apply_overrides, refresh_model_cache, validate};
+use super::{
+    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
+    validate,
+};
 
 fn unique_cache_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
@@ -35,6 +41,7 @@ fn with_cached_provider_models<T>(provider: &str, models: Vec<&str>, f: impl FnO
             display_name: model.into(),
             context_window: None,
             max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
         })
         .collect::<Vec<_>>();
     let result = with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
@@ -276,7 +283,7 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
         command: None,
     };
 
-    let refresh = refresh_model_cache(&cli, &store).await;
+    let refresh = refresh_model_cache(&cli, &cfg, &store).await;
     refresh.unwrap();
     apply_overrides(&mut cfg, &cli).unwrap();
     set_provider_models_cache_dir_for_tests(None);
@@ -440,5 +447,105 @@ fn cli_reasoning_override_updates_config() {
     assert_eq!(
         cfg.reasoning,
         rho_providers::reasoning::ReasoningLevel::High
+    );
+}
+
+#[test]
+fn authenticated_kimi_capabilities_normalize_stored_reasoning_without_disabling_it() {
+    let cache_dir = unique_cache_dir("kimi-normalization");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        rho_sdk::ReasoningLevel::Off,
+                        rho_sdk::ReasoningLevel::Low,
+                        rho_sdk::ReasoningLevel::High,
+                        rho_sdk::ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            ..Config::default()
+        };
+
+        assert!(normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
+
+        config.reasoning = rho_sdk::ReasoningLevel::Off;
+        assert!(!normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Off);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn explicit_kimi_reasoning_is_preserved_without_authenticated_capabilities() {
+    let cache_dir = unique_cache_dir("kimi-explicit-unknown");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Low,
+            ..Config::default()
+        };
+
+        assert!(!normalize_reasoning_for_cli(
+            &mut config,
+            /*explicit_choice*/ true
+        ));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
+    let config = Config {
+        provider: "kimi-code".into(),
+        model: "k3".into(),
+        ..Config::default()
+    };
+
+    let cli = Cli {
+        provider: None,
+        model: None,
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    assert_eq!(
+        super::selected_model_for_refresh(&cli, &config, "kimi-code"),
+        Some("k3".into())
     );
 }

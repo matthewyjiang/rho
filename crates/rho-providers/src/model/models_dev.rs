@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::reasoning::ReasoningLevel;
+use crate::{model::ReasoningCapabilities, reasoning::ReasoningLevel};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
@@ -68,8 +68,21 @@ pub struct ModelCost {
     pub cache_write_micros_per_m: Option<u64>,
 }
 
+pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
+    cached_model_metadata(provider, model)
+        .map(|metadata| {
+            ReasoningCapabilities::from_metadata(
+                metadata.supported_reasoning_levels,
+                metadata.reasoning_capabilities_known,
+            )
+        })
+        .unwrap_or_default()
+}
+
 pub fn cached_reasoning_levels(provider: &str, model: &str) -> Option<Vec<ReasoningLevel>> {
-    cached_model_metadata(provider, model)?.supported_reasoning_levels
+    cached_reasoning_capabilities(provider, model)
+        .levels()
+        .map(<[ReasoningLevel]>::to_vec)
 }
 
 pub fn cached_reasoning_effort(
@@ -138,7 +151,9 @@ fn apply_provider_capabilities(
     model: &str,
     mut metadata: ModelMetadata,
 ) -> ModelMetadata {
-    let context_window = super::provider_models::cached_provider_model(provider, model)
+    let provider_model = super::provider_models::cached_provider_model(provider, model);
+    let context_window = provider_model
+        .as_ref()
         .and_then(|model| model.context_window)
         .or_else(|| {
             crate::provider::provider_descriptor(provider)
@@ -146,6 +161,19 @@ fn apply_provider_capabilities(
         });
     if let Some(context_window) = context_window {
         metadata.effective_context_window = Some(context_window);
+    }
+    if let Some(provider_model) = provider_model {
+        match provider_model.reasoning_capabilities {
+            ReasoningCapabilities::Unknown => {}
+            ReasoningCapabilities::Unrestricted => {
+                metadata.supported_reasoning_levels = None;
+                metadata.reasoning_capabilities_known = true;
+            }
+            ReasoningCapabilities::Levels(levels) => {
+                metadata.supported_reasoning_levels = Some(levels.into_levels());
+                metadata.reasoning_capabilities_known = true;
+            }
+        }
     }
     metadata
 }
@@ -164,6 +192,7 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.cost_default.is_some()
         || metadata.cost_long_context.is_some()
         || metadata.supported_reasoning_levels.is_some()
+        || metadata.reasoning_capabilities_known
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
 }
 
@@ -570,6 +599,7 @@ fn merge_toml_override(
         toml_cost(table, "cost_long_context").or(metadata.cost_long_context);
     if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
         metadata.supported_reasoning_levels = Some(levels);
+        metadata.reasoning_capabilities_known = true;
     }
     metadata
 }

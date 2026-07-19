@@ -2,9 +2,26 @@ use {
     crate::cli::Cli,
     crate::config::Config,
     rho_providers::credentials::{self, CredentialStore},
-    rho_providers::model::{catalog, provider_models::refresh_provider_models_with_store},
+    rho_providers::model::{
+        catalog,
+        models_dev::{cached_reasoning_capabilities, fetch_model_metadata},
+        provider_models::{
+            provider_model_capabilities_need_refresh, refresh_provider_models_with_store,
+        },
+    },
     rho_providers::provider::{self, ProviderModelSource},
 };
+
+pub(super) enum ProviderRefreshStatus {
+    NotAttempted,
+    Attempted { provider: String },
+}
+
+impl ProviderRefreshStatus {
+    fn was_attempted_for(&self, provider: &str) -> bool {
+        matches!(self, Self::Attempted { provider: attempted } if attempted == provider)
+    }
+}
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
     if cli.resume.is_some() && cli.command.is_some() {
@@ -15,16 +32,29 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
 
 pub(super) async fn refresh_model_cache(
     cli: &Cli,
+    config: &Config,
     store: &dyn CredentialStore,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ProviderRefreshStatus> {
     let provider = cli
         .provider
         .as_deref()
-        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider));
-    if let Some(provider) = provider {
-        refresh_model_list_for_provider(provider, store).await?;
-    }
-    Ok(())
+        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider))
+        .unwrap_or(&config.provider);
+    let selected_model = selected_model_for_refresh(cli, config, provider);
+    let attempted = refresh_model_list_for_provider(
+        provider,
+        selected_model.as_deref(),
+        /*explicit_selection*/ cli.provider.is_some() || cli.model.is_some(),
+        store,
+    )
+    .await?;
+    Ok(if attempted {
+        ProviderRefreshStatus::Attempted {
+            provider: provider.to_string(),
+        }
+    } else {
+        ProviderRefreshStatus::NotAttempted
+    })
 }
 
 pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
@@ -49,8 +79,32 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         config.reasoning = reasoning;
         save_config = true;
     }
-    save_config |= normalize_reasoning(config);
     Ok(save_config)
+}
+
+pub(super) fn normalize_reasoning_for_cli(config: &mut Config, explicit_choice: bool) -> bool {
+    if explicit_choice
+        && config.provider == "kimi-code"
+        && provider_model_capabilities_need_refresh(&config.provider, &config.model)
+    {
+        return false;
+    }
+    normalize_reasoning(config)
+}
+
+pub(super) async fn prepare_model_metadata(
+    config: &Config,
+    store: &dyn CredentialStore,
+    provider_refresh: &ProviderRefreshStatus,
+) {
+    if !provider_refresh.was_attempted_for(&config.provider)
+        && provider_model_capabilities_need_refresh(&config.provider, &config.model)
+    {
+        let _ = refresh_provider_models_with_store(&config.provider, store).await;
+    }
+    if !cached_reasoning_capabilities(&config.provider, &config.model).is_known() {
+        let _ = fetch_model_metadata(&config.provider, &config.model).await;
+    }
 }
 
 pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
@@ -121,20 +175,46 @@ fn apply_model_override(
 
 async fn refresh_model_list_for_provider(
     provider: &str,
+    selected_model: Option<&str>,
+    explicit_selection: bool,
     store: &dyn credentials::CredentialStore,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let Some(descriptor) = provider::provider_descriptor(provider) else {
-        return Ok(());
+        return Ok(false);
     };
-    if descriptor.model_refresh.is_none() || catalog::default_model_for_provider(provider).is_some()
-    {
-        return Ok(());
+    let needs_model_discovery = catalog::default_model_for_provider(provider).is_none();
+    let needs_capabilities = selected_model
+        .is_some_and(|model| provider_model_capabilities_need_refresh(provider, model));
+    if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
+        return Ok(false);
     }
     match refresh_provider_models_with_store(provider, store).await {
-        Ok(_) => Ok(()),
-        Err(error) if provider_requires_cached_models(provider) => Err(error.into()),
-        Err(_) => Ok(()),
+        Ok(_) => Ok(true),
+        Err(error)
+            if explicit_selection
+                && needs_model_discovery
+                && provider_requires_cached_models(provider) =>
+        {
+            Err(error.into())
+        }
+        Err(_) => Ok(true),
     }
+}
+
+fn selected_model_for_refresh(cli: &Cli, config: &Config, provider: &str) -> Option<String> {
+    if let Some(model) = cli.model.as_deref() {
+        return Some(
+            model
+                .trim()
+                .strip_prefix(&format!("{provider}/"))
+                .unwrap_or(model.trim())
+                .to_string(),
+        );
+    }
+    if provider == config.provider {
+        return Some(config.model.clone());
+    }
+    catalog::default_model_for_provider(provider)
 }
 
 fn provider_requires_cached_models(provider: &str) -> bool {

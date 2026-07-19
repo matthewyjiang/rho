@@ -1,7 +1,9 @@
-use std::{cell::RefCell, fs, path::PathBuf};
-
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    cell::RefCell,
+    fs,
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use reqwest::{StatusCode, Url};
 use rusqlite::{params, Connection};
@@ -20,12 +22,15 @@ use crate::{
     credentials::{
         load_kimi_tokens, load_provider_api_key, save_kimi_tokens, CredentialStore, KimiTokens,
     },
-    model::{registry::missing_credential_error, ModelError},
+    model::{registry::missing_credential_error, ModelError, ReasoningCapabilities},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
 
 #[cfg(not(test))]
 use crate::paths;
+
+#[path = "provider_models/kimi_capabilities.rs"]
+mod kimi_capabilities;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderModel {
@@ -34,6 +39,7 @@ pub struct ProviderModel {
     pub display_name: String,
     pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,
+    pub reasoning_capabilities: ReasoningCapabilities,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +59,7 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
         return Vec::new();
     };
     let Ok(mut statement) = connection.prepare(
-        "select model, display_name, context_window, max_output_tokens from provider_models where provider = ?1 order by model",
+        "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json from provider_models where provider = ?1 order by model",
     ) else {
         return Vec::new();
     };
@@ -62,17 +68,70 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
         let display_name: String = row.get(1)?;
         let context_window: Option<u64> = row.get(2)?;
         let max_output_tokens: Option<u64> = row.get(3)?;
+        let reasoning_capabilities = row
+            .get::<_, Option<String>>(4)?
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default();
         Ok(ProviderModel {
             provider: provider.to_string(),
             model,
             display_name,
             context_window,
             max_output_tokens,
+            reasoning_capabilities,
         })
     }) else {
         return Vec::new();
     };
     rows.filter_map(Result::ok).collect()
+}
+
+const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
+const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
+    if provider != "kimi-code" {
+        return false;
+    }
+    let Ok(connection) = open_provider_models_cache() else {
+        return true;
+    };
+    let Ok((cache_version, serialized_capabilities, updated_at)) = connection.query_row(
+        "select models.cache_version, models.reasoning_capabilities_json, refresh.updated_at
+         from provider_models models
+         left join provider_model_refresh refresh on refresh.provider = models.provider
+         where models.provider = ?1 and models.model = ?2",
+        params![provider, model],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        },
+    ) else {
+        return true;
+    };
+    let capabilities = serialized_capabilities
+        .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(&value).ok())
+        .unwrap_or_default();
+    cache_version < PROVIDER_MODEL_CACHE_VERSION
+        || !capabilities.is_known()
+        || !updated_at.is_some_and(provider_snapshot_timestamp_is_fresh)
+}
+
+fn provider_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
+    let Ok(max_age) = i64::try_from(PROVIDER_MODEL_MAX_AGE.as_secs()) else {
+        return false;
+    };
+    let Some(now) = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+    else {
+        return false;
+    };
+    updated_at <= now && now - updated_at <= max_age
 }
 
 pub async fn refresh_provider_models_with_store(
@@ -113,15 +172,23 @@ fn replace_cached_provider_models(
     )
     .map_err(model_cache_error)?;
     for model in models {
+        let reasoning_capabilities =
+            serde_json::to_string(&model.reasoning_capabilities).map_err(|error| {
+                ModelError::InvalidResponse(format!(
+                    "failed to serialize provider reasoning capabilities: {error}"
+                ))
+            })?;
         tx.execute(
-            "insert into provider_models (provider, model, display_name, context_window, max_output_tokens, raw_json, updated_at)
-             values (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))",
+            "insert into provider_models (provider, model, display_name, context_window, max_output_tokens, reasoning_capabilities_json, cache_version, raw_json, updated_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%s', 'now'))",
             params![
                 provider,
                 model.model,
                 model.display_name,
                 model.context_window,
                 model.max_output_tokens,
+                reasoning_capabilities,
+                PROVIDER_MODEL_CACHE_VERSION,
                 Value::Null.to_string()
             ],
         )
@@ -143,6 +210,7 @@ async fn fetch_openai_compatible_models(
     api_base: &str,
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
+    let client = provider_models_client()?;
     let token = match descriptor.auth_kind {
         ProviderAuthKind::ApiKey { .. } => load_api_key_auth(descriptor.name, store)?,
         ProviderAuthKind::KimiOAuth { .. } => {
@@ -162,7 +230,7 @@ async fn fetch_openai_compatible_models(
                     .refresh_token
                     .as_deref()
                     .ok_or(ModelError::MissingKimiAuth)?;
-                tokens = refresh_kimi_tokens(&reqwest::Client::new(), refresh_token)
+                tokens = refresh_kimi_tokens(&client, refresh_token)
                     .await
                     .map_err(|error| match error {
                         KimiOAuthError::Unauthorized(_) => ModelError::MissingKimiAuth,
@@ -174,7 +242,7 @@ async fn fetch_openai_compatible_models(
         }
         _ => return Err(ModelError::UnsupportedProvider(descriptor.name.into())),
     };
-    let response: OpenAiModelsResponse = reqwest::Client::new()
+    let response: OpenAiModelsResponse = client
         .get(format!("{api_base}/models"))
         .bearer_auth(token)
         .send()
@@ -185,12 +253,20 @@ async fn fetch_openai_compatible_models(
     let mut models = response
         .data
         .into_iter()
-        .map(|model| ProviderModel {
-            provider: descriptor.name.into(),
-            display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-            context_window: model.context_length.filter(|window| *window > 0),
-            model: model.id,
-            max_output_tokens: None,
+        .map(|model| {
+            let reasoning_capabilities = if descriptor.name == "kimi-code" {
+                kimi_capabilities::reasoning_capabilities(&model.kimi_reasoning)
+            } else {
+                ReasoningCapabilities::Unknown
+            };
+            ProviderModel {
+                provider: descriptor.name.into(),
+                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                context_window: model.context_length.filter(|window| *window > 0),
+                model: model.id,
+                max_output_tokens: None,
+                reasoning_capabilities,
+            }
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| left.model.cmp(&right.model));
@@ -203,7 +279,7 @@ async fn fetch_openai_models(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let key = load_api_key_auth(provider, store)?;
-    let response: OpenAiModelsResponse = reqwest::Client::new()
+    let response: OpenAiModelsResponse = provider_models_client()?
         .get("https://api.openai.com/v1/models")
         .bearer_auth(key)
         .send()
@@ -221,6 +297,7 @@ async fn fetch_openai_models(
             context_window: model.context_length.filter(|window| *window > 0),
             model: model.id,
             max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| left.model.cmp(&right.model));
@@ -233,7 +310,7 @@ async fn fetch_anthropic_models(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let key = load_api_key_auth(provider, store)?;
-    let client = reqwest::Client::new();
+    let client = provider_models_client()?;
     let mut models = Vec::new();
     let mut after_id = None::<String>;
     loop {
@@ -264,6 +341,7 @@ async fn fetch_anthropic_models(
                     model: model.id,
                     context_window: None,
                     max_output_tokens: model.max_tokens,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }),
         );
         if !response.has_more {
@@ -283,7 +361,7 @@ async fn fetch_github_copilot_models(
     provider: &str,
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
-    let client = reqwest::Client::new();
+    let client = provider_models_client()?;
     let auth = auth_material_with_store(&client, store).await?;
     let response = send_github_copilot_models_request(&client, &auth).await?;
     let response = if response.status() == StatusCode::UNAUTHORIZED
@@ -356,11 +434,18 @@ fn parse_github_copilot_models(
             model,
             context_window: None,
             max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
+}
+
+fn provider_models_client() -> Result<reqwest::Client, ModelError> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?)
 }
 
 fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<String, ModelError> {
@@ -399,6 +484,8 @@ struct OpenAiModel {
     #[serde(alias = "name")]
     display_name: Option<String>,
     context_length: Option<u64>,
+    #[serde(flatten)]
+    kimi_reasoning: kimi_capabilities::KimiReasoningMetadata,
 }
 
 #[derive(Deserialize)]
@@ -429,6 +516,8 @@ fn open_provider_models_cache() -> rusqlite::Result<Connection> {
             display_name text not null,
             context_window integer,
             max_output_tokens integer,
+            reasoning_capabilities_json text,
+            cache_version integer not null default 1,
             raw_json text,
             updated_at integer not null,
             primary key(provider, model)
@@ -445,6 +534,14 @@ fn open_provider_models_cache() -> rusqlite::Result<Connection> {
     );
     let _ = connection.execute(
         "alter table provider_models add column max_output_tokens integer",
+        [],
+    );
+    let _ = connection.execute(
+        "alter table provider_models add column reasoning_capabilities_json text",
+        [],
+    );
+    let _ = connection.execute(
+        "alter table provider_models add column cache_version integer not null default 1",
         [],
     );
     Ok(connection)
@@ -543,6 +640,10 @@ fn unique_test_cache_dir(name: &str) -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "provider_models_capabilities_tests.rs"]
+mod capability_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::credentials::{
@@ -592,6 +693,7 @@ mod tests {
                     display_name: "claude-sonnet-4".into(),
                     context_window: None,
                     max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 },
                 ProviderModel {
                     provider: "github-copilot".into(),
@@ -599,6 +701,7 @@ mod tests {
                     display_name: "gpt-4.1".into(),
                     context_window: None,
                     max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 },
             ]
         );
@@ -640,6 +743,7 @@ mod tests {
                 display_name: "Kimi K3".into(),
                 context_window: Some(1_048_576),
                 max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
             }]
         );
         server.await.unwrap();
@@ -706,6 +810,7 @@ mod tests {
                 display_name: "gpt-4.1".into(),
                 context_window: None,
                 max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
             }]
         );
     }
@@ -722,6 +827,7 @@ mod tests {
                     display_name: "gpt-5.5".into(),
                     context_window: None,
                     max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }],
             )
             .unwrap();
@@ -734,6 +840,7 @@ mod tests {
                         display_name: "Claude B".into(),
                         context_window: None,
                         max_output_tokens: Some(64_000),
+                        reasoning_capabilities: ReasoningCapabilities::Unknown,
                     },
                     ProviderModel {
                         provider: "anthropic".into(),
@@ -741,6 +848,7 @@ mod tests {
                         display_name: "Claude A".into(),
                         context_window: None,
                         max_output_tokens: Some(32_000),
+                        reasoning_capabilities: ReasoningCapabilities::Unknown,
                     },
                 ],
             )
@@ -753,6 +861,7 @@ mod tests {
                     display_name: "Claude C".into(),
                     context_window: Some(200_000),
                     max_output_tokens: Some(16_000),
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }],
             )
             .unwrap();
@@ -765,6 +874,7 @@ mod tests {
                     display_name: "gpt-5.5".into(),
                     context_window: None,
                     max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }]
             );
             assert_eq!(
@@ -775,6 +885,7 @@ mod tests {
                     display_name: "Claude C".into(),
                     context_window: Some(200_000),
                     max_output_tokens: Some(16_000),
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }]
             );
         });
@@ -814,6 +925,7 @@ mod tests {
                     display_name: "Claude Sonnet".into(),
                     context_window: None,
                     max_output_tokens: Some(64_000),
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
                 }],
             )
             .unwrap();
