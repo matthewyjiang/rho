@@ -19,7 +19,9 @@ pub use contract::{
 };
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
-pub use reasoning_capabilities::{ReasoningCapabilities, ReasoningLevelSet};
+pub use reasoning_capabilities::{
+    ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource, ReasoningResolution,
+};
 
 impl From<crate::credentials::CredentialError> for ModelError {
     fn from(error: crate::credentials::CredentialError) -> Self {

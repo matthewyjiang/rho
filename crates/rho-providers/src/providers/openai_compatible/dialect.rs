@@ -1,21 +1,12 @@
 use serde_json::Value;
 
-use crate::{
-    protocol::openai_chat::{OpenAiReasoning, OpenAiThinking, OpenAiTool},
-    reasoning::ReasoningLevel,
-};
+use crate::protocol::openai_chat::OpenAiTool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenAiCompatibleDialect {
     OpenRouter,
     Moonshot,
     KimiCode,
-}
-
-pub(crate) struct OpenAiCompatibleReasoningFields {
-    pub(crate) reasoning: Option<OpenAiReasoning>,
-    pub(crate) reasoning_effort: Option<String>,
-    pub(crate) thinking: Option<OpenAiThinking>,
 }
 
 impl OpenAiCompatibleDialect {
@@ -27,53 +18,6 @@ impl OpenAiCompatibleDialect {
                 tool
             }
         }
-    }
-
-    pub(crate) fn reasoning_fields(
-        self,
-        model: &str,
-        reasoning: ReasoningLevel,
-    ) -> OpenAiCompatibleReasoningFields {
-        let empty = || OpenAiCompatibleReasoningFields {
-            reasoning: None,
-            reasoning_effort: None,
-            thinking: None,
-        };
-        match (self, model) {
-            (Self::OpenRouter, _) => OpenAiCompatibleReasoningFields {
-                reasoning: Some(OpenAiReasoning {
-                    effort: reasoning.effort().unwrap_or("none").to_string(),
-                }),
-                ..empty()
-            },
-            (Self::Moonshot, "kimi-k3") => OpenAiCompatibleReasoningFields {
-                reasoning_effort: Some(reasoning.effort().unwrap_or("none").to_string()),
-                ..empty()
-            },
-            (Self::KimiCode, "k3") => OpenAiCompatibleReasoningFields {
-                thinking: Some(match reasoning {
-                    ReasoningLevel::Off => OpenAiThinking {
-                        kind: "disabled",
-                        effort: None,
-                    },
-                    ReasoningLevel::Minimal => enabled_thinking("minimal"),
-                    ReasoningLevel::Low => enabled_thinking("low"),
-                    ReasoningLevel::Medium => enabled_thinking("medium"),
-                    ReasoningLevel::High => enabled_thinking("high"),
-                    ReasoningLevel::Xhigh => enabled_thinking("xhigh"),
-                    ReasoningLevel::Max => enabled_thinking("max"),
-                }),
-                ..empty()
-            },
-            (Self::Moonshot | Self::KimiCode, _) => empty(),
-        }
-    }
-}
-
-fn enabled_thinking(effort: &str) -> OpenAiThinking {
-    OpenAiThinking {
-        kind: "enabled",
-        effort: Some(effort.to_string()),
     }
 }
 

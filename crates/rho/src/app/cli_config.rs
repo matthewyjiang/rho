@@ -4,7 +4,7 @@ use {
     rho_providers::credentials::{self, CredentialStore},
     rho_providers::model::{
         catalog,
-        models_dev::{cached_reasoning_capabilities, fetch_model_metadata},
+        models_dev::{cached_reasoning_capabilities, current_reasoning_capabilities},
         provider_models::{
             provider_model_capabilities_need_refresh, refresh_provider_models_with_store,
         },
@@ -35,11 +35,17 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
-    let provider = cli
+    let explicit_provider = cli
         .provider
         .as_deref()
-        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider))
-        .unwrap_or(&config.provider);
+        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider));
+    if explicit_provider.is_none()
+        && (config.provider != "kimi-code"
+            || !provider_model_capabilities_need_refresh(&config.provider, &config.model))
+    {
+        return Ok(ProviderRefreshStatus::NotAttempted);
+    }
+    let provider = explicit_provider.unwrap_or(&config.provider);
     let selected_model = selected_model_for_refresh(cli, config, provider);
     let attempted = refresh_model_list_for_provider(
         provider,
@@ -82,14 +88,45 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
     Ok(save_config)
 }
 
-pub(super) fn normalize_reasoning_for_cli(config: &mut Config, explicit_choice: bool) -> bool {
-    if explicit_choice
-        && config.provider == "kimi-code"
-        && provider_model_capabilities_need_refresh(&config.provider, &config.model)
-    {
-        return false;
+pub(super) fn normalize_reasoning_for_cli(
+    config: &mut Config,
+    source: rho_providers::model::ReasoningRequestSource,
+) -> anyhow::Result<bool> {
+    let capabilities = if source == rho_providers::model::ReasoningRequestSource::Explicit {
+        current_reasoning_capabilities(&config.provider, &config.model)
+    } else {
+        cached_reasoning_capabilities(&config.provider, &config.model)
+    };
+    let resolution = capabilities.resolve(config.reasoning, source);
+    if let rho_providers::model::ReasoningResolution::UnsupportedExplicit(requested) = resolution {
+        let supported = capabilities
+            .levels()
+            .map(|levels| {
+                levels
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_else(|| "none".to_string());
+        anyhow::bail!(
+            "provider '{}' model '{}' does not support reasoning level '{}'; supported levels: {}",
+            config.provider,
+            config.model,
+            requested,
+            supported
+        );
     }
-    normalize_reasoning(config)
+    if source == rho_providers::model::ReasoningRequestSource::Explicit
+        && resolution == rho_providers::model::ReasoningResolution::NotConfigurable
+    {
+        anyhow::bail!(
+            "provider '{}' model '{}' does not expose configurable reasoning",
+            config.provider,
+            config.model
+        );
+    }
+    Ok(apply_reasoning_resolution(config, resolution))
 }
 
 pub(super) async fn prepare_model_metadata(
@@ -97,20 +134,48 @@ pub(super) async fn prepare_model_metadata(
     store: &dyn CredentialStore,
     provider_refresh: &ProviderRefreshStatus,
 ) {
-    if !provider_refresh.was_attempted_for(&config.provider)
-        && provider_model_capabilities_need_refresh(&config.provider, &config.model)
-    {
+    if needs_startup_capability_refresh(config, provider_refresh) {
         let _ = refresh_provider_models_with_store(&config.provider, store).await;
     }
-    if !cached_reasoning_capabilities(&config.provider, &config.model).is_known() {
-        let _ = fetch_model_metadata(&config.provider, &config.model).await;
-    }
+    // models.dev metadata is optional and fetched asynchronously by the TUI.
+    // Blocking automation and background-agent startup on the full catalog makes
+    // cold or offline launches depend on an unrelated network request. Provider-
+    // native discovery remains synchronous above because Kimi uses it as the
+    // authoritative capability source.
+}
+
+fn needs_startup_capability_refresh(
+    config: &Config,
+    provider_refresh: &ProviderRefreshStatus,
+) -> bool {
+    config.provider == "kimi-code"
+        && !provider_refresh.was_attempted_for(&config.provider)
+        && provider_model_capabilities_need_refresh(&config.provider, &config.model)
 }
 
 pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
-    let supported_reasoning =
-        rho_providers::model::models_dev::cached_reasoning_levels(&config.provider, &config.model);
-    let reasoning = config.reasoning.normalize(supported_reasoning.as_deref());
+    normalize_reasoning_from(
+        config,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
+    )
+}
+
+fn normalize_reasoning_from(
+    config: &mut Config,
+    source: rho_providers::model::ReasoningRequestSource,
+) -> bool {
+    let capabilities = cached_reasoning_capabilities(&config.provider, &config.model);
+    let resolution = capabilities.resolve(config.reasoning, source);
+    apply_reasoning_resolution(config, resolution)
+}
+
+fn apply_reasoning_resolution(
+    config: &mut Config,
+    resolution: rho_providers::model::ReasoningResolution,
+) -> bool {
+    let Some(reasoning) = resolution.effective() else {
+        return false;
+    };
     if reasoning == config.reasoning {
         return false;
     }
@@ -182,9 +247,10 @@ async fn refresh_model_list_for_provider(
     let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(false);
     };
-    let needs_model_discovery = catalog::default_model_for_provider(provider).is_none();
-    let needs_capabilities = selected_model
-        .is_some_and(|model| provider_model_capabilities_need_refresh(provider, model));
+    let needs_model_discovery =
+        selected_model.is_none() && catalog::default_model_for_provider(provider).is_none();
+    let needs_capabilities =
+        selected_model.is_some_and(|model| needs_synchronous_capability_refresh(provider, model));
     if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
         return Ok(false);
     }
@@ -199,6 +265,10 @@ async fn refresh_model_list_for_provider(
         }
         Err(_) => Ok(true),
     }
+}
+
+fn needs_synchronous_capability_refresh(provider: &str, model: &str) -> bool {
+    provider == "kimi-code" && provider_model_capabilities_need_refresh(provider, model)
 }
 
 fn selected_model_for_refresh(cli: &Cli, config: &Config, provider: &str) -> Option<String> {

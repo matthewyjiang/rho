@@ -1,5 +1,8 @@
 use super::*;
-use crate::model::{AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall};
+use crate::model::{
+    AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall, ReasoningCapabilities,
+    ReasoningLevelSet,
+};
 use crate::protocol::openai_chat::{
     convert_streamed_response, handle_openai_stream_line, to_openai_message_for_target,
 };
@@ -21,6 +24,44 @@ fn codex_reasoning_param_preserves_none_effort() {
     assert_eq!(
         codex_reasoning_param(Some("low"), Some("auto")).unwrap(),
         json!({"effort":"low","summary":"auto"})
+    );
+}
+
+#[test]
+fn immutable_openai_reasoning_profile_normalizes_exact_and_omits_fixed_models() {
+    let exact = reasoning::OpenAiReasoningProfile::from_metadata(Some(
+        crate::model::models_dev::ModelMetadata {
+            supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..Default::default()
+        },
+    ));
+    assert_eq!(
+        exact
+            .config("openai", "gpt-test", ReasoningLevel::Off)
+            .unwrap(),
+        reasoning::OpenAiReasoningConfig {
+            effort: Some("low".into()),
+            summary: Some("auto".into()),
+        }
+    );
+
+    let fixed = reasoning::OpenAiReasoningProfile::from_metadata(Some(
+        crate::model::models_dev::ModelMetadata {
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..Default::default()
+        },
+    ));
+    assert_eq!(
+        fixed
+            .config("openai", "gpt-test", ReasoningLevel::High)
+            .unwrap(),
+        reasoning::OpenAiReasoningConfig {
+            effort: None,
+            summary: None,
+        }
     );
 }
 
@@ -59,21 +100,41 @@ fn reasoning_level_maps_to_codex_reasoning_param() {
 
 #[test]
 fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
-    let supported = [
+    let capabilities = ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
         ReasoningLevel::Off,
         ReasoningLevel::Low,
         ReasoningLevel::High,
-    ];
+    ]));
     assert_eq!(
-        reasoning::normalize_openai_reasoning_level(ReasoningLevel::Minimal, Some(&supported)),
+        reasoning::normalize_openai_reasoning_level(ReasoningLevel::Minimal, &capabilities),
+        Some(ReasoningLevel::Low)
+    );
+    let off_only = ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![ReasoningLevel::Off]));
+    assert_eq!(
+        reasoning::normalize_openai_reasoning_level(ReasoningLevel::High, &off_only),
+        None
+    );
+    let mandatory = ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+        ReasoningLevel::Low,
+        ReasoningLevel::High,
+    ]));
+    assert_eq!(
+        reasoning::normalize_openai_reasoning_level(ReasoningLevel::Off, &mandatory),
         Some(ReasoningLevel::Low)
     );
     assert_eq!(
         reasoning::normalize_openai_reasoning_level(
             ReasoningLevel::High,
-            Some(&[ReasoningLevel::Off])
+            &ReasoningCapabilities::NotConfigurable,
         ),
-        None
+        Some(ReasoningLevel::High)
+    );
+    assert_eq!(
+        reasoning::normalize_openai_reasoning_level(
+            ReasoningLevel::High,
+            &ReasoningCapabilities::Unknown,
+        ),
+        Some(ReasoningLevel::High)
     );
 }
 

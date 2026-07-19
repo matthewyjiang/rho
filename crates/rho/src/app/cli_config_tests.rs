@@ -515,11 +515,123 @@ fn explicit_kimi_reasoning_is_preserved_without_authenticated_capabilities() {
 
         assert!(!normalize_reasoning_for_cli(
             &mut config,
-            /*explicit_choice*/ true
-        ));
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .unwrap());
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
     });
     let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn explicit_known_unsupported_reasoning_is_rejected() {
+    let cache_dir = unique_cache_dir("kimi-explicit-unsupported");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        rho_sdk::ReasoningLevel::Off,
+                        rho_sdk::ReasoningLevel::Low,
+                        rho_sdk::ReasoningLevel::High,
+                        rho_sdk::ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            ..Config::default()
+        };
+
+        let error = normalize_reasoning_for_cli(
+            &mut config,
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .expect_err("known unsupported reasoning should fail");
+
+        assert!(error
+            .to_string()
+            .contains("does not support reasoning level 'medium'"));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Medium);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn not_configurable_models_retain_persisted_preference_and_reject_explicit_control() {
+    let cache_dir = unique_cache_dir("kimi-not-configurable");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "fixed".into(),
+                display_name: "Fixed".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::NotConfigurable,
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "fixed".into(),
+            reasoning: rho_sdk::ReasoningLevel::High,
+            ..Config::default()
+        };
+
+        assert!(!normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
+        let error = normalize_reasoning_for_cli(
+            &mut config,
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .expect_err("fixed models should reject an explicit reasoning control");
+        assert!(error
+            .to_string()
+            .contains("does not expose configurable reasoning"));
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn only_kimi_prepares_provider_capabilities_during_startup() {
+    let refresh = super::ProviderRefreshStatus::NotAttempted;
+    let xai = Config {
+        provider: "xai".into(),
+        model: "unseen-model".into(),
+        ..Config::default()
+    };
+    let kimi = Config {
+        provider: "kimi-code".into(),
+        model: "unseen-model".into(),
+        ..Config::default()
+    };
+
+    assert!(!super::needs_startup_capability_refresh(&xai, &refresh));
+    assert!(super::needs_startup_capability_refresh(&kimi, &refresh));
+}
+
+#[test]
+fn only_kimi_requires_synchronous_capability_discovery() {
+    assert!(!super::needs_synchronous_capability_refresh(
+        "xai",
+        "unseen-model"
+    ));
+    assert!(super::needs_synchronous_capability_refresh(
+        "kimi-code",
+        "unseen-model"
+    ));
 }
 
 #[test]

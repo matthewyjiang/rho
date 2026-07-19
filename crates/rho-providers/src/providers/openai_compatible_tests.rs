@@ -1,6 +1,5 @@
 use super::*;
 use crate::model::{
-    models_dev::cached_reasoning_levels,
     provider_models::{
         replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
         ProviderModel,
@@ -47,7 +46,7 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         stream.write_all(response.as_bytes()).await.unwrap();
     });
 
-    let provider = OpenAiCompatibleProvider::new(
+    let mut provider = OpenAiCompatibleProvider::new(
         reqwest::Client::new(),
         "moonshot",
         "kimi-k3".into(),
@@ -55,6 +54,11 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         CompatibleAuth::ApiKey("moonshot-secret".into()),
         api_base,
     );
+    provider.moonshot_reasoning = Some(reasoning::MoonshotReasoningProfile::exact([
+        crate::reasoning::ReasoningLevel::Off,
+        crate::reasoning::ReasoningLevel::Low,
+        crate::reasoning::ReasoningLevel::Max,
+    ]));
     let tool = rho_tools::edit_file::EditFile.spec();
     let response = provider
         .complete_turn(ModelRequest {
@@ -207,11 +211,12 @@ fn authenticated_capabilities_normalize_before_kimi_request_serialization() {
             }],
         )
         .unwrap();
-        let normalized = crate::reasoning::ReasoningLevel::Medium
-            .normalize(cached_reasoning_levels("kimi-code", "k3").as_deref());
-
         assert_eq!(
-            request_body(OpenAiCompatibleDialect::KimiCode, "k3", normalized),
+            request_body(
+                OpenAiCompatibleDialect::KimiCode,
+                "k3",
+                crate::reasoning::ReasoningLevel::Medium,
+            ),
             json!({
                 "model": "k3",
                 "messages": [{
@@ -227,15 +232,41 @@ fn authenticated_capabilities_normalize_before_kimi_request_serialization() {
 }
 
 #[test]
-fn moonshot_k3_serializes_only_top_level_reasoning_effort() {
+fn moonshot_k3_never_serializes_off_and_preserves_offline_non_off_requests() {
+    let exact = reasoning::MoonshotReasoningProfile::exact([
+        crate::reasoning::ReasoningLevel::Off,
+        crate::reasoning::ReasoningLevel::Low,
+        crate::reasoning::ReasoningLevel::High,
+    ]);
+    assert_eq!(
+        exact.effort(crate::reasoning::ReasoningLevel::Off),
+        Some("low")
+    );
+
+    let offline = reasoning::MoonshotReasoningProfile::from_metadata("kimi-k3", None);
+    assert_eq!(offline.effort(crate::reasoning::ReasoningLevel::Off), None);
+    assert_eq!(
+        offline.effort(crate::reasoning::ReasoningLevel::High),
+        Some("high")
+    );
+
+    let unknown_model = reasoning::MoonshotReasoningProfile::from_metadata("future-model", None);
+    assert_eq!(
+        unknown_model.effort(crate::reasoning::ReasoningLevel::High),
+        None
+    );
+}
+
+#[test]
+fn moonshot_exact_metadata_drives_top_level_reasoning_effort() {
     assert_eq!(
         request_body(
             OpenAiCompatibleDialect::Moonshot,
-            "kimi-k3",
+            "moonshot-reasoner",
             crate::reasoning::ReasoningLevel::Max,
         ),
         json!({
-            "model": "kimi-k3",
+            "model": "moonshot-reasoner",
             "messages": [{
                 "role": "user",
                 "content": [{"type": "text", "text": "hello"}]
@@ -244,6 +275,20 @@ fn moonshot_k3_serializes_only_top_level_reasoning_effort() {
             "reasoning_effort": "max"
         })
     );
+}
+
+#[test]
+fn openrouter_omits_reasoning_for_non_configurable_models() {
+    let profile = reasoning::OpenRouterReasoningProfile::not_configurable();
+    let fields = OpenAiCompatibleDialect::OpenRouter.reasoning_fields(
+        Some(&profile),
+        None,
+        None,
+        "fixed-model",
+        crate::reasoning::ReasoningLevel::High,
+    );
+
+    assert!(fields.reasoning.is_none());
 }
 
 #[test]
@@ -286,14 +331,27 @@ fn request_body(
     model: &str,
     reasoning_level: crate::reasoning::ReasoningLevel,
 ) -> serde_json::Value {
-    let provider = OpenAiCompatibleProvider::new(
+    let provider_name = match dialect {
+        OpenAiCompatibleDialect::Moonshot => "moonshot",
+        OpenAiCompatibleDialect::OpenRouter => "openrouter",
+        OpenAiCompatibleDialect::KimiCode => "kimi-code",
+    };
+    let mut provider = OpenAiCompatibleProvider::new(
         reqwest::Client::new(),
-        "test",
+        provider_name,
         model.into(),
         dialect,
         CompatibleAuth::ApiKey("secret".into()),
         "https://example.com".into(),
     );
+    if dialect == OpenAiCompatibleDialect::Moonshot {
+        provider.moonshot_reasoning = Some(reasoning::MoonshotReasoningProfile::exact([
+            crate::reasoning::ReasoningLevel::Off,
+            crate::reasoning::ReasoningLevel::Low,
+            crate::reasoning::ReasoningLevel::High,
+            crate::reasoning::ReasoningLevel::Max,
+        ]));
+    }
     let messages = [Message::user_text("hello")];
     let request = provider
         .request_body(

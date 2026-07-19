@@ -234,7 +234,13 @@ impl ProviderBuilder {
                 )))
             }
             (ProviderRuntime::Xai { .. }, ProviderCredential::Xai(auth)) => {
+                let provider = match self.options.provider.as_str() {
+                    "xai" => "xai",
+                    "xai-oauth" => "xai-oauth",
+                    _ => unreachable!("xAI runtime must have an xAI provider identity"),
+                };
                 Ok(Arc::new(XaiProvider::new_with_transport(
+                    provider,
                     self.options.model,
                     auth,
                     client,

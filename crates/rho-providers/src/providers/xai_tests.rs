@@ -10,9 +10,75 @@ use tokio::{
 use super::*;
 use crate::{
     credentials::{save_xai_tokens, MemoryCredentialStore, XaiTokens},
-    model::Message,
+    model::{
+        models_dev::with_models_dev_cache_dir_for_tests,
+        provider_models::with_provider_models_cache_dir_for_tests, Message, ModelIdentity,
+    },
+    reasoning::ReasoningLevel,
 };
 use rho_tools::tool::ToolSpec;
+
+#[test]
+fn empty_cache_construction_preserves_static_wire_semantics_for_both_identities() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(cache.path().join("models-dev"), || {
+        with_provider_models_cache_dir_for_tests(cache.path().join("provider-models"), || {
+            for provider_name in ["xai", "xai-oauth"] {
+                for (model, off, high) in [
+                    ("grok-build-0.1", None, None),
+                    ("grok-composer-2.5-fast", None, None),
+                    ("grok-4.3", Some("none"), Some("high")),
+                    ("grok-4.5", None, Some("high")),
+                ] {
+                    let store = Arc::new(MemoryCredentialStore::default());
+                    save_xai_tokens(
+                        store.as_ref(),
+                        &XaiTokens {
+                            access_token: "access-token".into(),
+                            refresh_token: None,
+                            expires_at_unix: None,
+                            id_token: None,
+                        },
+                    )
+                    .unwrap();
+                    let provider = XaiProvider::new_with_transport(
+                        provider_name,
+                        model.into(),
+                        XaiAuthManager::new(store).unwrap(),
+                        reqwest::Client::new(),
+                        "https://api.x.ai/v1".into(),
+                    );
+                    assert_eq!(
+                        provider.model_identity(),
+                        ModelIdentity::new(provider_name, "openai-responses", model)
+                    );
+                    assert_eq!(provider.reasoning.effort(ReasoningLevel::Off), off);
+                    assert_eq!(provider.reasoning.effort(ReasoningLevel::High), high);
+                }
+            }
+        });
+    });
+}
+
+#[test]
+fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert!(body.get("reasoning").is_none());
+}
 
 #[test]
 fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
@@ -26,8 +92,15 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
         input_schema: json!({"type": "object"}),
     }];
 
+    let profile = reasoning::XaiReasoningProfile::exact([
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+    ]);
     let body = build_xai_responses_body(
+        "xai",
         "grok-4.5",
+        &profile,
         ModelRequest {
             messages: &messages,
             tools: &tools,
@@ -52,8 +125,15 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
 #[test]
 fn responses_body_uses_each_request_reasoning_level() {
     let messages = [Message::user_text("hello")];
+    let profile = reasoning::XaiReasoningProfile::exact([
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+    ]);
     let low = build_xai_responses_body(
+        "xai",
         "grok-4.5",
+        &profile,
         ModelRequest {
             messages: &messages,
             tools: &[],
@@ -64,7 +144,9 @@ fn responses_body_uses_each_request_reasoning_level() {
     )
     .unwrap();
     let high = build_xai_responses_body(
+        "xai",
         "grok-4.5",
+        &profile,
         ModelRequest {
             messages: &messages,
             tools: &[],
@@ -77,26 +159,6 @@ fn responses_body_uses_each_request_reasoning_level() {
 
     assert_eq!(low["reasoning"], json!({"effort": "low"}));
     assert_eq!(high["reasoning"], json!({"effort": "high"}));
-}
-
-#[test]
-fn reasoning_effort_is_only_sent_for_supported_models() {
-    assert_eq!(
-        xai_reasoning_effort("grok-4.5", ReasoningLevel::Off).unwrap(),
-        Some("low")
-    );
-    assert_eq!(
-        xai_reasoning_effort("grok-4.3", ReasoningLevel::Off).unwrap(),
-        Some("none")
-    );
-    assert_eq!(
-        xai_reasoning_effort("grok-build-0.1", ReasoningLevel::High).unwrap(),
-        None
-    );
-    assert_eq!(
-        xai_reasoning_effort("grok-composer-2.5-fast", ReasoningLevel::Medium).unwrap(),
-        None
-    );
 }
 
 #[tokio::test]

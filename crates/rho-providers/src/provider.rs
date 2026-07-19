@@ -32,6 +32,21 @@ pub enum ProviderModelSource {
     CachedProviderModels,
 }
 
+/// Defines how raw models.dev reasoning controls become application capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogReasoningPolicy {
+    /// Provider-specific protocol details cannot yet be represented safely.
+    Unknown,
+    /// This provider path does not forward a user reasoning control.
+    NotConfigurable,
+    /// Only controls explicitly advertised by the catalog are selectable.
+    ExactAdvertised,
+    /// A catalog toggle is a supported way to select `Off` for this protocol.
+    OffByAdvertisedToggle,
+    /// The provider serializes `Off` as a provider-owned `none` control.
+    OffAsNone,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderModelRefreshKind {
     OpenAi,
@@ -144,6 +159,7 @@ pub struct ProviderDescriptor {
     pub model_source: ProviderModelSource,
     pub model_refresh: Option<ProviderModelRefreshKind>,
     pub metadata_upstream: &'static str,
+    pub catalog_reasoning: CatalogReasoningPolicy,
 }
 
 pub const PROVIDERS: &[ProviderDescriptor] = &[
@@ -162,6 +178,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
         metadata_upstream: "openai",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::OpenAiCodex,
@@ -176,6 +193,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         metadata_upstream: "openai",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::Anthropic,
@@ -192,6 +210,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
         metadata_upstream: "anthropic",
+        catalog_reasoning: CatalogReasoningPolicy::Unknown,
     },
     ProviderDescriptor {
         id: ProviderId::GithubCopilot,
@@ -206,6 +225,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         metadata_upstream: "github-copilot",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
     },
     ProviderDescriptor {
         id: ProviderId::Moonshot,
@@ -224,6 +244,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             api_base: "https://api.moonshot.ai/v1",
         }),
         metadata_upstream: "moonshotai",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::OpenRouter,
@@ -242,6 +263,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             api_base: "https://openrouter.ai/api/v1",
         }),
         metadata_upstream: "openrouter",
+        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
     ProviderDescriptor {
         id: ProviderId::KimiCode,
@@ -258,6 +280,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             api_base: "https://api.kimi.com/coding/v1",
         }),
         metadata_upstream: "moonshotai",
+        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
     ProviderDescriptor {
         id: ProviderId::Xai,
@@ -274,6 +297,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         metadata_upstream: "xai",
+        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
     ProviderDescriptor {
         id: ProviderId::XaiOAuth,
@@ -288,6 +312,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         metadata_upstream: "xai",
+        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
 ];
 

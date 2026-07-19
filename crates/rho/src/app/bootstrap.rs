@@ -56,11 +56,16 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     save_config |= cli_config::normalize_reasoning_for_cli(
         &mut config,
-        /*explicit_choice*/ cli.reasoning.is_some(),
-    );
+        if cli.reasoning.is_some() {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        },
+    )?;
     if save_config {
         config_repository.save(&config)?;
     }
+    let reasoning_before_binding = config.reasoning;
     let role = if automation_prompt.is_some() {
         AgentRole::AutomationRoot
     } else {
@@ -78,10 +83,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
     validate_terminal_mode(&cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    cli_config::normalize_reasoning_for_cli(
-        &mut config,
-        /*explicit_choice*/ cli.reasoning.is_some(),
-    );
+    let bound_reasoning_source =
+        if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        };
+    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
         let diagnostics = RuntimeDiagnostics::new(&config);
@@ -145,6 +153,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         diagnostics,
         herdr,
         agent: bound_agent,
+        reasoning_source: bound_reasoning_source,
     })
     .await;
     result

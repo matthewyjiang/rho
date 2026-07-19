@@ -10,31 +10,42 @@ use serde_json::{json, Value};
 use crate::{
     auth::xai_token::XaiAuthManager,
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
-    reasoning::ReasoningLevel,
 };
 
 #[cfg(test)]
 use crate::{credentials::CredentialStore, provider_backend::stream_timeout::provider_client};
 
+#[path = "xai/reasoning.rs"]
+mod reasoning;
+
 pub struct XaiProvider {
     client: reqwest::Client,
+    provider: &'static str,
     model: String,
     auth: XaiAuthManager,
     api_base: String,
+    reasoning: reasoning::XaiReasoningProfile,
 }
 
 impl XaiProvider {
     pub(crate) fn new_with_transport(
+        provider: &'static str,
         model: String,
         auth: XaiAuthManager,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
+        let reasoning = reasoning::XaiReasoningProfile::from_metadata(
+            &model,
+            crate::model::models_dev::current_model_metadata(provider, &model),
+        );
         Self {
             client,
+            provider,
             model,
             auth,
             api_base,
+            reasoning,
         }
     }
 
@@ -45,6 +56,7 @@ impl XaiProvider {
         api_base: String,
     ) -> Result<Self, ModelError> {
         Ok(Self::new_with_transport(
+            "xai",
             model,
             XaiAuthManager::new(store)?,
             provider_client(),
@@ -60,7 +72,7 @@ impl XaiProvider {
                       + Send),
         >,
     ) -> Result<reqwest::Response, ModelError> {
-        let body = build_xai_responses_body(&self.model, request)?;
+        let body = build_xai_responses_body(self.provider, &self.model, &self.reasoning, request)?;
         let auth = self.auth.auth_material().await?;
         let response = self
             .send_request_with_token(&body, &auth.access_token)
@@ -117,7 +129,7 @@ impl XaiProvider {
 
 impl XaiProvider {
     pub(crate) fn model_identity(&self) -> ModelIdentity {
-        ModelIdentity::new("xai", "openai-responses", &self.model)
+        ModelIdentity::new(self.provider, "openai-responses", &self.model)
     }
 
     /// Completes one turn using a `Send` future suitable for the public SDK trait.
@@ -148,10 +160,15 @@ impl XaiProvider {
 
 crate::impl_sdk_model_provider!(XaiProvider);
 
-fn build_xai_responses_body(model: &str, request: ModelRequest<'_>) -> Result<Value, ModelError> {
-    let reasoning_effort = xai_reasoning_effort(model, request.reasoning_level)?;
+fn build_xai_responses_body(
+    provider: &'static str,
+    model: &str,
+    reasoning: &reasoning::XaiReasoningProfile,
+    request: ModelRequest<'_>,
+) -> Result<Value, ModelError> {
+    let reasoning_effort = reasoning.effort(request.reasoning_level);
     let mut instructions = Vec::new();
-    let target = crate::model::ModelIdentity::new("xai", "openai-responses", model);
+    let target = crate::model::ModelIdentity::new(provider, "openai-responses", model);
     let input =
         codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
     let tools = request
@@ -181,29 +198,6 @@ fn build_xai_responses_body(model: &str, request: ModelRequest<'_>) -> Result<Va
         body["reasoning"] = json!({ "effort": effort });
     }
     Ok(body)
-}
-
-fn xai_reasoning_effort(
-    model: &str,
-    reasoning: ReasoningLevel,
-) -> Result<Option<&'static str>, ModelError> {
-    // Non-reasoning models omit the field regardless of the session default so
-    // configured models like grok-build keep working without forcing reasoning=off.
-    Ok(match model {
-        "grok-4.5" => match reasoning {
-            ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
-            ReasoningLevel::Medium => Some("medium"),
-            ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => Some("high"),
-        },
-        "grok-4.3" => match reasoning {
-            ReasoningLevel::Off => Some("none"),
-            ReasoningLevel::Minimal | ReasoningLevel::Low => Some("low"),
-            ReasoningLevel::Medium => Some("medium"),
-            ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => Some("high"),
-        },
-        "grok-build-0.1" | "grok-composer-2.5-fast" => None,
-        _ => None,
-    })
 }
 
 #[cfg(test)]
