@@ -165,12 +165,6 @@ pub enum RunEvent {
         kind: String,
         detail: String,
     },
-    /// The current provider attempt was abandoned. Hosts rendering live
-    /// deltas must discard that attempt before processing subsequent deltas.
-    ProviderStreamReset {
-        reason: ProviderStreamResetReason,
-        detail: String,
-    },
     ProviderContextUpdated {
         kind: String,
     },
@@ -203,5 +197,11 @@ pub enum RunEvent {
     /// provider-returned data and must not be added to model context.
     ProviderDiagnostic {
         detail: crate::ProviderDiagnostic,
+    },
+    /// The current provider attempt was abandoned. Hosts rendering live
+    /// deltas must discard that attempt before processing subsequent deltas.
+    ProviderStreamReset {
+        reason: ProviderStreamResetReason,
+        detail: String,
     },
 }
