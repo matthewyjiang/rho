@@ -10,6 +10,10 @@ auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-k
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
 
+[model.aliases]
+# deep = "anthropic/claude-opus-4-8"
+# fast = "gpt-5.6-luna"
+
 [display]
 show_reasoning_output = true
 max_tool_output_lines = 10
@@ -97,6 +101,31 @@ rho --config ~/.rho/config.toml
 ```
 
 `--no-system-prompt`, `--no-tools`, and `--no-subagents` are only available on the command line and apply only to the current run. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
+
+## Model aliases
+
+`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected. Model ids may contain `/`, as OpenRouter ids commonly do:
+
+```toml
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.6-luna"
+openrouter-deep = "openrouter/anthropic/claude-sonnet-4"
+```
+
+Reference an alias with an `@` prefix. The explicit prefix distinguishes aliases from concrete model ids and makes a missing or misspelled alias an immediate configuration error:
+
+```toml
+[model]
+model = "@deep"
+
+[title]
+model = "@fast"
+```
+
+The same syntax works with `rho --model @deep` and with `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
+
+Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` picker shows the active mapping, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
 
 ## Title model
 

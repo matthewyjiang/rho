@@ -10,6 +10,7 @@ mod diagnostics;
 mod export;
 mod herdr;
 mod keybindings;
+mod model_aliases;
 mod paths;
 mod permission;
 mod prompt;

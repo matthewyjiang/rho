@@ -109,14 +109,32 @@ impl AgentBinder {
             ModelPolicy::Prefer(selection)
             | ModelPolicy::Require(selection)
             | ModelPolicy::Select(selection) => {
-                if let Some(provider) = &selection.provider {
+                // Resolve before provider or model-specific handling so all
+                // downstream code sees the concrete target.
+                let resolved = config
+                    .model_aliases
+                    .resolve(&selection.model)
+                    .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
+                match (&selection.provider, &resolved.provider, &resolved.alias) {
+                    (Some(pinned), Some(alias_provider), Some(_)) if pinned != alias_provider => {
+                        anyhow::bail!(
+                            "agent '{}': model alias '{}' resolves to provider '{alias_provider}', which conflicts with the agent's provider '{pinned}'",
+                            definition.id,
+                            selection.model,
+                        );
+                    }
+                    _ => {}
+                }
+                config.model_alias = resolved.alias;
+                let provider = resolved.provider.or_else(|| selection.provider.clone());
+                if let Some(provider) = &provider {
                     super::cli_config::apply_provider_override(
                         &mut config,
                         provider,
                         /* explicit_model */ true,
                     )?;
                 }
-                config.model.clone_from(&selection.model);
+                config.model = resolved.model;
             }
         }
         if let Some(reasoning) = definition.reasoning {

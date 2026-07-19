@@ -34,6 +34,18 @@ pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key"
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 
+/// Badge for the conversation model, shown as `alias → provider/model` when
+/// the selection came from a user-defined alias so the mapping is never hidden.
+fn conversation_model_badge(info: &super::TuiInfo, config: &Config) -> String {
+    let current = format!("{}/{}", info.provider, info.model);
+    match config.current_model_alias() {
+        Some(alias) if config.provider == info.provider && config.model == info.model => {
+            format!("{alias} → {current}")
+        }
+        _ => current,
+    }
+}
+
 pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker {
     let reasoning_capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
         &info.provider,
@@ -45,7 +57,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
                 preview: None,
                 badge: Some(PickerBadge {
-                    text: format!("{}/{}", info.provider, info.model),
+                    text: conversation_model_badge(info, config),
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: CONVERSATION_MODEL_VALUE.into(),
