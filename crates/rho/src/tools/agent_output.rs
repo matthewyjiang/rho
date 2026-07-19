@@ -1,6 +1,6 @@
 use rho_tools::tool::truncate;
 
-use super::agent::SubagentSnapshot;
+use {super::agent::SubagentSnapshot, crate::subagent::RunState};
 
 const DETAIL_BYTES: usize = 160;
 const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
@@ -55,6 +55,8 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
             lines.push(format!("error: {error}"));
+        }
+        if matches!(snapshot.status.state, RunState::Error | RunState::Stopped) {
             lines.push("this delegated task did not complete; treat its work as unverified".into());
         }
     }

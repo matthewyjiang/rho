@@ -37,9 +37,18 @@ The 1.0.0 implementation does not guarantee a terminal event for every worker ex
 
 ## Retry contract
 
-The core runtime performs one narrow automatic retry: a malformed normalized assistant response is attempted at most twice in total. Before the second attempt it emits `ProviderActivity` with kind `invalid_response_retry`. Any text, reasoning, or tool-call deltas emitted before this event belong to the rejected attempt. Hosts that render a live response must discard that attempt's current stream when they receive the event before rendering retry deltas. The Rho TUI performs this reset. A response with zero content blocks and malformed tool calls are invalid. A second invalid response fails permanently.
+The core runtime retries a model turn when either of these conditions occurs:
 
-The SDK does **not** automatically retry every retryable provider, transport, tool, policy, compaction, or persistence error. `Error::is_retryable` and `ProviderError` classification tell the host whether an unchanged retry may succeed; they do not authorize replay or guarantee idempotency. A host retry should start a new run only after checking session revision, provider billing implications, tool side effects, and its own idempotency keys.
+- The normalized assistant response is malformed. At most two malformed responses are accepted within the turn budget.
+- The provider returns a `ProviderError` classified as retryable. Retryable failures use exponential delays of 1, 2, and 4 seconds.
+
+A model turn makes at most four logical provider requests in total. Malformed responses and retryable provider failures share that bound. Permanent provider failures are returned immediately. Cancellation interrupts both an active request and a retry delay.
+
+Before retrying, the runtime emits `ProviderStreamReset` with a structured reason. Any text, reasoning, or tool-call deltas emitted since the preceding model-step boundary belong to the abandoned attempt. Hosts rendering live output must discard that attempt before rendering subsequent deltas. Usage reported by the abandoned attempt remains billable and is recorded as a separate physical request; hosts should retain it when presenting cumulative usage. The terminal `RunOutcome` contains usage from the successful response. The Rho TUI and headless reporter handle the reset.
+
+For compatibility with 1.0 hosts, a malformed response also emits the legacy `ProviderActivity` kind `invalid_response_retry` immediately before `ProviderStreamReset`. New hosts should use the typed reset event. Retryable provider failures emit only the typed event.
+
+Automatic retries repeat the model request with the same immutable history. They do not rerun tools completed by earlier model turns, but they can repeat provider-side work and incur usage for every attempt. Hosts should use recorded physical-request usage for billing and auditing rather than assuming one provider request per model turn.
 
 Tool-reported failures are returned to the model as tool results, so they can lead to another model step without being an SDK transport retry. The model loop ends with a permanent invalid-response error when it exceeds the configured step count.
 

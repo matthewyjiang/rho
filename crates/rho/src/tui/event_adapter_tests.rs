@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
     tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
-    HostChoice, HostInputRequest, HostQuestion, Revision, RunEvent, RunId, SelectionMode,
-    ToolCallId, ToolCompletion,
+    HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
+    RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -55,15 +55,33 @@ fn provider_diagnostics_are_shown_in_interactive_failures() {
 }
 
 #[test]
-fn malformed_response_retry_resets_the_current_provider_stream() {
+fn provider_retry_resets_the_current_provider_stream() {
+    let mut adapter = SdkEventAdapter::default();
+
+    for reason in [
+        ProviderStreamResetReason::InvalidResponse,
+        ProviderStreamResetReason::RetryableFailure(rho_sdk::ProviderErrorKind::Unavailable),
+    ] {
+        assert!(matches!(
+            adapter.translate(RunEvent::ProviderStreamReset {
+                reason,
+                detail: "retrying".into(),
+            }),
+            ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+        ));
+    }
+}
+
+#[test]
+fn legacy_malformed_response_activity_does_not_reset_twice() {
     let mut adapter = SdkEventAdapter::default();
 
     assert!(matches!(
         adapter.translate(RunEvent::ProviderActivity {
-            kind: "invalid_response_retry".into(),
+            kind: rho_sdk::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
             detail: "retrying".into(),
         }),
-        ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+        ViewEvent::Ignored
     ));
 }
 

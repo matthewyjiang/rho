@@ -19,9 +19,9 @@ use crate::{
 const PROVIDER_EVENT_CAPACITY: usize = 16;
 const TOOL_PROGRESS_CAPACITY: usize = 16;
 const INVALID_RESPONSE_ATTEMPTS: usize = 2;
-/// Total provider attempts per turn when failures are retryable: one initial
-/// request plus up to three retries.
-const RETRYABLE_REQUEST_ATTEMPTS: usize = 4;
+/// Maximum logical provider requests for one model turn, including malformed
+/// responses and retryable failures.
+const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -356,9 +356,11 @@ async fn request_valid_response(
     control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
     let mut next_attempt_index = 1;
+    let mut provider_turn_attempts = 0;
     let mut invalid_responses = 0;
     let mut failed_requests = 0;
     loop {
+        provider_turn_attempts += 1;
         let result = provider_turn(
             scope.runtime.provider.as_ref(),
             history,
@@ -406,19 +408,22 @@ async fn request_valid_response(
                 failed_requests += 1;
                 if control.cancellation.is_cancelled()
                     || !failure.error.is_retryable()
-                    || failed_requests >= RETRYABLE_REQUEST_ATTEMPTS
+                    || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
                 {
                     return Err(failure);
                 }
+                let detail = format!(
+                    "retrying after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}: {}",
+                    failure.error.message()
+                );
                 let _ = emit(
                     control.events,
                     control.cancellation,
-                    RunEvent::ProviderActivity {
-                        kind: crate::PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY.into(),
-                        detail: format!(
-                            "retrying after a retryable provider failure (attempt {failed_requests} of {RETRYABLE_REQUEST_ATTEMPTS}): {}",
-                            failure.error.message()
+                    RunEvent::ProviderStreamReset {
+                        reason: crate::ProviderStreamResetReason::RetryableFailure(
+                            failure.error.kind(),
                         ),
+                        detail,
                     },
                 )
                 .await;
@@ -434,7 +439,9 @@ async fn request_valid_response(
             return Ok((response, capture));
         }
         invalid_responses += 1;
-        if invalid_responses >= INVALID_RESPONSE_ATTEMPTS {
+        if invalid_responses >= INVALID_RESPONSE_ATTEMPTS
+            || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
+        {
             return Err(RequestFailure {
                 error: ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
@@ -444,14 +451,25 @@ async fn request_valid_response(
                 capture,
             });
         }
+        let detail = format!(
+            "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
+        );
+        // Preserve the 1.0 activity event while typed reset consumers migrate.
         let _ = emit(
             control.events,
             control.cancellation,
             RunEvent::ProviderActivity {
                 kind: crate::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
-                detail: format!(
-                    "retrying malformed provider response after attempt {invalid_responses}"
-                ),
+                detail: detail.clone(),
+            },
+        )
+        .await;
+        let _ = emit(
+            control.events,
+            control.cancellation,
+            RunEvent::ProviderStreamReset {
+                reason: crate::ProviderStreamResetReason::InvalidResponse,
+                detail,
             },
         )
         .await;

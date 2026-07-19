@@ -4,12 +4,23 @@ use crate::{
     Revision, RunId, SteeringId, ToolCallId,
 };
 
-/// Provider activity kind emitted when a malformed response is retried.
+/// Legacy provider activity kind emitted when a malformed response is retried.
+///
+/// New hosts should use [`RunEvent::ProviderStreamReset`]. This activity is
+/// retained so existing hosts still discard malformed response attempts.
 pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
-/// Provider activity kind emitted when a retryable provider failure is retried.
-pub const PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY: &str = "provider_error_retry";
 /// Provider activity kind emitted for provider-native web searches.
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
+
+/// Why the current provider attempt was abandoned before a fresh request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProviderStreamResetReason {
+    /// The provider returned a malformed normalized assistant response.
+    InvalidResponse,
+    /// The provider request failed with a retryable error.
+    RetryableFailure(crate::ProviderErrorKind),
+}
 
 /// Reason a successful run stopped producing model turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +163,12 @@ pub enum RunEvent {
     },
     ProviderActivity {
         kind: String,
+        detail: String,
+    },
+    /// The current provider attempt was abandoned. Hosts rendering live
+    /// deltas must discard that attempt before processing subsequent deltas.
+    ProviderStreamReset {
+        reason: ProviderStreamResetReason,
         detail: String,
     },
     ProviderContextUpdated {

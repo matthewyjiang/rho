@@ -4685,7 +4685,10 @@ impl App {
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
             ViewModelEvent::ProviderStreamReset => {
-                self.usage_before_current_attempt = self.current_run_usage.clone();
+                self.usage_before_current_attempt = self
+                    .current_run_usage
+                    .as_ref()
+                    .map(|usage| usage_difference(usage, self.usage_before_current_step.as_ref()));
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
