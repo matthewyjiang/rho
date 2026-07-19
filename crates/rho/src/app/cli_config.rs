@@ -70,11 +70,7 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         save_config = true;
     }
     if let Some(model) = &cli.model {
-        let provider = match cli.provider.as_deref() {
-            Some(provider) => ModelOverrideProvider::Explicit(provider),
-            None => ModelOverrideProvider::InferFromConfig,
-        };
-        apply_model_override(config, model, provider)?;
+        apply_model_override(config, model, cli.provider.as_deref())?;
         save_config = true;
     }
     if let Some(auth) = &cli.auth {
@@ -211,21 +207,33 @@ pub(super) fn apply_provider_override(
     Ok(())
 }
 
-enum ModelOverrideProvider<'a> {
-    Explicit(&'a str),
-    InferFromConfig,
-}
-
 fn apply_model_override(
     config: &mut Config,
-    model: &str,
-    provider: ModelOverrideProvider<'_>,
+    reference: &str,
+    cli_provider: Option<&str>,
 ) -> anyhow::Result<()> {
-    let selection = match provider {
-        ModelOverrideProvider::Explicit(provider) => {
-            catalog::resolve_model_selection_for_provider(provider, model)?
+    // `--model` may name a user-defined alias; resolve it before catalog
+    // validation so downstream code only sees concrete model ids.
+    let alias = config.model_aliases.get(reference).cloned();
+    let (model, provider) = match &alias {
+        Some(target) => {
+            if let (Some(pinned), Some(resolved)) = (cli_provider, target.provider.as_deref()) {
+                if pinned != resolved {
+                    anyhow::bail!(
+                        "model alias '{reference}' resolves to provider '{resolved}', which conflicts with --provider {pinned}"
+                    );
+                }
+            }
+            (
+                target.model.as_str(),
+                target.provider.as_deref().or(cli_provider),
+            )
         }
-        ModelOverrideProvider::InferFromConfig => catalog::resolve_model_selection_for_auths(
+        None => (reference, cli_provider),
+    };
+    let selection = match provider {
+        Some(provider) => catalog::resolve_model_selection_for_provider(provider, model)?,
+        None => catalog::resolve_model_selection_for_auths(
             model,
             &config.provider,
             &config.auth,
@@ -235,6 +243,7 @@ fn apply_model_override(
     config.provider = selection.provider;
     config.model = selection.model;
     config.auth = selection.auth;
+    config.model_alias = alias.is_some().then(|| reference.to_string());
     Ok(())
 }
 

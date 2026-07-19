@@ -109,14 +109,41 @@ impl AgentBinder {
             ModelPolicy::Prefer(selection)
             | ModelPolicy::Require(selection)
             | ModelPolicy::Select(selection) => {
-                if let Some(provider) = &selection.provider {
+                // `model:` may name a user-defined alias; resolve it before
+                // any provider or model-specific handling sees the value.
+                let (provider, model) = match config.model_aliases.get(&selection.model) {
+                    Some(target) => {
+                        let target = target.clone();
+                        if let (Some(pinned), Some(resolved)) =
+                            (&selection.provider, &target.provider)
+                        {
+                            if pinned != resolved {
+                                anyhow::bail!(
+                                    "agent '{}': model alias '{}' resolves to provider '{resolved}', which conflicts with the agent's provider '{pinned}'",
+                                    definition.id,
+                                    selection.model,
+                                );
+                            }
+                        }
+                        config.model_alias = Some(selection.model.clone());
+                        (
+                            target.provider.or_else(|| selection.provider.clone()),
+                            target.model,
+                        )
+                    }
+                    None => {
+                        config.model_alias = None;
+                        (selection.provider.clone(), selection.model.clone())
+                    }
+                };
+                if let Some(provider) = &provider {
                     super::cli_config::apply_provider_override(
                         &mut config,
                         provider,
                         /* explicit_model */ true,
                     )?;
                 }
-                config.model.clone_from(&selection.model);
+                config.model = model;
             }
         }
         if let Some(reasoning) = definition.reasoning {

@@ -661,3 +661,72 @@ fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
         Some("k3".into())
     );
 }
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn cli_model_override_resolves_user_defined_alias() {
+    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
+        let mut cfg = Config {
+            model_aliases: aliases(&[("deep", "anthropic/claude-sonnet-4-5")]),
+            ..Config::default()
+        };
+        let cli = Cli {
+            provider: None,
+            model: Some("deep".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.current_model_alias(), Some("deep"));
+    });
+}
+
+#[test]
+fn cli_model_alias_conflicting_with_provider_flag_errors() {
+    let mut cfg = Config {
+        model_aliases: aliases(&[("deep", "openai/gpt-5.5")]),
+        ..Config::default()
+    };
+    let cli = Cli {
+        provider: Some("anthropic".into()),
+        model: Some("deep".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "model alias 'deep' resolves to provider 'openai', which conflicts with --provider anthropic"
+        ),
+        "{error:#}"
+    );
+}

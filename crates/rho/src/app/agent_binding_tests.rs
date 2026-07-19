@@ -83,3 +83,94 @@ fn unavailable_explicit_tool_fails_before_execution() {
     .unwrap_err();
     assert!(error.to_string().contains("write_file"));
 }
+
+fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
+    Arc::new(AgentDefinition {
+        model,
+        ..definition(ToolPolicy::All).as_ref().clone()
+    })
+}
+
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn agent_model_alias_resolves_to_concrete_provider_and_model() {
+    let config = Config {
+        model_aliases: aliases(&[("deep", "anthropic/claude-opus-4-8")]),
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+            provider: None,
+            model: "deep".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &config,
+    )
+    .unwrap();
+
+    assert_eq!(bound.config().provider, "anthropic");
+    assert_eq!(bound.config().model, "claude-opus-4-8");
+    assert_eq!(bound.config().current_model_alias(), Some("deep"));
+}
+
+#[test]
+fn agent_bare_model_alias_keeps_inherited_provider() {
+    let config = Config {
+        model_aliases: aliases(&[("fast", "gpt-5.5-mini")]),
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+            provider: None,
+            model: "fast".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &config,
+    )
+    .unwrap();
+
+    assert_eq!(bound.config().provider, "openai");
+    assert_eq!(bound.config().model, "gpt-5.5-mini");
+}
+
+#[test]
+fn agent_model_alias_conflicting_with_pinned_provider_errors() {
+    let config = Config {
+        model_aliases: aliases(&[("deep", "anthropic/claude-opus-4-8")]),
+        ..Config::default()
+    };
+    let error = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+            provider: Some("openai".into()),
+            model: "deep".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &config,
+    )
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "model alias 'deep' resolves to provider 'anthropic', which conflicts with the agent's provider 'openai'"
+        ),
+        "{error:#}"
+    );
+}

@@ -433,3 +433,150 @@ fn saved_config_omits_migrated_web_search_secrets() {
     assert!(!saved.contains("web_search_exa_api_key"), "{saved}");
     assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
 }
+
+fn alias_config(path: &std::path::Path, model: &str) {
+    std::fs::write(
+        path,
+        format!(
+            r#"
+[model]
+provider = "openai"
+model = "{model}"
+
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.5-mini"
+"#
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn model_alias_resolves_session_model_at_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "deep");
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "anthropic");
+    assert_eq!(config.model, "claude-opus-4-8");
+    assert_eq!(config.current_model_alias(), Some("deep"));
+}
+
+#[test]
+fn bare_model_alias_keeps_configured_provider_and_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "fast");
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-5.5-mini");
+    assert_eq!(config.auth, Config::default().auth);
+    assert_eq!(config.current_model_alias(), Some("fast"));
+}
+
+#[test]
+fn model_alias_wins_over_identically_named_model_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+provider = "openai"
+model = "gpt-5.5"
+
+[model.aliases]
+"gpt-5.5" = "anthropic/claude-opus-4-8"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "anthropic");
+    assert_eq!(config.model, "claude-opus-4-8");
+    assert_eq!(config.current_model_alias(), Some("gpt-5.5"));
+}
+
+#[test]
+fn model_alias_targeting_unknown_provider_is_a_config_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+model = "deep"
+
+[model.aliases]
+deep = "nonexistent/model-x"
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("model alias 'deep' targets unknown provider 'nonexistent'"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn model_alias_round_trips_through_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "deep");
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("model = \"deep\""), "{saved}");
+    assert!(saved.contains("[model.aliases]"), "{saved}");
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.provider, "anthropic");
+    assert_eq!(reloaded.model, "claude-opus-4-8");
+    assert_eq!(reloaded.current_model_alias(), Some("deep"));
+}
+
+#[test]
+fn stale_model_alias_saves_the_concrete_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "deep");
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let mut config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.model = "claude-haiku-4-5".into();
+    assert_eq!(config.current_model_alias(), None);
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.model, "claude-haiku-4-5");
+    assert_eq!(reloaded.current_model_alias(), None);
+}

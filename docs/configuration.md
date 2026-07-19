@@ -10,6 +10,10 @@ auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-k
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
 
+[model.aliases]
+# deep = "anthropic/claude-opus-4-8"
+# fast = "gpt-5.6-luna"
+
 [display]
 show_reasoning_output = true
 max_tool_output_lines = 10
@@ -97,6 +101,20 @@ rho --config ~/.rho/config.toml
 ```
 
 `--no-system-prompt`, `--no-tools`, and `--no-subagents` are only available on the command line and apply only to the current run. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
+
+## Model aliases
+
+`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected:
+
+```toml
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.6-luna"
+```
+
+An alias can be used anywhere a model is referenced: the `model` setting above, `--model` on the command line, and `model` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
+
+Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. An alias always wins over an identically named model id, so a provider release cannot silently change what a configured name points to. The `/config` picker shows the mapping as `deep → anthropic/claude-opus-4-8` whenever the active model came from an alias, and saving config preserves the alias rather than its expansion. Alias values must be concrete models — an alias cannot point at another alias — and an alias targeting an unknown provider is a config error.
 
 ## Title model
 

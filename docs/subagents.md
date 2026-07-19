@@ -41,7 +41,7 @@ Supported fields are:
 | `description` | yes | Description shown by the `agent` tool |
 | `prompt` | no | `extend` (default) or `replace` |
 | `model-policy` | no | `inherit`, `prefer`, `require`, or `select` |
-| `model` | policy-dependent | Model selected by non-inherit policies |
+| `model` | policy-dependent | Model selected by non-inherit policies; may name a [model alias](/configuration#model-aliases) |
 | `provider` | no | Provider selected with the model |
 | `reasoning` | no | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
 | `tools` | no | `all` or an explicit capability list; `shell` resolves to the platform shell |

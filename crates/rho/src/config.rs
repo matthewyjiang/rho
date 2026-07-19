@@ -4,12 +4,14 @@ use std::{fmt, fs, path::PathBuf, str::FromStr};
 use {
     crate::compaction::CompactionConfig,
     crate::keybindings::Keybindings,
+    crate::model_aliases::ModelAliases,
     crate::paths,
     crate::permission::PermissionMode,
     rho_providers::credentials::{
         load_web_search_api_key, save_web_search_api_key, CredentialStore, OsCredentialStore,
         WebSearchCredential,
     },
+    rho_providers::model::catalog,
     rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
     rho_providers::reasoning::ReasoningLevel,
 };
@@ -27,6 +29,12 @@ pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
 pub struct Config {
     pub provider: String,
     pub model: String,
+    /// User-defined short names for concrete models; see `ModelAliases`.
+    pub model_aliases: ModelAliases,
+    /// Alias the current `provider`/`model` was resolved from, if any.
+    /// Consult it through `current_model_alias`, which drops it once the
+    /// selection no longer matches the alias table.
+    pub model_alias: Option<String>,
     pub max_output_bytes: usize,
     pub max_tool_output_lines: usize,
     pub auth: String,
@@ -59,6 +67,8 @@ impl Default for Config {
         Self {
             provider: "openai".into(),
             model: "gpt-5.5".into(),
+            model_aliases: ModelAliases::default(),
+            model_alias: None,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             max_tool_output_lines: 10,
             auth: "api-key".into(),
@@ -257,6 +267,8 @@ struct ModelConfig<'a> {
     auth: &'a str,
     reasoning: ReasoningLevel,
     favorite_models: &'a [String],
+    #[serde(skip_serializing_if = "ModelAliases::is_empty")]
+    aliases: &'a ModelAliases,
 }
 
 #[derive(Serialize)]
@@ -312,10 +324,13 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
         Self {
             model: ModelConfig {
                 provider: &config.provider,
-                model: &config.model,
+                // Persist the alias, not its expansion, so the alias table
+                // stays the single place a pinned model is spelled out.
+                model: config.current_model_alias().unwrap_or(&config.model),
                 auth: &config.auth,
                 reasoning: config.reasoning,
                 favorite_models: &config.favorite_models,
+                aliases: &config.model_aliases,
             },
             display: DisplayConfig {
                 show_reasoning_output: config.show_reasoning_output,
@@ -451,7 +466,9 @@ impl Config {
                 .favorite_models
                 .map(|models| favorite_model_values(&normalized_favorite_models(&models)))
                 .unwrap_or(cfg.favorite_models);
+            cfg.model_aliases = group.aliases.unwrap_or(cfg.model_aliases);
         }
+        cfg.resolve_model_alias()?;
         if let Some(group) = file.display {
             cfg.show_reasoning_output = group
                 .show_reasoning_output
@@ -527,6 +544,44 @@ impl Config {
         let _migration_result = config.migrate_legacy_web_search_credentials(store);
         write_config(&path, &config)?;
         Ok(())
+    }
+
+    /// Replace a session model that names an alias with its concrete target.
+    ///
+    /// Runs once at load time, before any model-specific behavior, so every
+    /// downstream consumer (capability checks, request building) only sees
+    /// concrete ids. An alias always wins over an identically named model id.
+    fn resolve_model_alias(&mut self) -> anyhow::Result<()> {
+        let Some(target) = self.model_aliases.get(&self.model).cloned() else {
+            self.model_alias = None;
+            return Ok(());
+        };
+        if let Some(provider) = &target.provider {
+            if !catalog::implemented_providers().contains(&provider.as_str()) {
+                anyhow::bail!(
+                    "model alias '{}' targets unknown provider '{provider}'",
+                    self.model
+                );
+            }
+            if *provider != self.provider {
+                if let Some(login) = catalog::login_target_for_provider(provider) {
+                    self.auth = login.auth;
+                }
+                self.provider.clone_from(provider);
+            }
+        }
+        self.model_alias = Some(std::mem::replace(&mut self.model, target.model));
+        Ok(())
+    }
+
+    /// The alias behind the current model selection, provided the alias table
+    /// still maps it there; stale aliases silently drop out.
+    pub fn current_model_alias(&self) -> Option<&str> {
+        let name = self.model_alias.as_deref()?;
+        let target = self.model_aliases.get(name)?;
+        (target.model == self.model
+            && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
+            .then_some(name)
     }
 
     pub fn set_compact_threshold_percent(&mut self, value: u8) {
@@ -638,6 +693,7 @@ struct PartialModelConfig {
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
     favorite_models: Option<Vec<String>>,
+    aliases: Option<ModelAliases>,
 }
 
 #[derive(Deserialize)]
