@@ -6,17 +6,17 @@ use rho_sdk::{
     SessionOptions, SystemPrompt, UserInput, Workspace,
 };
 
-use crate::{
-    agent::PromptPolicy,
-    compaction::CompactionConfig,
-    config::Config,
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    permission::PermissionMode,
-    prompt,
-    providers::{build_sdk_provider_with_source, UnavailableProvider},
-    session::Session as StoredSession,
-    tools::sdk_registry::{AppToolSet, ToolSetOptions},
+use {
+    crate::agent::PromptPolicy,
+    crate::compaction::CompactionConfig,
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::permission::PermissionMode,
+    crate::prompt,
+    crate::session::Session as StoredSession,
+    crate::tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
 use super::{
@@ -87,7 +87,7 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) storage: Option<StoredSession>,
     pub(crate) diagnostics: RuntimeDiagnostics,
     pub(crate) agent: BoundAgent,
-    pub(crate) unavailable_error: Option<crate::model::ModelError>,
+    pub(crate) unavailable_error: Option<rho_providers::model::ModelError>,
 }
 
 enum ReplacementSessionSource<'a> {
@@ -113,6 +113,7 @@ pub(crate) struct InteractiveRuntime {
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
     permission_mode: PermissionMode,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
@@ -153,9 +154,9 @@ impl InteractiveRuntime {
             Some(error) => Arc::new(UnavailableProvider::new(error)),
             None => {
                 let credentials =
-                    crate::auth::provider_credentials::ApplicationCredentialSource::new(Arc::new(
-                        OsCredentialStore,
-                    ));
+                    rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+                        Arc::new(OsCredentialStore),
+                    );
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
@@ -211,6 +212,7 @@ impl InteractiveRuntime {
         let permission_mode = config.permission_mode;
         let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
         diagnostics.update_compaction_config(&compaction);
+        let usage_recording = crate::usage::default_recording().await;
         let runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(&provider),
             tools: tools.tools(),
@@ -221,6 +223,9 @@ impl InteractiveRuntime {
             reasoning: sdk_options.runtime.reasoning,
             compaction: compaction.clone(),
             context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: usage_recording.clone(),
         })?;
         let cache_key = session_id.as_deref().map(prompt_cache_key);
         let resumed_snapshot = storage
@@ -269,6 +274,7 @@ impl InteractiveRuntime {
             reasoning: sdk_options.runtime.reasoning,
             compaction,
             context_window,
+            usage_recording,
             permission_mode,
             approval_handler,
             approval_receiver,
@@ -311,6 +317,9 @@ impl InteractiveRuntime {
             reasoning: self.reasoning,
             compaction: self.compaction.clone(),
             context_window: self.context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: self.usage_recording.clone(),
         })?;
         let replacement_session = replacement_runtime
             .session(SessionOptions::from_snapshot(snapshot))
@@ -340,6 +349,14 @@ impl InteractiveRuntime {
         self.pending_session_id
             .as_ref()
             .unwrap_or_else(|| self.session.id())
+    }
+
+    pub(crate) fn usage_recording(&self) -> rho_sdk::ProviderRequestUsageRecording {
+        self.usage_recording.clone()
+    }
+
+    pub(crate) fn workspace_path(&self) -> &std::path::Path {
+        self.workspace.root()
     }
 
     pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) {
@@ -588,6 +605,7 @@ impl InteractiveRuntime {
             self.reasoning,
             self.compaction.clone(),
             self.context_window,
+            self.usage_recording.clone(),
         );
         self.session
             .set_compaction(Some(Arc::new(compactor)), policy)
@@ -611,7 +629,7 @@ impl InteractiveRuntime {
         skill: &crate::skills::Skill,
         max_bytes: usize,
     ) -> anyhow::Result<()> {
-        let content = crate::tool::truncate(skill.contents.clone(), max_bytes);
+        let content = rho_tools::tool::truncate(skill.contents.clone(), max_bytes);
         let message = Message::user_text(format!(
             "Loaded skill `{}` from {}:\n\n{}",
             skill.name, skill.source, content
@@ -703,6 +721,9 @@ impl InteractiveRuntime {
             reasoning: self.reasoning,
             compaction: self.compaction.clone(),
             context_window: self.context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: self.usage_recording.clone(),
         })?;
         let replacement_session = replacement_runtime.session(options).await?;
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
@@ -771,7 +792,7 @@ fn approval_channel_for(
 }
 
 fn prompt_cache_key(id: &str) -> String {
-    crate::providers::openai::prompt_cache_key_from_session_id(id)
+    rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
         .unwrap_or_else(|| format!("rho:{id}"))
 }
 

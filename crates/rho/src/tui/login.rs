@@ -1,5 +1,8 @@
 use super::*;
-use crate::{model::registry, provider, providers::build_sdk_provider};
+use {
+    rho_providers::model::registry, rho_providers::provider,
+    rho_providers::providers::build_sdk_provider,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct SecretInput {
@@ -563,8 +566,8 @@ impl App {
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
             self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {}, but no cached models are available. Run /refresh-model-list {} before switching to it.",
-                    target.provider, target.provider
+                    "stored credentials for {}, but no cached models are available. Open /config and choose Refresh model lists before switching to it.",
+                    target.provider
                 )),
             );
             self.status = "login saved".into();

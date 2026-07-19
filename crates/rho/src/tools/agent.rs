@@ -11,12 +11,12 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{
-    agent::{AgentCatalog, AgentDefinition},
-    app::agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
-    cancellation::RunCancellation,
-    subagent::{self, RunState, RunStatus},
-    tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+use {
+    crate::agent::{AgentCatalog, AgentDefinition},
+    crate::app::agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
+    crate::subagent::{self, RunState, RunStatus},
+    rho_tools::cancellation::RunCancellation,
+    rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 use super::agent_output::{
@@ -108,16 +108,19 @@ impl SubagentManager {
     ) -> anyhow::Result<(String, PathBuf)> {
         let (id, directory) = create_run_directory()?;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
-        let handle = self.executor.spawn(AgentLaunchRequest {
-            definition: Arc::new(definition.clone()),
-            prompt: prompt.to_string(),
-            output_file,
-        })?;
         let session_id = self
             .session_id
             .lock()
             .expect("delegated session lock")
             .clone();
+        let handle = self.executor.spawn(AgentLaunchRequest {
+            definition: Arc::new(definition.clone()),
+            prompt: prompt.to_string(),
+            parent_session_id: session_id
+                .as_deref()
+                .and_then(|id| rho_sdk::SessionId::from_string(id.to_owned()).ok()),
+            output_file,
+        })?;
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),
             AgentEntry {
@@ -355,7 +358,7 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. Do not poll or wait when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. To wait for a background result, end the current turn. Do not call sleep or poll when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -496,7 +499,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check or stop background agents.".into(),
+            description: "Check background-agent progress or stop a run. Completed results are delivered automatically. To wait for a result, end the current turn. Do not call sleep or poll when no foreground work remains.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -551,7 +554,7 @@ impl Tool for AgentsTool {
                     .stop(id)
                     .await
                     .map_err(|error| ToolError::Message(error.to_string()))?;
-                format_snapshot(&snapshot, SnapshotFormat::Completion)
+                format_snapshot(&snapshot, SnapshotFormat::Status)
             }
             other => {
                 return Err(ToolError::Message(format!(

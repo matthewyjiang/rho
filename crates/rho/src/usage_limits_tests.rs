@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use super::*;
-use crate::credentials::{save_kimi_tokens, save_xai_tokens, CredentialResult};
+use rho_providers::credentials::{save_kimi_tokens, save_xai_tokens, CredentialResult};
 
 #[derive(Default)]
 struct TestStore {

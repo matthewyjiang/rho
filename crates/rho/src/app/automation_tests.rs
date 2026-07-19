@@ -93,6 +93,9 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
             target_percent: 1,
         },
         context_window: Some(1_000),
+        usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));

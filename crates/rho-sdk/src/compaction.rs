@@ -2,6 +2,7 @@ use std::{
     fmt,
     future::Future,
     num::{NonZeroU64, NonZeroUsize},
+    path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -176,6 +177,11 @@ impl CompactionPolicy {
 pub struct CompactionRequest {
     messages: Vec<Message>,
     cancellation: CancellationToken,
+    session_id: Option<crate::SessionId>,
+    parent_session_id: Option<crate::SessionId>,
+    run_id: Option<crate::RunId>,
+    step_index: Option<usize>,
+    workspace_path: Option<PathBuf>,
 }
 
 impl CompactionRequest {
@@ -183,11 +189,52 @@ impl CompactionRequest {
         Self {
             messages,
             cancellation,
+            session_id: None,
+            parent_session_id: None,
+            run_id: None,
+            step_index: None,
+            workspace_path: None,
         }
+    }
+
+    pub(crate) fn with_request_context(
+        mut self,
+        session_id: crate::SessionId,
+        parent_session_id: Option<crate::SessionId>,
+        run_id: crate::RunId,
+        step_index: Option<usize>,
+        workspace_path: Option<PathBuf>,
+    ) -> Self {
+        self.session_id = Some(session_id);
+        self.parent_session_id = parent_session_id;
+        self.run_id = Some(run_id);
+        self.step_index = step_index;
+        self.workspace_path = workspace_path;
+        self
     }
 
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    pub fn session_id(&self) -> Option<&crate::SessionId> {
+        self.session_id.as_ref()
+    }
+
+    pub fn parent_session_id(&self) -> Option<&crate::SessionId> {
+        self.parent_session_id.as_ref()
+    }
+
+    pub fn run_id(&self) -> Option<&crate::RunId> {
+        self.run_id.as_ref()
+    }
+
+    pub fn step_index(&self) -> Option<usize> {
+        self.step_index
+    }
+
+    pub fn workspace_path(&self) -> Option<&std::path::Path> {
+        self.workspace_path.as_deref()
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
@@ -238,6 +285,16 @@ impl CompactionOutput {
 pub type CompactionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CompactionOutput, Error>> + Send + 'a>>;
 
+/// Defines who cancels an in-flight compaction future.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompactorCancellationMode {
+    /// The SDK must drop the future when cancellation is requested.
+    #[default]
+    External,
+    /// The compactor observes `CompactionRequest::cancellation` and resolves itself.
+    Cooperative,
+}
+
 /// Transport-independent history compaction extension point.
 ///
 /// Implementors may summarize through a model or apply another host policy, but
@@ -245,6 +302,11 @@ pub type CompactionFuture<'a> =
 /// cancellation. Session history mutation remains owned by the SDK.
 pub trait Compactor: Send + Sync {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a>;
+
+    /// Describes whether the compactor resolves its future after request cancellation.
+    fn cancellation_mode(&self) -> CompactorCancellationMode {
+        CompactorCancellationMode::External
+    }
 }
 
 /// Cause of a compaction operation.

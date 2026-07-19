@@ -6,7 +6,7 @@ use rho_sdk::{
 };
 
 use super::InteractiveToolPresenter;
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
@@ -14,6 +14,20 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
         name: name.into(),
         arguments,
     }
+}
+
+#[test]
+fn shell_preview_uses_prompt_before_arguments_arrive() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+
+    assert_eq!(
+        presenter.preview(0, Some("bash".into()), ""),
+        Some(vec!["$".into()])
+    );
+    assert_eq!(
+        presenter.preview(1, Some("powershell".into()), ""),
+        Some(vec!["PS".into()])
+    );
 }
 
 #[test]

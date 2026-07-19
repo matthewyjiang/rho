@@ -1,7 +1,7 @@
 {
   "default_production_line_budget": 1000,
   "legacy_file_budgets": {
-    "crates/rho/src/providers/openai/codex_ws.rs": 1036,
+    "crates/rho-providers/src/providers/openai/codex_ws.rs": 1036,
     "crates/rho/src/tui.rs": 7753
   },
   "generated_files": {},
@@ -15,7 +15,7 @@
       "reason": "keep the headless SDK independent from application and terminal policy"
     },
     {
-      "path": "crates/rho/src/credentials.rs",
+      "path": "crates/rho-providers/src/credentials.rs",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
     }
@@ -25,6 +25,16 @@
       "manifest": "crates/rho-sdk/Cargo.toml",
       "packages": ["rho-coding-agent"],
       "reason": "the application depends on the SDK, never the reverse"
+    },
+    {
+      "manifest": "crates/rho-providers/Cargo.toml",
+      "packages": ["rho-coding-agent"],
+      "reason": "provider infrastructure must not depend on the application"
+    },
+    {
+      "manifest": "crates/rho-tools/Cargo.toml",
+      "packages": ["rho-coding-agent", "rho-providers"],
+      "reason": "tools remain below providers and independent from the application"
     }
   ]
 }

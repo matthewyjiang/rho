@@ -11,10 +11,10 @@ use super::{
     theme::Theme,
     TuiInfo,
 };
-use crate::{
-    model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
-    permission::PermissionMode,
-    reasoning::ReasoningLevel,
+use {
+    crate::permission::PermissionMode,
+    rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
+    rho_providers::reasoning::ReasoningLevel,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -13,6 +13,7 @@ fn retry_removes_only_replaceable_provider_output() {
             state: ToolEntryState::Running,
             display_lines: vec!["keep tool".into()],
             expanded: false,
+            image: None,
         }),
         Entry::Reasoning("discard reasoning".into()),
     ]);

@@ -73,8 +73,9 @@ fn failed_notification_warns_against_claiming_verification() {
     };
 
     let (model, display) = notification_prompts(&notification);
-    assert!(model
-        .contains("verification: incomplete — the delegated run did not finish; nothing is verified"));
+    assert!(model.contains(
+        "verification: incomplete — the delegated run did not finish; nothing is verified"
+    ));
     assert!(model.contains("only a passing review counts as verified"));
     assert!(display.contains("finished - error"));
 }

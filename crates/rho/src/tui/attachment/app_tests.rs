@@ -19,7 +19,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         ok: true,
-        display_style: crate::tool::ToolDisplayStyle::default_tool(),
+        display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
         display_lines: vec!["keep tool".into()],
     });
     app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));

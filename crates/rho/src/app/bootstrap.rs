@@ -4,13 +4,13 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    cli::{Cli, Command},
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
-    model::{models_dev::cached_model_metadata, ModelError},
-    update,
+use {
+    crate::cli::{Cli, Command},
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::HerdrReporter,
+    crate::update,
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::model::{models_dev::cached_model_metadata, ModelError},
 };
 
 use super::{
@@ -76,7 +76,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         && cached_model_metadata(&config.provider, &config.model).is_none()
     {
         let _ =
-            crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
+            rho_providers::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
+                .await;
     }
     cli_config::normalize_reasoning(&mut config);
     let herdr = HerdrReporter::from_env();
@@ -95,6 +96,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
                 no_subagents: cli.no_subagents,
+                usage_purpose: "agent",
+                parent_session_id: None,
                 agent: bound_agent,
                 output_file,
                 diagnostics,
@@ -114,11 +117,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
     let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
-    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
-    let provider_result =
-        crate::providers::build_sdk_provider_with_source(sdk_options.provider, &credentials);
+    let provider_result = rho_providers::providers::build_sdk_provider_with_source(
+        sdk_options.provider,
+        &credentials,
+    );
     let (missing_auth_error, missing_auth_model_error) = match provider_result {
         Ok(_) => (None, None),
         Err(error) if is_interactive_startup_unavailable_error(&error) => {

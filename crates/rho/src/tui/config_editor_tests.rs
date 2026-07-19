@@ -59,13 +59,13 @@ fn editor_uses_legacy_web_search_key_when_store_has_no_entry() {
 
 #[test]
 fn editor_preserves_legacy_web_search_key_when_store_is_unavailable() {
-    let store_error = crate::credentials::CredentialError::StoreUnavailable("test".into());
+    let store_error = rho_providers::credentials::CredentialError::StoreUnavailable("test".into());
 
     let (value, error) = resolve_web_search_editor_value(Err(store_error), Some("legacy-key"));
 
     assert_eq!(value.as_deref(), Some("legacy-key"));
     assert!(matches!(
         error,
-        Some(crate::credentials::CredentialError::StoreUnavailable(message)) if message == "test"
+        Some(rho_providers::credentials::CredentialError::StoreUnavailable(message)) if message == "test"
     ));
 }

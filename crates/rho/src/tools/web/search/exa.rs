@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::{credentials::WebSearchCredential, tool::ToolError};
+use {rho_providers::credentials::WebSearchCredential, rho_tools::tool::ToolError};
 
 use super::{
     openai::normalize_domain_filters, openai::openai_recency_label, SearchBackendConfig, SearchItem,

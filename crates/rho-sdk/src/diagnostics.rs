@@ -92,6 +92,7 @@ pub struct DiagnosticsSnapshot {
     compaction_trigger_tokens: Option<u64>,
     reasoning_level: crate::ReasoningLevel,
     default_features: Vec<String>,
+    usage_recorder_diagnostics: Vec<crate::UsageRecorderDiagnostic>,
 }
 
 pub(crate) struct SecuritySettings {
@@ -109,6 +110,7 @@ pub(crate) struct ExecutionSettings {
     pub(crate) compaction_trigger_messages: Option<usize>,
     pub(crate) compaction_trigger_tokens: Option<u64>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) usage_recorder_diagnostics: Vec<crate::UsageRecorderDiagnostic>,
 }
 
 impl DiagnosticsSnapshot {
@@ -136,6 +138,7 @@ impl DiagnosticsSnapshot {
             compaction_trigger_tokens: execution.compaction_trigger_tokens,
             reasoning_level: execution.reasoning_level,
             default_features: Vec::new(),
+            usage_recorder_diagnostics: execution.usage_recorder_diagnostics,
         }
     }
 
@@ -185,6 +188,10 @@ impl DiagnosticsSnapshot {
 
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {
         self.reasoning_level
+    }
+
+    pub fn usage_recorder_diagnostics(&self) -> &[crate::UsageRecorderDiagnostic] {
+        &self.usage_recorder_diagnostics
     }
 
     /// Enabled capability feature labels. Empty for the minimal default SDK.

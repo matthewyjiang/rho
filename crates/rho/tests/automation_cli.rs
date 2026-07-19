@@ -161,6 +161,11 @@ fn provider_and_tool_failures_stay_off_stdout() {
 #[test]
 fn output_run_persists_agent_identity() {
     let root = TempDir::new().unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        "provider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+    )
+    .unwrap();
     let output_file = root.path().join("result.json");
     let mut command = command(&root, "fixed");
     command.env(RESPONSE_ENV, "done").args([
@@ -226,6 +231,16 @@ fn final_answer_is_the_only_stdout_content() {
     assert_success(&output);
     assert_eq!(stdout(&output), "answer for a pipeline\n");
     assert!(output.stderr.is_empty());
+
+    let ledger = rusqlite::Connection::open(root.path().join(".rho/usage.sqlite3")).unwrap();
+    let request: (String, String, String) = ledger
+        .query_row(
+            "SELECT provider, model, purpose FROM usage_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
 }
 
 #[cfg(unix)]
@@ -338,6 +353,8 @@ fn command(root: &TempDir, mode: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
     command
         .current_dir(root.path())
+        .env("HOME", root.path())
+        .env("RHO_HOME", root.path().join(".rho"))
         .env(MODE_ENV, mode)
         .env_remove(RESPONSE_ENV)
         .env_remove(COMMAND_ENV)

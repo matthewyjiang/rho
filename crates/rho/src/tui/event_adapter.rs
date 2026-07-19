@@ -1,12 +1,12 @@
-use crate::{
-    app::interactive_presenter::InteractiveToolPresenter,
-    questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
-    tool::ToolDisplayStyle,
-};
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
     PROVIDER_ACTIVITY_WEB_SEARCH,
+};
+use {
+    crate::app::interactive_presenter::InteractiveToolPresenter,
+    crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
+    rho_tools::tool::ToolDisplayStyle,
 };
 
 use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest};
@@ -34,6 +34,7 @@ pub(super) enum ViewModelEvent {
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
+        image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
 }
 
@@ -117,6 +118,7 @@ impl SdkEventAdapter {
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
+                    image_asset: presented.image_asset,
                 })
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
@@ -129,6 +131,7 @@ impl SdkEventAdapter {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
+                        image_asset: None,
                     })
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))

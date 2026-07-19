@@ -3,14 +3,14 @@ use std::collections::HashSet;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::{
-    auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
-    credentials::{
+use {
+    rho_providers::auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
+    rho_providers::credentials::{
         load_codex_tokens, load_provider_api_key, CodexTokens, OsCredentialStore,
         WebSearchCredential,
     },
-    providers::openai::auth::{refresh_codex_token, CodexAuthSource},
-    tool::ToolError,
+    rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
+    rho_tools::tool::ToolError,
 };
 
 use super::{SearchBackendConfig, SearchItem};

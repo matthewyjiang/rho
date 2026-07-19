@@ -44,6 +44,7 @@ mod config_picker;
 mod copy_interaction;
 mod doctor;
 mod event_adapter;
+mod feed_image;
 mod file_palette;
 mod file_picker;
 mod frame_scheduler;
@@ -58,6 +59,7 @@ mod local_diff;
 mod login;
 mod markdown;
 mod message_history;
+mod message_render;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
@@ -71,15 +73,18 @@ mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
 mod render;
+mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
 mod session_picker;
+mod session_title;
 mod skill_picker;
 #[cfg(debug_assertions)]
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod stream_preview;
 mod subagent_panel;
 mod terminal_events;
 mod text_selection;
@@ -96,14 +101,12 @@ use config_editor::{
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
 use login::{PendingOAuthLogin, SecretInput};
-use markdown::{
-    push_wrapped_markdown_without_copy_button_from_fence_state, update_code_block_state,
-    CodeFenceState,
-};
+use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker};
@@ -116,10 +119,10 @@ use questionnaire::{
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
     input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
-    push_wrapped_text, session_header_lines, styled_line, tool_entry_lines, truncate_one_line,
-    LineFill,
+    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
+use session_title::{generate_session_title, PendingSessionTitle};
 use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
@@ -131,35 +134,35 @@ use text_selection::{
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
-use crate::{
-    app::config_repository::ConfigRepository,
-    app::interactive_runtime::InteractiveRuntime,
-    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
-    clipboard_image::read_clipboard_image,
-    commands::{self, CommandId, CommandInvocation, CommandSpec},
-    credentials::{
+use {
+    crate::app::config_repository::ConfigRepository,
+    crate::app::interactive_runtime::InteractiveRuntime,
+    crate::clipboard_image::read_clipboard_image,
+    crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
+    crate::herdr::{HerdrReporter, HerdrState},
+    crate::keybindings::Keybindings,
+    crate::permission::PermissionMode,
+    crate::session::Session,
+    rho_providers::auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
+    rho_providers::credentials::{
         available_auth_modes, delete_provider_credentials, load_web_search_api_key,
         provider_has_credentials, provider_has_env_override, save_codex_tokens,
         save_github_copilot_tokens, save_kimi_tokens, save_provider_api_key, save_xai_tokens,
         CodexTokens, CredentialStore, GitHubCopilotTokens, KimiTokens, OsCredentialStore,
         XaiTokens,
     },
-    herdr::{HerdrReporter, HerdrState},
-    keybindings::Keybindings,
-    model::{
+    rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
         models_dev::{cached_model_metadata, fetch_model_metadata},
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelRequest,
-        ModelResponse, ModelUsage, UnavailableProvider,
+        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
+        UnavailableProvider,
     },
-    permission::PermissionMode,
-    provider::{self, ProviderAuthKind},
-    providers::build_sdk_provider,
-    reasoning::ReasoningLevel,
-    session::Session,
-    tool::ToolDisplayStyle,
+    rho_providers::provider::{self, ProviderAuthKind},
+    rho_providers::providers::build_sdk_provider,
+    rho_providers::reasoning::ReasoningLevel,
+    rho_tools::tool::ToolDisplayStyle,
 };
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
@@ -281,6 +284,7 @@ struct App {
     assistant_stream: AppendOnlyStream,
     assistant_stream_code_fence: CodeFenceState,
     reasoning_stream: AppendOnlyStream,
+    reasoning_stream_code_fence: CodeFenceState,
     current_stream_kind: Option<StreamKind>,
     stream_preview_deadline: Option<Instant>,
     live_stream_preview: Option<LiveStreamPreview>,
@@ -292,6 +296,7 @@ struct App {
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
+    image_picker: Option<ratatui_image::picker::Picker>,
     steering_prompts: VecDeque<QueuedPrompt>,
     accepted_steering: VecDeque<AcceptedSteering>,
     retracting_steering: Option<rho_sdk::SteeringId>,
@@ -340,7 +345,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
-    pending_session_title: Option<Pin<Box<dyn Future<Output = SessionTitleResult>>>>,
+    pending_session_title: Option<PendingSessionTitle>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
     history_scrollbar_visible_until: Option<Instant>,
@@ -492,6 +497,7 @@ struct ToolEntry {
     state: ToolEntryState,
     display_lines: Vec<String>,
     expanded: bool,
+    image: Option<FeedImage>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -581,7 +587,7 @@ impl App {
         if smoke_injection::matrix_enabled() {
             return Self::new_with_credentials(
                 info,
-                Arc::new(crate::credentials::MemoryCredentialStore::default()),
+                Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
             );
         }
         Self::new_with_credentials(info, Arc::new(OsCredentialStore))
@@ -613,6 +619,7 @@ impl App {
             assistant_stream: AppendOnlyStream::default(),
             assistant_stream_code_fence: CodeFenceState::default(),
             reasoning_stream: AppendOnlyStream::default(),
+            reasoning_stream_code_fence: CodeFenceState::default(),
             current_stream_kind: None,
             stream_preview_deadline: None,
             live_stream_preview: None,
@@ -624,6 +631,7 @@ impl App {
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
             pending_tool_call: None,
+            image_picker: picker_from_environment(),
             steering_prompts: VecDeque::new(),
             accepted_steering: VecDeque::new(),
             retracting_steering: None,
@@ -782,6 +790,10 @@ impl App {
             }
         }
         self.cancel_limits_command().await;
+        if let Some(mut pending) = self.pending_session_title.take() {
+            pending.cancel();
+            let _ = (&mut pending).await;
+        }
         Ok(TuiResult {
             resume_session_id: self.info.session_id.clone(),
             exit_summary: self.exit_summary(),
@@ -1264,7 +1276,7 @@ impl App {
         };
         let waker = noop_waker_ref();
         let mut context = std::task::Context::from_waker(waker);
-        let std::task::Poll::Ready(result) = future.as_mut().poll(&mut context) else {
+        let std::task::Poll::Ready(result) = Pin::new(future).poll(&mut context) else {
             return Ok(false);
         };
         self.pending_session_title = None;
@@ -2085,16 +2097,43 @@ impl App {
         )
     }
 
-    fn start_session_title_generation(&mut self, first_user_message: String) {
-        let Some(session_id) = self.info.session_id.clone() else {
+    fn start_session_title_generation(
+        &mut self,
+        first_user_message: String,
+        agent: &InteractiveRuntime,
+    ) {
+        if self.info.session_id.is_none() {
             return;
-        };
+        }
+        let session_id = agent.session_id().clone();
+        let workspace_path = agent.workspace_path().to_path_buf();
+        let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
         let (provider, model, _auth) = self.title_model_selection();
-        self.pending_session_title = Some(Box::pin(async move {
-            let title = generate_session_title(provider, model, first_user_message).await;
-            SessionTitleResult { session_id, title }
-        }));
+        let cancellation = rho_sdk::CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let task_session_id = session_id.clone();
+        let handle = tokio::spawn(async move {
+            let title = generate_session_title(
+                provider,
+                model,
+                first_user_message,
+                task_session_id.clone(),
+                workspace_path,
+                usage_recording,
+                task_cancellation,
+            )
+            .await;
+            SessionTitleResult {
+                session_id: task_session_id.to_string(),
+                title,
+            }
+        });
+        self.pending_session_title = Some(PendingSessionTitle::new(
+            session_id.to_string(),
+            cancellation,
+            handle,
+        ));
     }
 
     async fn submit(
@@ -2542,7 +2581,7 @@ impl App {
             );
             if picker.items.is_empty() {
                 self.insert_entry(&Entry::Notice(
-                    "no cached API models. run /refresh-model-list after the current run ends."
+                    "no cached API models. refresh model lists from /config after the current run ends."
                         .into(),
                 ));
                 self.status = "running".into();
@@ -2604,20 +2643,14 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
-            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::Limits => {
                 self.start_limits_command();
                 Ok(())
             }
-            CommandId::Auto | CommandId::Plan | CommandId::Supervised => {
-                self.reject_permission_mode_change();
-                Ok(())
-            }
             CommandId::New
             | CommandId::Compact
-            | CommandId::RefreshModelList
             | CommandId::Login
             | CommandId::Logout
             | CommandId::Resume => {
@@ -2747,6 +2780,7 @@ impl App {
             return Ok(());
         };
 
+        let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(action, PickerAction::Config) {
             self.composer = ComposerMode::Input;
         }
@@ -2795,6 +2829,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList
             | PickerAction::ResumeSession => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
@@ -2802,11 +2837,28 @@ impl App {
                 self.status = "picker action unavailable while running".into();
             }
         }
+        if let Some((picker, selected_value)) = return_picker {
+            self.open_main_config_picker(selected_value, picker.filter)?;
+        }
         Ok(())
     }
 
     fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
+            config_picker::CONVERSATION_MODEL_VALUE => {
+                self.open_config_conversation_model_picker_during_turn();
+            }
+            config_picker::TITLE_MODEL_VALUE => {
+                self.open_config_title_model_picker();
+            }
+            config_picker::REFRESH_MODEL_LIST_VALUE
+            | config_picker::PROVIDER_LOGIN_VALUE
+            | config_picker::PROVIDER_LOGOUT_VALUE => {
+                self.insert_entry(&Entry::Notice(
+                    "provider configuration is unavailable while a model turn is running".into(),
+                ));
+                self.status = "config action unavailable while running".into();
+            }
             config_picker::PERMISSION_MODE_VALUE => {
                 self.reject_permission_mode_change();
             }
@@ -2927,6 +2979,7 @@ impl App {
         self.assistant_stream.reset();
         self.assistant_stream_code_fence = CodeFenceState::default();
         self.reasoning_stream.reset();
+        self.reasoning_stream_code_fence = CodeFenceState::default();
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
@@ -2966,7 +3019,7 @@ impl App {
         &mut self,
         event: ViewModelEvent,
         terminal: &mut DefaultTerminal,
-    ) -> Result<bool, crate::model::ModelError> {
+    ) -> Result<bool, rho_providers::model::ModelError> {
         Ok(self.handle_agent_event(event, terminal)?)
     }
 
@@ -2995,7 +3048,7 @@ impl App {
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
         input_mode: RunningInputMode,
-    ) -> Result<StreamControl, crate::model::ModelError> {
+    ) -> Result<StreamControl, rho_providers::model::ModelError> {
         let mut control = StreamControl::Continue;
         let mut next_event = Some(first_event);
         for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
@@ -3020,7 +3073,7 @@ impl App {
                         && matches!(self.composer, ComposerMode::Approval(_))
                     {
                         self.handle_approval_key(key, 1).map_err(|error| {
-                            crate::model::ModelError::InvalidResponse(error.to_string())
+                            rho_providers::model::ModelError::InvalidResponse(error.to_string())
                         })?;
                         self.cancel_inline_shells();
                         return Ok(
@@ -3037,7 +3090,7 @@ impl App {
                     }
                     if input_mode == RunningInputMode::Turn {
                         self.handle_key_during_turn(key, terminal).map_err(|err| {
-                            crate::model::ModelError::InvalidResponse(err.to_string())
+                            rho_providers::model::ModelError::InvalidResponse(err.to_string())
                         })?;
                         if self.pending_input_action.is_some() {
                             break;
@@ -3177,7 +3230,9 @@ impl App {
             StreamKind::Assistant => self
                 .assistant_stream
                 .drain_renderable_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self.reasoning_stream.drain_renderable(inner_width),
+            StreamKind::Reasoning => self
+                .reasoning_stream
+                .drain_renderable_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
         };
         if let Some(fragment) = fragment {
             self.live_stream_preview = None;
@@ -3234,7 +3289,9 @@ impl App {
             StreamKind::Assistant => self
                 .assistant_stream
                 .drain_preview_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self.reasoning_stream.drain_preview(),
+            StreamKind::Reasoning => self
+                .reasoning_stream
+                .drain_preview_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
         };
         self.stream_preview_deadline = None;
         self.update_stream_preview_deadline(kind);
@@ -3277,43 +3334,14 @@ impl App {
         }
     }
 
-    fn render_stream_preview_lines(
-        &self,
-        preview: &LiveStreamPreview,
-        width: usize,
-    ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        if preview.include_leading_blank {
-            lines.push(Line::raw(""));
-        }
-        let mut text_lines = Vec::new();
-        if matches!(preview.kind, StreamKind::Assistant) {
-            let mut code_fence = self.assistant_stream_code_fence;
-            push_wrapped_markdown_without_copy_button_from_fence_state(
-                &mut text_lines,
-                &preview.text,
-                padded_content_width(width),
-                &mut code_fence,
-            );
-        } else {
-            push_wrapped_text(
-                &mut text_lines,
-                &preview.text,
-                padded_content_width(width),
-                preview.kind.style(),
-                LineFill::Natural,
-            );
-        }
-        lines.extend(text_lines.into_iter().map(pad_display_line));
-        lines
-    }
-
     fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            if matches!(kind, StreamKind::Assistant) {
-                update_code_block_state(render_text, &mut self.assistant_stream_code_fence);
-            }
+            let code_fence = match kind {
+                StreamKind::Assistant => &mut self.assistant_stream_code_fence,
+                StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
+            };
+            update_code_block_state(render_text, code_fence);
             self.last_inserted_was_tool = false;
         }
         let text = fragment.into_text();
@@ -3357,11 +3385,6 @@ impl App {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
             }
-            CommandId::TitleModel => self.execute_title_model_command(invocation, terminal),
-            CommandId::RefreshModelList => {
-                self.execute_refresh_model_list_command(invocation, terminal)
-                    .await
-            }
             CommandId::Login => {
                 self.execute_login_command(invocation, terminal, agent)
                     .await
@@ -3372,18 +3395,6 @@ impl App {
                     .await
             }
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Auto => {
-                self.apply_permission_mode(PermissionMode::Auto, agent)
-                    .await
-            }
-            CommandId::Plan => {
-                self.apply_permission_mode(PermissionMode::Plan, agent)
-                    .await
-            }
-            CommandId::Supervised => {
-                self.apply_permission_mode(PermissionMode::Supervised, agent)
-                    .await
-            }
             CommandId::Info => self.execute_info_command(),
             CommandId::Compact => self.execute_compact_command(terminal, agent).await,
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
@@ -3504,12 +3515,12 @@ impl App {
         Ok(())
     }
 
-    async fn execute_refresh_model_list_command(
+    async fn refresh_model_lists(
         &mut self,
-        invocation: CommandInvocation,
+        selected_provider: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let providers = if invocation.args.trim().is_empty() {
+        let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
             self.refresh_available_auths();
             provider::providers()
                 .iter()
@@ -3522,12 +3533,12 @@ impl App {
                 .map(|provider| provider.name.to_string())
                 .collect()
         } else {
-            vec![invocation.args.trim().to_string()]
+            vec![selected_provider.to_string()]
         };
 
         if providers.is_empty() {
             self.insert_entry(&Entry::Notice(
-                    "no refreshable providers are configured. run /login for a provider with model list support."
+                    "no refreshable providers are configured. open Config > Log in to provider to add one."
                         .into(),
                 ),
             );
@@ -3599,7 +3610,7 @@ impl App {
 
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
-                "no cached API models. run /refresh-model-list after signing in.".into(),
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
             ));
             self.status = "ready".into();
             return Ok(());
@@ -3607,58 +3618,6 @@ impl App {
 
         self.composer = ComposerMode::Picker(picker);
         self.status = "select model".into();
-        Ok(())
-    }
-
-    fn execute_title_model_command(
-        &mut self,
-        invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let model = invocation.args.trim();
-        if model.is_empty() {
-            return self.open_title_model_picker(terminal);
-        }
-
-        self.refresh_available_auths();
-        let (provider, _model, auth) = self.title_model_selection();
-        match catalog::resolve_model_selection_for_auths(
-            model,
-            &provider,
-            &auth,
-            &self.available_auths,
-        ) {
-            Ok(selection) => self.select_title_model(selection),
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "title model switch failed".into();
-                Ok(())
-            }
-        }
-    }
-
-    fn open_title_model_picker(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        self.status = "loading title models".into();
-        terminal.draw(|frame| self.draw(frame))?;
-        self.refresh_available_auths();
-        let (provider, model, _auth) = self.title_model_selection();
-        let picker = model_picker::title_model_picker(
-            &provider,
-            &model,
-            &self.info.favorite_models,
-            &self.available_auths,
-        );
-
-        if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached API models. run /refresh-model-list after signing in.".into(),
-            ));
-            self.status = "ready".into();
-            return Ok(());
-        }
-
-        self.composer = ComposerMode::Picker(picker);
-        self.status = "select title model".into();
         Ok(())
     }
 
@@ -3673,10 +3632,11 @@ impl App {
             return Ok(());
         };
 
+        let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(action, PickerAction::Config | PickerAction::LoginGroup) {
             self.composer = ComposerMode::Input;
         }
-        match action {
+        let result = match action {
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
                 match catalog::resolve_model_selection_for_auths(
@@ -3732,6 +3692,7 @@ impl App {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
             PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
+            PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input = format!("/skill:{value}");
                 self.input_cursor = self.input_char_len();
@@ -3744,7 +3705,11 @@ impl App {
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::Doctor | PickerAction::ViewAgent => Ok(()),
+        };
+        if let (true, Some((picker, selected_value))) = (result.is_ok(), return_picker) {
+            self.open_main_config_picker(selected_value, picker.filter)?;
         }
+        result
     }
 
     async fn submit_config_selection(
@@ -3753,6 +3718,26 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match value {
+            config_picker::CONVERSATION_MODEL_VALUE => {
+                self.open_config_conversation_model_picker();
+                Ok(())
+            }
+            config_picker::TITLE_MODEL_VALUE => {
+                self.open_config_title_model_picker();
+                Ok(())
+            }
+            config_picker::REFRESH_MODEL_LIST_VALUE => {
+                self.open_config_refresh_model_picker();
+                Ok(())
+            }
+            config_picker::PROVIDER_LOGIN_VALUE => {
+                self.open_config_login_picker();
+                Ok(())
+            }
+            config_picker::PROVIDER_LOGOUT_VALUE => {
+                self.open_config_logout_picker();
+                Ok(())
+            }
             config_picker::PERMISSION_MODE_VALUE => {
                 let child = config_picker::permission_mode_picker(self.info.permission_mode);
                 self.open_child_picker(child);
@@ -4004,6 +3989,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
@@ -4050,7 +4036,7 @@ impl App {
     }
 
     fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        let supported_reasoning = crate::model::models_dev::cached_reasoning_levels(
+        let supported_reasoning = rho_providers::model::models_dev::cached_reasoning_levels(
             &self.info.provider,
             &self.info.model,
         );
@@ -4248,6 +4234,31 @@ impl App {
         Ok(())
     }
 
+    fn take_picker_parent_after_selection(
+        &mut self,
+        action: PickerAction,
+    ) -> Option<(UiPicker, &'static str)> {
+        let selected_value = match action {
+            PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
+            PickerAction::SelectTitleModel => config_picker::TITLE_MODEL_VALUE,
+            PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
+            PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
+            PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
+            | PickerAction::ResumeSession
+            | PickerAction::Config
+            | PickerAction::Doctor => return None,
+        };
+        match &mut self.composer {
+            ComposerMode::Picker(picker) => {
+                picker.take_parent().map(|parent| (parent, selected_value))
+            }
+            _ => None,
+        }
+    }
+
     fn active_picker_selection(&self) -> Option<(PickerAction, String)> {
         let ComposerMode::Picker(picker) = &self.composer else {
             return None;
@@ -4267,7 +4278,7 @@ impl App {
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
         let supported_reasoning =
-            crate::model::models_dev::cached_reasoning_levels(&provider, &model);
+            rho_providers::model::models_dev::cached_reasoning_levels(&provider, &model);
         let reasoning = self
             .info
             .reasoning
@@ -4646,6 +4657,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
+                    image: None,
                 });
                 None
             }
@@ -4658,6 +4670,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded,
+                    image: None,
                 });
                 None
             }
@@ -4666,6 +4679,7 @@ impl App {
                     state: ToolEntryState::Running,
                     display_lines,
                     expanded: false,
+                    image: None,
                 });
                 None
             }
@@ -4713,7 +4727,8 @@ impl App {
             ViewModelEvent::ToolFinished {
                 ok,
                 display_style,
-                display_lines,
+                mut display_lines,
+                image_asset,
             } => {
                 self.statusline.refresh_git_branch();
                 self.active_tool_call = false;
@@ -4722,10 +4737,21 @@ impl App {
                     .as_ref()
                     .is_some_and(|pending| pending.expanded);
                 self.pending_tool_call = None;
+                let image =
+                    image_asset
+                        .as_ref()
+                        .and_then(|asset| match self.load_feed_image(asset) {
+                            Ok(image) => image,
+                            Err(error) => {
+                                display_lines.push(format!("image preview unavailable: {error}"));
+                                None
+                            }
+                        });
                 Some(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
                     expanded,
+                    image,
                 }))
             }
         }
@@ -4755,6 +4781,8 @@ impl App {
             history_count,
             &live_history,
         );
+        let visible_images =
+            self.visible_history_image_placements(width, history_start, history_count);
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history,
@@ -4782,6 +4810,7 @@ impl App {
                 }
             }
         }
+        self.render_feed_images(frame, layout.history, &visible_images);
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
             frame.render_widget(
@@ -5709,64 +5738,6 @@ fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-async fn generate_session_title(
-    provider_name: String,
-    model: String,
-    first_user_message: String,
-) -> anyhow::Result<String> {
-    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let request_messages = vec![
-                Message::System(
-                    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
-                        .into(),
-                ),
-                Message::user_text(format!("First user message:\n\n{first_user_message}")),
-            ];
-    let response = tokio::time::timeout(
-        Duration::from_secs(20),
-        provider.send_turn(ModelRequest {
-            messages: &request_messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        }),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("title generation timed out"))??;
-    let ModelResponse::Assistant(blocks) = response;
-    let title = blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    sanitize_session_title(&title)
-        .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
-}
-
-fn sanitize_session_title(title: &str) -> Option<String> {
-    let title = title
-        .lines()
-        .find(|line| !line.trim().is_empty())?
-        .trim()
-        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '*' | '#'))
-        .trim()
-        .trim_end_matches(['.', ':', ';'])
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    let mut title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.chars().count() > 80 {
-        title = title.chars().take(79).collect();
-        title.push('…');
-    }
-    Some(title)
-}
-
 fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> {
     let masked = "•".repeat(secret.value.chars().count());
     vec![
@@ -6084,11 +6055,11 @@ enum HistoryDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{
-        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
-    };
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use rho_providers::credentials::{
+        save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
+    };
 
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
@@ -6139,6 +6110,7 @@ mod tests {
             },
             display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
             expanded: false,
+            image: None,
         })
     }
 
@@ -6209,10 +6181,10 @@ mod tests {
     #[test]
     fn sanitizes_generated_session_title() {
         assert_eq!(
-            sanitize_session_title("\"Implement resume picker.\""),
+            session_title::sanitize_session_title("\"Implement resume picker.\""),
             Some("Implement resume picker".into())
         );
-        assert_eq!(sanitize_session_title("\n\n"), None);
+        assert_eq!(session_title::sanitize_session_title("\n\n"), None);
     }
 
     #[test]
@@ -6228,7 +6200,7 @@ mod tests {
     #[test]
     fn estimated_usage_cost_uses_normalized_input_and_cache_read() {
         let metadata = ModelMetadata {
-            cost_default: Some(crate::model::models_dev::ModelCost {
+            cost_default: Some(rho_providers::model::models_dev::ModelCost {
                 input_micros_per_m: Some(1_000_000),
                 output_micros_per_m: Some(2_000_000),
                 cache_read_micros_per_m: Some(100_000),
@@ -6487,12 +6459,12 @@ mod tests {
                     }),
                 ]),
                 Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-                Message::Assistant(vec![ContentBlock::ToolCall(crate::tool::ToolCall {
+                Message::Assistant(vec![ContentBlock::ToolCall(rho_tools::tool::ToolCall {
                     id: "call_1".into(),
                     name: "read_file".into(),
                     arguments: serde_json::json!({"path": "src/main.rs"}),
                 })]),
-                Message::ToolResult(crate::tool::ToolResult {
+                Message::ToolResult(rho_tools::tool::ToolResult {
                     id: "call_1".into(),
                     ok: false,
                     content: "missing file".into(),
@@ -6559,6 +6531,7 @@ mod tests {
                 },
                 display_lines: vec!["skill caveman".into()],
                 expanded: false,
+                image: None,
             }),
             40,
             10,
@@ -6582,6 +6555,7 @@ mod tests {
                 },
                 display_lines: vec!["unknown skill".into()],
                 expanded: false,
+                image: None,
             }),
             40,
             10,
@@ -6859,6 +6833,7 @@ mod tests {
             state: ToolEntryState::Running,
             display_lines: vec!["bash".into(), "cargo test".into()],
             expanded: false,
+            image: None,
         });
         let width = 40;
         let height = 24;
@@ -7293,7 +7268,7 @@ mod tests {
         save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         save_codex_tokens(
             store.as_ref(),
-            &crate::credentials::CodexTokens {
+            &rho_providers::credentials::CodexTokens {
                 access_token: "access".into(),
                 refresh_token: Some("refresh".into()),
                 id_token: None,
@@ -7681,6 +7656,7 @@ mod tests {
             state: ToolEntryState::Running,
             display_lines: vec!["bash".into(), "cargo test".into()],
             expanded: false,
+            image: None,
         });
         app.live_stream_preview = Some(LiveStreamPreview {
             kind: StreamKind::Assistant,

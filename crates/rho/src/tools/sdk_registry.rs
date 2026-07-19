@@ -18,16 +18,16 @@ use rho_sdk::{
     HostQuestion, SelectionMode,
 };
 
-use crate::{
-    app::agent_executor::AgentExecutor,
-    config::Config,
-    diagnostics::RuntimeDiagnostics,
-    tool::{truncate, Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError},
+use crate::{app::agent_executor::AgentExecutor, config::Config, diagnostics::RuntimeDiagnostics};
+use rho_tools::tool::{
+    truncate, Tool as AppTool, ToolContext as AppToolContext, ToolError as AppToolError,
 };
 
 use super::{
     agent::{BackgroundSubagents, SubagentManager},
     process::{Process, ProcessLimits, ProcessManager},
+};
+use rho_tools::{
     sdk_adapter::{coding_tools, CodingToolOptions},
     sdk_security::{authorize_builtin, authorize_request, security_for},
     sdk_support::{check_cancelled, required_string, workspace, workspace_root},
@@ -116,13 +116,9 @@ impl AppToolSet {
         // RTK is intentionally disabled for SDK shell tools. Their immutable
         // ProcessExecution must be identical during authorization and execution.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        tools.push(Arc::new(super::sdk_shell::SdkShellTool::bash(
-            config.max_output_bytes,
-        )));
+        tools.push(rho_tools::shell_tool(config.max_output_bytes));
         #[cfg(windows)]
-        tools.push(Arc::new(super::sdk_shell::SdkShellTool::powershell(
-            config.max_output_bytes,
-        )));
+        tools.push(rho_tools::shell_tool(config.max_output_bytes));
         tools.push(Arc::new(SdkSkillTool {
             max_output_bytes: config.max_output_bytes,
         }));

@@ -7,9 +7,11 @@ fn permission_mode_defaults_to_auto_when_missing() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "provider = \"openai\"\n").unwrap();
 
-    let config =
-        Config::load_with_store(path, &crate::credentials::MemoryCredentialStore::default())
-            .unwrap();
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
 
     assert_eq!(config.permission_mode, PermissionMode::Auto);
 }
@@ -27,7 +29,7 @@ fn permission_mode_round_trips_known_values() {
             permission_mode: mode,
             ..Config::default()
         };
-        let store = crate::credentials::MemoryCredentialStore::default();
+        let store = rho_providers::credentials::MemoryCredentialStore::default();
 
         config.save_with_store(path.clone(), &store).unwrap();
         let loaded = Config::load_with_store(path, &store).unwrap();
@@ -42,9 +44,11 @@ fn unknown_permission_mode_is_a_config_error() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "permission_mode = \"unrestricted\"\n").unwrap();
 
-    let error =
-        Config::load_with_store(path, &crate::credentials::MemoryCredentialStore::default())
-            .unwrap_err();
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
 
     assert!(
         error
@@ -97,7 +101,10 @@ jump_to_bottom = "alt+g"
 
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-5");
-    assert_eq!(config.reasoning, crate::reasoning::ReasoningLevel::High);
+    assert_eq!(
+        config.reasoning,
+        rho_providers::reasoning::ReasoningLevel::High
+    );
     assert_eq!(config.max_tool_output_lines, 24);
     assert_eq!(config.keybindings.jump_to_bottom.to_string(), "alt+g");
     assert_eq!(config.keybindings.reset_conversation.to_string(), "ctrl+r");
@@ -262,24 +269,27 @@ brave_api_key = "grouped-brave"
 "#,
     )
     .unwrap();
-    let store = crate::credentials::MemoryCredentialStore::default();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
 
     let config = Config::load_with_store(path, &store).unwrap();
 
     assert_eq!(config.web_search_provider, super::SearchProvider::Brave);
     for (credential, expected) in [
         (
-            crate::credentials::WebSearchCredential::OpenAi,
+            rho_providers::credentials::WebSearchCredential::OpenAi,
             "legacy-openai",
         ),
-        (crate::credentials::WebSearchCredential::Exa, "legacy-exa"),
         (
-            crate::credentials::WebSearchCredential::Brave,
+            rho_providers::credentials::WebSearchCredential::Exa,
+            "legacy-exa",
+        ),
+        (
+            rho_providers::credentials::WebSearchCredential::Brave,
             "grouped-brave",
         ),
     ] {
         assert_eq!(
-            crate::credentials::load_web_search_api_key(&store, credential)
+            rho_providers::credentials::load_web_search_api_key(&store, credential)
                 .unwrap()
                 .as_deref(),
             Some(expected)
@@ -291,30 +301,39 @@ brave_api_key = "grouped-brave"
 fn save_preserves_legacy_web_search_keys_when_credentials_are_unavailable() {
     struct UnavailableCredentialStore;
 
-    impl crate::credentials::CredentialStore for UnavailableCredentialStore {
+    impl rho_providers::credentials::CredentialStore for UnavailableCredentialStore {
         fn get_secret(
             &self,
             _account: &str,
-        ) -> crate::credentials::CredentialResult<Option<String>> {
-            Err(crate::credentials::CredentialError::StoreUnavailable(
-                "test store unavailable".into(),
-            ))
+        ) -> rho_providers::credentials::CredentialResult<Option<String>> {
+            Err(
+                rho_providers::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ),
+            )
         }
 
         fn set_secret(
             &self,
             _account: &str,
             _secret: &str,
-        ) -> crate::credentials::CredentialResult<()> {
-            Err(crate::credentials::CredentialError::StoreUnavailable(
-                "test store unavailable".into(),
-            ))
+        ) -> rho_providers::credentials::CredentialResult<()> {
+            Err(
+                rho_providers::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ),
+            )
         }
 
-        fn delete_secret(&self, _account: &str) -> crate::credentials::CredentialResult<bool> {
-            Err(crate::credentials::CredentialError::StoreUnavailable(
-                "test store unavailable".into(),
-            ))
+        fn delete_secret(
+            &self,
+            _account: &str,
+        ) -> rho_providers::credentials::CredentialResult<bool> {
+            Err(
+                rho_providers::credentials::CredentialError::StoreUnavailable(
+                    "test store unavailable".into(),
+                ),
+            )
         }
     }
 
@@ -348,21 +367,21 @@ fn migrated_credential_cleanup_atomically_replaces_read_only_config() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "web_search_openai_api_key = \"sk-test\"\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
-    let store = crate::credentials::MemoryCredentialStore::default();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
 
     let config = Config::load_with_store(path.clone(), &store).unwrap();
 
     assert_eq!(
-        crate::credentials::load_web_search_api_key(
+        rho_providers::credentials::load_web_search_api_key(
             &store,
-            crate::credentials::WebSearchCredential::OpenAi
+            rho_providers::credentials::WebSearchCredential::OpenAi
         )
         .unwrap()
         .as_deref(),
         Some("sk-test")
     );
     assert_eq!(
-        config.legacy_web_search_api_key(crate::credentials::WebSearchCredential::OpenAi),
+        config.legacy_web_search_api_key(rho_providers::credentials::WebSearchCredential::OpenAi),
         None
     );
     let saved = std::fs::read_to_string(&path).unwrap();
@@ -373,7 +392,7 @@ fn migrated_credential_cleanup_atomically_replaces_read_only_config() {
 
 #[test]
 fn migrates_legacy_web_search_keys_to_credentials() {
-    let store = crate::credentials::MemoryCredentialStore::default();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
     let mut config = Config {
         legacy_web_search_credentials: super::LegacyWebSearchCredentials {
             openai: Some("sk-test".into()),
@@ -387,16 +406,16 @@ fn migrates_legacy_web_search_keys_to_credentials() {
         .migrate_legacy_web_search_credentials(&store)
         .unwrap());
     assert_eq!(
-        crate::credentials::load_web_search_api_key(
+        rho_providers::credentials::load_web_search_api_key(
             &store,
-            crate::credentials::WebSearchCredential::OpenAi
+            rho_providers::credentials::WebSearchCredential::OpenAi
         )
         .unwrap()
         .as_deref(),
         Some("sk-test")
     );
     assert_eq!(
-        config.legacy_web_search_api_key(crate::credentials::WebSearchCredential::OpenAi),
+        config.legacy_web_search_api_key(rho_providers::credentials::WebSearchCredential::OpenAi),
         None
     );
 }

@@ -20,7 +20,7 @@ pub(super) struct Startup<'a> {
     pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
-    pub(super) missing_auth_model_error: Option<crate::model::ModelError>,
+    pub(super) missing_auth_model_error: Option<rho_providers::model::ModelError>,
     pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,

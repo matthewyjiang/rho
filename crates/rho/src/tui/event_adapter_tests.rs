@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
-    tool::{OperationKind, ToolMetadata, ToolOutput},
+    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
     HostChoice, HostInputRequest, HostQuestion, Revision, RunEvent, RunId, SelectionMode,
     ToolCallId, ToolCompletion,
 };
@@ -100,6 +100,41 @@ fn retains_structured_tool_metadata_until_completion() {
 
     assert!(ok);
     assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
+}
+
+#[test]
+fn forwards_image_asset_on_tool_completion() {
+    let mut adapter = SdkEventAdapter::default();
+    let call_id = ToolCallId::from_string("call-image").unwrap();
+    let _ = adapter.translate(RunEvent::ToolStarted {
+        call_id: call_id.clone(),
+        name: "read_file".into(),
+        metadata: ToolMetadata::new(),
+    });
+    let asset = ToolAsset::new("image/png", vec![1, 2, 3, 4]);
+    let output = ToolOutput::text("image/png image (4 bytes)").metadata(
+        ToolMetadata::new()
+            .asset(asset.clone())
+            .presentation_notice("image preview unavailable: invalid image"),
+    );
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        image_asset,
+        display_lines,
+        ..
+    }) = adapter.translate(RunEvent::ToolFinished {
+        call_id,
+        result: ToolCompletion::Success(output),
+    })
+    else {
+        panic!("expected translated tool completion");
+    };
+
+    assert_eq!(image_asset, Some(asset));
+    assert_eq!(
+        display_lines,
+        ["read_file ", "image preview unavailable: invalid image"]
+    );
 }
 
 #[test]

@@ -1,7 +1,6 @@
-use super::{
-    markdown::{markdown_preview_width, markdown_stream_prefix},
-    render::{complete_visual_prefix, display_width},
-};
+use super::markdown::{markdown_preview_width, markdown_stream_prefix};
+#[cfg(test)]
+use super::render::{complete_visual_prefix, display_width};
 
 #[derive(Debug, Default)]
 pub(super) struct AppendOnlyStream {
@@ -48,6 +47,7 @@ impl AppendOnlyStream {
         &self.pending
     }
 
+    #[cfg(test)]
     pub(super) fn drain_renderable(&mut self, inner_width: usize) -> Option<StreamFragment> {
         self.drain_renderable_with_prefix(inner_width, |_pending, byte_index| byte_index)
     }
@@ -65,6 +65,7 @@ impl AppendOnlyStream {
         ))
     }
 
+    #[cfg(test)]
     pub(super) fn drain_preview(&mut self) -> Option<StreamPreview> {
         self.preview_with_width(display_width)
     }
@@ -129,6 +130,7 @@ impl AppendOnlyStream {
         })
     }
 
+    #[cfg(test)]
     fn preview_with_width(&self, rendered_width: impl Fn(&str) -> usize) -> Option<StreamPreview> {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
@@ -151,6 +153,7 @@ impl AppendOnlyStream {
         (width > 0).then_some(line_end)
     }
 
+    #[cfg(test)]
     fn drain_renderable_with_prefix(
         &mut self,
         inner_width: usize,

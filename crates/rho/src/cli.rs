@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::reasoning::ReasoningLevel;
+use rho_providers::reasoning::ReasoningLevel;
 
 #[derive(Parser, Debug)]
 #[command(name = "rho")]

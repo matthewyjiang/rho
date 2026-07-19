@@ -1,5 +1,5 @@
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiPicker};
-use crate::model::{catalog, favorites};
+use rho_providers::model::{catalog, favorites};
 
 pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPicker {
     model_picker_for_current(
@@ -18,7 +18,7 @@ pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPick
 
 pub(super) fn model_picker_during_run(
     info: &TuiInfo,
-    pending: Option<&crate::model::catalog::ModelSelection>,
+    pending: Option<&rho_providers::model::catalog::ModelSelection>,
     available_auths: &[String],
 ) -> UiPicker {
     let (provider, model, badge) = pending
@@ -136,14 +136,16 @@ fn model_picker_for_current(
 mod tests {
     use super::*;
     use crate::app::config_repository::ConfigRepository;
-    use crate::credentials::{available_auth_modes, save_codex_tokens, MemoryCredentialStore};
+    use rho_providers::credentials::{
+        available_auth_modes, save_codex_tokens, MemoryCredentialStore,
+    };
 
     #[test]
     fn model_picker_orders_pinned_models_before_selected_model() {
         let store = MemoryCredentialStore::default();
         save_codex_tokens(
             &store,
-            &crate::credentials::CodexTokens {
+            &rho_providers::credentials::CodexTokens {
                 access_token: "access".into(),
                 refresh_token: Some("refresh".into()),
                 id_token: None,
@@ -156,7 +158,7 @@ mod tests {
             cwd: std::path::PathBuf::from("/tmp/project"),
             provider: "openai-codex".into(),
             model: "gpt-5.6-sol".into(),
-            reasoning: crate::reasoning::ReasoningLevel::Low,
+            reasoning: rho_providers::reasoning::ReasoningLevel::Low,
             permission_mode: crate::permission::PermissionMode::Auto,
             show_reasoning_output: true,
             auth: "codex".into(),
@@ -192,7 +194,7 @@ mod tests {
         let store = MemoryCredentialStore::default();
         save_codex_tokens(
             &store,
-            &crate::credentials::CodexTokens {
+            &rho_providers::credentials::CodexTokens {
                 access_token: "access".into(),
                 refresh_token: Some("refresh".into()),
                 id_token: None,
@@ -205,7 +207,7 @@ mod tests {
             cwd: std::path::PathBuf::from("/tmp/project"),
             provider: "openai-codex".into(),
             model: "gpt-5.5".into(),
-            reasoning: crate::reasoning::ReasoningLevel::Low,
+            reasoning: rho_providers::reasoning::ReasoningLevel::Low,
             permission_mode: crate::permission::PermissionMode::Auto,
             show_reasoning_output: true,
             auth: "codex".into(),
@@ -226,7 +228,7 @@ mod tests {
             keybindings: crate::keybindings::Keybindings::default(),
             prompt_templates: Default::default(),
         };
-        let pending = crate::model::catalog::ModelSelection {
+        let pending = rho_providers::model::catalog::ModelSelection {
             provider: "openai-codex".into(),
             model: "gpt-5.4-mini".into(),
             auth: "codex".into(),

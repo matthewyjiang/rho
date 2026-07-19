@@ -2,12 +2,29 @@
 
 Rho supports Moonshot's OpenAI-compatible Chat Completions API through two explicit provider selections. Neither selection uses the Anthropic Messages API.
 
-| Provider | Auth | API base |
-| --- | --- | --- |
-| `moonshot` | `moonshot-api-key` | `https://api.moonshot.ai/v1` |
-| `kimi-code` | `kimi-oauth` | `https://api.kimi.com/coding/v1` |
+## At a glance
 
-Both providers send turns to `/chat/completions`. Their model lists can be updated with `/refresh-model-list moonshot` and `/refresh-model-list kimi-code` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
+### Moonshot
+
+| Setting | Value |
+| --- | --- |
+| Provider | `moonshot` |
+| Auth | `moonshot-api-key` |
+| Environment override | `MOONSHOT_API_KEY` |
+| API base | `https://api.moonshot.ai/v1` |
+| Model list | Refreshable after authentication |
+
+### Kimi Code
+
+| Setting | Value |
+| --- | --- |
+| Provider | `kimi-code` |
+| Auth | `kimi-oauth` |
+| Environment override | `KIMI_ACCESS_TOKEN` |
+| API base | `https://api.kimi.com/coding/v1` |
+| Model list | Refreshable after authentication |
+
+Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through **Refresh model lists** in `/config` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
 
 ## Moonshot API key
 
@@ -23,7 +40,7 @@ Rho stores the key in the OS credential store. For CI and development, `MOONSHOT
 For automation, select the matching provider and auth mode:
 
 ```sh
-rho --provider moonshot --auth moonshot-api-key --model <model-id>
+rho --provider moonshot --auth moonshot-api-key --model <model-id> run "hello"
 ```
 
 ## Kimi Code OAuth
@@ -43,7 +60,6 @@ Visit the displayed Kimi authorization URL and enter the displayed code if reque
 Select a model after login:
 
 ```text
-/refresh-model-list kimi-code
 /model kimi-code/<model-id>
 ```
 
@@ -52,7 +68,7 @@ For Kimi K3, Rho uses the authenticated `context_length` returned for the curren
 For automation after a prior login or with `KIMI_ACCESS_TOKEN`:
 
 ```sh
-rho --provider kimi-code --auth kimi-oauth --model <model-id>
+rho --provider kimi-code --auth kimi-oauth --model <model-id> run "hello"
 ```
 
 Use `/limits` in the TUI to inspect the weekly and rolling usage windows reported by Kimi Code. Remove stored OAuth tokens with `/logout kimi-code`. An active `KIMI_ACCESS_TOKEN` override remains available after logout.

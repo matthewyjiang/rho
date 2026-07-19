@@ -13,7 +13,7 @@ static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>
     OnceLock::new();
 
 #[cfg(test)]
-use crate::model::Message;
+use rho_providers::model::Message;
 
 use super::{
     clamp_u64_to_i64, session_dir_in_root, session_file_stats, session_id_from_path,

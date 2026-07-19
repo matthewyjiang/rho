@@ -6,13 +6,8 @@ pub enum CommandId {
     Login,
     Logout,
     Model,
-    TitleModel,
-    RefreshModelList,
     Resume,
     Config,
-    Auto,
-    Plan,
-    Supervised,
     Info,
     Compact,
     Goal,
@@ -98,20 +93,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
-        id: CommandId::TitleModel,
-        name: "title-model",
-        usage: "/title-model [model]",
-        description: "show or switch session title model",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::RefreshModelList,
-        name: "refresh-model-list",
-        usage: "/refresh-model-list [provider]",
-        description: "refresh cached API provider models",
-        argument_choices: &[],
-    },
-    CommandSpec {
         id: CommandId::Resume,
         name: "resume",
         usage: "/resume [id]",
@@ -123,27 +104,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Auto,
-        name: "auto",
-        usage: "/auto",
-        description: "allow tools without permission checks",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Plan,
-        name: "plan",
-        usage: "/plan",
-        description: "investigate only; deny writes and processes",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Supervised,
-        name: "supervised",
-        usage: "/supervised",
-        description: "ask before writes and processes",
         argument_choices: &[],
     },
     CommandSpec {
@@ -398,16 +358,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_permission_mode_commands() {
-        for (name, id) in [
-            ("auto", CommandId::Auto),
-            ("plan", CommandId::Plan),
-            ("supervised", CommandId::Supervised),
+    fn configuration_commands_are_not_in_the_command_palette() {
+        for name in [
+            "title-model",
+            "refresh-model-list",
+            "auto",
+            "plan",
+            "supervised",
         ] {
-            let invocation = parse_command(&format!("/{name}")).unwrap().unwrap();
-            assert_eq!(invocation.id, id);
-            assert_eq!(invocation.args, "");
-            assert_eq!(matching_commands(name)[0].id, id);
+            assert!(matching_commands(name).is_empty());
+            assert_eq!(
+                parse_command(&format!("/{name}")),
+                Err(CommandParseError::Unknown(name.into()))
+            );
         }
     }
 

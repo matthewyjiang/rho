@@ -2,7 +2,7 @@ use super::*;
 
 fn input_cost_metadata() -> ModelMetadata {
     ModelMetadata {
-        cost_default: Some(crate::model::models_dev::ModelCost {
+        cost_default: Some(rho_providers::model::models_dev::ModelCost {
             input_micros_per_m: Some(1_000_000),
             ..Default::default()
         }),
@@ -65,14 +65,14 @@ fn metadata_loaded_after_first_step_recomputes_uncosted_baseline() {
 fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
     let mut app = test_app();
     app.model_metadata = Some(ModelMetadata {
-        cost_default: Some(crate::model::models_dev::ModelCost {
+        cost_default: Some(rho_providers::model::models_dev::ModelCost {
             input_micros_per_m: Some(1_000_000),
             output_micros_per_m: Some(2_000_000),
             cache_read_micros_per_m: Some(100_000),
             cache_write_micros_per_m: None,
         }),
         long_context_threshold: Some(200_000),
-        cost_long_context: Some(crate::model::models_dev::ModelCost {
+        cost_long_context: Some(rho_providers::model::models_dev::ModelCost {
             input_micros_per_m: Some(4_000_000),
             output_micros_per_m: Some(8_000_000),
             cache_read_micros_per_m: Some(400_000),

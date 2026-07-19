@@ -1,4 +1,4 @@
-use crate::{commands::CommandInvocation, export, tool::ToolDisplayStyle};
+use {crate::commands::CommandInvocation, crate::export, rho_tools::tool::ToolDisplayStyle};
 
 use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
 
@@ -19,6 +19,7 @@ impl App {
             },
             display_lines: diff.lines,
             expanded: true,
+            image: None,
         }));
         self.status = if diff.has_changes {
             "worktree diff".into()

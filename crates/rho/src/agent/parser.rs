@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, path::Path};
 
-use crate::reasoning::ReasoningLevel;
+use rho_providers::reasoning::ReasoningLevel;
 
 use super::{
     catalog::AgentCatalogError,

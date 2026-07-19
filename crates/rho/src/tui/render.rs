@@ -1,15 +1,17 @@
 use super::{
+    feed_image::{reserve_entry_image_rows, reserve_optional_image_rows},
     limits_command::usage_limit_lines,
-    markdown::{render_markdown, MarkdownCodeBlock},
+    message_render::{render_assistant_content, render_reasoning_content},
+    rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
     tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
     DEFAULT_TUI_HEIGHT,
 };
-use crate::{
-    model::{image_summary, ImageContent},
-    tool::ToolDisplayStyle,
-};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use {
+    rho_providers::model::{image_summary, ImageContent},
+    rho_tools::tool::ToolDisplayStyle,
+};
 
 use ratatui::{
     layout::Position,
@@ -274,6 +276,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
+        | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ViewAgent => 30,
     };
@@ -353,6 +356,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ResumeSession => "select",
+        super::PickerAction::RefreshModelList => "refresh",
     };
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
@@ -431,12 +435,14 @@ fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'
     std::borrow::Cow::Owned(text[..end].to_string())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct CompleteVisualPrefix {
     pub(super) byte_index: usize,
     pub(super) ends_with_wrap: bool,
 }
 
+#[cfg(test)]
 pub(super) fn complete_visual_prefix(text: &str, width: usize) -> CompleteVisualPrefix {
     complete_visual_line_ends(text, width)
         .last()
@@ -453,6 +459,7 @@ fn complete_visual_prefix_byte_index(text: &str, width: usize) -> usize {
     complete_visual_prefix(text, width).byte_index
 }
 
+#[cfg(test)]
 fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     let width = width.max(1);
     let mut ends = Vec::new();
@@ -481,6 +488,7 @@ fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     ends
 }
 
+#[cfg(test)]
 fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> Vec<(usize, char)> {
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
@@ -615,11 +623,6 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub(super) struct RenderedEntry {
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) code_blocks: Vec<MarkdownCodeBlock>,
-}
-
 pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
@@ -635,6 +638,7 @@ pub(super) fn tool_entry_lines(
         max_tool_output_lines,
         tool.expanded,
     );
+    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -661,9 +665,13 @@ pub(super) fn render_entry(
     max_tool_output_lines: usize,
 ) -> RenderedEntry {
     let inner_width = padded_inner_width(width);
-    let (lines, code_blocks) = match entry {
+    let (mut lines, code_blocks) = match entry {
         Entry::Assistant(text) => {
             let rendered = render_assistant_content(text, width);
+            (rendered.lines, rendered.code_blocks)
+        }
+        Entry::Reasoning(text) => {
+            let rendered = render_reasoning_content(text, width);
             (rendered.lines, rendered.code_blocks)
         }
         _ => {
@@ -672,6 +680,8 @@ pub(super) fn render_entry(
             (lines, Vec::new())
         }
     };
+
+    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
 
     let block_style = lines
         .first()
@@ -685,15 +695,7 @@ pub(super) fn render_entry(
     RenderedEntry {
         lines: padded,
         code_blocks,
-    }
-}
-
-pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
-    let mut in_code_block = false;
-    let rendered = render_markdown(text, padded_inner_width(width), &mut in_code_block);
-    RenderedEntry {
-        lines: rendered.lines,
-        code_blocks: rendered.code_blocks,
+        image_placement,
     }
 }
 
@@ -711,14 +713,9 @@ fn render_non_assistant_entry(
             Theme::user_message(),
             LineFill::PadToWidth,
         ),
-        Entry::Assistant(_) => unreachable!("assistant entries are rendered as markdown"),
-        Entry::Reasoning(text) => push_wrapped_text(
-            lines,
-            text,
-            width,
-            Theme::dim().add_modifier(Modifier::DIM),
-            LineFill::Natural,
-        ),
+        Entry::Assistant(_) | Entry::Reasoning(_) => {
+            unreachable!("assistant and reasoning entries are rendered as markdown")
+        }
         Entry::Tool(tool) => push_tool_block(
             lines,
             &tool.display_lines,
@@ -876,7 +873,7 @@ pub(super) fn styled_line(
     Line::from(Span::styled(text, style))
 }
 
-fn padded_inner_width(width: usize) -> usize {
+pub(super) fn padded_inner_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 

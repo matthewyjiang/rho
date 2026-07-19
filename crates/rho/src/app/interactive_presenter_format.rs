@@ -1,14 +1,21 @@
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 
-use crate::tool::{compact_display_path, ToolDisplayStyle};
+use rho_tools::tool::{compact_display_path, ToolDisplayStyle};
 
 use super::{ToolKind, ToolPresentation, ToolView};
 
-pub(super) fn presentation(view: &ToolView, display_lines: Vec<String>) -> ToolPresentation {
+pub(super) fn presentation(view: &ToolView, mut display_lines: Vec<String>) -> ToolPresentation {
+    display_lines.extend(view.metadata.presentation_notices().iter().cloned());
     ToolPresentation {
         command: command(view),
         display_style: view.kind.display_style(&view.metadata),
         display_lines,
+        image_asset: view
+            .metadata
+            .assets()
+            .iter()
+            .find(|asset| asset.media_type().starts_with("image/"))
+            .cloned(),
     }
 }
 
@@ -38,7 +45,11 @@ pub(super) fn preview_lines(
     cwd: &std::path::Path,
 ) -> Vec<String> {
     let Some(arguments) = arguments else {
-        return vec![name.to_string()];
+        return vec![match kind {
+            ToolKind::Bash => "$".into(),
+            ToolKind::PowerShell => "PS".into(),
+            _ => name.to_string(),
+        }];
     };
     match kind {
         ToolKind::Bash => vec![command_line("$", arguments)],

@@ -1,6 +1,16 @@
 # OpenAI (Codex OAuth)
 
-Codex OAuth uses Rho-owned OAuth (`provider = "openai-codex"`, `auth = "codex"`). It signs in with an OpenAI account subscription rather than an API key. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+Codex OAuth uses Rho-owned OAuth and signs in with an OpenAI account subscription rather than an API key. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+
+## At a glance
+
+| Setting | Value |
+| --- | --- |
+| Provider | `openai-codex` |
+| Auth | `codex` |
+| Environment override | `CODEX_ACCESS_TOKEN` |
+| API base | `https://chatgpt.com/backend-api/codex` |
+| Model list | Static allowlist maintained by Rho |
 
 ## Sign in
 
@@ -43,17 +53,29 @@ Environment variables are CI/development escape hatches and override stored cred
 
 ## Models
 
-Codex OAuth uses a static model allowlist rather than a refreshable API list. Switch to a Codex model with:
+Codex OAuth uses this static model allowlist rather than a refreshable API list:
+
+- `gpt-5.6-sol`
+- `gpt-5.6-terra`
+- `gpt-5.6-luna`
+- `gpt-5.5`
+- `gpt-5.4`
+- `gpt-5.4-mini`
+- `gpt-5.3-codex-spark`
+
+Switch to a Codex model with:
 
 ```text
 /model openai-codex/gpt-5.6-sol
 ```
 
-Or from the CLI, which also updates the persistent default:
+For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider openai-codex --auth codex --model gpt-5.6-sol
+rho --provider openai-codex --auth codex --model gpt-5.6-sol run "hello"
 ```
+
+Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automation environment.
 
 ## Notes
 

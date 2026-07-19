@@ -2,11 +2,11 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use rho_sdk::{
     model::ToolCall,
-    tool::{ToolMetadata, ToolProgress},
+    tool::{ToolAsset, ToolMetadata, ToolProgress},
     ToolCallId, ToolCompletion,
 };
 
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
 #[path = "interactive_presenter_format.rs"]
 mod format;
@@ -17,6 +17,7 @@ pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
     pub(crate) display_style: ToolDisplayStyle,
     pub(crate) display_lines: Vec<String>,
+    pub(crate) image_asset: Option<ToolAsset>,
 }
 
 #[derive(Clone, Debug)]

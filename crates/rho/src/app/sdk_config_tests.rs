@@ -1,8 +1,11 @@
 use std::path::Path;
 
 use super::{RuntimeOptions, SdkBootstrapOptions, ToolOptions, WorkspaceOptions};
-use crate::{compaction::CompactionConfig, config::Config, providers::ProviderBuildOptions};
 use pretty_assertions::assert_eq;
+use {
+    crate::compaction::CompactionConfig, crate::config::Config,
+    rho_providers::providers::ProviderBuildOptions,
+};
 
 #[test]
 fn converts_application_config_without_credentials_or_side_effects() {

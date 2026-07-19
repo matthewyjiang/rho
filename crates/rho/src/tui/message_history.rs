@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::{
-    app::interactive_presenter::InteractiveToolPresenter,
-    model::{ContentBlock, Message, ToolCall},
-    tool::ToolDisplayStyle,
+use {
+    crate::app::interactive_presenter::InteractiveToolPresenter,
+    rho_providers::model::{ContentBlock, Message, ToolCall},
+    rho_tools::tool::ToolDisplayStyle,
 };
 
 use super::{Entry, ToolEntry, ToolEntryState};
@@ -63,6 +63,7 @@ pub(super) fn transcript_entries_from_messages(
                         },
                         display_lines,
                         expanded: false,
+                        image: None,
                     }));
                 }
                 entries.push(Entry::Notice("model interrupted".into()));
@@ -81,6 +82,7 @@ pub(super) fn transcript_entries_from_messages(
                     },
                     display_lines: presented.display_lines,
                     expanded: false,
+                    image: None,
                 }));
             }
         }

@@ -7,18 +7,18 @@ use std::{
 
 use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
-use crate::{
-    agent::PromptPolicy,
-    cli::Command,
-    config::Config,
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    herdr::{HerdrReporter, HerdrState},
-    prompt,
-    providers::build_automation_provider,
-    subagent::{self, RunState, RunStatus},
-    tools::sdk_registry::{AppToolSet, ToolSetOptions},
-    tui::AttachmentWriter,
+use {
+    crate::agent::PromptPolicy,
+    crate::cli::Command,
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::{HerdrReporter, HerdrState},
+    crate::prompt,
+    crate::subagent::{self, RunState, RunStatus},
+    crate::tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    crate::tui::AttachmentWriter,
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::providers::build_automation_provider,
 };
 
 use super::{
@@ -89,6 +89,8 @@ pub(super) struct Startup<'a> {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
+    pub usage_purpose: &'static str,
+    pub parent_session_id: Option<rho_sdk::SessionId>,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub diagnostics: RuntimeDiagnostics,
@@ -147,10 +149,10 @@ pub(crate) async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
     reporter: Option<&mut RunReporter>,
-    cancellation: Option<crate::cancellation::RunCancellation>,
+    cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
-    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
@@ -204,6 +206,7 @@ pub(crate) async fn run_session(
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
+    let usage_recording = crate::usage::default_recording().await;
     let runtime = build_runtime(RuntimeBuildOptions {
         provider,
         tools: tool_set.tools(),
@@ -214,8 +217,14 @@ pub(crate) async fn run_session(
         reasoning: sdk_options.runtime.reasoning,
         compaction,
         context_window,
+        usage_purpose: startup.usage_purpose,
+        usage_parent_session_id: startup.parent_session_id.clone(),
+        usage_recording,
     })?;
     let session = runtime.session(SessionOptions::default()).await?;
+    if let Some(manager) = tool_set.subagents() {
+        manager.set_session(session.id().to_string());
+    }
 
     startup
         .herdr
@@ -238,7 +247,7 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     reporter: Option<&mut RunReporter>,
-    external_cancellation: Option<crate::cancellation::RunCancellation>,
+    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();

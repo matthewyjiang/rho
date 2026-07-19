@@ -28,6 +28,7 @@ pub enum ScenarioId {
     RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
+    OpenConfigPicker,
     OpenAgentsPicker,
     LoginProviderGroups,
     GoalBlockedAndResumed,
@@ -50,6 +51,7 @@ impl ScenarioId {
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
+            Self::OpenConfigPicker => "open_config_picker",
             Self::OpenAgentsPicker => "open_agents_picker",
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
@@ -72,6 +74,7 @@ impl ScenarioId {
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
+            "open_config_picker" => Some(Self::OpenConfigPicker),
             "open_agents_picker" => Some(Self::OpenAgentsPicker),
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
@@ -376,13 +379,27 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("enable_supervised_mode"),
-    Step::SubmitText("/supervised"),
+    Step::SubmitText("/config"),
     Step::WaitText {
-        text: "permission mode: supervised",
+        text: "Permission mode",
         timeout: SETTLE,
     },
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "◇ Supervised",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "permission mode: supervised",
         timeout: SETTLE,
     },
     Step::Phase("inspect_long_process_approval"),
@@ -528,6 +545,42 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
+    Step::Phase("open_config"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/config"),
+    Step::WaitText {
+        text: "Conversation model",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Session title model"),
+    Step::AssertText("Refresh model lists"),
+    Step::AssertText("Log in to provider"),
+    Step::AssertText("Permission mode"),
+    Step::Phase("open_refresh_models"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "All configured providers",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "no refreshable providers are configured",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Conversation model",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -546,6 +599,7 @@ const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "Read-only investigation",
         timeout: SETTLE,
     },
+    Step::AssertText("You are a read-only exploration subagent"),
     Step::Resize { rows: 32, cols: 50 },
     Step::WaitText {
         text: "Read-only investigation",
@@ -764,6 +818,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Open and dismiss the model picker",
             size: DEFAULT_SIZE,
             steps: OPEN_MODEL_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "open_config_picker",
+            description: "Open model and provider settings and browse model refresh options",
+            size: DEFAULT_SIZE,
+            steps: OPEN_CONFIG_PICKER_STEPS,
             smoke: false,
         },
         Scenario {

@@ -3,9 +3,11 @@ use std::{ops::Range, sync::Arc};
 use ratatui::text::Line;
 
 use super::{
+    feed_image::RenderedImagePlacement,
     is_tool_entry,
     markdown::incremental_markdown_tail_start,
-    render::{pad_entry_line, render_assistant_content, render_entry},
+    message_render::render_assistant_content,
+    render::{pad_entry_line, render_entry},
     Entry,
 };
 
@@ -29,6 +31,7 @@ pub(super) struct HistoryLineCache {
     entry_ranges: Vec<Range<usize>>,
     assistant_caches: Vec<Option<IncrementalAssistantCache>>,
     code_blocks: Vec<CachedCodeBlock>,
+    image_placements: Vec<RenderedImagePlacement>,
     dirty_from: Option<usize>,
     appended_assistant: Option<usize>,
 }
@@ -114,6 +117,30 @@ impl HistoryLineCache {
         target.extend(self.lines[start..end].iter().cloned());
     }
 
+    pub(super) fn visible_image_placements(
+        &mut self,
+        entries: &[Entry],
+        width: usize,
+        max_tool_output_lines: usize,
+        start: usize,
+        count: usize,
+    ) -> Vec<super::feed_image::VisibleImagePlacement> {
+        self.ensure_current(entries, width, max_tool_output_lines);
+        let end = start.saturating_add(count);
+        self.image_placements
+            .iter()
+            .filter_map(|placement| {
+                let visible_start = placement.rows.start.max(start);
+                let visible_end = placement.rows.end.min(end);
+                (visible_start < visible_end).then(|| super::feed_image::VisibleImagePlacement {
+                    image: placement.image.clone(),
+                    row: visible_start - start,
+                    height: visible_end - visible_start,
+                })
+            })
+            .collect()
+    }
+
     fn ensure_current(&mut self, entries: &[Entry], width: usize, max_tool_output_lines: usize) {
         let settings = HistoryLineCacheSettings {
             width,
@@ -125,6 +152,7 @@ impl HistoryLineCache {
             self.entry_ranges.clear();
             self.assistant_caches.clear();
             self.code_blocks.clear();
+            self.image_placements.clear();
             self.appended_assistant = None;
             self.dirty_from = Some(0);
         }
@@ -153,6 +181,8 @@ impl HistoryLineCache {
         self.entry_ranges.truncate(rebuild_from);
         self.assistant_caches.truncate(rebuild_from);
         self.code_blocks.retain(|block| block.line < line_start);
+        self.image_placements
+            .retain(|placement| placement.rows.start < line_start);
 
         let mut previous_was_tool = rebuild_from
             .checked_sub(1)
@@ -179,6 +209,10 @@ impl HistoryLineCache {
                             text: Arc::from(block.text),
                         }),
                 );
+            if let Some(placement) = rendered.image_placement {
+                self.image_placements
+                    .push(placement.offset_rows(entry_start));
+            }
             self.lines.extend(rendered.lines);
             self.entry_ranges.push(range_start..self.lines.len());
             self.assistant_caches.push(match entry {

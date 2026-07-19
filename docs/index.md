@@ -45,6 +45,7 @@ features:
 - [Configuration](/configuration)
 - [Tools and workspace](/tools-workspace)
 - [Sessions](/sessions)
+- [Usage ledger](/usage-ledger)
 - [Rust SDK](/sdk/)
   - [Installation and support](/sdk/installation)
   - [Concepts and ownership](/sdk/concepts)

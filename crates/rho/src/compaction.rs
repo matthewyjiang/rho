@@ -1,8 +1,8 @@
-use crate::model::{
+use rho_providers::model::{
     context::{estimate_context_tokens, estimate_message_tokens},
     ContentBlock, Message,
 };
-use crate::tool::{ToolResult, ToolSpec};
+use rho_tools::tool::{ToolResult, ToolSpec};
 
 const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
 const SUMMARY_RESERVE_MAX_TOKENS: u64 = 8_192;
@@ -253,13 +253,16 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::ToolCall;
+    use rho_tools::tool::ToolCall;
 
     #[test]
     fn compaction_summary_retains_portable_reasoning_context() {
-        let source =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let messages = vec![Message::assistant(crate::model::AssistantMessage {
+        let source = rho_providers::model::ModelIdentity::new(
+            "openai-codex",
+            "openai-responses",
+            "gpt-test",
+        );
+        let messages = vec![Message::assistant(rho_providers::model::AssistantMessage {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source),
             reasoning_summary: Some("verified it".into()),
@@ -361,12 +364,15 @@ mod tests {
 
     #[test]
     fn partition_does_not_split_enriched_assistant_tool_call_group() {
-        let identity =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let identity = rho_providers::model::ModelIdentity::new(
+            "openai-codex",
+            "openai-responses",
+            "gpt-test",
+        );
         let messages = vec![
             Message::System("system".into()),
             Message::user_text("x".repeat(1_000)),
-            Message::assistant(crate::model::AssistantMessage {
+            Message::assistant(rho_providers::model::AssistantMessage {
                 content: vec![ContentBlock::ToolCall(ToolCall {
                     id: "call_1".into(),
                     name: "bash".into(),

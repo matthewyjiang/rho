@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rho", "crates/rho-sdk", "crates/rho-tui-pty"]
+members = ["crates/rho", "crates/rho-providers", "crates/rho-sdk", "crates/rho-tools", "crates/rho-tui-pty"]
 exclude = ["fixtures/downstream"]
 resolver = "2"
 

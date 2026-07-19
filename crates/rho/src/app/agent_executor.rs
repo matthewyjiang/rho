@@ -1,12 +1,12 @@
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
-use crate::{
-    agent::{AgentDefinition, KNOWN_TOOLS},
-    cancellation::RunCancellation,
-    config::Config,
-    diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
-    subagent::{self, RunState, RunStatus},
+use {
+    crate::agent::{AgentDefinition, KNOWN_TOOLS},
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::HerdrReporter,
+    crate::subagent::{self, RunState, RunStatus},
+    rho_tools::cancellation::RunCancellation,
 };
 
 use super::{
@@ -25,6 +25,7 @@ pub(crate) struct AgentExecutor {
 pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) prompt: String,
+    pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) output_file: PathBuf,
 }
 
@@ -134,6 +135,7 @@ impl AgentExecutor {
         let cwd = self.cwd.clone();
         let permits = Arc::clone(&self.permits);
         let output_file = request.output_file;
+        let parent_session_id = request.parent_session_id;
         let persisted_output = output_file.clone();
         let prompt = request.prompt;
 
@@ -155,12 +157,17 @@ impl AgentExecutor {
             };
             let mut config = bound.config().clone();
             if config.provider == "anthropic"
-                && crate::model::models_dev::cached_model_metadata(&config.provider, &config.model)
-                    .is_none()
+                && rho_providers::model::models_dev::cached_model_metadata(
+                    &config.provider,
+                    &config.model,
+                )
+                .is_none()
             {
-                let _ =
-                    crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
-                        .await;
+                let _ = rho_providers::model::models_dev::fetch_model_metadata(
+                    &config.provider,
+                    &config.model,
+                )
+                .await;
             }
             super::cli_config::normalize_reasoning(&mut config);
             let diagnostics = RuntimeDiagnostics::new(&config);
@@ -185,6 +192,8 @@ impl AgentExecutor {
                 no_system_prompt: false,
                 no_tools: false,
                 no_subagents: true,
+                usage_purpose: "subagent",
+                parent_session_id,
                 agent: bound,
                 output_file: None,
                 diagnostics,

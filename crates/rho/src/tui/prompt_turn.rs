@@ -58,7 +58,7 @@ impl App {
                     .iter()
                     .any(|message| matches!(message, Message::User(_)))
                 {
-                    self.start_session_title_generation(prompt.history.clone());
+                    self.start_session_title_generation(prompt.history.clone(), agent);
                 }
                 self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
 

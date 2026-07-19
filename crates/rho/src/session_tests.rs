@@ -3,9 +3,11 @@ use std::ops::Deref;
 use tempfile::TempDir;
 
 use super::*;
-use crate::{
-    model::{AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock},
-    tool::{ToolCall, ToolResult},
+use {
+    rho_providers::model::{
+        AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock,
+    },
+    rho_tools::tool::{ToolCall, ToolResult},
 };
 
 #[cfg(unix)]

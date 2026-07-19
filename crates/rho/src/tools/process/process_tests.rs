@@ -1,6 +1,6 @@
 use super::types::{terminal, Stream};
 use super::*;
-use crate::tool::{Tool, ToolContext, ToolError};
+use rho_tools::tool::{Tool, ToolContext, ToolError};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 

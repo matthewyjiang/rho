@@ -1,4 +1,4 @@
-use crate::tool::truncate;
+use rho_tools::tool::truncate;
 
 use super::agent::SubagentSnapshot;
 
@@ -12,7 +12,12 @@ pub(super) enum SnapshotFormat {
 }
 
 pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
-    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
+    format!(
+        "agent {id} ({agent_id}) started in background\n\
+         completion will be delivered automatically\n\
+         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
+         attach: rho attach {id}"
+    )
 }
 
 pub(super) fn format_running(id: &str) -> String {
@@ -37,25 +42,42 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
                 "elapsed: {} · {metrics}",
                 format_elapsed(snapshot.elapsed.as_secs())
             ));
-            if let Some(activity) = &snapshot.status.last_activity {
-                lines.push(format!("activity: {activity}"));
-            }
-            if let Some(text) = &snapshot.status.last_text {
-                lines.push(format!("latest: {text}"));
+            if !snapshot.done {
+                if let Some(activity) = &snapshot.status.last_activity {
+                    lines.push(format!("activity: {activity}"));
+                }
+                if let Some(text) = &snapshot.status.last_text {
+                    lines.push(format!("latest: {text}"));
+                }
             }
         }
     }
     lines.push(verification_line(&snapshot.status));
-    if let Some(error) = &snapshot.status.error {
-        lines.push(format!("error: {error}"));
+    if matches!(format, SnapshotFormat::Completion) {
+        if let Some(error) = &snapshot.status.error {
+            lines.push(format!("error: {error}"));
+        }
     }
-    if let Some(error) = &snapshot.status.attachment_error {
-        lines.push(format!("attachment error: {error}"));
+    if matches!(format, SnapshotFormat::Completion) || !snapshot.done {
+        if let Some(error) = &snapshot.status.attachment_error {
+            lines.push(format!("attachment error: {error}"));
+        }
     }
     if matches!(format, SnapshotFormat::Status) {
+        if snapshot.background {
+            if snapshot.done {
+                lines.push("completion result uses automatic delivery".into());
+            } else {
+                lines.push("completion will be delivered automatically".into());
+                lines.push(
+                    "if this is the only remaining work, end your turn now - do not call sleep or poll"
+                        .into(),
+                );
+            }
+        }
         lines.push(format!("attach: rho attach {}", snapshot.id));
     }
-    if snapshot.done {
+    if snapshot.done && matches!(format, SnapshotFormat::Completion) {
         if let Some(result) = snapshot
             .status
             .result

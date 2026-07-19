@@ -33,6 +33,8 @@ fn formats_agent_start_output() {
     assert_eq!(
         format_background_start("abc123", "explorer"),
         "agent abc123 (explorer) started in background\n\
+         completion will be delivered automatically\n\
+         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
     assert_eq!(
@@ -57,6 +59,8 @@ fn formats_status_with_runtime_details() {
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
          verification: pending\n\
+         completion will be delivered automatically\n\
+         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
 }
@@ -99,5 +103,39 @@ fn failed_review_is_explicitly_unverified() {
          turns: 3 · tokens: 1200 in / 300 out\n\
          verification: incomplete — the delegated run did not finish; nothing is verified\n\
          error: provider stream failed after emitting output"
+    );
+}
+
+#[test]
+fn completed_status_defers_result_to_automatic_delivery() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Error;
+    snapshot.status.error = Some("provider stream failed".into());
+    snapshot.status.last_text = Some("found it".into());
+
+    assert_eq!(
+        format_snapshot(&snapshot, SnapshotFormat::Status),
+        "agent abc123 (explorer): error\n\
+         elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
+         verification: incomplete — the delegated run did not finish; nothing is verified\n\
+         completion result uses automatic delivery\n\
+         attach: rho attach abc123"
+    );
+}
+
+#[test]
+fn formats_completion_with_result_and_error() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Error;
+    snapshot.status.error = Some("provider stream failed".into());
+
+    assert_eq!(
+        format_snapshot(&snapshot, SnapshotFormat::Completion),
+        "agent abc123 (explorer): error\n\
+         turns: 3 · tokens: 1200 in / 300 out\n\
+         verification: incomplete — the delegated run did not finish; nothing is verified\n\
+         error: provider stream failed\n\
+         \n\
+         found it"
     );
 }

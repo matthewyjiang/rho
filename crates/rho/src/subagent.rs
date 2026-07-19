@@ -190,8 +190,14 @@ mod verdict_tests {
 
     #[test]
     fn is_case_insensitive_and_tolerates_spacing() {
-        assert_eq!(parse_verdict("verdict:   findings"), Some(Verdict::Findings));
-        assert_eq!(parse_verdict("Verdict: Inconclusive"), Some(Verdict::Inconclusive));
+        assert_eq!(
+            parse_verdict("verdict:   findings"),
+            Some(Verdict::Findings)
+        );
+        assert_eq!(
+            parse_verdict("Verdict: Inconclusive"),
+            Some(Verdict::Inconclusive)
+        );
     }
 
     #[test]

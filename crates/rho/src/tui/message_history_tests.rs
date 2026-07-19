@@ -1,4 +1,4 @@
-use crate::model::{AbortedAssistant, Message, ModelUsage, PartialToolCall};
+use rho_providers::model::{AbortedAssistant, Message, ModelUsage, PartialToolCall};
 
 use super::{
     super::{Entry, ToolEntry},
