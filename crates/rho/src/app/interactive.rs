@@ -25,6 +25,7 @@ pub(super) struct Startup<'a> {
     pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
     pub(super) agent: super::agent_binding::BoundAgent,
+    pub(super) reasoning_source: rho_providers::model::ReasoningRequestSource,
 }
 
 fn validate_resume_agent(
@@ -48,6 +49,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         diagnostics,
         herdr,
         agent,
+        reasoning_source,
     } = startup;
     let selected_agent_id = agent.id().to_string();
     let selected_agent_fingerprint = agent.fingerprint().to_string();
@@ -92,6 +94,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
             provider: config.provider,
             model: config.model,
             reasoning: config.reasoning,
+            reasoning_source,
             permission_mode: config.permission_mode,
             show_reasoning_output: config.show_reasoning_output,
             auth: config.auth,

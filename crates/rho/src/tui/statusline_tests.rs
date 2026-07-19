@@ -23,6 +23,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        reasoning_configurable: true,
         permission_mode: crate::permission::PermissionMode::Auto,
         billing: BillingInfo::Metered,
         model_metadata: Some(priced_metadata()),
@@ -43,6 +44,15 @@ fn statusline_rows_use_display_width_for_alignment() {
     let text = line_text(&line);
 
     assert_eq!(display_width(&text), 10);
+}
+
+#[test]
+fn statusline_omits_reasoning_for_non_configurable_provider_paths() {
+    let mut state = test_state(ModelUsage::default());
+    state.provider = "github-copilot".into();
+    state.reasoning_configurable = reasoning_is_configurable(&state.provider, &state.model);
+
+    assert_eq!(state.right_bottom(), "◇ Auto • (github-copilot) gpt-test");
 }
 
 #[test]
@@ -243,6 +253,7 @@ fn test_info(cwd: PathBuf) -> TuiInfo {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        reasoning_source: rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
         permission_mode: crate::permission::PermissionMode::Auto,
         show_reasoning_output: true,
         auth: "api-key".into(),

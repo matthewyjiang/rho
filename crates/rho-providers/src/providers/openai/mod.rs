@@ -19,9 +19,11 @@ use crate::protocol::openai_chat::{
 };
 use crate::protocol::openai_responses::collect_codex_sse_response;
 use auth::{refresh_codex_token, Auth, CodexAuthSource};
-use codex_request::{build_codex_responses_body, CodexRequestMode};
+#[cfg(test)]
+use codex_request::build_codex_responses_body;
+use codex_request::{build_codex_responses_body_with_profile, CodexRequestMode};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
-use reasoning::openai_reasoning_config;
+use reasoning::OpenAiReasoningProfile;
 
 use crate::{
     credentials::{load_codex_tokens, CodexTokens, CredentialStore},
@@ -38,6 +40,7 @@ pub struct OpenAiProvider {
     api_base: String,
     model: String,
     provider: &'static str,
+    reasoning: OpenAiReasoningProfile,
     codex_ws: CodexWsTransport,
     credential_store: Arc<dyn CredentialStore>,
     refreshed_codex_tokens: Mutex<Option<CodexTokens>>,
@@ -68,6 +71,9 @@ impl OpenAiProvider {
             Auth::ApiKey(_) => ("https://api.openai.com/v1".into(), "openai"),
         };
         let api_base = api_base_override.unwrap_or(default_api_base);
+        let reasoning = OpenAiReasoningProfile::from_metadata(
+            crate::model::models_dev::current_model_metadata(provider, &model),
+        );
         let codex_ws = CodexWsTransport::new(&api_base);
         Self {
             client,
@@ -75,6 +81,7 @@ impl OpenAiProvider {
             api_base,
             model,
             provider,
+            reasoning,
             codex_ws,
             credential_store,
             refreshed_codex_tokens: Mutex::new(None),
@@ -186,7 +193,8 @@ impl OpenAiProvider {
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
         let reasoning =
-            openai_reasoning_config(self.provider, &self.model, request.reasoning_level)?;
+            self.reasoning
+                .config(self.provider, &self.model, request.reasoning_level)?;
         Ok(ChatRequest {
             model: self.model.clone(),
             messages,
@@ -267,7 +275,7 @@ impl OpenAiProvider {
         tokens: CodexTokens,
         source: CodexAuthSource,
     ) -> Result<ModelResponse, ModelError> {
-        let body = build_codex_responses_body(&self.model, request)?;
+        let body = build_codex_responses_body_with_profile(&self.model, &self.reasoning, request)?;
         let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
@@ -366,7 +374,8 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = build_codex_responses_body(&self.model, request.clone())?;
+        let body =
+            build_codex_responses_body_with_profile(&self.model, &self.reasoning, request.clone())?;
         let mode = CodexRequestMode::for_model(&self.model);
         match self
             .codex_ws
@@ -390,7 +399,7 @@ impl OpenAiProvider {
 
         // Rebuilt only on this rare fallback path so the common WebSocket
         // turn does not clone the full-history request body.
-        let body = build_codex_responses_body(&self.model, request)?;
+        let body = build_codex_responses_body_with_profile(&self.model, &self.reasoning, request)?;
 
         let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
         let make_request = |token: &str| {

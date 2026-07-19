@@ -69,14 +69,22 @@ impl ReasoningLevel {
         if supported.is_empty() {
             return self;
         }
-        if supported.contains(&self) {
+        if supported.contains(&self) || self == Self::Off {
             return self;
         }
         supported
             .iter()
             .copied()
-            .rfind(|level| *level < self)
-            .or_else(|| supported.first().copied())
+            .filter(|level| *level != Self::Off)
+            .filter(|level| *level > self)
+            .min()
+            .or_else(|| {
+                supported
+                    .iter()
+                    .copied()
+                    .filter(|level| *level != Self::Off && *level < self)
+                    .max()
+            })
             .unwrap_or(self)
     }
 

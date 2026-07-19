@@ -13,7 +13,9 @@ use super::{
 };
 use {
     crate::permission::PermissionMode,
-    rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
+    rho_providers::model::{
+        ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage, ReasoningCapabilities,
+    },
     rho_providers::reasoning::ReasoningLevel,
 };
 
@@ -27,6 +29,7 @@ pub(super) struct StatusLineState {
     provider: String,
     model: String,
     reasoning: ReasoningLevel,
+    reasoning_configurable: bool,
     permission_mode: PermissionMode,
     billing: BillingInfo,
     model_metadata: Option<ModelMetadata>,
@@ -66,6 +69,7 @@ impl Default for StatusLineState {
             provider: String::new(),
             model: String::new(),
             reasoning: ReasoningLevel::default(),
+            reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
             billing: BillingInfo::Metered,
             model_metadata: None,
@@ -85,6 +89,7 @@ impl StatusLineState {
             provider: info.provider.clone(),
             model: info.model.clone(),
             reasoning: info.reasoning,
+            reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
             billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
             model_metadata: None,
@@ -100,13 +105,17 @@ impl StatusLineState {
     }
 
     fn right_bottom(&self) -> String {
-        format!(
-            "◇ {} • ({}) {} • {}",
+        let prefix = format!(
+            "◇ {} • ({}) {}",
             self.permission_mode.label(),
             self.provider,
-            self.model,
-            self.reasoning
-        )
+            self.model
+        );
+        if !self.reasoning_configurable {
+            prefix
+        } else {
+            format!("{prefix} • {}", self.reasoning)
+        }
     }
 }
 
@@ -128,15 +137,18 @@ impl StatusLine {
 
     pub(super) fn update_model(&mut self, info: &TuiInfo) {
         let billing = BillingInfo::from_provider_auth(&info.provider, &info.auth);
+        let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.reasoning != info.reasoning
+            || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
             || self.state.billing != billing
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
             self.state.reasoning = info.reasoning;
+            self.state.reasoning_configurable = reasoning_configurable;
             self.state.permission_mode = info.permission_mode;
             self.state.billing = billing;
             self.invalidate();
@@ -165,11 +177,15 @@ impl StatusLine {
         model_metadata: Option<&ModelMetadata>,
         loading: bool,
     ) {
+        let reasoning_configurable =
+            reasoning_is_configurable(&self.state.provider, &self.state.model);
         if self.state.model_metadata.as_ref() != model_metadata
             || self.state.model_metadata_loading != loading
+            || self.state.reasoning_configurable != reasoning_configurable
         {
             self.state.model_metadata = model_metadata.cloned();
             self.state.model_metadata_loading = loading;
+            self.state.reasoning_configurable = reasoning_configurable;
             self.invalidate();
         }
     }
@@ -200,6 +216,11 @@ impl StatusLine {
     fn invalidate(&mut self) {
         self.cache.lines.clear();
     }
+}
+
+fn reasoning_is_configurable(provider: &str, model: &str) -> bool {
+    rho_providers::model::models_dev::current_reasoning_capabilities(provider, model)
+        != ReasoningCapabilities::NotConfigurable
 }
 
 fn statusline_lines(

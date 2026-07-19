@@ -24,7 +24,14 @@ Rho supports Moonshot's OpenAI-compatible Chat Completions API through two expli
 | API base | `https://api.kimi.com/coding/v1` |
 | Model list | Refreshable after authentication |
 
-Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through **Refresh model lists** in `/config` after authentication. Rho preserves account-specific context limits returned by the model-list API and combines them with general model capabilities from models.dev.
+Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through **Refresh model lists** in `/config` after authentication. Rho preserves account-specific context limits returned by the model-list API. For Kimi Code, account-specific reasoning choices replace general models.dev reasoning metadata when available.
+
+Although Moonshot and Kimi Code share an OpenAI-compatible transport, they use separate reasoning contracts:
+
+- Moonshot Kimi K3 requests use the top-level `reasoning_effort` field.
+- Kimi Code K3 requests use `thinking: { "type": "enabled", "effort": "<level>" }`. Turning reasoning off sends `thinking: { "type": "disabled" }` without an effort.
+
+Rho does not send Anthropic-style adaptive thinking or `output_config.effort` to either provider.
 
 ## Moonshot API key
 
@@ -63,7 +70,7 @@ Select a model after login:
 /model kimi-code/<model-id>
 ```
 
-For Kimi K3, Rho uses the authenticated `context_length` returned for the current account. If that field is unavailable, Rho uses a conservative 256K effective window while retaining the model's advertised 1M maximum. K3 reasoning choices follow models.dev capabilities and currently expose thinking off or max; Rho sends these through Kimi's native `thinking.type` field.
+For Kimi K3, Rho uses the authenticated `context_length` returned for the current account. If that field is unavailable, Rho uses a conservative 256K effective window while retaining the model's advertised 1M maximum. K3 reasoning choices come from the authenticated model list when available. Enabled requests carry the selected effort in Kimi Code's native `thinking` object. Turning reasoning off sends the native disabled mode, which Kimi documents as routing the request to K2.6.
 
 For automation after a prior login or with `KIMI_ACCESS_TOKEN`:
 

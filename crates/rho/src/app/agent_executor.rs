@@ -156,19 +156,12 @@ impl AgentExecutor {
                 return Ok(());
             };
             let mut config = bound.config().clone();
-            if config.provider == "anthropic"
-                && rho_providers::model::models_dev::cached_model_metadata(
-                    &config.provider,
-                    &config.model,
-                )
-                .is_none()
-            {
-                let _ = rho_providers::model::models_dev::fetch_model_metadata(
-                    &config.provider,
-                    &config.model,
-                )
-                .await;
-            }
+            super::cli_config::prepare_model_metadata(
+                &config,
+                &rho_providers::credentials::OsCredentialStore,
+                &super::cli_config::ProviderRefreshStatus::NotAttempted,
+            )
+            .await;
             super::cli_config::normalize_reasoning(&mut config);
             let diagnostics = RuntimeDiagnostics::new(&config);
             diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());

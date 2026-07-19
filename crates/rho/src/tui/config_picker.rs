@@ -35,10 +35,11 @@ pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 
 pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker {
-    UiPicker::new(
-        "Config",
-        "type regex filter, enter change, esc cancel",
-        vec![
+    let reasoning_capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+        &info.provider,
+        &info.model,
+    );
+    let mut items = vec![
             PickerItem {
                 label: "Conversation model".into(),
                 detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
@@ -99,13 +100,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 detail: Some(format!(
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
-                    info.reasoning.next_supported(
-                        rho_providers::model::models_dev::cached_reasoning_levels(
-                            &info.provider,
-                            &info.model,
-                        )
-                        .as_deref(),
-                    )
+                    reasoning_capabilities.next_level(info.reasoning)
                 )),
                 preview: None,
                 badge: Some(PickerBadge {
@@ -246,7 +241,14 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 }),
                 value: WEB_SEARCH_VALUE.into(),
             },
-        ],
+        ];
+    if reasoning_capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+        items.retain(|item| item.value != REASONING_VALUE);
+    }
+    UiPicker::new(
+        "Config",
+        "type regex filter, enter change, esc cancel",
+        items,
         PickerAction::Config,
     )
 }

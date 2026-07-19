@@ -15,6 +15,40 @@ fn provider_ids_have_unique_descriptors_and_lookup_round_trips() {
 }
 
 #[test]
+fn catalog_reasoning_policies_follow_provider_control_semantics() {
+    use super::{CatalogReasoningPolicy, ProviderId};
+
+    for provider in [ProviderId::OpenAi, ProviderId::OpenAiCodex] {
+        assert_eq!(
+            super::provider_descriptor_by_id(provider).catalog_reasoning,
+            CatalogReasoningPolicy::ExactAdvertised
+        );
+    }
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::OpenRouter).catalog_reasoning,
+        CatalogReasoningPolicy::OffAsNone
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::GithubCopilot).catalog_reasoning,
+        CatalogReasoningPolicy::NotConfigurable
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::Anthropic).catalog_reasoning,
+        CatalogReasoningPolicy::Unknown
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::Moonshot).catalog_reasoning,
+        CatalogReasoningPolicy::ExactAdvertised
+    );
+    for provider in [ProviderId::KimiCode, ProviderId::Xai, ProviderId::XaiOAuth] {
+        assert_eq!(
+            super::provider_descriptor_by_id(provider).catalog_reasoning,
+            CatalogReasoningPolicy::OffByAdvertisedToggle
+        );
+    }
+}
+
+#[test]
 fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     use super::{ProviderAuthKind, ProviderId};
 

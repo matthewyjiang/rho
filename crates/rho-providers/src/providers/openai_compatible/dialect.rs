@@ -1,52 +1,22 @@
 use serde_json::Value;
 
-use crate::{
-    protocol::openai_chat::{OpenAiThinking, OpenAiTool},
-    reasoning::ReasoningLevel,
-};
+use crate::protocol::openai_chat::OpenAiTool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenAiCompatibleDialect {
     OpenRouter,
     Moonshot,
+    KimiCode,
 }
 
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         match self {
             Self::OpenRouter => tool,
-            Self::Moonshot => {
+            Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(&mut tool.function.parameters);
                 tool
             }
-        }
-    }
-
-    pub(crate) fn reasoning(self, reasoning: ReasoningLevel) -> Option<String> {
-        match self {
-            Self::OpenRouter => Some(reasoning.effort().unwrap_or("none").to_string()),
-            Self::Moonshot => None,
-        }
-    }
-
-    pub(crate) fn thinking(
-        self,
-        provider: &str,
-        model: &str,
-        reasoning: ReasoningLevel,
-    ) -> Option<OpenAiThinking> {
-        let metadata_model = crate::provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.metadata_model(model))
-            .unwrap_or(model);
-        match (self, metadata_model) {
-            (Self::Moonshot, "kimi-k3") => Some(OpenAiThinking {
-                kind: if reasoning == ReasoningLevel::Off {
-                    "disabled"
-                } else {
-                    "enabled"
-                },
-            }),
-            _ => None,
         }
     }
 }

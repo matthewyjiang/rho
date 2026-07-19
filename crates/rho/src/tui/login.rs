@@ -483,12 +483,13 @@ impl App {
                 )));
             }
         } else if target.provider == self.info.provider {
-            self.reload_active_provider_after_login(&target, agent)?;
-            self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
-                    target.provider
-                )),
-            );
+            if self.reload_active_provider_after_login(&target, agent)? {
+                self.insert_entry(&Entry::Notice(format!(
+                        "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
+                        target.provider
+                    )),
+                );
+            }
         } else {
             self.insert_entry(&Entry::Notice(format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",
@@ -534,29 +535,67 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn resolve_reasoning_after_login(
+        &mut self,
+        provider: &str,
+        model: &str,
+    ) -> Option<reasoning_metadata::ModelSwitchReasoningResolution> {
+        let capabilities =
+            rho_providers::model::models_dev::current_reasoning_capabilities(provider, model);
+        match reasoning_metadata::resolve_model_switch_reasoning(
+            &capabilities,
+            self.info.reasoning,
+            self.info.reasoning_source,
+        ) {
+            Ok(reasoning) => Some(reasoning),
+            Err(requested) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but reasoning level '{requested}' is not supported by {provider}/{model}"
+                )));
+                self.status = "login saved".into();
+                None
+            }
+        }
+    }
+
     fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let new_provider =
-            match build_sdk_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "stored credentials, but could not refresh {}: {err}",
-                        target.provider
-                    )));
-                    self.status = "login saved".into();
-                    return Ok(());
-                }
-            };
+    ) -> anyhow::Result<bool> {
+        let provider = self.info.provider.clone();
+        let model = self.info.model.clone();
+        let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
+            return Ok(false);
+        };
+        let new_provider = match build_sdk_provider(&provider, &model, reasoning.effective) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but could not refresh {}: {err}",
+                    target.provider
+                )));
+                self.status = "login saved".into();
+                return Ok(false);
+            }
+        };
 
-        agent.replace_provider(new_provider, self.info.reasoning)?;
+        agent.replace_provider(new_provider, reasoning.effective)?;
+        self.info
+            .set_reasoning(reasoning.effective, reasoning.source);
         self.info.auth = target.auth.clone();
         self.info.auth_unavailable = None;
-        self.status = "login saved".into();
-        Ok(())
+        self.start_model_metadata_fetch(agent);
+        match self.save_current_config() {
+            Ok(()) => self.status = "login saved".into(),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "login applied, but saving config failed: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(true)
     }
 
     fn activate_provider_after_login(
@@ -573,7 +612,10 @@ impl App {
             self.status = "login saved".into();
             return Ok(false);
         };
-        let new_provider = match build_sdk_provider(&target.provider, &model, self.info.reasoning) {
+        let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
+            return Ok(false);
+        };
+        let new_provider = match build_sdk_provider(&target.provider, &model, reasoning.effective) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -585,17 +627,15 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider, self.info.reasoning)?;
+        agent.replace_provider(new_provider, reasoning.effective)?;
         self.info.provider = target.provider.clone();
         self.info.auth = target.auth.clone();
         self.info.model = model;
-        self.info.diagnostics.update_identity(
-            &self.info.provider,
-            &self.info.model,
-            self.info.reasoning,
-        );
+        self.info
+            .set_reasoning(reasoning.effective, reasoning.source);
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
+        self.start_model_metadata_fetch(agent);
         match self.save_current_config() {
             Ok(()) => {
                 self.status = format!("model: {}/{}", self.info.provider, self.info.model);
@@ -689,3 +729,7 @@ impl App {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "login_tests.rs"]
+mod tests;

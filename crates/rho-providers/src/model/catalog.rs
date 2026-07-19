@@ -391,9 +391,12 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::model::provider_models::{
-        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
-        ProviderModel,
+    use crate::model::{
+        provider_models::{
+            replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+            ProviderModel,
+        },
+        ReasoningCapabilities,
     };
 
     fn test_catalog() -> Vec<ModelCatalogEntry> {
@@ -466,6 +469,7 @@ mod tests {
             display_name: model.into(),
             context_window: None,
             max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
         }
     }
 

@@ -28,6 +28,8 @@ pub(crate) struct OpenAiReasoning {
 pub(crate) struct OpenAiThinking {
     #[serde(rename = "type")]
     pub(crate) kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) effort: Option<String>,
 }
 
 #[derive(Serialize)]

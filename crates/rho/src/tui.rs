@@ -72,6 +72,7 @@ mod provider_attempt;
 mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
+mod reasoning_metadata;
 mod render;
 mod rendered_entry;
 mod run_lifecycle;
@@ -121,6 +122,7 @@ use render::{
     input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
     session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
+use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use session_title::{generate_session_title, PendingSessionTitle};
 use statusline::{GoalStatus, StatusLine};
@@ -154,10 +156,10 @@ use {
     rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
-        models_dev::{cached_model_metadata, fetch_model_metadata},
+        models_dev::fetch_model_metadata,
         provider_models::refresh_provider_models_with_store,
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
-        UnavailableProvider,
+        ReasoningRequestSource, UnavailableProvider,
     },
     rho_providers::provider::{self, ProviderAuthKind},
     rho_providers::providers::build_sdk_provider,
@@ -179,6 +181,7 @@ pub struct TuiInfo {
     pub provider: String,
     pub model: String,
     pub reasoning: ReasoningLevel,
+    pub reasoning_source: ReasoningRequestSource,
     pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
     pub auth: String,
@@ -344,6 +347,7 @@ struct App {
     current_context: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
+    pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<PendingSessionTitle>,
@@ -678,6 +682,7 @@ impl App {
             current_context: None,
             model_metadata: None,
             pending_model_metadata: None,
+            pending_model_metadata_reasoning: None,
             pending_update_notice,
             pending_model_selection: None,
             pending_session_title: None,
@@ -1202,11 +1207,14 @@ impl App {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
         }
-        if let Some(metadata) = cached_model_metadata(&self.info.provider, &self.info.model) {
+        self.pending_model_metadata_reasoning = None;
+        if let Some((metadata, metadata_is_current)) =
+            reasoning_metadata::cached_metadata(&self.info.provider, &self.info.model)
+        {
             agent.set_context_window(metadata.display_context_window());
-            let reasoning_capabilities_known = metadata.reasoning_capabilities_known;
+            let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
             self.model_metadata = Some(metadata);
-            if reasoning_capabilities_known {
+            if reasoning_metadata_complete && metadata_is_current {
                 return;
             }
         } else {
@@ -1215,6 +1223,8 @@ impl App {
         }
         let provider = self.info.provider.clone();
         let model = self.info.model.clone();
+        self.pending_model_metadata_reasoning =
+            Some((self.info.reasoning, self.info.reasoning_source));
         self.pending_model_metadata = Some(tokio::spawn(async move {
             fetch_model_metadata(&provider, &model).await
         }));
@@ -1228,12 +1238,22 @@ impl App {
             return;
         }
         if let Some(handle) = self.pending_model_metadata.take() {
+            let reasoning_at_fetch_start = self.pending_model_metadata_reasoning.take();
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
                 agent.set_context_window(metadata.display_context_window());
-                let reasoning = self
-                    .info
-                    .reasoning
-                    .normalize(metadata.supported_reasoning_levels.as_deref());
+                let capabilities = metadata.reasoning_capabilities();
+                let resolved = reasoning_metadata::resolve_fetched_reasoning(
+                    &capabilities,
+                    self.info.reasoning,
+                    reasoning_at_fetch_start,
+                );
+                let reasoning = resolved.effective;
+                if let Some(requested) = resolved.rejected {
+                    self.insert_entry(&Entry::Error(format!(
+                        "reasoning level '{requested}' is not supported by {}/{}; restored '{reasoning}'",
+                        self.info.provider, self.info.model
+                    )));
+                }
                 let provider_updated =
                     match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
                         Ok(provider) => match agent.replace_provider(provider, reasoning) {
@@ -1253,12 +1273,7 @@ impl App {
                         }
                     };
                 if provider_updated && reasoning != self.info.reasoning {
-                    self.info.reasoning = reasoning;
-                    self.info.diagnostics.update_identity(
-                        &self.info.provider,
-                        &self.info.model,
-                        reasoning,
-                    );
+                    self.info.set_reasoning(reasoning, PersistedOrDefault);
                     if let Err(err) = self.info.config_repository.update(|config| {
                         config.reasoning = reasoning;
                     }) {
@@ -4044,58 +4059,6 @@ impl App {
         }
     }
 
-    fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        let supported_reasoning = rho_providers::model::models_dev::cached_reasoning_levels(
-            &self.info.provider,
-            &self.info.model,
-        );
-        let reasoning = self
-            .info
-            .reasoning
-            .next_supported(supported_reasoning.as_deref());
-        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not update reasoning to {reasoning}: {err}"
-                )));
-                self.status = "reasoning change failed".into();
-                return Ok(());
-            }
-        };
-        agent.replace_provider(provider, reasoning)?;
-        self.info.reasoning = reasoning;
-        self.info.diagnostics.update_identity(
-            &self.info.provider,
-            &self.info.model,
-            self.info.reasoning,
-        );
-        let save_result = self.info.config_repository.update(|config| {
-            config.reasoning = reasoning;
-        });
-        if matches!(
-            &self.composer,
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            let config = self.info.config_repository.load().unwrap_or_default();
-            self.info.show_reasoning_output = config.show_reasoning_output;
-            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
-        }
-        match save_result {
-            Ok(()) => {
-                self.status = format!("reasoning: {reasoning}");
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                        "reasoning set to {reasoning} for this session, but saving config failed: {err}"
-                    )),
-                );
-                self.status = "config save failed".into();
-            }
-        }
-        Ok(())
-    }
-
     fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.config_repository, ConfigToggle::CheckForUpdates) {
             Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
@@ -4286,13 +4249,23 @@ impl App {
         let model = selection.model;
         let auth = selection.auth;
         let provider_model = format!("{provider}/{model}");
-        let supported_reasoning =
-            rho_providers::model::models_dev::cached_reasoning_levels(&provider, &model);
-        let reasoning = self
-            .info
-            .reasoning
-            .normalize(supported_reasoning.as_deref());
-        let new_provider = match build_sdk_provider(&provider, &model, reasoning) {
+        let capabilities =
+            rho_providers::model::models_dev::current_reasoning_capabilities(&provider, &model);
+        let reasoning = match reasoning_metadata::resolve_model_switch_reasoning(
+            &capabilities,
+            self.info.reasoning,
+            self.info.reasoning_source,
+        ) {
+            Ok(reasoning) => reasoning,
+            Err(requested) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {provider_model}: reasoning level '{requested}' is not supported"
+                )));
+                self.status = "model switch rejected".into();
+                return Ok(());
+            }
+        };
+        let new_provider = match build_sdk_provider(&provider, &model, reasoning.effective) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -4303,7 +4276,7 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider, reasoning)?;
+        let handoff = agent.replace_provider(new_provider, reasoning.effective)?;
         if handoff.has_omissions() {
             let kinds = handoff.omitted_kinds.join(", ");
             self.insert_entry(&Entry::Notice(format!(
@@ -4313,34 +4286,30 @@ impl App {
         }
         self.info.provider = provider.clone();
         self.info.model = model.clone();
-        self.info.reasoning = reasoning;
+        self.info
+            .set_reasoning(reasoning.effective, reasoning.source);
         self.info.auth = auth.clone();
-        self.info.diagnostics.update_identity(
-            &self.info.provider,
-            &self.info.model,
-            self.info.reasoning,
-        );
         self.info.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
         match self.info.config_repository.update(|config| {
             config.provider = provider.clone();
             config.model = model.clone();
-            config.reasoning = reasoning;
+            config.reasoning = reasoning.effective;
             config.auth = auth.clone();
         }) {
             Ok(()) => {
                 self.insert_entry(&Entry::Notice(format!(
-                        "model switched to {provider_model} with reasoning {reasoning} and saved to config"
-                    )),
-                );
+                    "model switched to {provider_model} with reasoning {} and saved to config",
+                    reasoning.effective
+                )));
                 self.status = format!("model: {provider_model}");
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                        "model switched to {provider_model} with reasoning {reasoning} for this session, but saving config failed: {err}"
-                    )),
-                );
+                    "model switched to {provider_model} with reasoning {} for this session, but saving config failed: {err}",
+                    reasoning.effective
+                )));
                 self.status = "config save failed".into();
             }
         }
@@ -4386,6 +4355,7 @@ impl App {
             config.provider = self.info.provider.clone();
             config.model = self.info.model.clone();
             config.auth = self.info.auth.clone();
+            config.reasoning = self.info.reasoning;
         })
     }
 
@@ -6147,6 +6117,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                reasoning_source: ReasoningRequestSource::PersistedOrDefault,
                 permission_mode: PermissionMode::Auto,
                 show_reasoning_output: true,
                 auth: "api-key".into(),
@@ -7307,6 +7278,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
                 reasoning: ReasoningLevel::Low,
+                reasoning_source: ReasoningRequestSource::PersistedOrDefault,
                 permission_mode: PermissionMode::Auto,
                 show_reasoning_output: true,
                 auth: "api-key".into(),

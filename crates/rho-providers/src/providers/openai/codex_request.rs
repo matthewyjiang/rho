@@ -39,11 +39,12 @@ impl CodexRequestMode {
     }
 }
 
-pub(super) fn build_codex_responses_body(
+pub(super) fn build_codex_responses_body_with_profile(
     model: &str,
+    reasoning_profile: &super::reasoning::OpenAiReasoningProfile,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    let reasoning = super::openai_reasoning_config("openai-codex", model, request.reasoning_level)?;
+    let reasoning = reasoning_profile.config("openai-codex", model, request.reasoning_level)?;
     let mode = CodexRequestMode::for_model(model);
     let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new("openai-codex", "openai-responses", model);
@@ -118,6 +119,18 @@ fn responses_tool(mode: CodexRequestMode, tool: ToolSpec) -> Value {
         CodexRequestMode::Standard => to_responses_tool(tool),
         CodexRequestMode::ResponsesLite => to_responses_lite_tool(tool),
     }
+}
+
+#[cfg(test)]
+pub(super) fn build_codex_responses_body(
+    model: &str,
+    request: ModelRequest<'_>,
+) -> Result<Value, ModelError> {
+    build_codex_responses_body_with_profile(
+        model,
+        &super::reasoning::OpenAiReasoningProfile::unknown(),
+        request,
+    )
 }
 
 #[cfg(test)]
