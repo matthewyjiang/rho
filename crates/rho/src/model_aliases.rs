@@ -4,14 +4,12 @@ use serde::{Deserialize, Serialize};
 
 /// User-defined model aliases: short names mapped to concrete models.
 ///
-/// An alias value is either `provider/model` or a bare `model` id (which
-/// keeps whichever provider is otherwise selected). Aliases are consulted
-/// wherever a model can be referenced — the session model, `--model`, and
-/// agent `model:` frontmatter — and an alias always wins over an identically
-/// named model id, so a provider release can never silently change what a
-/// configured name points to. Resolution is a single flat lookup performed
-/// before any model-specific behavior; downstream code only ever sees
-/// concrete model ids.
+/// Alias references use the explicit `@name` syntax. All other references are
+/// concrete model targets, even when their model id happens to match an alias
+/// name. An alias value is either `provider/model` or a bare `model` id (which
+/// keeps whichever provider is otherwise selected). Provider-qualified model
+/// ids may themselves contain slashes; only the first slash separates the
+/// provider from the model id.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModelAliases(BTreeMap<String, AliasTarget>);
 
@@ -32,30 +30,83 @@ impl fmt::Display for AliasTarget {
     }
 }
 
+/// A concrete model reference produced by [`ModelAliases::resolve`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedModelReference {
+    /// The alias name, without its leading `@`, when the input was an alias.
+    pub alias: Option<String>,
+    /// Provider selected by a qualified reference, or `None` to keep the
+    /// provider selected by the caller.
+    pub provider: Option<String>,
+    pub model: String,
+}
+
+/// An error resolving a model alias reference.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelAliasResolutionError {
+    UndefinedAlias { name: String },
+}
+
+impl fmt::Display for ModelAliasResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UndefinedAlias { name } => write!(
+                formatter,
+                "model alias '@{name}' is not defined; define it in [model.aliases] or use a concrete model reference"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ModelAliasResolutionError {}
+
 impl ModelAliases {
     pub fn from_entries(entries: BTreeMap<String, String>) -> Result<Self, String> {
         let mut aliases = BTreeMap::new();
         for (name, value) in entries {
-            if name.is_empty() || name.contains(char::is_whitespace) || name.contains('/') {
+            if name.is_empty() || name.contains(char::is_whitespace) || name.contains(['/', '@']) {
                 return Err(format!(
-                    "invalid model alias name '{name}': must be non-empty with no whitespace or '/'"
+                    "invalid model alias name '{name}': must be non-empty with no whitespace, '/', or '@'"
                 ));
             }
             aliases.insert(name, parse_target(&value)?);
         }
-        for (name, target) in &aliases {
-            if aliases.contains_key(&target.model) {
-                return Err(format!(
-                    "model alias '{name}' targets alias '{}'; alias values must be concrete models",
-                    target.model
-                ));
-            }
-        }
         Ok(Self(aliases))
+    }
+
+    /// Resolves an explicit `@name` alias or returns an ordinary concrete model
+    /// reference unchanged. Ordinary references never consult the alias table.
+    pub fn resolve(
+        &self,
+        reference: &str,
+    ) -> Result<ResolvedModelReference, ModelAliasResolutionError> {
+        if let Some(name) = reference.strip_prefix('@') {
+            let target =
+                self.0
+                    .get(name)
+                    .ok_or_else(|| ModelAliasResolutionError::UndefinedAlias {
+                        name: name.to_string(),
+                    })?;
+            return Ok(ResolvedModelReference {
+                alias: Some(name.to_string()),
+                provider: target.provider.clone(),
+                model: target.model.clone(),
+            });
+        }
+
+        Ok(ResolvedModelReference {
+            alias: None,
+            provider: None,
+            model: reference.to_string(),
+        })
     }
 
     pub fn get(&self, name: &str) -> Option<&AliasTarget> {
         self.0.get(name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &AliasTarget)> {
+        self.0.iter().map(|(name, target)| (name.as_str(), target))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -63,18 +114,24 @@ impl ModelAliases {
     }
 }
 
-fn parse_target(value: &str) -> Result<AliasTarget, String> {
-    let invalid = |value: &str| {
-        format!("invalid model alias value '{value}': expected 'provider/model' or 'model' with no whitespace")
-    };
-    if value.is_empty() || value.contains(char::is_whitespace) {
-        return Err(invalid(value));
-    }
-    let (provider, model) = match value.split_once('/') {
+fn split_target(value: &str) -> (Option<&str>, &str) {
+    match value.split_once('/') {
         Some((provider, model)) => (Some(provider), model),
         None => (None, value),
+    }
+}
+
+fn parse_target(value: &str) -> Result<AliasTarget, String> {
+    let invalid = |value: &str| {
+        format!(
+            "invalid model alias value '{value}': expected a concrete 'provider/model' or 'model' with no whitespace"
+        )
     };
-    if provider.is_some_and(str::is_empty) || model.is_empty() || model.contains('/') {
+    if value.is_empty() || value.starts_with('@') || value.contains(char::is_whitespace) {
+        return Err(invalid(value));
+    }
+    let (provider, model) = split_target(value);
+    if provider.is_some_and(str::is_empty) || model.is_empty() {
         return Err(invalid(value));
     }
     Ok(AliasTarget {

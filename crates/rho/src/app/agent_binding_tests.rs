@@ -110,7 +110,7 @@ fn agent_model_alias_resolves_to_concrete_provider_and_model() {
     let bound = AgentBinder::bind(
         definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
             provider: None,
-            model: "deep".into(),
+            model: "@deep".into(),
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -134,7 +134,7 @@ fn agent_bare_model_alias_keeps_inherited_provider() {
     let bound = AgentBinder::bind(
         definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
             provider: None,
-            model: "fast".into(),
+            model: "@fast".into(),
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -157,7 +157,7 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
     let error = AgentBinder::bind(
         definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
             provider: Some("openai".into()),
-            model: "deep".into(),
+            model: "@deep".into(),
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -169,7 +169,30 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
 
     assert!(
         error.to_string().contains(
-            "model alias 'deep' resolves to provider 'anthropic', which conflicts with the agent's provider 'openai'"
+            "model alias '@deep' resolves to provider 'anthropic', which conflicts with the agent's provider 'openai'"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn undefined_agent_model_alias_names_agent_and_reference() {
+    let error = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+            provider: None,
+            model: "@missing".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "agent 'test': model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
         "{error:#}"
     );

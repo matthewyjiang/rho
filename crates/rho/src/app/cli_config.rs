@@ -1,6 +1,7 @@
 use {
     crate::cli::Cli,
     crate::config::Config,
+    crate::model_aliases::ResolvedModelReference,
     rho_providers::credentials::{self, CredentialStore},
     rho_providers::model::{
         catalog,
@@ -35,18 +36,39 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
-    let explicit_provider = cli
-        .provider
+    let model_override = cli
+        .model
         .as_deref()
-        .or_else(|| cli.model.as_deref().and_then(explicit_model_provider));
-    if explicit_provider.is_none()
-        && (config.provider != "kimi-code"
-            || !provider_model_capabilities_need_refresh(&config.provider, &config.model))
+        .map(|reference| effective_model_override(config, reference, cli.provider.as_deref()))
+        .transpose()?;
+    let provider = model_override
+        .as_ref()
+        .and_then(|selection| selection.provider.as_deref())
+        .or(cli.provider.as_deref())
+        .or_else(|| {
+            model_override
+                .as_ref()
+                .and_then(|selection| explicit_model_provider(&selection.model))
+        })
+        .unwrap_or(&config.provider);
+    if cli.provider.is_none()
+        && cli.model.is_none()
+        && (provider != "kimi-code"
+            || !provider_model_capabilities_need_refresh(provider, &config.model))
     {
         return Ok(ProviderRefreshStatus::NotAttempted);
     }
-    let provider = explicit_provider.unwrap_or(&config.provider);
-    let selected_model = selected_model_for_refresh(cli, config, provider);
+    let selected_model = model_override
+        .as_ref()
+        .map(|selection| {
+            selection
+                .model
+                .trim()
+                .strip_prefix(&format!("{provider}/"))
+                .unwrap_or(selection.model.trim())
+                .to_string()
+        })
+        .or_else(|| selected_model_for_refresh(config, provider));
     let attempted = refresh_model_list_for_provider(
         provider,
         selected_model.as_deref(),
@@ -212,29 +234,13 @@ fn apply_model_override(
     reference: &str,
     cli_provider: Option<&str>,
 ) -> anyhow::Result<()> {
-    // `--model` may name a user-defined alias; resolve it before catalog
-    // validation so downstream code only sees concrete model ids.
-    let alias = config.model_aliases.get(reference).cloned();
-    let (model, provider) = match &alias {
-        Some(target) => {
-            if let (Some(pinned), Some(resolved)) = (cli_provider, target.provider.as_deref()) {
-                if pinned != resolved {
-                    anyhow::bail!(
-                        "model alias '{reference}' resolves to provider '{resolved}', which conflicts with --provider {pinned}"
-                    );
-                }
-            }
-            (
-                target.model.as_str(),
-                target.provider.as_deref().or(cli_provider),
-            )
+    let model_override = effective_model_override(config, reference, cli_provider)?;
+    let selection = match model_override.provider.as_deref() {
+        Some(provider) => {
+            catalog::resolve_model_selection_for_provider(provider, &model_override.model)?
         }
-        None => (reference, cli_provider),
-    };
-    let selection = match provider {
-        Some(provider) => catalog::resolve_model_selection_for_provider(provider, model)?,
         None => catalog::resolve_model_selection_for_auths(
-            model,
+            &model_override.model,
             &config.provider,
             &config.auth,
             std::slice::from_ref(&config.auth),
@@ -243,8 +249,33 @@ fn apply_model_override(
     config.provider = selection.provider;
     config.model = selection.model;
     config.auth = selection.auth;
-    config.model_alias = alias.is_some().then(|| reference.to_string());
+    config.model_alias = model_override.alias;
     Ok(())
+}
+
+fn effective_model_override(
+    config: &Config,
+    reference: &str,
+    cli_provider: Option<&str>,
+) -> anyhow::Result<ResolvedModelReference> {
+    // Resolve once before refresh or catalog validation so both paths act on
+    // the same concrete target.
+    let mut resolved = config
+        .model_aliases
+        .resolve(reference)
+        .map_err(|error| anyhow::anyhow!("--model: {error}"))?;
+    match (cli_provider, resolved.provider.as_deref(), &resolved.alias) {
+        (Some(pinned), Some(alias_provider), Some(_)) if pinned != alias_provider => {
+            anyhow::bail!(
+                "model alias '{reference}' resolves to provider '{alias_provider}', which conflicts with --provider {pinned}"
+            );
+        }
+        _ => {}
+    }
+    resolved.provider = resolved
+        .provider
+        .or_else(|| cli_provider.map(str::to_string));
+    Ok(resolved)
 }
 
 async fn refresh_model_list_for_provider(
@@ -256,8 +287,8 @@ async fn refresh_model_list_for_provider(
     let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(false);
     };
-    let needs_model_discovery =
-        selected_model.is_none() && catalog::default_model_for_provider(provider).is_none();
+    let needs_model_discovery = catalog::default_model_for_provider(provider).is_none()
+        && (selected_model.is_none() || provider_requires_cached_models(provider));
     let needs_capabilities =
         selected_model.is_some_and(|model| needs_synchronous_capability_refresh(provider, model));
     if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
@@ -280,16 +311,7 @@ fn needs_synchronous_capability_refresh(provider: &str, model: &str) -> bool {
     provider == "kimi-code" && provider_model_capabilities_need_refresh(provider, model)
 }
 
-fn selected_model_for_refresh(cli: &Cli, config: &Config, provider: &str) -> Option<String> {
-    if let Some(model) = cli.model.as_deref() {
-        return Some(
-            model
-                .trim()
-                .strip_prefix(&format!("{provider}/"))
-                .unwrap_or(model.trim())
-                .to_string(),
-        );
-    }
+fn selected_model_for_refresh(config: &Config, provider: &str) -> Option<String> {
     if provider == config.provider {
         return Some(config.model.clone());
     }

@@ -104,17 +104,28 @@ rho --config ~/.rho/config.toml
 
 ## Model aliases
 
-`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected:
+`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected. Model ids may contain `/`, as OpenRouter ids commonly do:
 
 ```toml
 [model.aliases]
 deep = "anthropic/claude-opus-4-8"
 fast = "gpt-5.6-luna"
+openrouter-deep = "openrouter/anthropic/claude-sonnet-4"
 ```
 
-An alias can be used anywhere a model is referenced: the `model` setting above, `--model` on the command line, and `model` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
+Reference an alias with an `@` prefix. The explicit prefix distinguishes aliases from concrete model ids and makes a missing or misspelled alias an immediate configuration error:
 
-Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. An alias always wins over an identically named model id, so a provider release cannot silently change what a configured name points to. The `/config` picker shows the mapping as `deep → anthropic/claude-opus-4-8` whenever the active model came from an alias, and saving config preserves the alias rather than its expansion. Alias values must be concrete models — an alias cannot point at another alias — and an alias targeting an unknown provider is a config error.
+```toml
+[model]
+model = "@deep"
+
+[title]
+model = "@fast"
+```
+
+The same syntax works with `rho --model @deep` and with `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
+
+Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` picker shows the active mapping, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
 
 ## Title model
 

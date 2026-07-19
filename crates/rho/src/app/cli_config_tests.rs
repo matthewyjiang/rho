@@ -294,6 +294,76 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
     assert_eq!(cfg.auth, "github-copilot");
 }
 
+#[tokio::test]
+async fn cli_github_copilot_model_alias_refreshes_empty_cache() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let models_url = format!("http://{}/models", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 1024];
+        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        let body = r#"{"data":[{"id":"copilot-api-model"}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+            .await
+            .unwrap();
+        tokio::io::AsyncWriteExt::shutdown(&mut stream)
+            .await
+            .unwrap();
+    });
+    let cache_dir = unique_cache_dir("github-copilot-alias-refresh");
+    let store = MemoryCredentialStore::default();
+    save_github_copilot_tokens(
+        &store,
+        &GitHubCopilotTokens {
+            github_access_token: "github".into(),
+            github_refresh_token: None,
+            github_expires_at_unix: None,
+            copilot_token: Some("copilot-test-token".into()),
+            copilot_expires_at_unix: Some(i64::MAX),
+            copilot_refresh_after_unix: None,
+            copilot_token_endpoint: None,
+            copilot_chat_endpoint: None,
+            copilot_models_endpoint: Some(models_url),
+        },
+    )
+    .unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    let mut cfg = Config {
+        model_aliases: aliases(&[("copilot", "github-copilot/copilot-api-model")]),
+        ..Config::default()
+    };
+    let cli = Cli {
+        provider: None,
+        model: Some("@copilot".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    refresh_model_cache(&cli, &cfg, &store).await.unwrap();
+    apply_overrides(&mut cfg, &cli).unwrap();
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    assert_eq!(cfg.provider, "github-copilot");
+    assert_eq!(cfg.model, "copilot-api-model");
+    assert_eq!(cfg.auth, "github-copilot");
+    assert_eq!(cfg.current_model_alias(), Some("copilot"));
+}
+
 #[test]
 fn cli_github_copilot_provider_override_uses_cached_default() {
     with_cached_provider_models("github-copilot", vec!["copilot-cached-model"], || {
@@ -642,22 +712,8 @@ fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
         ..Config::default()
     };
 
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: None,
-        command: None,
-    };
-
     assert_eq!(
-        super::selected_model_for_refresh(&cli, &config, "kimi-code"),
+        super::selected_model_for_refresh(&config, "kimi-code"),
         Some("k3".into())
     );
 }
@@ -680,7 +736,7 @@ fn cli_model_override_resolves_user_defined_alias() {
         };
         let cli = Cli {
             provider: None,
-            model: Some("deep".into()),
+            model: Some("@deep".into()),
             config: None,
             auth: None,
             no_system_prompt: false,
@@ -709,7 +765,7 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
     };
     let cli = Cli {
         provider: Some("anthropic".into()),
-        model: Some("deep".into()),
+        model: Some("@deep".into()),
         config: None,
         auth: None,
         no_system_prompt: false,
@@ -725,7 +781,34 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
 
     assert!(
         error.to_string().contains(
-            "model alias 'deep' resolves to provider 'openai', which conflicts with --provider anthropic"
+            "model alias '@deep' resolves to provider 'openai', which conflicts with --provider anthropic"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn undefined_cli_model_alias_names_flag() {
+    let mut cfg = Config::default();
+    let cli = Cli {
+        provider: None,
+        model: Some("@missing".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "--model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
         "{error:#}"
     );

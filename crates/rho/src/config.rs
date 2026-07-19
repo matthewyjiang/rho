@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt, fs, path::PathBuf, str::FromStr};
+use std::{borrow::Cow, fmt, fs, path::PathBuf, str::FromStr};
 
 use {
     crate::compaction::CompactionConfig,
@@ -45,6 +45,10 @@ pub struct Config {
     pub compact_target_percent: u8,
     pub title_provider: Option<String>,
     pub title_model: Option<String>,
+    /// Alias the title model was resolved from, if any.
+    /// Consult it through `current_title_model_alias`, which drops it once the
+    /// title selection no longer matches the alias table.
+    pub title_model_alias: Option<String>,
     pub title_auth: Option<String>,
     pub favorite_models: Vec<String>,
     pub web_search_provider: SearchProvider,
@@ -79,6 +83,7 @@ impl Default for Config {
             compact_target_percent: 50,
             title_provider: None,
             title_model: None,
+            title_model_alias: None,
             title_auth: None,
             favorite_models: Vec::new(),
             web_search_provider: SearchProvider::Auto,
@@ -263,7 +268,7 @@ struct GroupedConfig<'a> {
 #[derive(Serialize)]
 struct ModelConfig<'a> {
     provider: &'a str,
-    model: &'a str,
+    model: Cow<'a, str>,
     auth: &'a str,
     reasoning: ReasoningLevel,
     favorite_models: &'a [String],
@@ -294,7 +299,7 @@ struct TitleConfig<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<&'a str>,
+    model: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     auth: Option<&'a str>,
 }
@@ -324,9 +329,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
         Self {
             model: ModelConfig {
                 provider: &config.provider,
-                // Persist the alias, not its expansion, so the alias table
-                // stays the single place a pinned model is spelled out.
-                model: config.current_model_alias().unwrap_or(&config.model),
+                model: persisted_model_reference(config.current_model_alias(), &config.model),
                 auth: &config.auth,
                 reasoning: config.reasoning,
                 favorite_models: &config.favorite_models,
@@ -346,7 +349,12 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             },
             title: TitleConfig {
                 provider: config.title_provider.as_deref(),
-                model: config.title_model.as_deref(),
+                // As with the conversation model, keep the alias as the
+                // persisted source of truth while its expansion still
+                // matches the concrete title selection.
+                model: config.title_model.as_deref().map(|model| {
+                    persisted_model_reference(config.current_title_model_alias(), model)
+                }),
                 auth: config.title_auth.as_deref(),
             },
             web_search: WebSearchConfig {
@@ -365,6 +373,13 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             keybindings: &config.keybindings,
             prompt_templates: &config.prompt_templates,
         }
+    }
+}
+
+fn persisted_model_reference<'a>(alias: Option<&str>, model: &'a str) -> Cow<'a, str> {
+    match alias {
+        Some(alias) => Cow::Owned(format!("@{alias}")),
+        None => Cow::Borrowed(model),
     }
 }
 
@@ -468,6 +483,7 @@ impl Config {
                 .unwrap_or(cfg.favorite_models);
             cfg.model_aliases = group.aliases.unwrap_or(cfg.model_aliases);
         }
+        cfg.validate_model_aliases()?;
         cfg.resolve_model_alias()?;
         if let Some(group) = file.display {
             cfg.show_reasoning_output = group
@@ -495,6 +511,7 @@ impl Config {
             cfg.title_model = group.model.or(cfg.title_model);
             cfg.title_auth = group.auth.or(cfg.title_auth);
         }
+        cfg.resolve_title_model_alias()?;
         if let Some(group) = file.web_search {
             if let Some(provider) = group.provider {
                 cfg.web_search_provider = SearchProvider::from_config_value(&provider);
@@ -546,31 +563,67 @@ impl Config {
         Ok(())
     }
 
-    /// Replace a session model that names an alias with its concrete target.
-    ///
-    /// Runs once at load time, before any model-specific behavior, so every
-    /// downstream consumer (capability checks, request building) only sees
-    /// concrete ids. An alias always wins over an identically named model id.
-    fn resolve_model_alias(&mut self) -> anyhow::Result<()> {
-        let Some(target) = self.model_aliases.get(&self.model).cloned() else {
-            self.model_alias = None;
-            return Ok(());
-        };
-        if let Some(provider) = &target.provider {
-            if !catalog::implemented_providers().contains(&provider.as_str()) {
-                anyhow::bail!(
-                    "model alias '{}' targets unknown provider '{provider}'",
-                    self.model
-                );
-            }
-            if *provider != self.provider {
-                if let Some(login) = catalog::login_target_for_provider(provider) {
-                    self.auth = login.auth;
-                }
-                self.provider.clone_from(provider);
+    fn validate_model_aliases(&self) -> anyhow::Result<()> {
+        let implemented_providers = catalog::implemented_providers();
+        for (name, target) in self.model_aliases.iter() {
+            let Some(provider) = target.provider.as_deref() else {
+                continue;
+            };
+            if !implemented_providers.contains(&provider) {
+                anyhow::bail!("model alias '{name}' targets unknown provider '{provider}'");
             }
         }
-        self.model_alias = Some(std::mem::replace(&mut self.model, target.model));
+        Ok(())
+    }
+
+    /// Resolve the configured session model reference to its concrete target.
+    ///
+    /// Runs once at load time, before any model-specific behavior, so every
+    /// downstream consumer sees only concrete model ids.
+    fn resolve_model_alias(&mut self) -> anyhow::Result<()> {
+        let resolved = self
+            .model_aliases
+            .resolve(&self.model)
+            .map_err(|error| anyhow::anyhow!("session model: {error}"))?;
+        self.model_alias = resolved.alias;
+        if let Some(provider) = resolved
+            .provider
+            .as_deref()
+            .filter(|provider| *provider != self.provider)
+        {
+            if let Some(login) = catalog::login_target_for_provider(provider) {
+                self.auth = login.auth;
+            }
+            self.provider = provider.to_string();
+        }
+        self.model = resolved.model;
+        Ok(())
+    }
+
+    fn resolve_title_model_alias(&mut self) -> anyhow::Result<()> {
+        let Some(reference) = self.title_model.clone() else {
+            self.title_model_alias = None;
+            return Ok(());
+        };
+        let resolved = self
+            .model_aliases
+            .resolve(&reference)
+            .map_err(|error| anyhow::anyhow!("title model: {error}"))?;
+        self.title_model_alias = resolved.alias;
+        if let Some(provider) = resolved.provider {
+            let current_provider = self.title_provider.as_deref().unwrap_or(&self.provider);
+            let auth_is_inherited_from_another_provider =
+                self.title_auth.is_none() && self.provider != provider;
+            let should_switch_auth =
+                current_provider != provider || auth_is_inherited_from_another_provider;
+            if let Some(login) =
+                catalog::login_target_for_provider(&provider).filter(|_| should_switch_auth)
+            {
+                self.title_auth = Some(login.auth);
+            }
+            self.title_provider = Some(provider);
+        }
+        self.title_model = Some(resolved.model);
         Ok(())
     }
 
@@ -582,6 +635,18 @@ impl Config {
         (target.model == self.model
             && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
             .then_some(name)
+    }
+
+    /// The alias behind the title model selection, provided the alias table
+    /// still maps it there; stale aliases silently drop out.
+    pub fn current_title_model_alias(&self) -> Option<&str> {
+        let name = self.title_model_alias.as_deref()?;
+        let target = self.model_aliases.get(name)?;
+        let model = self.title_model.as_deref()?;
+        let provider_matches = target.provider.as_deref().is_none_or(|provider| {
+            self.title_provider.as_deref().unwrap_or(&self.provider) == provider
+        });
+        (target.model == model && provider_matches).then_some(name)
     }
 
     pub fn set_compact_threshold_percent(&mut self, value: u8) {

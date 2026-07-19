@@ -109,33 +109,24 @@ impl AgentBinder {
             ModelPolicy::Prefer(selection)
             | ModelPolicy::Require(selection)
             | ModelPolicy::Select(selection) => {
-                // `model:` may name a user-defined alias; resolve it before
-                // any provider or model-specific handling sees the value.
-                let (provider, model) = match config.model_aliases.get(&selection.model) {
-                    Some(target) => {
-                        let target = target.clone();
-                        if let (Some(pinned), Some(resolved)) =
-                            (&selection.provider, &target.provider)
-                        {
-                            if pinned != resolved {
-                                anyhow::bail!(
-                                    "agent '{}': model alias '{}' resolves to provider '{resolved}', which conflicts with the agent's provider '{pinned}'",
-                                    definition.id,
-                                    selection.model,
-                                );
-                            }
-                        }
-                        config.model_alias = Some(selection.model.clone());
-                        (
-                            target.provider.or_else(|| selection.provider.clone()),
-                            target.model,
-                        )
+                // Resolve before provider or model-specific handling so all
+                // downstream code sees the concrete target.
+                let resolved = config
+                    .model_aliases
+                    .resolve(&selection.model)
+                    .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
+                match (&selection.provider, &resolved.provider, &resolved.alias) {
+                    (Some(pinned), Some(alias_provider), Some(_)) if pinned != alias_provider => {
+                        anyhow::bail!(
+                            "agent '{}': model alias '{}' resolves to provider '{alias_provider}', which conflicts with the agent's provider '{pinned}'",
+                            definition.id,
+                            selection.model,
+                        );
                     }
-                    None => {
-                        config.model_alias = None;
-                        (selection.provider.clone(), selection.model.clone())
-                    }
-                };
+                    _ => {}
+                }
+                config.model_alias = resolved.alias;
+                let provider = resolved.provider.or_else(|| selection.provider.clone());
                 if let Some(provider) = &provider {
                     super::cli_config::apply_provider_override(
                         &mut config,
@@ -143,7 +134,7 @@ impl AgentBinder {
                         /* explicit_model */ true,
                     )?;
                 }
-                config.model = model;
+                config.model = resolved.model;
             }
         }
         if let Some(reasoning) = definition.reasoning {
