@@ -112,6 +112,9 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
+        ViewModelEvent::ProviderRetry
+        | ViewModelEvent::CompactionStarted
+        | ViewModelEvent::CompactionCompleted { .. } => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

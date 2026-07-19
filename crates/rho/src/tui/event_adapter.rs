@@ -9,7 +9,10 @@ use {
     rho_tools::tool::ToolDisplayStyle,
 };
 
-use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest};
+use super::{
+    activity::ActivityPhase,
+    questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
+};
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -20,6 +23,12 @@ pub(super) enum ViewModelEvent {
         display_lines: Vec<String>,
     },
     ProviderStreamReset,
+    ProviderRetry,
+    CompactionStarted,
+    CompactionCompleted {
+        previous_messages: usize,
+        current_messages: usize,
+    },
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
@@ -36,6 +45,25 @@ pub(super) enum ViewModelEvent {
         display_lines: Vec<String>,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
+}
+
+impl ViewModelEvent {
+    pub(super) fn activity_phase(&self) -> Option<ActivityPhase> {
+        match self {
+            Self::RunStarted | Self::ToolFinished { .. } | Self::CompactionCompleted { .. } => {
+                Some(ActivityPhase::Starting)
+            }
+            Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
+            Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
+            Self::ProviderStreamReset | Self::ProviderRetry => {
+                Some(ActivityPhase::RetryingProvider)
+            }
+            Self::OutputDelta(_) => Some(ActivityPhase::Responding),
+            Self::ReasoningDelta(_) => Some(ActivityPhase::Thinking),
+            Self::CompactionStarted => Some(ActivityPhase::Compacting),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +161,8 @@ impl SdkEventAdapter {
                 } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
                     // The following typed reset event drives current hosts.
                     ViewEvent::Ignored
+                } else if kind == "provider_request_retry" {
+                    ViewEvent::Update(ViewModelEvent::ProviderRetry)
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))
                 }
@@ -147,13 +177,14 @@ impl SdkEventAdapter {
             }
             RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire(request),
             RunEvent::CompactionStarted { .. } => {
-                ViewEvent::Notice("compacting conversation context".into())
+                ViewEvent::Update(ViewModelEvent::CompactionStarted)
             }
-            RunEvent::CompactionCompleted { outcome, .. } => ViewEvent::Notice(format!(
-                "compacted conversation context ({} to {} messages)",
-                outcome.previous_messages(),
-                outcome.current_messages()
-            )),
+            RunEvent::CompactionCompleted { outcome, .. } => {
+                ViewEvent::Update(ViewModelEvent::CompactionCompleted {
+                    previous_messages: outcome.previous_messages(),
+                    current_messages: outcome.current_messages(),
+                })
+            }
             RunEvent::Completed { .. } => ViewEvent::Completed,
             RunEvent::Cancelled { .. } => ViewEvent::Cancelled,
             RunEvent::Failed { message, .. } => ViewEvent::Failed(message),

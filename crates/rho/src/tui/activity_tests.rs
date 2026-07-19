@@ -29,8 +29,12 @@ fn loading_spinner_line_separates_frame_from_text() {
     };
 
     assert_eq!(
-        line_text(&spinner.line(started_at, 40, ActivityStatus::Working)),
-        "⠋ working"
+        line_text(&spinner.line(
+            started_at,
+            40,
+            ActivityStatus::Parent(ActivityPhase::WaitingForProvider),
+        )),
+        "⠋ waiting for provider"
     );
 }
 
@@ -39,8 +43,12 @@ fn activity_line_combines_parent_and_subagent_work() {
     let spinner = LoadingSpinner::default();
 
     assert_eq!(
-        line_text(&spinner.line(Instant::now(), 40, ActivityStatus::WorkingWithSubagents(2),)),
-        "⠋ working  ·  2 agents"
+        line_text(&spinner.line(
+            Instant::now(),
+            40,
+            ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
+        )),
+        "⠋ thinking  ·  2 agents"
     );
     assert_eq!(
         line_text(&spinner.line(Instant::now(), 40, ActivityStatus::Subagents(2))),
@@ -51,16 +59,25 @@ fn activity_line_combines_parent_and_subagent_work() {
 #[test]
 fn spinner_line_compacts_to_available_width() {
     let spinner = LoadingSpinner::default();
-    let rendered =
-        line_text(&spinner.line(Instant::now(), 1, ActivityStatus::WorkingWithSubagents(2)));
+    let rendered = line_text(&spinner.line(
+        Instant::now(),
+        1,
+        ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
+    ));
 
     assert_eq!(rendered, "⠋");
     assert_eq!(
-        activity_width(1, ActivityStatus::WorkingWithSubagents(2)),
+        activity_width(
+            1,
+            ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
+        ),
         1
     );
     assert_eq!(
-        activity_width(40, ActivityStatus::WorkingWithSubagents(2)),
-        display_width("⠋ working  ·  2 agents")
+        activity_width(
+            40,
+            ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
+        ),
+        display_width("⠋ thinking  ·  2 agents")
     );
 }

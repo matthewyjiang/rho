@@ -97,6 +97,7 @@ impl App {
         self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
+        self.activity_phase = ActivityPhase::Starting;
         self.info
             .herdr
             .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
@@ -211,6 +212,7 @@ impl App {
                 event = next_runtime_event(agent, approval_ready) => {
                     let event = match event {
                         RuntimeEvent::Approval(pending) => {
+                            self.activity_phase = ActivityPhase::WaitingForApproval;
                             self.finish_streams();
                             self.open_approval(pending);
                             self.draw_running_frame(terminal, &mut frame_scheduler)?;
@@ -237,6 +239,7 @@ impl App {
                             tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
                         }
                         ViewEvent::Questionnaire(request) => {
+                            self.activity_phase = ActivityPhase::WaitingForInput;
                             let request_id = request.id().clone();
                             let (reply_tx, reply_rx) = oneshot::channel();
                             self.open_questionnaire(

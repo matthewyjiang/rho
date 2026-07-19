@@ -92,7 +92,7 @@ mod theme;
 mod tool_diff;
 mod turn_prompt;
 
-use activity::{ActivityStatus, LoadingSpinner};
+use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -293,6 +293,7 @@ struct App {
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     running: bool,
+    activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
     active_tool_call: bool,
     pending_tool_call: Option<ToolEntry>,
@@ -628,6 +629,7 @@ impl App {
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             running: false,
+            activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
             active_tool_call: false,
             pending_tool_call: None,
@@ -2996,8 +2998,11 @@ impl App {
 
     fn activity_status(&self) -> Option<ActivityStatus> {
         match (self.loading_active(), self.subagent_panel.count()) {
-            (true, 0) => Some(ActivityStatus::Working),
-            (true, count) => Some(ActivityStatus::WorkingWithSubagents(count)),
+            (true, 0) => Some(ActivityStatus::Parent(self.activity_phase)),
+            (true, count) => Some(ActivityStatus::ParentWithSubagents(
+                self.activity_phase,
+                count,
+            )),
             (false, 0) => None,
             (false, count) => Some(ActivityStatus::Subagents(count)),
         }
@@ -4626,6 +4631,9 @@ impl App {
     }
 
     fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
+        if let Some(phase) = event.activity_phase() {
+            self.activity_phase = phase;
+        }
         match event {
             ViewModelEvent::RunStarted => {
                 self.usage_before_current_run = self.cumulative_usage.clone();
@@ -4675,6 +4683,7 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
+                self.activity_phase = ActivityPhase::PreparingTool;
                 self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
@@ -4684,7 +4693,7 @@ impl App {
                 None
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
-            ViewModelEvent::ProviderStreamReset => {
+            ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
                 self.usage_before_current_attempt = self
                     .current_run_usage
                     .as_ref()
@@ -4692,6 +4701,15 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::CompactionStarted => {
+                Some(Entry::Notice("compacting conversation context".into()))
+            }
+            ViewModelEvent::CompactionCompleted {
+                previous_messages,
+                current_messages,
+            } => Some(Entry::Notice(format!(
+                "compacted conversation context ({previous_messages} to {current_messages} messages)"
+            ))),
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.diagnostics.record_context(usage.clone());
                 self.current_context = Some(usage);
@@ -6745,7 +6763,7 @@ mod tests {
         let lines = app.active_lines(40);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(rendered.contains("working"), "{rendered}");
+        assert!(rendered.contains("starting"), "{rendered}");
         assert!(!rendered.contains("hello"), "{rendered}");
         assert!(!rendered.contains("thinking"), "{rendered}");
     }
@@ -6824,8 +6842,8 @@ mod tests {
 ",
             );
 
-        assert!(!small_rendered.contains("working"), "{small_rendered}");
-        assert!(default_rendered.contains("working"), "{default_rendered}");
+        assert!(!small_rendered.contains("starting"), "{small_rendered}");
+        assert!(default_rendered.contains("starting"), "{default_rendered}");
     }
 
     #[test]
@@ -6852,7 +6870,7 @@ mod tests {
         assert_eq!(activity.y.saturating_add(1), layout.top_divider.y);
         assert_eq!(activity.y, layout.history.bottom().saturating_sub(1));
         assert!(activity.width < layout.history.width);
-        assert!(rows[activity.y as usize].contains("working"), "{rows:#?}");
+        assert!(rows[activity.y as usize].contains("starting"), "{rows:#?}");
         assert!(
             rows[..activity.y as usize]
                 .iter()
@@ -6871,7 +6889,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(!rendered.contains("working"), "{rendered}");
+        assert!(!rendered.contains("starting"), "{rendered}");
     }
 
     #[test]
@@ -7680,7 +7698,7 @@ mod tests {
         assert!(rendered.contains("hello"), "{rendered}");
         assert!(rendered.contains("bash"), "{rendered}");
         assert!(rendered.contains("partial answer"), "{rendered}");
-        assert!(!rendered.contains("working"), "{rendered}");
+        assert!(!rendered.contains("starting"), "{rendered}");
     }
 
     #[test]

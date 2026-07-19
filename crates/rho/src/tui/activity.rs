@@ -4,13 +4,43 @@ use ratatui::text::{Line, Span};
 
 use super::{render::display_width, theme::Theme};
 
-const WORKING_LABEL: &str = "⠋ working";
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ActivityPhase {
+    #[default]
+    Starting,
+    WaitingForProvider,
+    Thinking,
+    Responding,
+    PreparingTool,
+    RunningTool,
+    RetryingProvider,
+    Compacting,
+    WaitingForApproval,
+    WaitingForInput,
+}
+
+impl ActivityPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::WaitingForProvider => "waiting for provider",
+            Self::Thinking => "thinking",
+            Self::Responding => "responding",
+            Self::PreparingTool => "preparing tool",
+            Self::RunningTool => "running tool",
+            Self::RetryingProvider => "retrying provider",
+            Self::Compacting => "compacting context",
+            Self::WaitingForApproval => "waiting for approval",
+            Self::WaitingForInput => "waiting for input",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
-    Working,
+    Parent(ActivityPhase),
     Subagents(usize),
-    WorkingWithSubagents(usize),
+    ParentWithSubagents(ActivityPhase, usize),
 }
 
 pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize {
@@ -25,8 +55,8 @@ pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize 
 
 fn activity_labels(status: ActivityStatus) -> Vec<String> {
     let subagent_count = match status {
-        ActivityStatus::Working => 0,
-        ActivityStatus::Subagents(count) | ActivityStatus::WorkingWithSubagents(count) => count,
+        ActivityStatus::Parent(_) => 0,
+        ActivityStatus::Subagents(count) | ActivityStatus::ParentWithSubagents(_, count) => count,
     };
     let agents = if subagent_count == 1 {
         "1 agent".into()
@@ -34,10 +64,10 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
         format!("{subagent_count} agents")
     };
     match status {
-        ActivityStatus::Working => vec![WORKING_LABEL.into(), "⠋".into()],
-        ActivityStatus::WorkingWithSubagents(_) => vec![
-            format!("{WORKING_LABEL}  ·  {agents}"),
-            format!("⠋ working · {subagent_count}"),
+        ActivityStatus::Parent(phase) => vec![format!("⠋ {}", phase.label()), "⠋".into()],
+        ActivityStatus::ParentWithSubagents(phase, _) => vec![
+            format!("⠋ {}  ·  {agents}", phase.label()),
+            format!("⠋ {} · {subagent_count}", phase.label()),
             format!("⠋ {subagent_count}"),
             "⠋".into(),
         ],
@@ -110,7 +140,8 @@ pub(super) fn jump_to_bottom_text(width: usize, binding: &str, alongside_activit
     let full = format!("↓ jump to bottom  {binding}");
     let compact = format!("↓ bottom {binding}");
     let shortcut = format!("↓ {binding}");
-    let activity_width = usize::from(alongside_activity) * (display_width(WORKING_LABEL) + 1);
+    // Leave enough room for the compact activity label when both controls share a row.
+    let activity_width = usize::from(alongside_activity) * (display_width("⠋ 0") + 1);
     let available = width.saturating_sub(activity_width);
 
     if display_width(&full) <= available {
