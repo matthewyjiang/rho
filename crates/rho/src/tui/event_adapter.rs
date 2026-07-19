@@ -123,19 +123,23 @@ impl SdkEventAdapter {
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
             RunEvent::ProviderActivity { kind, detail } => {
-                if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
-                    self.presenter().step_started();
-                    ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
-                } else if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
+                if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
                         image_asset: None,
                     })
+                } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
+                    // The following typed reset event drives current hosts.
+                    ViewEvent::Ignored
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))
                 }
+            }
+            RunEvent::ProviderStreamReset { .. } => {
+                self.presenter().step_started();
+                ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
             }
             RunEvent::ProviderContextUpdated { .. } => ViewEvent::Ignored,
             RunEvent::ProviderDiagnostic { detail } => {

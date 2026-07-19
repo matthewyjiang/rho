@@ -81,6 +81,23 @@ fn completed_status_defers_result_to_automatic_delivery() {
 }
 
 #[test]
+fn formats_stopped_completion_as_unverified() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Stopped;
+    snapshot.status.result = Some("(partial, stopped before finishing)\nfound it".into());
+
+    assert_eq!(
+        format_snapshot(&snapshot, SnapshotFormat::Completion),
+        "agent abc123 (explorer): stopped\n\
+         turns: 3 · tokens: 1200 in / 300 out\n\
+         this delegated task did not complete; treat its work as unverified\n\
+         \n\
+         (partial, stopped before finishing)\n\
+         found it"
+    );
+}
+
+#[test]
 fn formats_completion_with_result_and_error() {
     let mut snapshot = snapshot(true);
     snapshot.status.state = RunState::Error;
@@ -91,6 +108,7 @@ fn formats_completion_with_result_and_error() {
         "agent abc123 (explorer): error\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
          error: provider stream failed\n\
+         this delegated task did not complete; treat its work as unverified\n\
          \n\
          found it"
     );

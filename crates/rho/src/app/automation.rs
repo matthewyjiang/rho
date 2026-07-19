@@ -407,6 +407,12 @@ impl RunReporter {
                 self.stream(text);
                 self.write_throttled();
             }
+            RunEvent::ProviderStreamReset { .. } => {
+                self.status.last_activity = Some("retrying provider response".into());
+                self.status.last_text = None;
+                self.stream("\n[provider response discarded; retrying]\n");
+                self.write();
+            }
             RunEvent::UsageUpdated { usage } => {
                 self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
                 self.status.output_tokens = usage.output_tokens.unwrap_or(0);

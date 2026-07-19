@@ -152,7 +152,7 @@ pub use compaction::{
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{
-    RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure,
+    ProviderStreamResetReason, RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure,
     PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 pub use host_input::{
