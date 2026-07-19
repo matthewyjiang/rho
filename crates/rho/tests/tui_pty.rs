@@ -70,6 +70,11 @@ fn renders_markdown_headings() {
 }
 
 #[test]
+fn background_agent_completion_is_delivered_after_turn_end() {
+    assert_pass("background_agent_auto_delivery");
+}
+
+#[test]
 fn attach_is_read_only_and_updates_live() {
     let home = IsolatedHome::new().unwrap();
     let directory = home.home.join(".rho/subagents/abc123");

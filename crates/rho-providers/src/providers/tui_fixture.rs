@@ -20,6 +20,7 @@ const TOOL_CALL_ID: &str = "tui-fixture-tool";
 const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
+const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
 const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -187,6 +188,17 @@ async fn fixture_stream(
                 serde_json::json!({}),
             )
         }
+        "fixture background agent" if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() => {
+            completed_tool_call(
+                BACKGROUND_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture stream",
+                    "background": true,
+                }),
+            )
+        }
         "fixture steering" => {
             events
                 .send(ModelEvent::OutputDelta(
@@ -286,7 +298,22 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             result.content
         ));
     }
+    if let Some(result) = tool_result(request, BACKGROUND_AGENT_CALL_ID) {
+        // Echo whether the spawn result already carried the delegated run's
+        // first activity, so PTY scenarios can assert it from screen text.
+        let activity = if result.content.contains("activity:") {
+            "with"
+        } else {
+            "without"
+        };
+        return completed(format!(
+            "background agent dispatched {activity} first activity; ending turn"
+        ));
+    }
     let prompt = last_user_text(request).unwrap_or_default();
+    if prompt.starts_with("[agent notification]") {
+        return completed("background agent completion received");
+    }
     if prompt.starts_with("Resume the following goal after it was blocked") {
         return completed("verified that the fixture release is now published");
     }
