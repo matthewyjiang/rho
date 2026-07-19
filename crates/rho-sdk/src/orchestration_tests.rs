@@ -532,6 +532,146 @@ async fn simple_completion_host_input_cancellation_remains_replay_safe() {
     assert_eq!(outcome.text(), "continued");
 }
 
+#[derive(Clone)]
+struct FlakyProvider {
+    failures: usize,
+    retryability: Retryability,
+    calls: Arc<AtomicUsize>,
+}
+
+impl ModelProvider for FlakyProvider {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("flaky", "test", "flaky")
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            if self.calls.fetch_add(1, Ordering::AcqRel) < self.failures {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Unavailable,
+                    "stream broke",
+                    self.retryability,
+                ));
+            }
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "recovered".into(),
+            )]))
+        })
+    }
+}
+
+async fn flaky_session(failures: usize, retryability: Retryability) -> (Arc<AtomicUsize>, Session) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let session = Rho::builder()
+        .provider(FlakyProvider {
+            failures,
+            retryability,
+            calls: Arc::clone(&calls),
+        })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    (calls, session)
+}
+
+/// Generous virtual-time bound so paused-clock backoff sleeps always fire
+/// before an event wait gives up.
+async fn next_event_virtual(run: &mut Run) -> RunEvent {
+    tokio::time::timeout(Duration::from_secs(60), run.next_event())
+        .await
+        .expect("run event timed out")
+        .expect("run event stream closed")
+}
+
+#[tokio::test(start_paused = true)]
+async fn retryable_provider_failures_are_retried() {
+    let (calls, session) = flaky_session(2, Retryability::Retryable).await;
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    let mut retries = 0;
+    let outcome = loop {
+        match next_event_virtual(&mut run).await {
+            RunEvent::ProviderActivity { kind, .. }
+                if kind == crate::PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY =>
+            {
+                retries += 1;
+            }
+            RunEvent::Completed { outcome } => break outcome,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    };
+    assert_eq!(outcome.text(), "recovered");
+    assert_eq!(retries, 2);
+    assert_eq!(calls.load(Ordering::Acquire), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retryable_provider_failures_exhaust_after_bounded_attempts() {
+    let (calls, session) = flaky_session(usize::MAX, Retryability::Retryable).await;
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    let mut retries = 0;
+    let retryability = loop {
+        match next_event_virtual(&mut run).await {
+            RunEvent::ProviderActivity { kind, .. }
+                if kind == crate::PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY =>
+            {
+                retries += 1;
+            }
+            RunEvent::Failed { retryability, .. } => break retryability,
+            RunEvent::Completed { .. } => panic!("run unexpectedly completed"),
+            _ => {}
+        }
+    };
+    assert_eq!(retries, super::RETRYABLE_REQUEST_ATTEMPTS - 1);
+    assert_eq!(retryability, Retryability::Retryable);
+    assert_eq!(
+        calls.load(Ordering::Acquire),
+        super::RETRYABLE_REQUEST_ATTEMPTS
+    );
+    let outcome = run.outcome().await;
+    assert!(matches!(outcome, Err(Error::Provider(_))), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn permanent_provider_failures_are_not_retried() {
+    let (calls, session) = flaky_session(usize::MAX, Retryability::Permanent).await;
+
+    let outcome = tokio::time::timeout(TEST_TIMEOUT, session.complete("start"))
+        .await
+        .expect("failing run timed out");
+    assert!(matches!(outcome, Err(Error::Provider(_))), "{outcome:?}");
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn cancellation_during_retry_backoff_stops_the_run() {
+    let (calls, session) = flaky_session(usize::MAX, Retryability::Retryable).await;
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::ProviderActivity { kind, .. }
+                if kind == crate::PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY =>
+            {
+                break;
+            }
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    run.cancel();
+
+    let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+        .await
+        .expect("cancelled run timed out");
+    assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+}
+
 #[tokio::test]
 async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     let runtime = Rho::builder()

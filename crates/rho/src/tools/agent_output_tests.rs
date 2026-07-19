@@ -91,6 +91,7 @@ fn formats_completion_with_result_and_error() {
         "agent abc123 (explorer): error\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
          error: provider stream failed\n\
+         this delegated task did not complete; treat its work as unverified\n\
          \n\
          found it"
     );

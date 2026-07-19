@@ -55,6 +55,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
             lines.push(format!("error: {error}"));
+            lines.push("this delegated task did not complete; treat its work as unverified".into());
         }
     }
     if matches!(format, SnapshotFormat::Completion) || !snapshot.done {

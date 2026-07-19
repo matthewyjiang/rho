@@ -52,10 +52,12 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             ),
             Retryability::Retryable,
         ),
+        // The broken stream cannot be resumed, but retrying the turn as a
+        // fresh request may well succeed.
         ModelError::StreamFailedAfterOutput { message } => ProviderError::new(
             ProviderErrorKind::InvalidResponse,
             "provider stream failed after emitting output",
-            Retryability::Permanent,
+            Retryability::Retryable,
         )
         .with_diagnostic(sanitize_diagnostic(&message)),
         ModelError::InvalidResponse(details) => ProviderError::new(

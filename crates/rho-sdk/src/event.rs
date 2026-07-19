@@ -6,6 +6,8 @@ use crate::{
 
 /// Provider activity kind emitted when a malformed response is retried.
 pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
+/// Provider activity kind emitted when a retryable provider failure is retried.
+pub const PROVIDER_ACTIVITY_PROVIDER_ERROR_RETRY: &str = "provider_error_retry";
 /// Provider activity kind emitted for provider-native web searches.
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
 
