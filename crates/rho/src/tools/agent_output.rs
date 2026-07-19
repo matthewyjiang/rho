@@ -45,7 +45,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
-    lines.push(verification_note(snapshot.status.state).into());
+    lines.push(verification_line(&snapshot.status));
     if let Some(error) = &snapshot.status.error {
         lines.push(format!("error: {error}"));
     }
@@ -69,18 +69,21 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
     lines.join("\n")
 }
 
-fn verification_note(state: crate::subagent::RunState) -> &'static str {
-    match state {
-        crate::subagent::RunState::Ok => {
-            "verification: delegated run completed; overall task verification is not established"
+fn verification_line(status: &crate::subagent::RunStatus) -> String {
+    use crate::subagent::{RunState, Verdict};
+    let note = match (status.state, status.verdict) {
+        (RunState::Starting | RunState::Running, _) => "pending",
+        (RunState::Error | RunState::Stopped, _) => {
+            "incomplete — the delegated run did not finish; nothing is verified"
         }
-        crate::subagent::RunState::Error | crate::subagent::RunState::Stopped => {
-            "verification: incomplete; do not claim the delegated work or review was verified"
+        (RunState::Ok, Some(Verdict::Pass)) => "review passed",
+        (RunState::Ok, Some(Verdict::Findings)) => "review reported findings — not verified",
+        (RunState::Ok, Some(Verdict::Inconclusive)) => "review inconclusive — not verified",
+        (RunState::Ok, None) => {
+            "run completed; no review verdict — implementation done, not verified"
         }
-        crate::subagent::RunState::Starting | crate::subagent::RunState::Running => {
-            "verification: pending"
-        }
-    }
+    };
+    format!("verification: {note}")
 }
 
 pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {

@@ -73,7 +73,30 @@ fn failed_notification_warns_against_claiming_verification() {
     };
 
     let (model, display) = notification_prompts(&notification);
-    assert!(model.contains("Treat `error` and `stopped` states as incomplete work or review"));
-    assert!(model.contains("Do not claim full verification"));
+    assert!(model
+        .contains("verification: incomplete — the delegated run did not finish; nothing is verified"));
+    assert!(model.contains("only a passing review counts as verified"));
     assert!(display.contains("finished - error"));
+}
+
+#[test]
+fn passing_review_notification_reports_verified() {
+    let notification = SubagentNotification {
+        snapshot: SubagentSnapshot {
+            id: "abc123".into(),
+            agent_id: "reviewer".into(),
+            background: true,
+            elapsed: Duration::from_secs(1),
+            done: true,
+            status: RunStatus {
+                state: RunState::Ok,
+                verdict: Some(crate::subagent::Verdict::Pass),
+                result: Some("Looks correct.\n\nVERDICT: pass".into()),
+                ..RunStatus::default()
+            },
+        },
+    };
+
+    let (model, _display) = notification_prompts(&notification);
+    assert!(model.contains("verification: review passed"));
 }

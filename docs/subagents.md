@@ -54,12 +54,18 @@ Every invocation goes through the same binder. It resolves model and reasoning p
 
 Delegated invocations do not receive `agent`, `agents`, or interactive questionnaire capabilities, so they cannot recursively delegate. Each delegated run owns a fresh SDK runtime, session, tool registry, cancellation token, event stream, and usage accounting. Immutable configuration and provider infrastructure may be shared.
 
-The delegated run state reports the lifecycle of that subagent, not verification of the
-parent task. `ok` means that the delegated run ended without a runtime error; it does not
-prove that the requested work, acceptance criteria, or review passed. `error` and `stopped`
-states must be treated as incomplete work or review. The parent should report automated
-validation, implementation, and review status separately and must not claim full
-verification from a successful delegated run alone.
+A delegated run reports two orthogonal things. Its **run state** (`starting` →
+`running` → `ok` / `error` / `stopped`) is the process lifecycle: `ok` means only that
+the run ended without a runtime error. Its **verdict** is the semantic outcome of the work
+it reviewed, and is separate: a run can be `ok` yet report findings, or carry no verdict at
+all. A run is only verified when it reached `ok` **and** carries a `pass` verdict.
+
+Agents opt into a verdict by ending their final message with a machine-readable line —
+`VERDICT: pass`, `VERDICT: findings`, or `VERDICT: inconclusive`. The built-in reviewer
+does this; most agents do not, so their runs report no verdict and are never mistaken for a
+passing review. The `verification:` line in a subagent snapshot is derived from the
+`(state, verdict)` pair, so the parent never has to infer verification from a run's freeform
+text or from `ok` alone.
 
 ## Delegating work
 

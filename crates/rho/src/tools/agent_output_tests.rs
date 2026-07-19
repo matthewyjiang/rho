@@ -3,7 +3,7 @@ use std::time::Duration;
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::subagent::{RunState, RunStatus};
+use crate::subagent::{RunState, RunStatus, Verdict};
 
 fn snapshot(done: bool) -> SubagentSnapshot {
     SubagentSnapshot {
@@ -62,19 +62,32 @@ fn formats_status_with_runtime_details() {
 }
 
 #[test]
-fn formats_completion_with_result() {
+fn completed_run_without_a_verdict_is_not_verified() {
     assert_eq!(
         format_snapshot(&snapshot(true), SnapshotFormat::Completion),
         "agent abc123 (explorer): ok\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
-         verification: delegated run completed; overall task verification is not established\n\
+         verification: run completed; no review verdict — implementation done, not verified\n\
          \n\
          found it"
     );
 }
 
 #[test]
-fn failed_completion_is_explicitly_unverified() {
+fn passing_review_is_the_only_verified_state() {
+    let mut passed = snapshot(true);
+    passed.status.verdict = Some(Verdict::Pass);
+    assert!(format_snapshot(&passed, SnapshotFormat::Completion)
+        .contains("verification: review passed"));
+
+    let mut findings = snapshot(true);
+    findings.status.verdict = Some(Verdict::Findings);
+    assert!(format_snapshot(&findings, SnapshotFormat::Completion)
+        .contains("verification: review reported findings — not verified"));
+}
+
+#[test]
+fn failed_review_is_explicitly_unverified() {
     let mut failed = snapshot(true);
     failed.status.state = RunState::Error;
     failed.status.result = None;
@@ -84,7 +97,7 @@ fn failed_completion_is_explicitly_unverified() {
         format_snapshot(&failed, SnapshotFormat::Completion),
         "agent abc123 (explorer): error\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
-         verification: incomplete; do not claim the delegated work or review was verified\n\
+         verification: incomplete — the delegated run did not finish; nothing is verified\n\
          error: provider stream failed after emitting output"
     );
 }

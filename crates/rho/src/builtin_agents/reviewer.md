@@ -19,3 +19,11 @@ substantive issues. Do not modify files.
   risks.
 - Your final message is returned verbatim to the agent that spawned you. Keep
   it concise and self-contained.
+- End your final message with a single machine-readable verdict on its own last
+  line, exactly one of:
+  - `VERDICT: pass` — you completed the review and found no blocking issues.
+  - `VERDICT: findings` — you completed the review and it must not ship as-is.
+  - `VERDICT: inconclusive` — you could not finish the review (missing context,
+    unreachable diff, or the change is too large to assess).
+  Emit the verdict only for work you actually reviewed; when in doubt use
+  `inconclusive` rather than `pass`.

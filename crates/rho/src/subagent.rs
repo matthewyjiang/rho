@@ -40,6 +40,29 @@ impl RunState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Pass,
+    Findings,
+    Inconclusive,
+}
+
+pub fn parse_verdict(text: &str) -> Option<Verdict> {
+    text.lines().rev().find_map(|line| {
+        let (label, value) = line.trim().split_once(':')?;
+        if !label.trim().eq_ignore_ascii_case("verdict") {
+            return None;
+        }
+        match value.trim().to_ascii_lowercase().as_str() {
+            "pass" => Some(Verdict::Pass),
+            "findings" => Some(Verdict::Findings),
+            "inconclusive" => Some(Verdict::Inconclusive),
+            _ => None,
+        }
+    })
+}
+
 /// Contents of the `--output-file` a subagent writes atomically as it runs.
 ///
 /// The parent process reads this file for status checks and completion
@@ -67,6 +90,8 @@ pub struct RunStatus {
     pub last_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<Verdict>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,4 +176,33 @@ pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(path)
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::{parse_verdict, Verdict};
+
+    #[test]
+    fn parses_trailing_verdict_line() {
+        let text = "Reviewed the diff. No blocking issues.\n\nVERDICT: pass\n";
+        assert_eq!(parse_verdict(text), Some(Verdict::Pass));
+    }
+
+    #[test]
+    fn is_case_insensitive_and_tolerates_spacing() {
+        assert_eq!(parse_verdict("verdict:   findings"), Some(Verdict::Findings));
+        assert_eq!(parse_verdict("Verdict: Inconclusive"), Some(Verdict::Inconclusive));
+    }
+
+    #[test]
+    fn last_verdict_line_wins() {
+        let text = "VERDICT: findings\n... after fixes ...\nVERDICT: pass";
+        assert_eq!(parse_verdict(text), Some(Verdict::Pass));
+    }
+
+    #[test]
+    fn absent_or_malformed_verdict_is_none() {
+        assert_eq!(parse_verdict("looks good to me"), None);
+        assert_eq!(parse_verdict("VERDICT: maybe"), None);
+    }
 }

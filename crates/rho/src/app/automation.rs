@@ -409,8 +409,10 @@ impl RunReporter {
     pub(crate) fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
         match result {
             Ok(outcome) => {
+                let text = outcome.text().to_string();
+                self.status.verdict = crate::subagent::parse_verdict(&text);
                 self.status.state = RunState::Ok;
-                self.status.result = Some(outcome.text().to_string());
+                self.status.result = Some(text);
                 let usage = outcome.usage();
                 self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
                 self.status.output_tokens = usage.output_tokens.unwrap_or(0);
