@@ -98,18 +98,20 @@ fn agent_resolvable_failure_remains_active() {
 #[test]
 fn transcript_omits_opaque_provider_context() {
     let identity =
-        crate::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
-    let transcript = evaluation_transcript(&[Message::assistant(crate::model::AssistantMessage {
-        content: vec![ContentBlock::Text("answer".into())],
-        provenance: Some(identity.clone()),
-        reasoning_summary: Some("safe summary".into()),
-        provider_context: vec![crate::model::ProviderContextBlock {
-            identity,
-            kind: "anthropic_content_block".into(),
-            position: Some(0),
-            data: serde_json::json!({"signature": "secret-signature"}),
-        }],
-    })]);
+        rho_providers::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
+    let transcript = evaluation_transcript(&[Message::assistant(
+        rho_providers::model::AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(identity.clone()),
+            reasoning_summary: Some("safe summary".into()),
+            provider_context: vec![rho_providers::model::ProviderContextBlock {
+                identity,
+                kind: "anthropic_content_block".into(),
+                position: Some(0),
+                data: serde_json::json!({"signature": "secret-signature"}),
+            }],
+        },
+    )]);
 
     assert!(transcript.contains("answer"));
     assert!(transcript.contains("safe summary"));

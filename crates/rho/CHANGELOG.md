@@ -1,5 +1,183 @@
 # Changelog
 
+## [1.8.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.1...rho-coding-agent-v1.8.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** align dependent tool versions ([#426](https://github.com/matthewyjiang/rho/issues/426)) ([7b9ea52](https://github.com/matthewyjiang/rho/commit/7b9ea5211419bd600000466a0aab2d3d0405cda8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.3.1 to 0.3.2
+
+## [1.8.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.0...rho-coding-agent-v1.8.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **agents:** batch completion notifications and acknowledge observed results ([#422](https://github.com/matthewyjiang/rho/issues/422)) ([1169791](https://github.com/matthewyjiang/rho/commit/11697919d3149581a40bf0b7dc02950c0afe4b13))
+* **tui:** improve agent tool displays ([#413](https://github.com/matthewyjiang/rho/issues/413)) ([062edd0](https://github.com/matthewyjiang/rho/commit/062edd0851848c4fbd7754b47ec5dd588605989f))
+* **tui:** isolate test config from user settings ([#419](https://github.com/matthewyjiang/rho/issues/419)) ([274df7f](https://github.com/matthewyjiang/rho/commit/274df7fa121b677f76ee2f36ddb33934c6e0ef32))
+* **tui:** use stable braille spinner ([#423](https://github.com/matthewyjiang/rho/issues/423)) ([de62286](https://github.com/matthewyjiang/rho/commit/de622866c76987cddbb653c625f92797a3aff4aa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.3.0 to 0.3.1
+
+## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.7.0...rho-coding-agent-v1.8.0) (2026-07-20)
+
+
+### Features
+
+* **agents:** move background-run contract into tool descriptions ([#405](https://github.com/matthewyjiang/rho/issues/405)) ([b75d0fa](https://github.com/matthewyjiang/rho/commit/b75d0fac659cd85a5469ce962e2bd026c673e288))
+* **config:** user-defined model aliases so pinned models live in one place ([#404](https://github.com/matthewyjiang/rho/issues/404)) ([09dff65](https://github.com/matthewyjiang/rho/commit/09dff65d81788feeb2493ad971a9b5aff8fcb2c4))
+* **tui:** show detailed activity stages ([#403](https://github.com/matthewyjiang/rho/issues/403)) ([267a47b](https://github.com/matthewyjiang/rho/commit/267a47bd3894f7a6ed64c82d98920a2c2d585e91))
+
+
+### Bug Fixes
+
+* **agents:** yield while background work completes ([#396](https://github.com/matthewyjiang/rho/issues/396)) ([d54e9f3](https://github.com/matthewyjiang/rho/commit/d54e9f34d794f33bb493a3f0077582c6d37c4148))
+* **kimi:** use provider-native K3 reasoning ([#402](https://github.com/matthewyjiang/rho/issues/402)) ([5453cdc](https://github.com/matthewyjiang/rho/commit/5453cdc5c78df2b11b3e5bbab4ea96c5fba635d9))
+* **sdk:** retry retryable provider failures instead of failing the run ([#401](https://github.com/matthewyjiang/rho/issues/401)) ([b2867da](https://github.com/matthewyjiang/rho/commit/b2867da58eab9636c5e9691fe1de25e669a36dc3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.3.0 to 1.4.0
+    * rho-providers bumped from 0.2.1 to 0.3.0
+
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.6.1...rho-coding-agent-v1.7.0) (2026-07-18)
+
+
+### Features
+
+* **tui:** render read file image previews ([#393](https://github.com/matthewyjiang/rho/issues/393)) ([52165ec](https://github.com/matthewyjiang/rho/commit/52165eccb9429cbfe80c6ec1390aa5e97be19df8))
+
+
+### Bug Fixes
+
+* **ci:** sync released tool dependency versions ([#391](https://github.com/matthewyjiang/rho/issues/391)) ([fc78948](https://github.com/matthewyjiang/rho/commit/fc78948953a790dcf6a8f783e67748cae0dd61dc))
+* **tui:** render markdown in reasoning traces ([#394](https://github.com/matthewyjiang/rho/issues/394)) ([3a88542](https://github.com/matthewyjiang/rho/commit/3a88542608fc383e6de12ea29b193e071a83f824))
+* **tui:** show shell prompt during tool streaming ([#390](https://github.com/matthewyjiang/rho/issues/390)) ([6e6b39d](https://github.com/matthewyjiang/rho/commit/6e6b39ddaf2b7337e12bb5d7a11bce97d971f10c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.2.0 to 1.3.0
+    * rho-providers bumped from 0.2.0 to 0.2.1
+
+## [1.6.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.6.0...rho-coding-agent-v1.6.1) (2026-07-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.1.0 to 0.2.0
+
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.5.0...rho-coding-agent-v1.6.0) (2026-07-17)
+
+
+### Features
+
+* **tools:** add permission modes ([#372](https://github.com/matthewyjiang/rho/issues/372)) ([dd45f31](https://github.com/matthewyjiang/rho/commit/dd45f3161d53042baaed679fb101cacd929417a1))
+* **tui:** move persistent commands into config ([#377](https://github.com/matthewyjiang/rho/issues/377)) ([9e58048](https://github.com/matthewyjiang/rho/commit/9e58048486633a191879bbbfdfe5027027c37d07))
+* **tui:** preview custom agent prompts ([#378](https://github.com/matthewyjiang/rho/issues/378)) ([235eed1](https://github.com/matthewyjiang/rho/commit/235eed1636685e4fbe683a9d00906ee5554a408a))
+* **tui:** redesign questionnaire with tabbed question layout ([#369](https://github.com/matthewyjiang/rho/issues/369)) ([a90135a](https://github.com/matthewyjiang/rho/commit/a90135a494409cfc1c99ffd2226bee9075788d41))
+* **usage:** add durable request ledger ([#381](https://github.com/matthewyjiang/rho/issues/381)) ([0502b99](https://github.com/matthewyjiang/rho/commit/0502b9987be74a8922f675ab941eadb23bc88b12))
+
+
+### Bug Fixes
+
+* **agents:** reserve background results for notifications ([#384](https://github.com/matthewyjiang/rho/issues/384)) ([377e35e](https://github.com/matthewyjiang/rho/commit/377e35effa871595a188d6c92a078599e757a215))
+* **prompt:** require fenced Mermaid diagrams ([#375](https://github.com/matthewyjiang/rho/issues/375)) ([afd5656](https://github.com/matthewyjiang/rho/commit/afd56567c43779b50ad13999b78325d5eb834d31))
+* **provider:** classify Anthropic in-stream provider errors by type ([#345](https://github.com/matthewyjiang/rho/issues/345)) ([768562d](https://github.com/matthewyjiang/rho/commit/768562d789b16558be24d407df325bbdd0204c95)), closes [#343](https://github.com/matthewyjiang/rho/issues/343)
+* **tui:** align mouse selection with history viewport ([#370](https://github.com/matthewyjiang/rho/issues/370)) ([d91ff50](https://github.com/matthewyjiang/rho/commit/d91ff50ceb50723c64b263f9ce6caef04b6ad0ea))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.1.0 to 1.2.0
+
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.1...rho-coding-agent-v1.5.0) (2026-07-17)
+
+
+### Features
+
+* **agents:** unify agent definitions and execution ([#355](https://github.com/matthewyjiang/rho/issues/355)) ([157712e](https://github.com/matthewyjiang/rho/commit/157712e86906b72c5c76fe3664380700cb37eb7f))
+* **auth:** add grouped login methods and xAI API keys ([#363](https://github.com/matthewyjiang/rho/issues/363)) ([1f1fdc9](https://github.com/matthewyjiang/rho/commit/1f1fdc93b5c3476ade353801ef9fc34d33c50897))
+* **providers:** add Moonshot and Kimi authentication ([#359](https://github.com/matthewyjiang/rho/issues/359)) ([051fbda](https://github.com/matthewyjiang/rho/commit/051fbda5153c0c1d3dd8fd0a8d12c97c1b8f66ea))
+* **providers:** add OpenRouter API key support ([#365](https://github.com/matthewyjiang/rho/issues/365)) ([51c69dd](https://github.com/matthewyjiang/rho/commit/51c69ddcca60d21da189d23ff91858bcc16f9242))
+* **tui:** add agent browser and creator skill ([#366](https://github.com/matthewyjiang/rho/issues/366)) ([84937e3](https://github.com/matthewyjiang/rho/commit/84937e343f3ae8e1a9489b31ce9366231aea527b))
+* **tui:** add Kimi OAuth usage limits ([#361](https://github.com/matthewyjiang/rho/issues/361)) ([84a8ca8](https://github.com/matthewyjiang/rho/commit/84a8ca8ca9c5760304eb3b789220e2a76e03a302))
+
+
+### Bug Fixes
+
+* **tui:** constrain activity rail background ([#362](https://github.com/matthewyjiang/rho/issues/362)) ([139b9e1](https://github.com/matthewyjiang/rho/commit/139b9e131ed3022d78aebf8be603be772cb7cfda))
+* **tui:** extend activity background to agents ([#364](https://github.com/matthewyjiang/rho/issues/364)) ([11cfc9e](https://github.com/matthewyjiang/rho/commit/11cfc9ef5dd752a851a64739571e22c5767ffe94))
+
+## [1.4.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.4.0...rho-coding-agent-v1.4.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **packaging:** enable test fixtures in Arch build ([#356](https://github.com/matthewyjiang/rho/issues/356)) ([2e19b5e](https://github.com/matthewyjiang/rho/commit/2e19b5e0e6bdbd7881ec2b5f0becc4ae5adb596f))
+* **tui:** extend activity background below spinner ([#354](https://github.com/matthewyjiang/rho/issues/354)) ([d692736](https://github.com/matthewyjiang/rho/commit/d69273600b1a91737ec1217d5f007d22337985e8))
+
+## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.3.0...rho-coding-agent-v1.4.0) (2026-07-17)
+
+
+### Features
+
+* **tui:** render Mermaid diagrams in transcripts ([#348](https://github.com/matthewyjiang/rho/issues/348)) ([f91c478](https://github.com/matthewyjiang/rho/commit/f91c478b339534cc282b7d12615ff91d9af29d30))
+
+
+### Bug Fixes
+
+* **subagents:** improve background delegation flow ([#351](https://github.com/matthewyjiang/rho/issues/351)) ([80d0aff](https://github.com/matthewyjiang/rho/commit/80d0aff044d266295f80ba490b471018fb0e4af1))
+* **tui:** preserve selection and delete paste markers atomically ([#352](https://github.com/matthewyjiang/rho/issues/352)) ([c1e699e](https://github.com/matthewyjiang/rho/commit/c1e699ed4da860dc4de7ea3cc6dce4e16234854f))
+* **tui:** unify activity rail background ([#349](https://github.com/matthewyjiang/rho/issues/349)) ([a16f24e](https://github.com/matthewyjiang/rho/commit/a16f24e5e62629ca4ec8aafc842b6d27b0c947cc))
+
+## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.2.0...rho-coding-agent-v1.3.0) (2026-07-16)
+
+
+### Features
+
+* **subagents:** add read-only attachment ([#333](https://github.com/matthewyjiang/rho/issues/333)) ([e63340c](https://github.com/matthewyjiang/rho/commit/e63340ccb81dc501e483f3036871e688c63b3595))
+* **tui:** add retractable pending input ([#334](https://github.com/matthewyjiang/rho/issues/334)) ([5f293a2](https://github.com/matthewyjiang/rho/commit/5f293a2221e0dcd5457eccbc8675eed2463d878e))
+* **tui:** show running subagents ([#340](https://github.com/matthewyjiang/rho/issues/340)) ([5523a90](https://github.com/matthewyjiang/rho/commit/5523a907e2a8b87e910baea8a03c75a0173af9e2))
+
+
+### Bug Fixes
+
+* **providers:** show bounded error diagnostics ([#344](https://github.com/matthewyjiang/rho/issues/344)) ([e3fc489](https://github.com/matthewyjiang/rho/commit/e3fc48984590d34e19238e157e2479fa3c9d0d20))
+* **release:** auto-merge Scoop manifest updates ([#329](https://github.com/matthewyjiang/rho/issues/329)) ([1aaf368](https://github.com/matthewyjiang/rho/commit/1aaf36827323856d96295aba958e02e5239937d4))
+* **subagents:** discourage unnecessary delegation ([#332](https://github.com/matthewyjiang/rho/issues/332)) ([489a43f](https://github.com/matthewyjiang/rho/commit/489a43f9cbfa67f60d9f6125e447e42ffb6d05b4))
+* **tui:** allow limits during model turns ([#331](https://github.com/matthewyjiang/rho/issues/331)) ([2f1c63a](https://github.com/matthewyjiang/rho/commit/2f1c63ae31bc823845221c2d4e45bcb0cb87d494))
+* **tui:** make pending discard accessible ([#335](https://github.com/matthewyjiang/rho/issues/335)) ([c3e18ff](https://github.com/matthewyjiang/rho/commit/c3e18ffe6098337c1fa9f099bd6d307acac13cee))
+* **tui:** prevent markdown table parser panic on lone pipe lines ([#338](https://github.com/matthewyjiang/rho/issues/338)) ([e54fd50](https://github.com/matthewyjiang/rho/commit/e54fd507b53b36a2791aa9861d7fc7e60e6bdf09)), closes [#336](https://github.com/matthewyjiang/rho/issues/336)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.0.2 to 1.1.0
+
 ## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.1.0...rho-coding-agent-v1.2.0) (2026-07-16)
 
 

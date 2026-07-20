@@ -1,417 +1,254 @@
-use std::path::Path;
-
-use tempfile::TempDir;
-
 use super::*;
-use crate::subagent::{self, write_status};
+use crate::{
+    app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics,
+    tools::agent_output::MODEL_NOTIFICATION_BYTES,
+};
 
-fn test_entry(preset: &str, background: bool) -> AgentEntry {
-    let (force_kill, _requests) = tokio::sync::mpsc::unbounded_channel();
-    AgentEntry {
-        preset: preset.into(),
-        background,
-        started: Instant::now(),
-        log_file: PathBuf::from("/tmp/log.txt"),
-        output_file: PathBuf::from("result.json"),
-        force_kill,
-        session_id: Some("session-a".into()),
-        status: RunStatus::default(),
-        done: false,
-        process_exited: false,
-        notified: false,
+fn manager(root: &Path) -> SubagentManager {
+    SubagentManager::new(AgentExecutor::new(
+        Config::default(),
+        root.join("rho.toml"),
+        root.to_path_buf(),
+    ))
+}
+
+#[test]
+fn agent_tool_uses_agent_id_terminology() {
+    let root = tempfile::tempdir().unwrap();
+    let tool = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Enabled,
+    );
+    let spec = tool.spec();
+    let properties = &spec.input_schema["properties"];
+    assert!(properties.get("agent_id").is_some());
+    assert_eq!(
+        spec.input_schema["required"],
+        serde_json::json!(["agent_id", "prompt"])
+    );
+}
+
+#[test]
+fn delegated_manager_starts_empty() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    assert!(manager.list().is_empty());
+    assert!(manager.status("missing").is_none());
+}
+
+#[tokio::test]
+async fn stopping_unknown_run_is_actionable() {
+    let root = tempfile::tempdir().unwrap();
+    let error = manager(root.path()).stop("missing").await.unwrap_err();
+    assert!(error.to_string().contains("unknown delegated run"));
+}
+
+#[tokio::test]
+async fn background_start_receipt_is_the_registration() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let result = tool
+        .call(
+            serde_json::json!({
+                "agent_id": "default",
+                "prompt": "background task",
+                "background": true,
+            }),
+            ToolContext {
+                cwd: root.path().to_path_buf(),
+                max_output_bytes: 16 * 1024,
+            },
+            "call-1".into(),
+        )
+        .await
+        .unwrap();
+    // The start receipt reports registration only: no live run state, no
+    // activity lines, nothing that depends on how far the spawned task got.
+    let runs = manager.list();
+    assert_eq!(runs.len(), 1);
+    let run_id = &runs[0].id;
+    assert!(result.ok);
+    assert_eq!(
+        result.content,
+        format!("agent {run_id} (default) started in background\nattach: rho attach {run_id}")
+    );
+}
+
+#[test]
+fn background_guidance_is_gated_by_capability() {
+    let root = tempfile::tempdir().unwrap();
+    let enabled = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Enabled,
+    );
+    let disabled = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Disabled,
+    );
+    assert!(enabled
+        .spec()
+        .description
+        .contains("delivered automatically"));
+    let disabled_spec = disabled.spec();
+    assert!(!disabled_spec.description.contains("background"));
+    assert!(disabled_spec.input_schema["properties"]
+        .get("background")
+        .is_none());
+}
+
+fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotification {
+    SubagentNotification {
+        snapshot: SubagentSnapshot {
+            id: id.into(),
+            agent_id: agent_id.into(),
+            background: true,
+            elapsed: Duration::from_secs(5),
+            status: crate::subagent::RunStatus {
+                state,
+                turns: 1,
+                input_tokens: 10,
+                output_tokens: 2,
+                result: Some(format!("{id} result")),
+                ..crate::subagent::RunStatus::default()
+            },
+            done: true,
+        },
     }
 }
 
-fn insert_entry(manager: &SubagentManager, id: &str, entry: AgentEntry) {
-    manager
-        .inner
-        .lock()
-        .expect("subagent registry lock")
-        .insert(id.into(), entry);
+#[test]
+fn notification_prompts_batch_terminal_runs_into_one_message() {
+    let first = notification("aaa111", "worker", RunState::Ok);
+    let mut second = notification("bbb222", "reviewer", RunState::Stopped);
+    second.snapshot.status.error = Some("review stopped before completion".into());
+    second.snapshot.status.attachment_error = Some("log unavailable".into());
+    let notifications = vec![first, second];
+    let (model, display) = notification_prompts(&notifications);
+    assert_eq!(model.matches("[agent notification]").count(), 1);
+    assert!(model.contains("agent aaa111 (worker): ok"));
+    assert!(model.contains("aaa111 result"));
+    assert!(model.contains("agent bbb222 (reviewer): stopped"));
+    assert!(model.contains("error: review stopped before completion"));
+    assert!(model.contains("attachment error: log unavailable"));
+    assert!(model.contains("treat its work as unverified"));
+    assert_eq!(
+        display,
+        "agent aaa111 (worker) finished - ok\nagent bbb222 (reviewer) finished - stopped"
+    );
 }
 
-#[tokio::test]
-async fn watcher_detects_terminal_status_and_notifies() {
-    let dir = TempDir::new().unwrap();
-    let output_file = dir.path().join("result.json");
-    let manager = SubagentManager::new();
-    insert_entry(&manager, "x1", test_entry("explorer", true));
-    manager.watch_status_file("x1", output_file.clone());
-
-    assert!(manager.has_active_or_pending_notification("session-a"));
-    assert!(manager.take_notifications("session-a").is_empty());
-
-    write_status(
-        &output_file,
-        &RunStatus {
-            state: RunState::Ok,
-            result: Some("all done".into()),
-            ..RunStatus::default()
-        },
-    )
-    .unwrap();
-
-    let snapshot = tokio::time::timeout(Duration::from_secs(5), manager.wait_done("x1"))
-        .await
-        .expect("watcher should observe the terminal state")
-        .expect("entry exists");
-    assert_eq!(snapshot.status.state, RunState::Ok);
-    assert_eq!(snapshot.status.result.as_deref(), Some("all done"));
-    assert!(manager.has_active_or_pending_notification("session-a"));
-
-    let notifications = manager.take_notifications("session-a");
-    assert_eq!(notifications.len(), 1);
-    assert_eq!(notifications[0].snapshot.id, "x1");
-    // Notifications are delivered once.
-    assert!(manager.take_notifications("session-a").is_empty());
-}
-
-#[tokio::test]
-async fn blocking_agents_do_not_notify() {
-    let dir = TempDir::new().unwrap();
-    let output_file = dir.path().join("result.json");
-    let manager = SubagentManager::new();
-    insert_entry(&manager, "x2", test_entry("worker", false));
-    manager.watch_status_file("x2", output_file.clone());
-
-    write_status(
-        &output_file,
-        &RunStatus {
-            state: RunState::Error,
-            error: Some("boom".into()),
-            ..RunStatus::default()
-        },
-    )
-    .unwrap();
-
-    tokio::time::timeout(Duration::from_secs(5), manager.wait_done("x2"))
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(manager.take_notifications("session-a").is_empty());
-}
-
-#[tokio::test]
-async fn stop_unknown_subagent_errors() {
-    let manager = SubagentManager::new();
-
-    let error = manager.stop("missing").await.unwrap_err();
-
-    assert!(error.to_string().contains("unknown subagent"));
-}
-
-#[tokio::test]
-async fn stop_waits_for_graceful_process_exit() {
-    let dir = TempDir::new().unwrap();
-    let output_file = dir.path().join(subagent::RESULT_FILE_NAME);
-    let cancel_file = subagent::cancel_file_for(&output_file);
-    let manager = SubagentManager::new();
-    let mut entry = test_entry("explorer", false);
-    entry.output_file = output_file.clone();
-    insert_entry(&manager, "x3", entry);
-    manager.watch_status_file("x3", output_file.clone());
-
-    let completion_manager = manager.clone();
-    let completion = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !cancel_file.exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+#[test]
+fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
+    let notifications = (0..96)
+        .map(|index| {
+            let id = format!("run{index:03}");
+            let mut notification = notification(&id, "worker", RunState::Ok);
+            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
+            notification
         })
-        .await
-        .expect("cancel marker was not written");
-        write_status(
-            &output_file,
-            &RunStatus {
-                state: RunState::Stopped,
-                result: Some("partial result".into()),
-                ..RunStatus::default()
-            },
-        )
-        .unwrap();
-        let status = subagent::read_status(&output_file).expect("terminal status");
-        let mut agents = completion_manager
-            .inner
-            .lock()
-            .expect("subagent registry lock");
-        let entry = agents.get_mut("x3").expect("subagent entry");
-        entry.status = status;
-        entry.done = true;
-        entry.process_exited = true;
-    });
+        .collect::<Vec<_>>();
 
-    let snapshot = manager.stop("x3").await.unwrap();
-    completion.await.unwrap();
+    let (model, _) = notification_prompts(&notifications);
 
-    assert_eq!(snapshot.status.state, RunState::Stopped);
-    assert_eq!(snapshot.status.result.as_deref(), Some("partial result"));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn spawned_child_uses_a_distinct_process_group() {
-    let directory = TempDir::new().unwrap();
-    let log_file = directory.path().join("log.txt");
-    let mut child = spawn_headless(
-        Path::new("/bin/sleep"),
-        &["30".into()],
-        directory.path(),
-        &log_file,
-    )
-    .unwrap();
-    let pid = child.id().expect("spawned child") as libc::pid_t;
-
-    assert_ne!(unsafe { libc::getpgid(pid) }, unsafe { libc::getpgrp() });
-
-    child.kill().await.unwrap();
-    child.wait().await.unwrap();
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn shutdown_kills_a_child_that_reported_completion_before_exiting() {
-    let directory = TempDir::new().unwrap();
-    let output_file = directory.path().join(subagent::RESULT_FILE_NAME);
-    let log_file = directory.path().join(subagent::LOG_FILE_NAME);
-    let child = spawn_headless(
-        Path::new("/bin/sleep"),
-        &["30".into()],
-        directory.path(),
-        &log_file,
-    )
-    .unwrap();
-    let pid = child.id().expect("spawned child") as libc::pid_t;
-    let manager = SubagentManager::new();
-    let force_kill = manager.watch_child("x4", child);
-    let mut entry = test_entry("explorer", true);
-    entry.output_file = output_file;
-    entry.force_kill = force_kill;
-    entry.status.state = RunState::Ok;
-    entry.done = true;
-    insert_entry(&manager, "x4", entry);
-
-    tokio::time::timeout(Duration::from_secs(5), manager.shutdown())
-        .await
-        .expect("shutdown should reap the completed child");
-
-    let entry = manager.inner.lock().unwrap();
-    assert!(entry["x4"].process_exited);
-    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn child_failure_without_status_is_persisted_for_attach() {
-    let directory = TempDir::new().unwrap();
-    let output_file = directory.path().join(subagent::RESULT_FILE_NAME);
-    let log_file = directory.path().join(subagent::LOG_FILE_NAME);
-    let child = spawn_headless(Path::new("true"), &[], directory.path(), &log_file).unwrap();
-    let manager = SubagentManager::new();
-    let force_kill = manager.watch_child("x5", child);
-    let mut entry = test_entry("explorer", true);
-    entry.output_file = output_file.clone();
-    entry.force_kill = force_kill;
-    insert_entry(&manager, "x5", entry);
-
-    let snapshot = tokio::time::timeout(Duration::from_secs(5), manager.wait_done("x5"))
-        .await
-        .expect("child watcher should finish")
-        .expect("subagent entry");
-    let persisted = subagent::read_status(&output_file).expect("persisted terminal status");
-
-    assert_eq!(persisted, snapshot.status);
-    assert_eq!(persisted.state, RunState::Error);
-    assert!(persisted
-        .error
-        .as_deref()
-        .is_some_and(|error| error.contains("without writing a result")));
-}
-
-#[test]
-fn run_args_shape() {
-    let args = run_args(
-        "explorer",
-        Path::new("/tmp/out.json"),
-        "find the tests",
-        Some(Path::new("/tmp/rho.toml")),
+    assert!(
+        model.len() <= MODEL_NOTIFICATION_BYTES,
+        "{}-byte notification exceeded the {}-byte budget",
+        model.len(),
+        MODEL_NOTIFICATION_BYTES
     );
+    for index in 0..notifications.len() {
+        assert!(
+            model.contains(&format!("agent run{index:03} (worker): ok")),
+            "missing status for run {index}"
+        );
+    }
+    assert!(model.contains("Any omitted or truncated result details remain available"));
+    assert!(model.contains("`agents status`"));
+    assert!(model.contains("`rho attach <run-id>`"));
+    assert_eq!(model, notification_prompts(&notifications).0);
 
-    assert_eq!(
-        args,
-        vec![
-            "--no-subagents",
-            "--config",
-            "/tmp/rho.toml",
-            "run",
-            "--preset",
-            "explorer",
-            "--output-file",
-            "/tmp/out.json",
-            "--",
-            "find the tests",
-        ]
-    );
+    let newer = (0..96)
+        .map(|index| {
+            let id = format!("new{index:03}");
+            let mut notification = notification(&id, "reviewer", RunState::Ok);
+            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
+            notification
+        })
+        .collect::<Vec<_>>();
+    let newer = notification_prompts(&newer).0;
+    let retried_context = merge_notification_context(Some(&model), &newer);
+    assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
+    assert!(retried_context.contains("agent new000 (reviewer): ok"));
 }
 
-#[test]
-fn agent_ids_are_short_and_unique() {
-    let a = new_agent_id();
-    let b = new_agent_id();
-
-    assert_eq!(a.len(), 6);
-    assert_ne!(a, b);
-}
-
-#[test]
-fn agent_tool_spec_lists_presets() {
-    let dir = TempDir::new().unwrap();
-    let tool = AgentTool::new(
-        SubagentManager::new(),
-        dir.path(),
-        BackgroundSubagents::Enabled,
-    );
-
-    let spec = tool.spec();
-
-    assert_eq!(spec.name, "agent");
-    assert!(spec
-        .description
-        .starts_with("Delegate a substantial, self-contained task to a fresh agent."));
-    assert!(!spec.description.contains("herdr"));
-    assert!(!spec.description.contains("Blocking by default"));
-    assert!(spec.description.contains("rho attach <id>"));
-    assert!(spec.description.contains("explorer:"));
-    assert!(spec.description.contains("reviewer:"));
-    assert!(spec.description.contains("worker:"));
-    assert_eq!(
-        spec.input_schema["properties"]["preset"]["description"],
-        "Agent preset"
-    );
-    assert_eq!(
-        spec.input_schema["properties"]["prompt"]["description"],
-        "Self-contained task and all context the agent needs"
-    );
-    assert_eq!(
-        spec.input_schema["properties"]["background"]["description"],
-        "Run concurrently and return an id immediately"
-    );
-    let names = spec.input_schema["properties"]["preset"]["enum"]
-        .as_array()
-        .unwrap();
-    assert!(names.iter().any(|name| name == "explorer"));
-    assert!(names.iter().any(|name| name == "reviewer"));
-    assert!(names.iter().any(|name| name == "worker"));
-}
-
-#[test]
-fn agents_tool_spec_is_concise() {
-    let spec = AgentsTool::new(SubagentManager::new()).spec();
-
-    assert_eq!(spec.description, "Check or stop background subagents.");
-}
-
-#[test]
-fn notifications_are_isolated_by_session() {
-    let manager = SubagentManager::new();
-    let mut entry = test_entry("explorer", true);
-    entry.done = true;
-    insert_entry(&manager, "old", entry);
-
-    assert!(manager.take_notifications("session-b").is_empty());
-    assert!(manager.has_active_or_pending_notification("session-a"));
-    assert_eq!(manager.take_notifications("session-a").len(), 1);
-}
-
-#[test]
-fn headless_agent_schema_does_not_advertise_background_runs() {
-    let dir = TempDir::new().unwrap();
-    let tool = AgentTool::new(
-        SubagentManager::new(),
-        dir.path(),
-        BackgroundSubagents::Disabled,
-    );
-
-    let spec = tool.spec();
-
-    assert!(spec.input_schema["properties"].get("background").is_none());
-    assert!(!spec.description.contains("background=true"));
-}
-
-#[tokio::test]
-async fn agents_tool_lists_and_reports_status() {
-    let dir = TempDir::new().unwrap();
-    let manager = SubagentManager::new();
-    let mut entry = test_entry("explorer", true);
-    entry.status.state = RunState::Running;
-    entry.status.turns = 4;
-    entry.status.last_activity = Some("tool: bash".into());
-    insert_entry(&manager, "x9", entry);
-    let tool = AgentsTool::new(manager);
-    let ctx = ToolContext {
-        cwd: dir.path().to_path_buf(),
-        max_output_bytes: 65536,
-    };
-
-    let list = tool
-        .call(
-            serde_json::json!({"action": "list"}),
-            ctx.clone(),
-            "1".into(),
-        )
-        .await
-        .unwrap();
-    assert!(list.content.contains("\"id\": \"x9\""));
-    assert!(list.content.contains("\"state\": \"running\""));
-
-    let status = tool
-        .call(
-            serde_json::json!({"action": "status", "id": "x9"}),
-            ctx.clone(),
-            "2".into(),
-        )
-        .await
-        .unwrap();
-    assert!(status.content.contains("\"turns\": 4"));
-    assert!(status.content.contains("tool: bash"));
-
-    let missing = tool
-        .call(
-            serde_json::json!({"action": "status", "id": "nope"}),
-            ctx.clone(),
-            "3".into(),
-        )
-        .await
-        .unwrap_err();
-    assert!(missing.to_string().contains("unknown subagent"));
-
-    let no_id = tool
-        .call(serde_json::json!({"action": "stop"}), ctx, "4".into())
-        .await
-        .unwrap_err();
-    assert!(no_id.to_string().contains("requires a subagent id"));
-}
-
-#[test]
-fn notification_prompts_summarize_result() {
-    let snapshot = SubagentSnapshot {
-        id: "x7".into(),
-        preset: "explorer".into(),
-        background: true,
-        elapsed: Duration::from_secs(90),
-        log_file: PathBuf::from("/tmp/log.txt"),
-        status: RunStatus {
-            state: RunState::Ok,
-            turns: 6,
-            result: Some("the answer".into()),
-            ..RunStatus::default()
+async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
+    let tool = AgentTool::new(manager.clone(), root, BackgroundSubagents::Enabled);
+    tool.call(
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "background task",
+            "background": true,
+        }),
+        ToolContext {
+            cwd: root.to_path_buf(),
+            max_output_bytes: 16 * 1024,
         },
-        done: true,
-    };
+        "call".into(),
+    )
+    .await
+    .unwrap();
+    manager.list().last().unwrap().id.clone()
+}
 
-    let (model, display) = notification_prompts(&SubagentNotification { snapshot });
+#[tokio::test]
+async fn observed_terminal_run_is_not_redelivered() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.set_session("session-1".into());
+    let id = spawn_background_run(&manager, root.path()).await;
+    let snapshot = manager.wait_done(&id).await.unwrap();
+    assert!(snapshot.done);
+    // Reading the terminal snapshot counts as delivery.
+    let observed = manager.observe(&id).unwrap();
+    assert!(observed.done);
+    assert!(manager.take_notifications("session-1").is_empty());
+    assert!(!manager.has_active_or_pending_notification("session-1"));
+}
 
-    assert!(model.contains("subagent x7"));
-    assert!(model.contains("the answer"));
-    assert!(model.contains("automated notification"));
-    assert_eq!(display, "subagent x7 (explorer) finished - ok");
+#[tokio::test]
+async fn unobserved_terminal_runs_drain_as_one_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.set_session("session-1".into());
+    let first = spawn_background_run(&manager, root.path()).await;
+    let second = spawn_background_run(&manager, root.path()).await;
+    manager.wait_done(&first).await.unwrap();
+    manager.wait_done(&second).await.unwrap();
+    let batch = manager.take_notifications("session-1");
+    let ids = batch
+        .iter()
+        .map(|notification| notification.snapshot.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![first, second], "batch drains in launch order");
+    assert!(
+        manager.take_notifications("session-1").is_empty(),
+        "a drained batch is observed and never redelivered"
+    );
+}
+
+#[test]
+fn lifecycle_tool_schema_is_stable() {
+    let root = tempfile::tempdir().unwrap();
+    let tool = AgentsTool::new(manager(root.path()));
+    let spec = tool.spec();
+    assert_eq!(spec.name, "agents");
+    assert_eq!(
+        spec.input_schema["properties"]["action"]["enum"],
+        serde_json::json!(["list", "status", "stop"])
+    );
+    let _ = test_diagnostics("test", "test");
 }

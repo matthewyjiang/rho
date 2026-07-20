@@ -19,7 +19,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         ok: true,
-        display_style: crate::tool::ToolDisplayStyle::default_tool(),
+        display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
         display_lines: vec!["keep tool".into()],
     });
     app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));
@@ -77,7 +77,7 @@ fn attached_view_renders_transcript_without_a_composer() {
     );
     app.status = Some(RunStatus {
         state: RunState::Running,
-        preset: Some("explorer".into()),
+        agent_id: Some("explorer".into()),
         last_activity: Some("tool: read_file".into()),
         ..RunStatus::default()
     });

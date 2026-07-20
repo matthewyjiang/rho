@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     herdr::HerdrReporter,
     session::Session,
-    tui::{self, TuiInfo},
+    tui::{self, ApplicationServices, RuntimeModelView, SessionBootstrap, TuiBootstrap},
 };
 
 use super::{
@@ -20,10 +20,20 @@ pub(super) struct Startup<'a> {
     pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
     pub(super) missing_auth_error: Option<String>,
-    pub(super) missing_auth_model_error: Option<crate::model::ModelError>,
+    pub(super) missing_auth_model_error: Option<rho_providers::model::ModelError>,
     pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
+    pub(super) agent: super::agent_binding::BoundAgent,
+    pub(super) reasoning_source: rho_providers::model::ReasoningRequestSource,
+}
+
+fn validate_resume_agent(
+    session: &Session,
+    selected_id: &str,
+    selected_fingerprint: &str,
+) -> anyhow::Result<()> {
+    session.validate_agent_identity(selected_id, selected_fingerprint)
 }
 
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
@@ -38,12 +48,17 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         pending_update_notice,
         diagnostics,
         herdr,
+        agent,
+        reasoning_source,
     } = startup;
+    let selected_agent_id = agent.id().to_string();
+    let selected_agent_fingerprint = agent.fingerprint().to_string();
     let mut open_resume_picker = false;
     let mut recovered_messages = Vec::new();
     let (session_id, history, storage) = match &cli.resume {
         Some(Some(id)) => {
             let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
+            validate_resume_agent(&session, &selected_agent_id, &selected_agent_fingerprint)?;
             let session_id = Some(session.id().to_string());
             recovered_messages = histories.display;
             (session_id, histories.model, Some(session))
@@ -68,34 +83,43 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         session_id: session_id.clone(),
         storage,
         diagnostics: diagnostics.clone(),
+        agent,
         unavailable_error: missing_auth_model_error,
     })
     .await?;
     let result = tui::run(
         &mut runtime,
-        TuiInfo {
-            cwd,
-            provider: config.provider,
-            model: config.model,
-            reasoning: config.reasoning,
-            show_reasoning_output: config.show_reasoning_output,
-            auth: config.auth,
-            title_provider: config.title_provider,
-            title_model: config.title_model,
-            title_auth: config.title_auth,
-            favorite_models: config.favorite_models,
-            max_tool_output_lines: config.max_tool_output_lines,
-            keybindings: config.keybindings,
-            prompt_templates,
-            session_id,
-            recovered_messages,
-            open_resume_picker,
-            config_repository,
-            auth_unavailable: missing_auth_error,
-            update_notice: None,
-            pending_update_notice,
-            diagnostics,
-            herdr,
+        TuiBootstrap {
+            runtime: RuntimeModelView {
+                cwd,
+                provider: config.provider,
+                model: config.model,
+                reasoning: config.reasoning,
+                reasoning_source,
+                permission_mode: config.permission_mode,
+                show_reasoning_output: config.show_reasoning_output,
+                auth: config.auth,
+                title_provider: config.title_provider,
+                title_model: config.title_model,
+                title_auth: config.title_auth,
+                favorite_models: config.favorite_models,
+                max_tool_output_lines: config.max_tool_output_lines,
+                keybindings: config.keybindings,
+                prompt_templates,
+            },
+            session: SessionBootstrap {
+                session_id,
+                recovered_messages,
+                open_resume_picker,
+            },
+            services: ApplicationServices {
+                config_repository,
+                auth_unavailable: missing_auth_error,
+                update_notice: None,
+                pending_update_notice,
+                diagnostics,
+                herdr,
+            },
         },
     )
     .await;
@@ -106,3 +130,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "interactive_tests.rs"]
+mod tests;

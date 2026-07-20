@@ -46,9 +46,20 @@ fn home_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> Option<Pa
 }
 
 pub(crate) fn rho_dir() -> anyhow::Result<PathBuf> {
-    home_dir()
+    rho_dir_from_env(|name| std::env::var_os(name))
+}
+
+fn rho_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> anyhow::Result<PathBuf> {
+    if let Some(root) = var("RHO_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(root));
+    }
+    home_dir_from_env(var)
         .map(|home| home.join(".rho"))
         .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
+}
+
+pub(crate) fn usage_database_path() -> anyhow::Result<PathBuf> {
+    Ok(rho_dir()?.join("usage.sqlite3"))
 }
 
 #[cfg(test)]
@@ -58,6 +69,28 @@ mod tests {
     fn env(vars: &[(&str, &str)], name: &str) -> Option<OsString> {
         vars.iter()
             .find_map(|(key, value)| (*key == name).then(|| OsString::from(value)))
+    }
+
+    #[test]
+    fn rho_home_overrides_default_data_root() {
+        assert_eq!(
+            rho_dir_from_env(|name| env(
+                &[("RHO_HOME", "/var/lib/rho"), ("HOME", "/home/rho")],
+                name
+            ))
+            .unwrap(),
+            PathBuf::from("/var/lib/rho")
+        );
+    }
+
+    #[test]
+    fn usage_database_uses_data_root() {
+        assert_eq!(
+            rho_dir_from_env(|name| env(&[("RHO_HOME", "/var/lib/rho")], name))
+                .unwrap()
+                .join("usage.sqlite3"),
+            PathBuf::from("/var/lib/rho/usage.sqlite3")
+        );
     }
 
     #[test]

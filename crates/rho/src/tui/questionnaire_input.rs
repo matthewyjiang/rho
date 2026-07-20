@@ -2,8 +2,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
+    questionnaire::{QuestionnaireComposer, QuestionnaireEnterAction},
     questionnaire_notice_text, App, ComposerMode, Entry, QuestionAnswerRequest,
-    QuestionnaireComposer,
 };
 
 impl App {
@@ -51,7 +51,17 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_questionnaire_answer()?;
+                let action = match &mut self.composer {
+                    ComposerMode::Questionnaire(questionnaire) => {
+                        questionnaire.confirm_active_question()
+                    }
+                    _ => unreachable!("questionnaire mode checked before key handling"),
+                };
+                match action {
+                    QuestionnaireEnterAction::Advance => {}
+                    QuestionnaireEnterAction::Submit => self.submit_questionnaire_answer()?,
+                }
+                self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -63,7 +73,7 @@ impl App {
             }
             (_, KeyCode::Up) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_active_choice_previous();
+                    questionnaire.move_up();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -71,7 +81,7 @@ impl App {
             }
             (_, KeyCode::Down) => {
                 if let ComposerMode::Questionnaire(questionnaire) = &mut self.composer {
-                    questionnaire.move_active_choice_next();
+                    questionnaire.move_down();
                 }
                 self.paste_burst.clear();
                 self.ctrl_c_streak = 0;

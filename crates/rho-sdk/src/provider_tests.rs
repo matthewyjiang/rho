@@ -11,7 +11,9 @@ use crate::{
     CancellationToken, ProviderErrorKind,
 };
 
-use super::{provider_event_channel, ModelProvider, ScriptedProvider, ScriptedTurn};
+use super::{
+    provider_event_channel, ModelProvider, ProviderRequestEvent, ScriptedProvider, ScriptedTurn,
+};
 
 fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")
@@ -109,6 +111,29 @@ async fn streaming_preserves_event_order_usage_and_native_replay_context() {
         ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())])
     );
     assert_eq!(received, expected);
+}
+
+#[tokio::test]
+async fn semantic_and_request_event_receivers_remain_compatible() {
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(2).unwrap());
+    events
+        .send_request_attempt_failed(ProviderErrorKind::Unavailable, ModelUsage::default())
+        .await
+        .unwrap();
+    let expected = ModelEvent::OutputDelta("retry succeeded".into());
+    events.send(expected.clone()).await.unwrap();
+    drop(events);
+
+    assert_eq!(receiver.recv().await, Some(expected));
+    assert_eq!(receiver.recv().await, None);
+    assert_eq!(
+        receiver.recv_request_event().await,
+        Some(ProviderRequestEvent::RequestAttemptFailed {
+            kind: ProviderErrorKind::Unavailable,
+            usage: ModelUsage::default(),
+        })
+    );
+    assert_eq!(receiver.recv_request_event().await, None);
 }
 
 #[tokio::test]

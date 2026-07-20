@@ -9,17 +9,21 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--app] [--dry-run]
+Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [--providers] [--app] [--dry-run]
 
   --sha <full-sha>  Exact 40-character commit that must be checked out
   --sdk             Publish rho-sdk
-  --app             Publish rho-coding-agent after rho-sdk is available
+  --tools           Publish rho-agent-tools
+  --providers       Publish rho-providers
+  --app             Publish rho-agent-tools, rho-providers, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
 }
 
 sha=""
 publish_sdk=false
+publish_tools=false
+publish_providers=false
 publish_app=false
 dry_run=false
 
@@ -33,7 +37,17 @@ while [[ $# -gt 0 ]]; do
       publish_sdk=true
       shift
       ;;
+    --tools)
+      publish_tools=true
+      shift
+      ;;
+    --providers)
+      publish_providers=true
+      shift
+      ;;
     --app)
+      publish_tools=true
+      publish_providers=true
       publish_app=true
       shift
       ;;
@@ -64,8 +78,8 @@ if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$publish_sdk" != true && "$publish_app" != true ]]; then
-  echo "Select at least one of --sdk or --app" >&2
+if [[ "$publish_sdk" != true && "$publish_tools" != true && "$publish_providers" != true && "$publish_app" != true ]]; then
+  echo "Select at least one of --sdk, --tools, --providers, or --app" >&2
   exit 2
 fi
 
@@ -87,8 +101,16 @@ else
   publish_flags+=(--token "$CARGO_REGISTRY_TOKEN")
 fi
 
-sdk_version="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]=="rho-sdk"))')"
-app_version="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]=="rho-coding-agent"))')"
+metadata="$(cargo metadata --format-version 1 --no-deps)"
+crate_version() {
+  local name="$1"
+  python3 -c 'import json,sys; name=sys.argv[1]; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"]==name))' "$name" <<<"$metadata"
+}
+
+sdk_version="$(crate_version rho-sdk)"
+tools_version="$(crate_version rho-agent-tools)"
+providers_version="$(crate_version rho-providers)"
+app_version="$(crate_version rho-coding-agent)"
 
 crates_io_curl=(
   curl
@@ -132,22 +154,65 @@ if [[ "$publish_sdk" == true ]]; then
   fi
 fi
 
-if [[ "$publish_app" == true ]]; then
-  if [[ "$publish_sdk" != true && "$dry_run" != true ]]; then
-    # Application publish requires the versioned SDK dependency to exist.
+publish_crate() {
+  local name="$1"
+  local version="$2"
+  shift 2
+  local validation_flags=("$@")
+
+  echo "Validating ${name} ${version} at ${sha}"
+  cargo publish --dry-run --locked -p "$name" "${validation_flags[@]}"
+  if [[ "$dry_run" == true ]]; then
+    echo "Dry-run complete for ${name}"
+  elif crate_already_published "$name" "$version"; then
+    echo "${name}@${version} already published; reusing existing crate"
+  else
+    echo "Publishing ${name} ${version}"
+    cargo publish "${publish_flags[@]}" -p "$name"
+    wait_for_crate "$name" "$version"
+  fi
+}
+
+if [[ "$publish_tools" == true ]]; then
+  tools_validation_flags=()
+  if [[ "$dry_run" == true ]]; then
+    tools_validation_flags+=(--config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"')
+  elif [[ "$publish_sdk" != true ]]; then
     wait_for_crate rho-sdk "$sdk_version"
   fi
-  echo "Validating rho-coding-agent ${app_version} at ${sha}"
-  cargo publish --dry-run --locked -p rho-coding-agent
+  publish_crate rho-agent-tools "$tools_version" "${tools_validation_flags[@]}"
+fi
+
+if [[ "$publish_providers" == true ]]; then
+  providers_validation_flags=()
   if [[ "$dry_run" == true ]]; then
-    echo "Dry-run complete for rho-coding-agent"
-  elif crate_already_published rho-coding-agent "$app_version"; then
-    echo "rho-coding-agent@${app_version} already published; reusing existing crate"
+    providers_validation_flags+=(
+      --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
+    )
   else
-    echo "Publishing rho-coding-agent ${app_version}"
-    cargo publish "${publish_flags[@]}" -p rho-coding-agent
-    wait_for_crate rho-coding-agent "$app_version"
+    if [[ "$publish_sdk" != true ]]; then
+      wait_for_crate rho-sdk "$sdk_version"
+    fi
+    if [[ "$publish_tools" != true ]]; then
+      wait_for_crate rho-agent-tools "$tools_version"
+    fi
   fi
+  publish_crate rho-providers "$providers_version" "${providers_validation_flags[@]}"
+fi
+
+if [[ "$publish_app" == true ]]; then
+  app_validation_flags=()
+  if [[ "$dry_run" == true ]]; then
+    app_validation_flags+=(
+      --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+      --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
+      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
+    )
+  elif [[ "$publish_sdk" != true ]]; then
+    wait_for_crate rho-sdk "$sdk_version"
+  fi
+  publish_crate rho-coding-agent "$app_version" "${app_validation_flags[@]}"
 fi
 
 echo "Workspace crate publication finished for ${sha}"

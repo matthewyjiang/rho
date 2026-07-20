@@ -63,12 +63,16 @@ release_has_assets() {
   archive="$1"
   checksum="$2"
   awk -v archive="$archive" -v checksum="$checksum" '
-    $0 ~ /"name"[[:space:]]*:/ {
+    {
       line=$0
-      sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", line)
-      sub(/".*$/, "", line)
-      if (line == archive) have_archive=1
-      if (line == checksum) have_checksum=1
+      while (match(line, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        name=substr(line, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*"/, "", name)
+        sub(/"$/, "", name)
+        if (name == archive) have_archive=1
+        if (name == checksum) have_checksum=1
+        line=substr(line, RSTART + RLENGTH)
+      }
     }
     END { exit(have_archive && have_checksum ? 0 : 1) }
   '
@@ -96,20 +100,24 @@ release_tag() {
             exit
           }
         }
-        /"tag_name"[[:space:]]*:/ {
-          select_release()
-          tag=$0
-          sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
-          sub(/".*$/, "", tag)
-          have_archive=0
-          have_checksum=0
-        }
-        /"name"[[:space:]]*:/ {
-          name=$0
-          sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", name)
-          sub(/".*$/, "", name)
-          if (name == archive) have_archive=1
-          if (name == checksum) have_checksum=1
+        {
+          line=$0
+          while (match(line, /"(tag_name|name)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+            field=substr(line, RSTART, RLENGTH)
+            value=field
+            sub(/^[^:]*:[[:space:]]*"/, "", value)
+            sub(/"$/, "", value)
+            if (field ~ /^"tag_name"/) {
+              select_release()
+              tag=value
+              have_archive=0
+              have_checksum=0
+            } else {
+              if (value == archive) have_archive=1
+              if (value == checksum) have_checksum=1
+            }
+            line=substr(line, RSTART + RLENGTH)
+          }
         }
         END { if (!found) select_release() }
       ')"
@@ -147,6 +155,7 @@ asset_url() {
   printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$tag" "$asset"
 }
 
+# Installer entry point. Function-only tests source the lines above this marker.
 need_cmd uname
 need_cmd mktemp
 need_cmd tar

@@ -5,25 +5,28 @@ use std::{
     sync::Arc,
 };
 
-use rho_sdk::{
-    CapabilityRequest, PolicyDecision, SessionOptions, SystemPrompt, UserInput, Workspace,
-    WorkspacePolicy,
-};
+use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
-use crate::{
-    cli::Command,
-    config::Config,
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    herdr::{HerdrReporter, HerdrState},
-    prompt,
-    providers::build_automation_provider,
-    subagent::{self, Preset, RunState, RunStatus},
-    tools::sdk_registry::{AppToolSet, ToolSetOptions},
-    tui::AttachmentWriter,
+use {
+    crate::agent::{PromptPolicy, ToolCapability},
+    crate::cli::Command,
+    crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::{HerdrReporter, HerdrState},
+    crate::prompt,
+    crate::subagent::{self, RunState, RunStatus},
+    crate::tools::{
+        agent::BackgroundSubagents,
+        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
+    },
+    crate::tui::AttachmentWriter,
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::providers::build_automation_provider,
 };
 
 use super::{
+    agent_binding::BoundAgent,
+    policy::AppPolicy,
     runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions},
     sdk_config::SdkBootstrapOptions,
 };
@@ -89,7 +92,9 @@ pub(super) struct Startup<'a> {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
-    pub preset: Option<Preset>,
+    pub usage_purpose: &'static str,
+    pub parent_session_id: Option<rho_sdk::SessionId>,
+    pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
@@ -114,13 +119,20 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .map(|path| {
             RunReporter::new(
                 path.clone(),
-                startup.preset.as_ref().map(|preset| preset.name.clone()),
+                RunArtifactIdentity {
+                    agent_id: startup.agent.id().to_string(),
+                    agent_fingerprint: startup.agent.fingerprint().to_string(),
+                    provider: startup.config.provider.clone(),
+                    model: startup.config.model.clone(),
+                },
                 startup.cwd.clone(),
                 &prompt_text,
+                /* stream_output */ true,
+                None,
             )
         })
         .transpose()?;
-    let result = run_session(prompt_text, &startup, reporter.as_mut()).await;
+    let result = run_session(prompt_text, &startup, reporter.as_mut(), None).await;
     if let Some(reporter) = reporter.as_mut() {
         reporter.finish(&result);
     }
@@ -136,56 +148,61 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     Ok(())
 }
 
-async fn run_session(
+pub(crate) async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
     reporter: Option<&mut RunReporter>,
+    cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
-    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let subagents_enabled = startup.config.enable_subagents && !startup.no_subagents;
-    let mut tool_set = if startup.no_tools {
+    let mut capabilities = startup.agent.capabilities().clone();
+    if startup.no_subagents {
+        capabilities.remove(&ToolCapability::Agent);
+        capabilities.remove(&ToolCapability::Agents);
+    }
+    let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
+    let delegation_enabled =
+        launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
+    let tool_set = if startup.no_tools {
         AppToolSet::disabled()
     } else {
-        let subagents = subagents_enabled.then(|| startup.cwd.clone());
-        AppToolSet::new(
-            startup.config,
-            startup.diagnostics.clone(),
-            ToolSetOptions::default()
-                .subagents(subagents)
-                .subagent_config_path(startup.config_path.clone()),
-        )
+        let mut options = ToolSetOptions::new(capabilities);
+        if delegation_enabled {
+            options = options.delegation(DelegationConfig::new(
+                startup.cwd.clone(),
+                startup.config_path.clone(),
+                BackgroundSubagents::Disabled,
+            ));
+        }
+        AppToolSet::new(startup.config, startup.diagnostics.clone(), options)
     };
-    if let Some(allowed) = startup
-        .preset
-        .as_ref()
-        .and_then(|preset| preset.tools.as_ref())
-    {
-        // The preset's tool list is the subagent's permission boundary:
-        // anything not listed is never registered, so it cannot run.
-        tool_set.retain_named(allowed);
-    }
     let tool_specs = tool_set.specs();
     let system_prompt = if startup.no_system_prompt {
         startup.diagnostics.update_prompt_sources(Vec::new());
         SystemPrompt::None
     } else {
-        let system_prompt = prompt::system_prompt(&tool_specs, &startup.cwd);
-        startup
-            .diagnostics
-            .update_prompt_sources(system_prompt.sources);
-        let mut text = system_prompt.text;
-        if !subagents_enabled {
-            prompt::append_subagents_disabled_instruction(&mut text);
-        }
-        if let Some(preset) = &startup.preset {
-            if !preset.prompt.is_empty() {
-                text.push_str("\n\n# Subagent instructions\n\n");
-                text.push_str(&preset.prompt);
+        let mut text = match startup.agent.prompt() {
+            PromptPolicy::Replace(text) => text.clone(),
+            PromptPolicy::Extend(extra) => {
+                let built = prompt::system_prompt(&tool_specs, &startup.cwd);
+                startup.diagnostics.update_prompt_sources(built.sources);
+                let mut text = built.text;
+                if !launch_delegation_enabled {
+                    prompt::append_subagents_disabled_instruction(&mut text);
+                }
+                if !extra.is_empty() {
+                    text.push_str("\n\n# Agent instructions\n\n");
+                    text.push_str(extra);
+                }
+                text
             }
+        };
+        if text.is_empty() {
+            text = "You are a coding agent.".into();
         }
         SystemPrompt::Custom(text)
     };
@@ -195,23 +212,31 @@ async fn run_session(
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
+    let usage_recording = crate::usage::default_recording().await;
     let runtime = build_runtime(RuntimeBuildOptions {
         provider,
         tools: tool_set.tools(),
         workspace,
-        workspace_policy: AutomationWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+        approval_handler: None,
         system_prompt,
         reasoning: sdk_options.runtime.reasoning,
         compaction,
         context_window,
+        usage_purpose: startup.usage_purpose,
+        usage_parent_session_id: startup.parent_session_id.clone(),
+        usage_recording,
     })?;
     let session = runtime.session(SessionOptions::default()).await?;
+    if let Some(manager) = tool_set.subagents() {
+        manager.set_session(session.id().to_string());
+    }
 
     startup
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
-    let result = complete_run(&session, prompt_text, reporter).await;
+    let result = complete_run(&session, prompt_text, reporter, cancellation).await;
 
     runtime.shutdown();
     tool_set.shutdown().await;
@@ -228,12 +253,11 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     reporter: Option<&mut RunReporter>,
+    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
-    let cancel_file = reporter
-        .as_ref()
-        .map(|reporter| reporter.cancel_file.clone());
+    let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
         outcome = drive_headless_run(&mut run, reporter) => outcome,
         signal = shutdown_signal() => {
@@ -242,8 +266,7 @@ async fn complete_run(
             let _ = run.outcome().await;
             Err(AutomationInterrupted::new(signal).into())
         }
-        cancelled = wait_for_cancel_request(cancel_file) => {
-            cancelled?;
+        () = external_cancellation.cancelled() => {
             cancellation.cancel();
             let _ = run.outcome().await;
             Err(SubagentCancelled.into())
@@ -290,13 +313,21 @@ async fn drive_headless_run(
     Ok(run.outcome().await?)
 }
 
+pub(crate) struct RunArtifactIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) agent_fingerprint: String,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+}
+
 /// Maintains the `--output-file` status contract for subagent runs and
 /// streams progress to stdout so a watching pane shows live activity.
-struct RunReporter {
+pub(crate) struct RunReporter {
     path: PathBuf,
-    cancel_file: PathBuf,
     status: RunStatus,
     attachment: Option<AttachmentWriter>,
+    stream_output: bool,
+    status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     last_write: std::time::Instant,
 }
 
@@ -307,21 +338,20 @@ const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10)
 const LAST_TEXT_BYTES: usize = 400;
 
 impl RunReporter {
-    fn new(
+    pub(crate) fn new(
         path: PathBuf,
-        preset: Option<String>,
+        identity: RunArtifactIdentity,
         cwd: PathBuf,
         prompt: &str,
+        stream_output: bool,
+        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let cancel_file = subagent::cancel_file_for(&path);
-        match std::fs::remove_file(&cancel_file) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
         let status = RunStatus {
             state: RunState::Starting,
-            preset,
+            agent_id: Some(identity.agent_id),
+            agent_fingerprint: Some(identity.agent_fingerprint),
+            provider: Some(identity.provider),
+            model: Some(identity.model),
             ..RunStatus::default()
         };
         subagent::write_status(&path, &status)?;
@@ -333,18 +363,20 @@ impl RunReporter {
                 subagent::write_status(&path, &status)?;
                 return Ok(Self {
                     path,
-                    cancel_file,
                     status,
                     attachment: None,
+                    stream_output,
+                    status_tx,
                     last_write: std::time::Instant::now(),
                 });
             }
         };
         Ok(Self {
             path,
-            cancel_file,
             status,
             attachment,
+            stream_output,
+            status_tx,
             last_write: std::time::Instant::now(),
         })
     }
@@ -381,6 +413,12 @@ impl RunReporter {
                 self.stream(text);
                 self.write_throttled();
             }
+            RunEvent::ProviderStreamReset { .. } => {
+                self.status.last_activity = Some("retrying provider response".into());
+                self.status.last_text = None;
+                self.stream("\n[provider response discarded; retrying]\n");
+                self.write();
+            }
             RunEvent::UsageUpdated { usage } => {
                 self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
                 self.status.output_tokens = usage.output_tokens.unwrap_or(0);
@@ -389,7 +427,7 @@ impl RunReporter {
         }
     }
 
-    fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
+    pub(crate) fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
         match result {
             Ok(outcome) => {
                 self.status.state = RunState::Ok;
@@ -417,6 +455,9 @@ impl RunReporter {
     }
 
     fn stream(&self, text: &str) {
+        if !self.stream_output {
+            return;
+        }
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
@@ -430,23 +471,10 @@ impl RunReporter {
 
     fn write(&mut self) {
         self.last_write = std::time::Instant::now();
-        let _ = subagent::write_status(&self.path, &self.status);
-    }
-}
-
-const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
-async fn wait_for_cancel_request(cancel_file: Option<PathBuf>) -> io::Result<()> {
-    let Some(cancel_file) = cancel_file else {
-        return std::future::pending().await;
-    };
-    loop {
-        match tokio::fs::metadata(&cancel_file).await {
-            Ok(_) => return Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        if let Some(status_tx) = &self.status_tx {
+            status_tx.send_replace(self.status.clone());
         }
-        tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
+        let _ = subagent::write_status(&self.path, &self.status);
     }
 }
 
@@ -478,15 +506,6 @@ async fn shutdown_signal() -> io::Result<ShutdownSignal> {
 async fn shutdown_signal() -> io::Result<ShutdownSignal> {
     tokio::signal::ctrl_c().await?;
     Ok(ShutdownSignal::Interrupt)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct AutomationWorkspacePolicy;
-
-impl WorkspacePolicy for AutomationWorkspacePolicy {
-    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
-        PolicyDecision::Allow
-    }
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {

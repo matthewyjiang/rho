@@ -1,6 +1,16 @@
 # OpenAI
 
-OpenAI uses API-key auth (`provider = "openai"`, `auth = "api-key"`). For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+OpenAI uses API-key auth. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+
+## At a glance
+
+| Setting | Value |
+| --- | --- |
+| Provider | `openai` |
+| Auth | `api-key` |
+| Environment override | `OPENAI_API_KEY` |
+| API base | `https://api.openai.com/v1` |
+| Model list | Refreshable after authentication |
 
 ## Sign in
 
@@ -28,17 +38,19 @@ Environment variables are CI/development escape hatches and override stored cred
 
 ## Models
 
-OpenAI can refresh its provider model list with `/refresh-model-list openai`. Switch to an OpenAI model with:
+OpenAI can refresh its provider model list through **Refresh model lists** in `/config`. Switch to an OpenAI model with:
 
 ```text
 /model openai/gpt-5.6-sol
 ```
 
-Or from the CLI, which also updates the persistent default:
+For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider openai --auth api-key --model gpt-5.6-sol
+rho --provider openai --auth api-key --model gpt-5.6-sol run "hello"
 ```
+
+Provide `OPENAI_API_KEY` in the automation environment or log in once through the TUI so Rho can read the stored key.
 
 ## Notes
 

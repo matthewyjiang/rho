@@ -1,10 +1,21 @@
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
-use crate::{
-    config::Config,
-    credentials::{
+use super::{
+    model_picker, provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone,
+    PickerItem, UiPicker,
+};
+use {
+    crate::config::Config,
+    crate::permission::PermissionMode,
+    rho_providers::credentials::{
         load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
     },
 };
+pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
+pub(super) const TITLE_MODEL_VALUE: &str = "title_model";
+pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
+pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
+pub(super) const PROVIDER_LOGOUT_VALUE: &str = "provider_logout";
+pub(super) const PERMISSION_MODE_VALUE: &str = "permission_mode";
+pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
@@ -23,23 +34,85 @@ pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key"
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 
-pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker {
-    UiPicker::new(
-        "Config",
-        "type regex filter, enter change, esc cancel",
-        vec![
+/// Badge for the conversation model, shown as `alias → provider/model` when
+/// the selection came from a user-defined alias so the mapping is never hidden.
+fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> String {
+    let current = format!("{}/{}", info.provider, info.model);
+    match config.current_model_alias() {
+        Some(alias) if config.provider == info.provider && config.model == info.model => {
+            format!("{alias} → {current}")
+        }
+        _ => current,
+    }
+}
+
+pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
+    let reasoning_capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+        &info.provider,
+        &info.model,
+    );
+    let mut items = vec![
+            PickerItem {
+                label: "Conversation model".into(),
+                detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: conversation_model_badge(info, config),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: CONVERSATION_MODEL_VALUE.into(),
+            },
+            PickerItem {
+                label: "Session title model".into(),
+                detail: Some("Model used to generate session titles. Enter to choose a model.".into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: format!(
+                        "{}/{}",
+                        info.title_provider.as_deref().unwrap_or(&info.provider),
+                        info.title_model.as_deref().unwrap_or(&info.model)
+                    ),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: TITLE_MODEL_VALUE.into(),
+            },
+            PickerItem {
+                label: "Refresh model lists".into(),
+                detail: Some("Refresh cached models from configured API providers.".into()),
+                preview: None,
+                badge: None,
+                value: REFRESH_MODEL_LIST_VALUE.into(),
+            },
+            PickerItem {
+                label: "Log in to provider".into(),
+                detail: Some("Add or replace provider credentials.".into()),
+                preview: None,
+                badge: None,
+                value: PROVIDER_LOGIN_VALUE.into(),
+            },
+            PickerItem {
+                label: "Log out of provider".into(),
+                detail: Some("Delete stored provider credentials.".into()),
+                preview: None,
+                badge: None,
+                value: PROVIDER_LOGOUT_VALUE.into(),
+            },
+            PickerItem {
+                label: "Permission mode".into(),
+                detail: Some(permission_mode_description(info.permission_mode).into()),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: info.permission_mode.label().into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: PERMISSION_MODE_VALUE.into(),
+            },
             PickerItem {
                 label: "Reasoning".into(),
                 detail: Some(format!(
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
-                    info.reasoning.next_supported(
-                        crate::model::models_dev::cached_reasoning_levels(
-                            &info.provider,
-                            &info.model,
-                        )
-                        .as_deref(),
-                    )
+                    reasoning_capabilities.next_level(info.reasoning)
                 )),
                 preview: None,
                 badge: Some(PickerBadge {
@@ -80,7 +153,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 value: CHECK_FOR_UPDATES_VALUE.into(),
             },
             PickerItem {
-                label: "Enable subagents".into(),
+                label: "Enable delegation".into(),
                 detail: Some(
                     "Controls whether agent tools are available. Applies next session.".into(),
                 ),
@@ -180,9 +253,49 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 }),
                 value: WEB_SEARCH_VALUE.into(),
             },
-        ],
+        ];
+    if reasoning_capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+        items.retain(|item| item.value != REASONING_VALUE);
+    }
+    UiPicker::new(
+        "Config",
+        "type regex filter, enter change, esc cancel",
+        items,
         PickerAction::Config,
     )
+}
+
+pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
+    UiPicker::new(
+        "Permission mode",
+        "enter select, esc back",
+        [
+            PermissionMode::Auto,
+            PermissionMode::Plan,
+            PermissionMode::Supervised,
+        ]
+        .into_iter()
+        .map(|candidate| PickerItem {
+            label: candidate.label().into(),
+            detail: Some(permission_mode_description(candidate).into()),
+            preview: None,
+            badge: (candidate == mode).then_some(PickerBadge {
+                text: "selected".into(),
+                tone: PickerBadgeTone::Selected,
+            }),
+            value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
+        })
+        .collect(),
+        PickerAction::Config,
+    )
+}
+
+fn permission_mode_description(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Auto => "No permission checks.",
+        PermissionMode::Plan => "Investigate only; writes and processes are denied.",
+        PermissionMode::Supervised => "Ask before writes and processes.",
+    }
 }
 
 pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
@@ -301,6 +414,91 @@ fn web_search_api_key_is_set(
         .as_deref()
         .or(legacy)
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+impl App {
+    pub(super) fn open_config_conversation_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+            ));
+            self.status = "config".into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select model".into();
+        }
+    }
+
+    pub(super) fn open_config_conversation_model_picker_during_turn(&mut self) {
+        self.refresh_available_auths();
+        let picker = model_picker::model_picker_during_run(
+            &self.info.runtime,
+            self.pending_model_selection.as_ref(),
+            &self.available_auths,
+        );
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. refresh model lists after the current turn ends.".into(),
+            ));
+            self.status = "running".into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select model for next turn".into();
+        }
+    }
+
+    pub(super) fn open_config_title_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let (provider, model, _auth) = self.title_model_selection();
+        let picker = model_picker::title_model_picker(
+            &provider,
+            &model,
+            &self.info.runtime.favorite_models,
+            &self.available_auths,
+        );
+        if picker.items.is_empty() {
+            self.insert_entry(&Entry::Notice(
+                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+            ));
+            self.status = if self.running { "running" } else { "config" }.into();
+        } else {
+            self.open_child_picker(picker);
+            self.status = "select title model".into();
+        }
+    }
+
+    pub(super) fn open_config_refresh_model_picker(&mut self) {
+        self.refresh_available_auths();
+        let picker = provider_picker::refresh_model_list_picker(&self.available_auths);
+        self.open_child_picker(picker);
+        self.status = "select provider to refresh".into();
+    }
+
+    pub(super) fn open_config_login_picker(&mut self) {
+        self.open_child_picker(provider_picker::login_group_picker());
+        self.status = "select provider to login".into();
+    }
+
+    pub(super) fn open_config_logout_picker(&mut self) {
+        match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
+            Ok(picker) if picker.items.is_empty() => {
+                self.insert_entry(&Entry::Notice(
+                    "no stored provider credentials to delete".into(),
+                ));
+                self.status = "config".into();
+            }
+            Ok(picker) => {
+                self.open_child_picker(picker);
+                self.status = "select provider to logout".into();
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "provider credentials unavailable".into();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

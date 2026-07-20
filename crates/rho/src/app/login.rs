@@ -1,10 +1,9 @@
-use crate::{
-    auth::{codex_oauth, github_copilot_device, xai_oauth},
-    credentials::{
-        save_codex_tokens, save_github_copilot_tokens, save_xai_tokens, OsCredentialStore,
+use {
+    rho_providers::auth::login_dispatch::{
+        AuthenticationMethod, OAuthMode, OAuthUserAction, ProviderAuthentication,
     },
-    model::catalog,
-    provider::{self, ProviderAuthKind},
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::model::catalog,
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
@@ -14,62 +13,43 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             catalog::implemented_providers().join(", ")
         );
     };
-    let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
-        anyhow::bail!("unsupported login provider '{}'", target.provider);
-    };
-    let store = OsCredentialStore;
+    if let AuthenticationMethod::ApiKey { entry_label } =
+        ProviderAuthentication::method(&target.provider)?
+    {
+        anyhow::bail!(
+            "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
+        );
+    }
 
-    match descriptor.auth_kind {
-        ProviderAuthKind::CodexOAuth { .. } => {
-            let tokens = if device_auth {
-                let login = codex_oauth::start_codex_device_login().await?;
-                eprintln!(
-                    "Codex login: visit {} and enter code {}",
-                    login.verification_uri, login.user_code
-                );
-                codex_oauth::complete_codex_device_login(login).await?
-            } else {
-                eprintln!("Opening browser for Codex login. On a remote or headless session, use `rho login openai-codex --device-auth` instead.");
-                codex_oauth::run_codex_oauth_flow().await?
-            };
-            save_codex_tokens(&store, &tokens)?;
-        }
-        ProviderAuthKind::GithubCopilotDevice { .. } => {
-            let login = github_copilot_device::start_github_copilot_device_login().await?;
+    let mode = if device_auth {
+        OAuthMode::Device
+    } else {
+        OAuthMode::Browser
+    };
+    let login = ProviderAuthentication::start_oauth(&target.provider, mode).await?;
+    match &login.user_action {
+        OAuthUserAction::BrowserOpened => {
             eprintln!(
-                "GitHub Copilot login: visit {} and enter code {}",
-                login.verification_uri, login.user_code
+                "Opening browser for {} login. On a remote or headless session, use `rho login {} --device-auth` instead.",
+                login.provider_label, target.provider
             );
-            if let Some(uri) = &login.verification_uri_complete {
+        }
+        OAuthUserAction::DeviceCode {
+            verification_uri,
+            user_code,
+            verification_uri_complete,
+        } => {
+            eprintln!(
+                "{} login: visit {verification_uri} and enter code {user_code}",
+                login.provider_label
+            );
+            if let Some(uri) = verification_uri_complete {
                 eprintln!("Or open this URL to continue: {uri}");
             }
-            let tokens = github_copilot_device::complete_github_copilot_device_login(login).await?;
-            save_github_copilot_tokens(&store, &tokens)?;
-        }
-        ProviderAuthKind::XaiOAuth { .. } => {
-            let tokens = if device_auth {
-                let login = xai_oauth::start_xai_device_login().await?;
-                eprintln!(
-                    "xAI login: visit {} and enter code {}",
-                    login.verification_uri, login.user_code
-                );
-                if let Some(uri) = &login.verification_uri_complete {
-                    eprintln!("Or open this URL to continue: {uri}");
-                }
-                xai_oauth::complete_xai_device_login(login).await?
-            } else {
-                eprintln!("Opening browser for xAI login. On a remote or headless session, use `rho login xai --device-auth` instead.");
-                xai_oauth::run_xai_oauth_flow().await?
-            };
-            save_xai_tokens(&store, &tokens)?;
-        }
-        ProviderAuthKind::ApiKey { entry_label, .. } => {
-            anyhow::bail!(
-                "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
-            );
         }
     }
 
+    login.completion.await?.save(&OsCredentialStore)?;
     eprintln!("Successfully logged in to {}", target.provider);
     Ok(())
 }

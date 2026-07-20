@@ -1,15 +1,27 @@
-use crate::{
-    app::interactive_presenter::InteractiveToolPresenter,
-    questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
-    tool::ToolDisplayStyle,
-};
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH,
+    PROVIDER_ACTIVITY_REQUEST_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,
+};
+use {
+    crate::app::interactive_presenter::InteractiveToolPresenter,
+    crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
+    rho_tools::tool::ToolDisplayStyle,
 };
 
-use super::questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest};
+use super::{
+    activity::ActivityPhase,
+    questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
+};
+
+pub(super) const COMPACTION_STARTED_NOTICE: &str = "compacting conversation context";
+
+pub(super) fn compaction_completed_notice(
+    previous_messages: usize,
+    current_messages: usize,
+) -> String {
+    format!("compacted conversation context ({previous_messages} to {current_messages} messages)")
+}
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -20,6 +32,12 @@ pub(super) enum ViewModelEvent {
         display_lines: Vec<String>,
     },
     ProviderStreamReset,
+    ProviderRetry,
+    CompactionStarted,
+    CompactionCompleted {
+        previous_messages: usize,
+        current_messages: usize,
+    },
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
@@ -34,7 +52,28 @@ pub(super) enum ViewModelEvent {
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
+        image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
+}
+
+impl ViewModelEvent {
+    pub(super) fn activity_phase(&self) -> Option<ActivityPhase> {
+        match self {
+            Self::RunStarted | Self::ToolFinished { .. } | Self::CompactionCompleted { .. } => {
+                Some(ActivityPhase::Starting)
+            }
+            Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
+            Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
+            Self::ToolCallUpdated { .. } => Some(ActivityPhase::PreparingTool),
+            Self::ProviderStreamReset | Self::ProviderRetry => {
+                Some(ActivityPhase::RetryingProvider)
+            }
+            Self::OutputDelta(_) => Some(ActivityPhase::Responding),
+            Self::ReasoningDelta(_) => Some(ActivityPhase::Thinking),
+            Self::CompactionStarted => Some(ActivityPhase::Compacting),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -117,33 +156,45 @@ impl SdkEventAdapter {
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
+                    image_asset: presented.image_asset,
                 })
             }
             RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
             RunEvent::ProviderActivity { kind, detail } => {
-                if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
-                    self.presenter().step_started();
-                    ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
-                } else if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
+                if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
+                        image_asset: None,
                     })
+                } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
+                    // The following typed reset event drives current hosts.
+                    ViewEvent::Ignored
+                } else if kind == PROVIDER_ACTIVITY_REQUEST_RETRY {
+                    ViewEvent::Update(ViewModelEvent::ProviderRetry)
                 } else {
                     ViewEvent::Notice(format!("{kind}: {detail}"))
                 }
             }
+            RunEvent::ProviderStreamReset { .. } => {
+                self.presenter().step_started();
+                ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+            }
             RunEvent::ProviderContextUpdated { .. } => ViewEvent::Ignored,
+            RunEvent::ProviderDiagnostic { detail } => {
+                ViewEvent::Notice(format!("provider diagnostic:\n{}", detail.as_str()))
+            }
             RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire(request),
             RunEvent::CompactionStarted { .. } => {
-                ViewEvent::Notice("compacting conversation context".into())
+                ViewEvent::Update(ViewModelEvent::CompactionStarted)
             }
-            RunEvent::CompactionCompleted { outcome, .. } => ViewEvent::Notice(format!(
-                "compacted conversation context ({} to {} messages)",
-                outcome.previous_messages(),
-                outcome.current_messages()
-            )),
+            RunEvent::CompactionCompleted { outcome, .. } => {
+                ViewEvent::Update(ViewModelEvent::CompactionCompleted {
+                    previous_messages: outcome.previous_messages(),
+                    current_messages: outcome.current_messages(),
+                })
+            }
             RunEvent::Completed { .. } => ViewEvent::Completed,
             RunEvent::Cancelled { .. } => ViewEvent::Cancelled,
             RunEvent::Failed { message, .. } => ViewEvent::Failed(message),
@@ -168,6 +219,7 @@ pub(super) fn questionnaire_request(request: &HostInputRequest) -> Questionnaire
                 QuestionnaireQuestion {
                     id: question.id().to_string(),
                     question: question.prompt().to_string(),
+                    header: question.header_text().map(str::to_string),
                     help: question.help_text().map(str::to_string),
                     default: question.default_value_ref().cloned(),
                     kind: questionnaire_kind(question),

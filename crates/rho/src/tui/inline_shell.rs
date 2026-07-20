@@ -279,7 +279,7 @@ impl super::App {
             self.status = "enter a shell command after ! or !!".into();
             return Ok(());
         }
-        let config = self.info.config_repository.load()?;
+        let config = self.info.services.config_repository.load()?;
         let shell = if config.inline_shell.trim().is_empty() {
             default_shell()
         } else {
@@ -294,7 +294,7 @@ impl super::App {
             },
             command
         ));
-        let cwd = self.info.cwd.clone();
+        let cwd = self.info.runtime.cwd.clone();
         let task_shell = shell.clone();
         let task_command = command.clone();
         let (updates_tx, updates_rx) = mpsc::unbounded_channel();
@@ -332,10 +332,11 @@ impl super::App {
             self.insert_entry(&super::Entry::Tool(super::ToolEntry {
                 state: super::ToolEntryState::Finished {
                     ok: false,
-                    display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+                    display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
                 },
                 display_lines: display_lines(&output, task.mode.included_in_context()),
                 expanded: true,
+                image: None,
             }));
         }
         self.status = "inline shell cancelled".into();
@@ -382,8 +383,11 @@ impl super::App {
         if task.mode.included_in_context() {
             self.deferred_inline_shell_context
                 .push(DeferredShellContext {
-                    context: crate::tool::truncate(context_text(&output), task.max_output_bytes),
-                    persisted_display: crate::tool::truncate(
+                    context: rho_tools::tool::truncate(
+                        context_text(&output),
+                        task.max_output_bytes,
+                    ),
+                    persisted_display: rho_tools::tool::truncate(
                         format!(
                             "!{}\n\n{}",
                             output.command,
@@ -393,7 +397,7 @@ impl super::App {
                     ),
                 });
         }
-        let display_text = crate::tool::truncate(
+        let display_text = rho_tools::tool::truncate(
             display_text(&output, task.mode.included_in_context()),
             task.max_output_bytes,
         );
@@ -401,10 +405,11 @@ impl super::App {
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
             state: super::ToolEntryState::Finished {
                 ok: output.ok,
-                display_style: crate::tool::ToolDisplayStyle::file_or_command(),
+                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
             },
             display_lines: display_text.lines().map(str::to_string).collect(),
             expanded: true,
+            image: None,
         }));
         self.statusline.refresh_git_branch();
         self.status = if output.ok {
@@ -455,15 +460,6 @@ impl super::App {
         self.input_cursor = 0;
         self.clamp_command_selection();
     }
-
-    pub(super) fn inline_shell_picker_is_open(&self) -> bool {
-        matches!(
-            &self.composer,
-            super::ComposerMode::Picker(picker)
-                if picker.action == super::PickerAction::Config
-                    && picker.items.iter().any(|item| item.value.starts_with(super::config_picker::INLINE_SHELL_PREFIX))
-        )
-    }
 }
 
 impl PendingShellTask {
@@ -492,6 +488,7 @@ impl PendingShellTask {
             state: super::ToolEntryState::Running,
             display_lines: display_lines(&output, self.mode.included_in_context()),
             expanded: true,
+            image: None,
         }
     }
 }

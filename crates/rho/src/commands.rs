@@ -6,14 +6,13 @@ pub enum CommandId {
     Login,
     Logout,
     Model,
-    TitleModel,
-    RefreshModelList,
     Resume,
     Config,
     Info,
     Compact,
     Goal,
     Skills,
+    Agents,
     Diff,
     Doctor,
     Limits,
@@ -94,20 +93,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
-        id: CommandId::TitleModel,
-        name: "title-model",
-        usage: "/title-model [model]",
-        description: "show or switch session title model",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::RefreshModelList,
-        name: "refresh-model-list",
-        usage: "/refresh-model-list [provider]",
-        description: "refresh cached API provider models",
-        argument_choices: &[],
-    },
-    CommandSpec {
         id: CommandId::Resume,
         name: "resume",
         usage: "/resume [id]",
@@ -147,6 +132,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Agents,
+        name: "agents",
+        usage: "/agents",
+        description: "reload agents and show their details",
         argument_choices: &[],
     },
     CommandSpec {
@@ -363,6 +355,31 @@ mod tests {
         assert_eq!(invocation.id, CommandId::Goal);
         assert_eq!(invocation.name, "goal");
         assert_eq!(invocation.args, "all tests pass");
+    }
+
+    #[test]
+    fn configuration_commands_are_not_in_the_command_palette() {
+        for name in [
+            "title-model",
+            "refresh-model-list",
+            "auto",
+            "plan",
+            "supervised",
+        ] {
+            assert!(matching_commands(name).is_empty());
+            assert_eq!(
+                parse_command(&format!("/{name}")),
+                Err(CommandParseError::Unknown(name.into()))
+            );
+        }
+    }
+
+    #[test]
+    fn parses_agents_command() {
+        let invocation = parse_command("/agents").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Agents);
+        assert_eq!(invocation.args, "");
     }
 
     #[test]

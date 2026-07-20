@@ -23,11 +23,16 @@ pub enum ScenarioId {
     TerminalRestoration,
     PasteMultiline,
     Questionnaire,
+    SupervisedApproval,
     ProgressTool,
     RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
+    OpenConfigPicker,
+    OpenAgentsPicker,
+    LoginProviderGroups,
     GoalBlockedAndResumed,
+    BackgroundAgentAutoDelivery,
 }
 
 impl ScenarioId {
@@ -42,11 +47,16 @@ impl ScenarioId {
             Self::TerminalRestoration => "terminal_restoration",
             Self::PasteMultiline => "paste_multiline",
             Self::Questionnaire => "questionnaire",
+            Self::SupervisedApproval => "supervised_approval",
             Self::ProgressTool => "progress_tool",
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
+            Self::OpenConfigPicker => "open_config_picker",
+            Self::OpenAgentsPicker => "open_agents_picker",
+            Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
+            Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
         }
     }
 
@@ -61,11 +71,16 @@ impl ScenarioId {
             "terminal_restoration" => Some(Self::TerminalRestoration),
             "paste_multiline" => Some(Self::PasteMultiline),
             "questionnaire" => Some(Self::Questionnaire),
+            "supervised_approval" => Some(Self::SupervisedApproval),
             "progress_tool" => Some(Self::ProgressTool),
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
+            "open_config_picker" => Some(Self::OpenConfigPicker),
+            "open_agents_picker" => Some(Self::OpenAgentsPicker),
+            "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
+            "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
             _ => None,
         }
     }
@@ -129,7 +144,7 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::TypeText("draft while streaming"),
     Step::WaitText {
         text: "draft while streaming",
-        timeout: WaitTimeout::millis(500, "composer input during stream"),
+        timeout: WaitTimeout::secs(2, "composer input during stream"),
     },
     Step::Key(Key::Esc),
     Step::WaitQuiet {
@@ -280,6 +295,10 @@ const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("return_bottom"),
     Step::Key(Key::Ctrl('g')),
     Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
+    },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(250),
         timeout: SETTLE,
@@ -306,7 +325,23 @@ const PASTE_MULTILINE_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("paste"),
+    Step::Phase("delete_collapsed_paste"),
+    Step::Paste("discard one\ndiscard two\ndiscard three"),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Backspace),
+    Step::SubmitText("fixture stream"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "part two",
+        timeout: STREAM,
+    },
+    Step::Phase("submit_multiline_paste"),
     Step::Paste("line one\n/not-a-command\nline three"),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
@@ -335,6 +370,83 @@ const QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "questionnaire response observed exactly 1 time",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("enable_supervised_mode"),
+    Step::SubmitText("/config"),
+    Step::WaitText {
+        text: "Permission mode",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "◇ Supervised",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "permission mode: supervised",
+        timeout: SETTLE,
+    },
+    Step::Phase("inspect_long_process_approval"),
+    Step::SubmitText("fixture approval long"),
+    Step::WaitText {
+        text: "bash wants to execute",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "DANGEROUS_SUFFIX_INSPECTABLE",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Allow for session",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "pgup/pgdn details",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::PageUp),
+    Step::WaitText {
+        text: "output limit:",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::PageDown),
+    Step::WaitText {
+        text: "DANGEROUS_SUFFIX_INSPECTABLE",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
+    },
+    Step::Phase("continue_session"),
+    Step::SubmitText("fixture stream"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "part two",
         timeout: STREAM,
     },
     Step::ExitCommand,
@@ -436,6 +548,122 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
+    Step::Phase("open_config"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/config"),
+    Step::WaitText {
+        text: "Conversation model",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Session title model"),
+    Step::AssertText("Refresh model lists"),
+    Step::AssertText("Log in to provider"),
+    Step::AssertText("Permission mode"),
+    Step::Phase("open_refresh_models"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "All configured providers",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "no refreshable providers are configured",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Conversation model",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
+const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "loaded agents",
+        timeout: SETTLE,
+    },
+    Step::AssertText("default"),
+    Step::AssertText("Rho's standard coding agent"),
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Read-only investigation",
+        timeout: SETTLE,
+    },
+    Step::AssertText("You are a read-only exploration subagent"),
+    Step::Resize { rows: 32, cols: 50 },
+    Step::WaitText {
+        text: "Read-only investigation",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
+const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
+    Step::Phase("open_group_picker"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("OpenAI"),
+    Step::AssertText("Anthropic"),
+    Step::AssertText("Moonshot AI"),
+    Step::AssertText("xAI"),
+    Step::Phase("open_openai_methods"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::AssertText("API Key"),
+    Step::AssertText("OAuth"),
+    Step::AssertText("Esc to back"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Esc to cancel"),
+    Step::Phase("close_group_picker"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Phase("single_method_provider"),
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Anthropic"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "enter Anthropic API key",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -488,6 +716,74 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
         text: "goal achieved",
         timeout: STREAM,
     },
+    Step::ExitCommand,
+];
+
+fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if screen.contains("\"agent_id\"")
+        || screen.contains("\"background\":true")
+        || screen.contains("\"action\":\"list\"")
+    {
+        anyhow::bail!("agent tool exposed raw JSON:\n{screen}");
+    }
+    Ok(())
+}
+
+const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("spawn_background_agent"),
+    Step::SubmitText("fixture background agent"),
+    Step::WaitText {
+        text: "● wor  starting",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "● worker  running in background",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "fixture stream",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_agent_tool_hides_raw_json),
+    // The fixture echoes the spawn receipt's first line, proving the tool
+    // resolved with a start line and the parent turn ended.
+    Step::WaitText {
+        text: "background agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "(worker) started in background",
+        timeout: STREAM,
+    },
+    Step::Phase("automatic_completion_delivery"),
+    // The fixture validates the notification's real payload (agent identity,
+    // terminal state, delegated result) and counts notification turns, so
+    // this asserts a well-formed, exactly-once delivery.
+    Step::WaitText {
+        text: "background agent completion received with delegated result (delivery 1)",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::Phase("list_agents"),
+    Step::SubmitText("fixture agents list"),
+    Step::WaitText {
+        text: "delegated agents",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "worker  completed",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_agent_tool_hides_raw_json),
     Step::ExitCommand,
 ];
 
@@ -558,6 +854,16 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "supervised_approval",
+            description: "Inspect and cancel a bounded supervised process approval",
+            size: PtySize {
+                rows: 14,
+                cols: 100,
+            },
+            steps: SUPERVISED_APPROVAL_STEPS,
+            smoke: true,
+        },
+        Scenario {
             id: "progress_tool",
             description: "Run the fixture progress tool to completion",
             size: DEFAULT_SIZE,
@@ -586,10 +892,39 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "open_config_picker",
+            description: "Open model and provider settings and browse model refresh options",
+            size: DEFAULT_SIZE,
+            steps: OPEN_CONFIG_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "open_agents_picker",
+            description: "Browse agent metadata and adapt the picker to a narrow terminal",
+            size: DEFAULT_SIZE,
+            steps: OPEN_AGENTS_PICKER_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "login_provider_groups",
+            description: "Group login providers and open readable authentication methods",
+            size: DEFAULT_SIZE,
+            steps: LOGIN_PROVIDER_GROUPS_STEPS,
+            smoke: false,
+        },
+        Scenario {
             id: "goal_blocked_and_resumed",
             description: "Pause a goal for user action, inspect it, then resume it",
             size: DEFAULT_SIZE,
             steps: GOAL_BLOCKED_AND_RESUMED_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "background_agent_auto_delivery",
+            description:
+                "Spawn a background agent, end the turn, and receive its completion automatically",
+            size: DEFAULT_SIZE,
+            steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
             smoke: false,
         },
     ]

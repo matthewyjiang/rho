@@ -4,151 +4,31 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    CompactionFuture, CompactionOutput, CompactionRequest, Compactor, HostChoice, HostInputRequest,
-    HostQuestion, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId, SelectionMode,
-    SessionId, SessionOptions, SystemPrompt, ToolCallId, UserInput, Workspace,
+    CompactionFuture, CompactionOutput, CompactionRequest, Compactor, PolicyDecision,
+    ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId, SessionId, SessionOptions,
+    SystemPrompt, UserInput, Workspace,
 };
 
 use super::{
-    active_run_disposition, begin_provider_switch, build_runtime, state_after_event,
-    ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime, InteractiveState,
-    InteractiveWorkspacePolicy, RunPhase, RuntimeBuildOptions,
+    build_runtime, InteractiveRunController, InteractiveRuntime, InteractiveSessionController,
+    ProviderController, RuntimeBuildOptions,
 };
 use crate::{
-    compaction::CompactionConfig, session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    agent::{AgentCapabilities, ToolCapability},
+    app::{
+        interactive_state::{state_after_event, InteractiveState},
+        policy::AppPolicy,
+    },
+    compaction::CompactionConfig,
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    permission::PermissionMode,
+    session::Session as StoredSession,
+    tools::{
+        agent::BackgroundSubagents,
+        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
+    },
 };
-
-fn questionnaire_event() -> RunEvent {
-    let question = HostQuestion::new(
-        "q1",
-        "continue?",
-        vec![HostChoice::new("yes", "Yes")],
-        SelectionMode::One,
-    )
-    .unwrap();
-    RunEvent::HostInputRequested {
-        request: HostInputRequest::questionnaire("confirm", vec![question]).unwrap(),
-    }
-}
-
-#[test]
-fn scripted_events_cover_model_tool_questionnaire_and_steering_states() {
-    let state = state_after_event(InteractiveState::Idle, &RunEvent::StepStarted { step: 1 });
-    assert_eq!(state, InteractiveState::Running(RunPhase::Model));
-
-    let state = state_after_event(
-        state,
-        &RunEvent::ToolStarted {
-            call_id: ToolCallId::from_string("call-1").unwrap(),
-            name: "questionnaire".into(),
-            metadata: Default::default(),
-        },
-    );
-    assert_eq!(state, InteractiveState::Running(RunPhase::Tool));
-
-    let state = state_after_event(state, &questionnaire_event());
-    assert_eq!(state, InteractiveState::WaitingForHostInput);
-
-    let steering = InteractiveState::Running(RunPhase::Steering);
-    assert_eq!(
-        state_after_event(
-            steering,
-            &RunEvent::AssistantTextDelta {
-                text: "still streaming".into(),
-            },
-        ),
-        steering
-    );
-    assert_eq!(
-        state_after_event(steering, &RunEvent::StepStarted { step: 2 }),
-        InteractiveState::Running(RunPhase::Model)
-    );
-}
-
-#[test]
-fn cancellation_wins_over_tool_questionnaire_and_compaction_events() {
-    let cancelling = InteractiveState::Cancelling(RunPhase::Tool);
-    assert_eq!(
-        state_after_event(cancelling, &questionnaire_event()),
-        cancelling
-    );
-    assert_eq!(
-        state_after_event(
-            cancelling,
-            &RunEvent::CompactionStarted {
-                trigger: rho_sdk::CompactionTrigger::Automatic,
-                message_count: 5,
-            },
-        ),
-        cancelling
-    );
-    assert_eq!(
-        state_after_event(cancelling, &RunEvent::StepStarted { step: 2 }),
-        cancelling
-    );
-    assert_eq!(
-        state_after_event(
-            cancelling,
-            &RunEvent::Cancelled {
-                revision: rho_sdk::Revision::INITIAL,
-            },
-        ),
-        InteractiveState::Completed
-    );
-}
-
-#[test]
-fn compaction_provider_switch_and_failure_are_explicit_states() {
-    assert_eq!(
-        state_after_event(
-            InteractiveState::Running(RunPhase::Model),
-            &RunEvent::CompactionStarted {
-                trigger: rho_sdk::CompactionTrigger::Automatic,
-                message_count: 8,
-            },
-        ),
-        InteractiveState::Compacting
-    );
-    assert_eq!(
-        state_after_event(
-            InteractiveState::Compacting,
-            &RunEvent::StepStarted { step: 2 },
-        ),
-        InteractiveState::Running(RunPhase::Model)
-    );
-    assert_eq!(
-        begin_provider_switch(InteractiveState::Idle).unwrap(),
-        InteractiveState::SwitchingProvider
-    );
-    assert!(begin_provider_switch(InteractiveState::Running(RunPhase::Tool)).is_err());
-    assert_eq!(
-        state_after_event(
-            InteractiveState::Running(RunPhase::Model),
-            &RunEvent::Failed {
-                message: "failed".into(),
-                retryability: Retryability::Permanent,
-            },
-        ),
-        InteractiveState::Failed
-    );
-}
-
-#[test]
-fn active_tool_commands_cancel_quit_reject_session_switch_and_defer_provider_replace() {
-    assert_eq!(
-        active_run_disposition(ActiveRunCommand::Quit),
-        ActiveRunDisposition::CancelAndWait
-    );
-    assert_eq!(
-        active_run_disposition(ActiveRunCommand::SwitchSession),
-        ActiveRunDisposition::RejectUntilFinished
-    );
-    assert_eq!(
-        active_run_disposition(ActiveRunCommand::ReplaceProvider),
-        ActiveRunDisposition::DeferUntilFinished
-    );
-}
 
 #[tokio::test]
 async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
@@ -170,7 +50,8 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         provider: shared_provider,
         tools: tools.tools(),
         workspace,
-        workspace_policy: InteractiveWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig {
@@ -179,6 +60,9 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
             target_percent: 1,
         },
         context_window: Some(1_000),
+        usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));
@@ -235,7 +119,8 @@ async fn set_context_window_installs_automatic_compaction_when_idle() {
     };
     assert_eq!(
         interactive
-            .session
+            .sessions
+            .session()
             .diagnostics()
             .compaction_trigger_tokens(),
         None
@@ -245,7 +130,8 @@ async fn set_context_window_installs_automatic_compaction_when_idle() {
 
     assert_eq!(
         interactive
-            .session
+            .sessions
+            .session()
             .diagnostics()
             .compaction_trigger_tokens(),
         Some(10)
@@ -272,17 +158,18 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
 
     assert_eq!(
         interactive
-            .session
+            .sessions
+            .session()
             .diagnostics()
             .compaction_trigger_tokens(),
         Some(1_600)
     );
     assert_eq!(
-        interactive.session.diagnostics().provider(),
+        interactive.sessions.session().diagnostics().provider(),
         &ModelIdentity::new("replacement", "test", "model")
     );
     assert_eq!(
-        interactive.session.reasoning_level(),
+        interactive.sessions.session().reasoning_level(),
         rho_sdk::ReasoningLevel::Low
     );
 }
@@ -299,11 +186,15 @@ async fn new_sessions_seed_prompt_cache_keys() {
         provider: Arc::clone(&provider) as Arc<dyn ModelProvider>,
         tools: tools.tools(),
         workspace: workspace.clone(),
-        workspace_policy: InteractiveWorkspacePolicy,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: None,
+        usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
     })
     .unwrap();
     let id = SessionId::new();
@@ -339,25 +230,20 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     InteractiveRuntime {
         runtime,
-        session,
-        active_run: None,
-        state: InteractiveState::Idle,
-        provider: shared_provider,
+        runs: InteractiveRunController::default(),
+        sessions: InteractiveSessionController::new(session, None),
+        provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
         tools,
         workspace,
         system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: None,
-        storage: None,
-        pending_model_user: None,
-        pending_display_user: None,
-        pending_history_start: None,
-        pending_session_id: None,
-        pending_context_usage: None,
-        pending_notices: Vec::new(),
-        cumulative_input_tokens: 0,
-        step_input_token_baseline: 0,
+        usage_recording: Default::default(),
+        permission_mode: PermissionMode::Auto,
+        approval_handler: None,
+        approval_receiver: None,
+        agent_id: "default".into(),
+        agent_fingerprint: "test-fingerprint".into(),
     }
 }
 
@@ -368,12 +254,156 @@ async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {
     .await
 }
 
+async fn permission_mode_runtime() -> InteractiveRuntime {
+    let mut interactive = pending_compaction_runtime("done").await;
+    let config = Config::default();
+    let capabilities = AgentCapabilities::new(
+        [ToolCapability::Agent, ToolCapability::Agents]
+            .into_iter()
+            .collect(),
+    );
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities).delegation(DelegationConfig::new(
+            std::env::current_dir().unwrap(),
+            std::path::PathBuf::new(),
+            BackgroundSubagents::Disabled,
+        )),
+    );
+    interactive
+}
+
+#[tokio::test]
+async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_policy() {
+    let mut interactive = permission_mode_runtime().await;
+    interactive
+        .sessions
+        .session()
+        .append_message(Message::user_text("preserved history"))
+        .unwrap();
+    let session_id = interactive.sessions.session().id().clone();
+    let history = interactive.sessions.session().history();
+
+    interactive
+        .set_permission_mode(PermissionMode::Plan)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Plan);
+    assert_eq!(
+        interactive
+            .tools
+            .subagents()
+            .unwrap()
+            .launch_permission_mode()
+            .decision_for(rho_sdk::CapabilityKind::Write),
+        PolicyDecision::Deny {
+            reason: "capability is not allowed in plan mode".into()
+        }
+    );
+    assert!(interactive.approval_handler.is_none());
+    assert!(interactive.approval_receiver().is_none());
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.sessions.session().history(), history);
+
+    interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Supervised);
+    assert_eq!(
+        interactive
+            .tools
+            .subagents()
+            .unwrap()
+            .launch_permission_mode()
+            .decision_for(rho_sdk::CapabilityKind::Write),
+        PolicyDecision::RequireApproval {
+            reason: "host approval is required".into()
+        }
+    );
+    assert!(interactive.approval_handler.is_some());
+    assert!(interactive.approval_receiver().is_some());
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.sessions.session().history(), history);
+    let supervised_handler = interactive.approval_handler.clone().unwrap();
+    interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        interactive.approval_handler.as_ref().unwrap(),
+        &supervised_handler
+    ));
+
+    interactive
+        .set_permission_mode(PermissionMode::Auto)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert!(interactive.approval_handler.is_none());
+    assert!(interactive.approval_receiver().is_none());
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.sessions.session().history(), history);
+}
+
+#[tokio::test]
+async fn permission_mode_switch_preserves_a_pending_new_session() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    let previous_id = interactive.session_id().clone();
+    interactive.reset().unwrap();
+    let pending_id = interactive.session_id().clone();
+    assert_ne!(pending_id, previous_id);
+
+    interactive
+        .set_permission_mode(PermissionMode::Plan)
+        .await
+        .unwrap();
+    interactive
+        .set_permission_mode(PermissionMode::Auto)
+        .await
+        .unwrap();
+    assert_eq!(interactive.session_id(), &pending_id);
+
+    interactive
+        .start(UserInput::text("first new-session turn"), None)
+        .await
+        .unwrap();
+    while interactive.next_event().await.is_some() {}
+    interactive.finish_run().await.unwrap();
+
+    assert_eq!(interactive.session_id(), &pending_id);
+    assert_eq!(interactive.sessions.session().id(), &pending_id);
+}
+
+#[tokio::test]
+async fn permission_mode_switch_rejects_an_active_run_without_mutation() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive
+        .start(UserInput::text("start"), None)
+        .await
+        .unwrap();
+
+    let error = interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("while a run is active"));
+    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert!(interactive.approval_receiver().is_none());
+}
+
 #[tokio::test]
 async fn a_new_run_resets_the_context_usage_baseline() {
     let mut interactive = pending_compaction_runtime("done").await;
     interactive.context_window = Some(10_000);
-    interactive.cumulative_input_tokens = 50_000;
-    interactive.step_input_token_baseline = 50_000;
+    interactive.observe_event(&RunEvent::UsageUpdated {
+        usage: ModelUsage {
+            input_tokens: Some(50_000),
+            ..ModelUsage::default()
+        },
+    });
 
     interactive.observe_event(&RunEvent::Started {
         run_id: RunId::new(),
@@ -389,7 +419,7 @@ async fn a_new_run_resets_the_context_usage_baseline() {
     });
 
     assert_eq!(
-        interactive.pending_context_usage,
+        interactive.take_context_usage(),
         Some(rho_sdk::model::ContextUsage::provider_reported(
             1_000,
             Some(10_000)
@@ -431,12 +461,13 @@ async fn failed_turn_does_not_duplicate_the_previous_assistant_in_display_histor
     let cwd = root.path().join("workspace");
     std::fs::create_dir(&cwd).unwrap();
     let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
-    interactive.session = interactive
+    let sdk_session = interactive
         .runtime
         .session(SessionOptions::new().id(SessionId::from_string(storage.id()).unwrap()))
         .await
         .unwrap();
-    interactive.storage = Some(storage.clone());
+    interactive.sessions.replace_session(sdk_session, None);
+    interactive.sessions.attach_storage(storage.clone());
 
     interactive
         .start(UserInput::text("successful prompt"), None)

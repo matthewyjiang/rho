@@ -1,3 +1,5 @@
+use rho_sdk::CancellationToken;
+
 use super::*;
 
 const GOAL_RETRY_DELAY: Duration = Duration::from_secs(3);
@@ -302,26 +304,41 @@ impl App {
                 (
                     goal.condition.clone(),
                     self.info
+                        .runtime
                         .title_provider
                         .clone()
-                        .unwrap_or_else(|| self.info.provider.clone()),
+                        .unwrap_or_else(|| self.info.runtime.provider.clone()),
                     self.info
+                        .runtime
                         .title_model
                         .clone()
-                        .unwrap_or_else(|| self.info.model.clone()),
+                        .unwrap_or_else(|| self.info.runtime.model.clone()),
                 )
             };
             let history = agent.history();
             let evaluation = {
                 let interrupt_requested = AtomicBool::new(false);
                 let tool_call_active = AtomicBool::new(false);
-                let mut evaluation =
-                    Box::pin(goal::evaluate(&provider, &model, &condition, &history));
+                let cancellation = CancellationToken::new();
+                let mut evaluation = Box::pin(goal::evaluate(
+                    goal::EvaluationRequest {
+                        provider_name: &provider,
+                        model: &model,
+                        condition: &condition,
+                        messages: &history,
+                        cancellation: cancellation.clone(),
+                        session_id: agent.session_id(),
+                        workspace_path: agent.workspace_path(),
+                    },
+                    agent.usage_recording(),
+                ));
                 let deadline = tokio::time::Instant::now() + goal::EVALUATION_TIMEOUT;
                 loop {
                     tokio::select! {
                         result = &mut evaluation => break Some(result),
                         _ = tokio::time::sleep_until(deadline) => {
+                            cancellation.cancel();
+                            let _ = evaluation.await;
                             break Some(Err(anyhow::anyhow!("goal evaluation timed out")));
                         }
                         terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
@@ -333,10 +350,14 @@ impl App {
                                 RunningInputMode::Turn,
                             )?;
                             if matches!(control, StreamControl::Interrupt) {
+                                cancellation.cancel();
+                                let _ = evaluation.await;
                                 self.clear_goal();
                                 break None;
                             }
                             if self.goal.is_none() {
+                                cancellation.cancel();
+                                let _ = evaluation.await;
                                 break None;
                             }
                             terminal.draw(|frame| self.draw(frame))?;

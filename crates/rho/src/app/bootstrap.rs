@@ -3,17 +3,20 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    cli::{Cli, Command},
-    credentials::OsCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
-    model::{models_dev::cached_model_metadata, ModelError},
-    update,
+use {
+    crate::cli::{Cli, Command},
+    crate::diagnostics::RuntimeDiagnostics,
+    crate::herdr::HerdrReporter,
+    crate::update,
+    rho_providers::credentials::OsCredentialStore,
+    rho_providers::model::ModelError,
 };
 
 use super::{
-    automation, cli_config, config_repository::ConfigRepository, interactive, login,
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+    automation, cli_config,
+    config_repository::ConfigRepository,
+    interactive, login,
     sdk_config::SdkBootstrapOptions,
 };
 
@@ -38,50 +41,61 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut config = config_repository.load()?;
     let cwd = std::env::current_dir()?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
-    let (preset, output_file) = match &cli.command {
-        Some(Command::Run {
-            preset,
-            output_file,
-            ..
-        }) => (
-            preset
-                .as_deref()
-                .map(|name| crate::subagent::find(&cwd, name))
-                .transpose()?,
-            output_file.clone(),
-        ),
-        _ => (None, None),
+    let output_file = match &cli.command {
+        Some(Command::Run { output_file, .. }) => output_file.clone(),
+        _ => None,
     };
+    let catalog = crate::agent::AgentCatalog::discover(&cwd)?;
+    let selected_agent = cli.agent.as_deref().unwrap_or("default");
+    let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = OsCredentialStore;
-    cli_config::refresh_model_cache(&cli, &store).await?;
-    if let Some(provider) = preset
-        .as_ref()
-        .and_then(|preset| preset.provider.as_deref())
-    {
-        cli_config::refresh_model_cache_for_provider(provider, &store).await?;
-    }
-    if cli_config::apply_overrides(&mut config, &cli)? {
+    let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
+    let mut save_config = cli_config::apply_overrides(&mut config, &cli)?;
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    save_config |= cli_config::normalize_reasoning_for_cli(
+        &mut config,
+        if cli.reasoning.is_some() {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        },
+    )?;
+    if save_config {
         config_repository.save(&config)?;
     }
-    if let Some(preset) = &preset {
-        apply_preset_overrides(&mut config, preset)?;
-    }
+    let reasoning_before_binding = config.reasoning;
+    let role = if automation_prompt.is_some() {
+        AgentRole::AutomationRoot
+    } else {
+        AgentRole::InteractiveRoot
+    };
+    let bound_agent = AgentBinder::bind(
+        definition,
+        AgentInvocation {
+            role,
+            available_tools: host_capabilities(&cli, &config, role),
+        },
+        &config,
+    )?;
+    config = bound_agent.config().clone();
 
     validate_terminal_mode(&cli)?;
-    if automation_prompt.is_some()
-        && config.provider == "anthropic"
-        && cached_model_metadata(&config.provider, &config.model).is_none()
-    {
-        let _ =
-            crate::model::models_dev::fetch_model_metadata(&config.provider, &config.model).await;
-    }
-    if preset.is_some() {
-        cli_config::normalize_reasoning(&mut config);
-    }
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    let bound_reasoning_source =
+        if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        };
+    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
         let diagnostics = RuntimeDiagnostics::new(&config);
+        diagnostics.update_agent(
+            bound_agent.id().as_str(),
+            &bound_agent.fingerprint().to_string(),
+        );
         return automation::run(
             prompt,
             automation::Startup {
@@ -91,7 +105,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 no_system_prompt: cli.no_system_prompt,
                 no_tools: cli.no_tools,
                 no_subagents: cli.no_subagents,
-                preset,
+                usage_purpose: "agent",
+                parent_session_id: None,
+                agent: bound_agent,
                 output_file,
                 diagnostics,
                 herdr,
@@ -100,17 +116,23 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         .await;
     }
     let diagnostics = RuntimeDiagnostics::new(&config);
+    diagnostics.update_agent(
+        bound_agent.id().as_str(),
+        &bound_agent.fingerprint().to_string(),
+    );
 
     let pending_update_notice = config
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
     let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
-    let credentials = crate::auth::provider_credentials::ApplicationCredentialSource::new(
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(OsCredentialStore),
     );
-    let provider_result =
-        crate::providers::build_sdk_provider_with_source(sdk_options.provider, &credentials);
+    let provider_result = rho_providers::providers::build_sdk_provider_with_source(
+        sdk_options.provider,
+        &credentials,
+    );
     let (missing_auth_error, missing_auth_model_error) = match provider_result {
         Ok(_) => (None, None),
         Err(error) if is_interactive_startup_unavailable_error(&error) => {
@@ -129,26 +151,45 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         pending_update_notice,
         diagnostics,
         herdr,
+        agent: bound_agent,
+        reasoning_source: bound_reasoning_source,
     })
     .await;
     result
 }
 
-fn apply_preset_overrides(
-    config: &mut crate::config::Config,
-    preset: &crate::subagent::Preset,
-) -> anyhow::Result<()> {
-    // Preset overrides apply to this run only; never persist them.
-    if let Some(provider) = &preset.provider {
-        cli_config::apply_provider_override(config, provider, preset.model.is_some())?;
+fn host_capabilities(
+    cli: &Cli,
+    config: &crate::config::Config,
+    role: AgentRole,
+) -> crate::agent::AgentCapabilities {
+    use crate::agent::ToolCapability;
+
+    if cli.no_tools {
+        return crate::agent::AgentCapabilities::default();
     }
-    if let Some(model) = &preset.model {
-        config.model = model.clone();
+    let mut tools = crate::agent::AgentCapabilities::all_host_tools();
+    if !crate::tools::web::access_tools(config).is_available() {
+        tools.remove(&ToolCapability::WebSearch);
     }
-    if let Some(reasoning) = preset.reasoning {
-        config.reasoning = reasoning;
+    #[cfg(windows)]
+    tools.remove(&ToolCapability::Bash);
+    #[cfg(not(windows))]
+    tools.remove(&ToolCapability::Powershell);
+    if cli.no_subagents || !config.enable_subagents {
+        tools.remove(&ToolCapability::Agent);
+        tools.remove(&ToolCapability::Agents);
     }
-    Ok(())
+    if role != AgentRole::InteractiveRoot {
+        tools.remove(&ToolCapability::Questionnaire);
+    }
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
+        tools.insert(ToolCapability::Extension(
+            crate::tools::tui_fixture::NAME.into(),
+        ));
+    }
+    tools
 }
 
 fn absolute_config_path(repository: &ConfigRepository) -> anyhow::Result<std::path::PathBuf> {
@@ -176,6 +217,7 @@ fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
             | ModelError::MissingCodexAuth
             | ModelError::MissingAnthropicApiKey
             | ModelError::MissingGithubCopilotAuth
+            | ModelError::MissingXaiApiKey
             | ModelError::MissingXaiAuth
             | ModelError::Credentials(_)
             | ModelError::UnsupportedProvider(_)

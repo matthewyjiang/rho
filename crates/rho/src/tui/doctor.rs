@@ -1,12 +1,13 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
-use crate::{
-    credentials::{provider_has_credentials, provider_has_env_override, CredentialStore},
-    model::catalog,
-    provider::{self, ProviderModelSource},
+use {
+    rho_providers::model::catalog,
+    rho_providers::provider::{self, ProviderModelSource},
+    rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore},
 };
 
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use crate::clipboard::doctor_report as clipboard_doctor_report;
 
 pub(super) struct DoctorContext<'a> {
     pub(super) provider: &'a str,
@@ -23,11 +24,11 @@ pub(super) struct DoctorContext<'a> {
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     let mut items = Vec::new();
     for descriptor in provider::providers() {
-        let (healthy, status, detail) = match provider_has_credentials(
+        let (healthy, status, detail) = match ProviderAuthentication::has_credentials(
             context.credential_store,
             descriptor.name,
         ) {
-            Ok(true) if provider_has_env_override(descriptor.name) => (
+            Ok(true) if ProviderAuthentication::has_environment_override(descriptor.name) => (
                 true,
                 "authenticated",
                 "Credentials are provided by an environment variable.",
@@ -95,7 +96,8 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     for descriptor in provider::providers() {
         if descriptor.model_source == ProviderModelSource::CachedProviderModels {
             let count =
-                crate::model::provider_models::cached_provider_models(descriptor.name).len();
+                rho_providers::model::provider_models::cached_provider_models(descriptor.name)
+                    .len();
             items.push(item(
                 format!("{} model cache", descriptor.display_name),
                 if count > 0 { "populated" } else { "empty" },
@@ -105,22 +107,23 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         }
     }
 
-    let helpers = clipboard_helpers();
+    let clipboard = clipboard_doctor_report();
+    items.push(item(
+        "Clipboard text write",
+        clipboard.text_write_status,
+        clipboard.text_write_healthy,
+        format!(
+            "session={}; {}",
+            clipboard.session_label, clipboard.text_write_detail
+        ),
+    ));
     items.push(item(
         "Clipboard image helper",
-        if helpers.is_empty() {
-            "not found"
-        } else {
-            "available"
-        },
-        !helpers.is_empty(),
-        if helpers.is_empty() {
-            "Install a supported platform clipboard helper to paste images.".into()
-        } else {
-            format!("Detected: {}", helpers.join(", "))
-        },
+        clipboard.image_status(),
+        clipboard.image_healthy(),
+        clipboard.image_detail(),
     ));
-    let rtk = crate::tools::rtk::is_available();
+    let rtk = rho_tools::rtk::is_available();
     items.push(item(
         "rtk",
         if rtk { "available" } else { "unavailable" },
@@ -227,27 +230,6 @@ fn probe_directory(directory: &Path) -> bool {
         .is_ok();
     let _ = fs::remove_file(probe);
     result
-}
-
-fn clipboard_helpers() -> Vec<&'static str> {
-    let candidates: &[&str] = if cfg!(target_os = "linux") {
-        &["wl-paste", "xclip"]
-    } else if cfg!(target_os = "macos") {
-        &["pngpaste"]
-    } else if cfg!(target_os = "windows") {
-        &["powershell"]
-    } else {
-        &[]
-    };
-    candidates
-        .iter()
-        .copied()
-        .filter(|command| command_available(command))
-        .collect()
-}
-
-fn command_available(command: &str) -> bool {
-    Command::new(command).arg("--help").output().is_ok()
 }
 
 #[cfg(test)]

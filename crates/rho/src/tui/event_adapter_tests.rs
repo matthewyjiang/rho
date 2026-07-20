@@ -1,9 +1,9 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
-    tool::{OperationKind, ToolMetadata, ToolOutput},
-    HostChoice, HostInputRequest, HostQuestion, Revision, RunEvent, RunId, SelectionMode,
-    ToolCallId, ToolCompletion,
+    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
+    HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
+    RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -41,15 +41,60 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
 }
 
 #[test]
-fn malformed_response_retry_resets_the_current_provider_stream() {
+fn provider_diagnostics_are_shown_in_interactive_failures() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let event = adapter.translate(RunEvent::ProviderDiagnostic {
+        detail: rho_sdk::ProviderDiagnostic::new("{\"error\":\"bad request\"}"),
+    });
+
+    let ViewEvent::Notice(message) = event else {
+        panic!("expected diagnostic notice");
+    };
+    assert_eq!(message, "provider diagnostic:\n{\"error\":\"bad request\"}");
+}
+
+#[test]
+fn provider_retry_resets_the_current_provider_stream() {
+    let mut adapter = SdkEventAdapter::default();
+
+    for reason in [
+        ProviderStreamResetReason::InvalidResponse,
+        ProviderStreamResetReason::RetryableFailure(rho_sdk::ProviderErrorKind::Unavailable),
+    ] {
+        assert!(matches!(
+            adapter.translate(RunEvent::ProviderStreamReset {
+                reason,
+                detail: "retrying".into(),
+            }),
+            ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+        ));
+    }
+}
+
+#[test]
+fn physical_provider_retry_maps_to_typed_view_model_event() {
     let mut adapter = SdkEventAdapter::default();
 
     assert!(matches!(
         adapter.translate(RunEvent::ProviderActivity {
-            kind: "invalid_response_retry".into(),
+            kind: rho_sdk::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
             detail: "retrying".into(),
         }),
-        ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+        ViewEvent::Update(ViewModelEvent::ProviderRetry)
+    ));
+}
+
+#[test]
+fn legacy_malformed_response_activity_does_not_reset_twice() {
+    let mut adapter = SdkEventAdapter::default();
+
+    assert!(matches!(
+        adapter.translate(RunEvent::ProviderActivity {
+            kind: rho_sdk::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
+            detail: "retrying".into(),
+        }),
+        ViewEvent::Ignored
     ));
 }
 
@@ -86,6 +131,41 @@ fn retains_structured_tool_metadata_until_completion() {
 
     assert!(ok);
     assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
+}
+
+#[test]
+fn forwards_image_asset_on_tool_completion() {
+    let mut adapter = SdkEventAdapter::default();
+    let call_id = ToolCallId::from_string("call-image").unwrap();
+    let _ = adapter.translate(RunEvent::ToolStarted {
+        call_id: call_id.clone(),
+        name: "read_file".into(),
+        metadata: ToolMetadata::new(),
+    });
+    let asset = ToolAsset::new("image/png", vec![1, 2, 3, 4]);
+    let output = ToolOutput::text("image/png image (4 bytes)").metadata(
+        ToolMetadata::new()
+            .asset(asset.clone())
+            .presentation_notice("image preview unavailable: invalid image"),
+    );
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        image_asset,
+        display_lines,
+        ..
+    }) = adapter.translate(RunEvent::ToolFinished {
+        call_id,
+        result: ToolCompletion::Success(output),
+    })
+    else {
+        panic!("expected translated tool completion");
+    };
+
+    assert_eq!(image_asset, Some(asset));
+    assert_eq!(
+        display_lines,
+        ["read_file ", "image preview unavailable: invalid image"]
+    );
 }
 
 #[test]

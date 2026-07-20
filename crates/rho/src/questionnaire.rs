@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::tool::ToolSpec;
+use rho_tools::tool::ToolSpec;
 
 pub const TOOL_NAME: &str = "questionnaire";
 const MAX_QUESTIONS: usize = 8;
@@ -19,6 +19,8 @@ pub struct QuestionnaireRequest {
 pub struct QuestionnaireQuestion {
     pub id: String,
     pub question: String,
+    #[serde(default)]
+    pub header: Option<String>,
     #[serde(default)]
     pub help: Option<String>,
     #[serde(default)]
@@ -76,6 +78,8 @@ struct RawQuestionnaireQuestion {
     id: Option<String>,
     question: String,
     #[serde(default)]
+    header: Option<String>,
+    #[serde(default)]
     help: Option<String>,
     #[serde(default)]
     reason: Option<String>,
@@ -126,6 +130,11 @@ pub fn tool_spec() -> ToolSpec {
                                 "type": "string",
                                 "description": "The concise question or field label to show the user."
                             },
+                            "header": {
+                                "type": "string",
+                                "maxLength": 16,
+                                "description": "Very short label (max 16 chars, e.g. Branch, Test suites) shown on this question's tab in multi-question forms. Defaults to the question text."
+                            },
                             "help": {
                                 "type": "string",
                                 "description": "Optional short per-question help text."
@@ -175,6 +184,7 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
             questions.push(RawQuestionnaireQuestion {
                 id: None,
                 question,
+                header: None,
                 help: None,
                 reason: None,
                 kind: None,
@@ -291,6 +301,7 @@ fn parse_question(
     Ok(QuestionnaireQuestion {
         id,
         question,
+        header: trim_optional(raw.header),
         help: trim_optional(raw.help).or_else(|| trim_optional(raw.reason)),
         default,
         kind,
@@ -432,6 +443,7 @@ mod tests {
                 {
                     "id": " file ",
                     "question": "  Which file?  ",
+                    "header": "  File  ",
                     "help": "  Use a repo-relative path  ",
                     "type": "choice",
                     "choices": ["src/main.rs", "src/lib.rs"],
@@ -449,6 +461,7 @@ mod tests {
                 questions: vec![QuestionnaireQuestion {
                     id: "file".into(),
                     question: "Which file?".into(),
+                    header: Some("File".into()),
                     help: Some("Use a repo-relative path".into()),
                     default: Some(json!("src/main.rs")),
                     kind: QuestionnaireQuestionKind::Choice,
@@ -559,6 +572,7 @@ mod tests {
         let question = QuestionnaireQuestion {
             id: "apply".into(),
             question: "Apply changes?".into(),
+            header: None,
             help: None,
             default: Some(json!("no")),
             kind: QuestionnaireQuestionKind::Confirm,

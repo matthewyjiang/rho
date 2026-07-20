@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::{skills, tool::ToolSpec};
+use {crate::skills, rho_tools::tool::ToolSpec};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -45,6 +45,8 @@ Web access is available through tool schemas; invoke it only when needed and ret
 Use structured tool calls when available. Do not write tool calls in prose.
 
 Do not invent tool results. When done, answer directly.
+
+If you produce a Mermaid diagram, always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render. The interactive transcript also renders CommonMark.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "agent") {
@@ -115,7 +117,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
-    text.push_str("\n\nSubagents are disabled. Do not attempt to spawn or use subagents.\n");
+    text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
 }
 
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
@@ -281,6 +283,20 @@ mod tests {
     }
 
     #[test]
+    fn instructs_models_to_fence_mermaid_without_encouraging_diagrams() {
+        let project = TempDir::new().unwrap();
+
+        let prompt = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(prompt.contains("If you produce a Mermaid diagram"));
+        assert!(prompt.contains("always wrap valid Mermaid source"));
+        assert!(prompt.contains("closed `mermaid` fenced code block"));
+        assert!(prompt.contains("Bare Mermaid source does not render"));
+        assert!(!prompt.contains("use Mermaid"));
+        assert!(!prompt.contains("consider a diagram"));
+    }
+
+    #[test]
     fn keeps_web_access_guidance_concise_and_lazy() {
         let project = TempDir::new().unwrap();
 
@@ -333,8 +349,8 @@ mod tests {
 
         append_subagents_disabled_instruction(&mut text);
 
-        assert!(text.contains("Subagents are disabled"));
-        assert!(text.contains("Do not attempt to spawn or use subagents"));
+        assert!(text.contains("Agent delegation is disabled"));
+        assert!(text.contains("Do not attempt to delegate work"));
     }
 
     fn skill_tool_spec() -> ToolSpec {

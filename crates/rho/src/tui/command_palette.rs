@@ -42,6 +42,7 @@ impl App {
         }
         let mut template_matches = self
             .info
+            .runtime
             .prompt_templates
             .iter()
             .filter(|(name, _)| crate::prompt_templates::matches_search(name, &prefix))
@@ -93,7 +94,7 @@ impl App {
                 return Arc::clone(&cache.skills);
             }
         }
-        Arc::new(crate::skills::discover(&self.info.cwd))
+        Arc::new(crate::skills::discover(&self.info.runtime.cwd))
     }
 
     pub(super) fn refresh_skill_match_cache(&mut self) {
@@ -105,7 +106,7 @@ impl App {
             return;
         }
         self.skill_match_cache = Some(SkillMatchCache {
-            skills: Arc::new(crate::skills::discover(&self.info.cwd)),
+            skills: Arc::new(crate::skills::discover(&self.info.runtime.cwd)),
             refreshed_at: std::time::Instant::now(),
         });
     }

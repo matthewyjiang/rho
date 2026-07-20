@@ -2,12 +2,14 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use rho_sdk::{
     model::ToolCall,
-    tool::{ToolMetadata, ToolProgress},
+    tool::{ToolAsset, ToolMetadata, ToolProgress},
     ToolCallId, ToolCompletion,
 };
 
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
+#[path = "interactive_presenter_agent.rs"]
+mod agent_format;
 #[path = "interactive_presenter_format.rs"]
 mod format;
 use format::*;
@@ -17,6 +19,7 @@ pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
     pub(crate) display_style: ToolDisplayStyle,
     pub(crate) display_lines: Vec<String>,
+    pub(crate) image_asset: Option<ToolAsset>,
 }
 
 #[derive(Clone, Debug)]
@@ -29,6 +32,8 @@ struct ToolView {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ToolKind {
+    Agent,
+    Agents,
     Bash,
     PowerShell,
     Process,
@@ -47,6 +52,8 @@ enum ToolKind {
 impl ToolKind {
     fn from_name(name: &str) -> Self {
         match name {
+            "agent" => Self::Agent,
+            "agents" => Self::Agents,
             "bash" => Self::Bash,
             "powershell" => Self::PowerShell,
             "process" => Self::Process,
@@ -65,6 +72,7 @@ impl ToolKind {
 
     fn display_style(self, metadata: &ToolMetadata) -> ToolDisplayStyle {
         match self {
+            Self::Agent | Self::Agents => ToolDisplayStyle::default_tool(),
             Self::Bash | Self::PowerShell | Self::ListDir | Self::ReadFile => {
                 ToolDisplayStyle::file_or_command()
             }
@@ -145,6 +153,35 @@ impl InteractiveToolPresenter {
             .len()
             .saturating_add(preview.arguments.len().max(1));
         Some(lines)
+    }
+
+    pub(crate) fn interrupted(
+        &self,
+        name: Option<&str>,
+        partial_arguments: &str,
+    ) -> ToolPresentation {
+        let name = name.unwrap_or("tool call");
+        let kind = ToolKind::from_name(name);
+        let arguments = parse_incomplete_json(partial_arguments)
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let view = ToolView {
+            kind,
+            name: name.into(),
+            arguments,
+            metadata: ToolMetadata::default(),
+        };
+        let display_lines = match kind {
+            ToolKind::Agent => agent_format::agent_interrupted_lines_for(&view.arguments),
+            ToolKind::Agents => agent_format::agents_interrupted_lines_for(&view.arguments),
+            _ => {
+                let mut lines = vec![name.to_string()];
+                if !partial_arguments.is_empty() {
+                    lines.push(partial_arguments.to_string());
+                }
+                lines
+            }
+        };
+        presentation(&view, display_lines)
     }
 
     pub(crate) fn historical(&self, call: &ToolCall, ok: bool, content: &str) -> ToolPresentation {

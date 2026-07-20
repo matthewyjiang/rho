@@ -6,9 +6,13 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 [model]
 provider = "openai"
 model = "gpt-5.6-sol"
-auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", or "xai-oauth"
+auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", or "kimi-oauth"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
+
+[model.aliases]
+# deep = "anthropic/claude-opus-4-8"
+# fast = "gpt-5.6-luna"
 
 [display]
 show_reasoning_output = true
@@ -33,6 +37,7 @@ provider = "auto" # auto, openai, exa, brave, or disabled
 [behavior]
 check_for_updates = true
 enable_subagents = true
+permission_mode = "auto" # auto, plan, or supervised
 rtk = true
 
 [prompt_templates]
@@ -97,13 +102,34 @@ rho --config ~/.rho/config.toml
 
 `--no-system-prompt`, `--no-tools`, and `--no-subagents` are only available on the command line and apply only to the current run. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
 
+## Model aliases
+
+`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected. Model ids may contain `/`, as OpenRouter ids commonly do:
+
+```toml
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.6-luna"
+openrouter-deep = "openrouter/anthropic/claude-sonnet-4"
+```
+
+Reference an alias with an `@` prefix. The explicit prefix distinguishes aliases from concrete model ids and makes a missing or misspelled alias an immediate configuration error:
+
+```toml
+[model]
+model = "@deep"
+
+[title]
+model = "@fast"
+```
+
+The same syntax works with `rho --model @deep` and with `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
+
+Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` picker shows the active mapping, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
+
 ## Title model
 
-Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Use `/title-model` in the TUI to choose from available catalog and cached models, or pass a direct provider/model name:
-
-```text
-/title-model openai/gpt-5.6-luna
-```
+Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Choose **Session title model** in `/config` to select from available catalog and cached models.
 
 If no title model settings are present, Rho falls back to the active provider, model, and auth.
 
@@ -115,11 +141,25 @@ Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_sear
 
 `enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
 
+## Permission modes
+
+`permission_mode` must be `auto`, `plan`, or `supervised`. Missing values default to `auto`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, or asks before security-sensitive tool capabilities:
+
+- `auto` is the default and preserves unrestricted tool behavior.
+- `plan` allows investigation but denies file writes and process execution.
+- `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
+
+Change the mode from the **Permission mode** row in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
+
+Non-interactive `rho run` sessions cannot display approval prompts. Supervised operations that require approval therefore fail closed instead of being approved automatically.
+
+Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them and Supervised requires approval.
+
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `enable_subagents` row controls whether agent tools are available in the next session. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a picker for configuration values. Its model and provider rows change the conversation and title models, refresh cached model lists, and manage provider credentials. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, saves immediately, and applies to the current session. The `show_reasoning_output` row toggles whether reasoning text is shown in the TUI and applies on the next model call. The `check_for_updates` row toggles startup update checks against GitHub releases. The `enable_subagents` row controls whether agent tools are available in the next session. The auto compaction rows toggle compaction and edit its threshold and target percentages. The `max_output_bytes` row opens a numeric input and saves for the next session.
 
-[`/login`](/interactive-tui#commands) stores credentials in the OS credential store, not in this config file. [`/logout`](/interactive-tui#commands) deletes stored credentials. [`/model`](/interactive-tui#commands) saves the selected `provider` and `model`. [`/title-model`](/interactive-tui#commands) saves optional title-generation model settings. The picker shows entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
+[`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows, while **Session title model** saves optional title-generation model settings. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
 ## Reasoning options
 

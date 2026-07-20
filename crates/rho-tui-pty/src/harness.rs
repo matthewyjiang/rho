@@ -184,9 +184,9 @@ impl PtyHarness {
     }
 
     pub fn submit_text(&mut self, text: &str) -> Result<()> {
-        self.type_text(text)?;
-        // Leave a gap after the final character so Enter is not absorbed as a
-        // paste-burst newline.
+        // Use an explicit paste event so runner load cannot collapse delayed
+        // plain-key input into a paste burst and absorb Enter as a newline.
+        self.paste(text)?;
         self.settle_input();
         self.inject_key(&Key::Enter)
     }
@@ -379,10 +379,14 @@ impl PtyHarness {
 
     pub fn quit_with_exit_command(&mut self) -> Result<u32> {
         self.set_phase("quit_with_/exit");
-        // Ensure the composer is idle before typing the exit command.
+        // Ensure the composer is idle before inserting the exit command. Use an
+        // explicit paste event so runner load cannot collapse delayed plain-key
+        // input into a paste burst and absorb Enter as a newline.
         self.inject_key(&Key::Esc)?;
         self.settle_input();
-        self.submit_text("/exit")?;
+        self.paste("/exit")?;
+        self.settle_input();
+        self.inject_key(&Key::Enter)?;
         self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
     }
 

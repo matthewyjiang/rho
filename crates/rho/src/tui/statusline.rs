@@ -9,11 +9,14 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
-    TuiInfo,
+    RuntimeModelView,
 };
-use crate::{
-    model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage},
-    reasoning::ReasoningLevel,
+use {
+    crate::permission::PermissionMode,
+    rho_providers::model::{
+        ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage, ReasoningCapabilities,
+    },
+    rho_providers::reasoning::ReasoningLevel,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,6 +29,8 @@ pub(super) struct StatusLineState {
     provider: String,
     model: String,
     reasoning: ReasoningLevel,
+    reasoning_configurable: bool,
+    permission_mode: PermissionMode,
     billing: BillingInfo,
     model_metadata: Option<ModelMetadata>,
     model_metadata_loading: bool,
@@ -64,6 +69,8 @@ impl Default for StatusLineState {
             provider: String::new(),
             model: String::new(),
             reasoning: ReasoningLevel::default(),
+            reasoning_configurable: true,
+            permission_mode: PermissionMode::default(),
             billing: BillingInfo::Metered,
             model_metadata: None,
             model_metadata_loading: false,
@@ -72,7 +79,7 @@ impl Default for StatusLineState {
 }
 
 impl StatusLineState {
-    fn from_tui(info: &TuiInfo) -> Self {
+    fn from_tui(info: &RuntimeModelView) -> Self {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
@@ -82,6 +89,8 @@ impl StatusLineState {
             provider: info.provider.clone(),
             model: info.model.clone(),
             reasoning: info.reasoning,
+            reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
+            permission_mode: info.permission_mode,
             billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
             model_metadata: None,
             model_metadata_loading: false,
@@ -96,12 +105,22 @@ impl StatusLineState {
     }
 
     fn right_bottom(&self) -> String {
-        format!("({}) {} • {}", self.provider, self.model, self.reasoning)
+        let prefix = format!(
+            "◇ {} • ({}) {}",
+            self.permission_mode.label(),
+            self.provider,
+            self.model
+        );
+        if !self.reasoning_configurable {
+            prefix
+        } else {
+            format!("{prefix} • {}", self.reasoning)
+        }
     }
 }
 
 impl StatusLine {
-    pub(super) fn new(info: &TuiInfo) -> Self {
+    pub(super) fn new(info: &RuntimeModelView) -> Self {
         Self {
             state: StatusLineState::from_tui(info),
             cache: StatusLineCache::default(),
@@ -116,16 +135,21 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn update_model(&mut self, info: &TuiInfo) {
+    pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let billing = BillingInfo::from_provider_auth(&info.provider, &info.auth);
+        let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.reasoning != info.reasoning
+            || self.state.reasoning_configurable != reasoning_configurable
+            || self.state.permission_mode != info.permission_mode
             || self.state.billing != billing
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
             self.state.reasoning = info.reasoning;
+            self.state.reasoning_configurable = reasoning_configurable;
+            self.state.permission_mode = info.permission_mode;
             self.state.billing = billing;
             self.invalidate();
         }
@@ -153,11 +177,15 @@ impl StatusLine {
         model_metadata: Option<&ModelMetadata>,
         loading: bool,
     ) {
+        let reasoning_configurable =
+            reasoning_is_configurable(&self.state.provider, &self.state.model);
         if self.state.model_metadata.as_ref() != model_metadata
             || self.state.model_metadata_loading != loading
+            || self.state.reasoning_configurable != reasoning_configurable
         {
             self.state.model_metadata = model_metadata.cloned();
             self.state.model_metadata_loading = loading;
+            self.state.reasoning_configurable = reasoning_configurable;
             self.invalidate();
         }
     }
@@ -188,6 +216,11 @@ impl StatusLine {
     fn invalidate(&mut self) {
         self.cache.lines.clear();
     }
+}
+
+fn reasoning_is_configurable(provider: &str, model: &str) -> bool {
+    rho_providers::model::models_dev::current_reasoning_capabilities(provider, model)
+        != ReasoningCapabilities::NotConfigurable
 }
 
 fn statusline_lines(

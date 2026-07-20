@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::{clipboard::CopyToClipboard, execute};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -16,27 +15,9 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::theme::Theme;
+use super::{clipboard::CopyOutcome, theme::Theme};
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(2);
-
-/// Writes transcript text to a clipboard synchronously.
-///
-/// Implementors must preserve the supplied text exactly and return any clipboard or terminal
-/// error to the caller so the TUI can report copy failures.
-pub(super) trait ClipboardWriter {
-    fn copy(&mut self, text: &str) -> io::Result<()>;
-}
-
-#[derive(Default)]
-pub(super) struct TerminalClipboard;
-
-impl ClipboardWriter for TerminalClipboard {
-    fn copy(&mut self, text: &str) -> io::Result<()> {
-        let mut stdout = io::stdout();
-        execute!(stdout, CopyToClipboard::to_clipboard_from(text))
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct SelectionPosition {
@@ -64,6 +45,11 @@ impl TextSelection {
 
     pub(super) fn has_moved(self) -> bool {
         self.anchor != self.focus
+    }
+
+    pub(super) fn selected_line_range(self) -> Range<usize> {
+        let (start, end) = self.ordered_positions();
+        start.line..end.line.saturating_add(1)
     }
 
     pub(super) fn selected_text(self, lines: &[Line<'_>], first_line: usize) -> Option<String> {
@@ -153,6 +139,7 @@ pub(super) fn highlight_selection(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CopyNoticeTone {
     Success,
+    Warning,
     Error,
 }
 
@@ -164,23 +151,43 @@ pub(super) struct CopyNotice {
 }
 
 impl CopyNotice {
-    pub(super) fn copied(character_count: usize, now: Instant) -> Self {
+    pub(super) fn from_copy_result(
+        result: io::Result<CopyOutcome>,
+        character_count: usize,
+        now: Instant,
+    ) -> Self {
+        match result {
+            Ok(CopyOutcome::Confirmed) => {
+                Self::count_message(character_count, "copied", CopyNoticeTone::Success, now)
+            }
+            Ok(CopyOutcome::SentToTerminal) => Self::count_message(
+                character_count,
+                "sent to terminal",
+                CopyNoticeTone::Warning,
+                now,
+            ),
+            Err(error) => Self {
+                message: format!("copy failed: {error}"),
+                tone: CopyNoticeTone::Error,
+                visible_until: now + COPY_NOTICE_DURATION,
+            },
+        }
+    }
+
+    fn count_message(
+        character_count: usize,
+        suffix: &str,
+        tone: CopyNoticeTone,
+        now: Instant,
+    ) -> Self {
         let unit = if character_count == 1 {
             "char"
         } else {
             "chars"
         };
         Self {
-            message: format!("{character_count} {unit} copied"),
-            tone: CopyNoticeTone::Success,
-            visible_until: now + COPY_NOTICE_DURATION,
-        }
-    }
-
-    pub(super) fn failed(error: &io::Error, now: Instant) -> Self {
-        Self {
-            message: format!("copy failed: {error}"),
-            tone: CopyNoticeTone::Error,
+            message: format!("{character_count} {unit} {suffix}"),
+            tone,
             visible_until: now + COPY_NOTICE_DURATION,
         }
     }
@@ -222,6 +229,7 @@ pub(super) fn render_copy_notice(
     );
     let style = match notice.tone {
         CopyNoticeTone::Success => Theme::success(),
+        CopyNoticeTone::Warning => Theme::warning(),
         CopyNoticeTone::Error => Theme::error(),
     };
 

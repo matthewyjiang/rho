@@ -26,7 +26,10 @@ pub struct Skill {
     pub contents: String,
 }
 
-const BUILTIN_SKILLS: &[&str] = &[include_str!("builtin_skills/rho-diagnostics/SKILL.md")];
+const BUILTIN_SKILLS: &[&str] = &[
+    include_str!("builtin_skills/rho-diagnostics/SKILL.md"),
+    include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
+];
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
     let home = crate::paths::home_dir();
@@ -248,6 +251,20 @@ mod tests {
     }
 
     #[test]
+    fn discovers_embedded_rho_agent_creator_skill() {
+        let root = TempDir::new().unwrap();
+
+        let skills = discover_with_home(root.path(), None);
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "rho-agent-creator")
+            .unwrap();
+
+        assert_eq!(skill.source, SkillSource::BuiltIn);
+        assert!(skill.contents.contains("questionnaire"));
+    }
+
+    #[test]
     fn discovers_valid_skills_in_order() {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
@@ -277,6 +294,7 @@ mod tests {
             names,
             [
                 "rho-diagnostics",
+                "rho-agent-creator",
                 "rho-skill",
                 "agent-skill",
                 "project-skill"
@@ -341,8 +359,9 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 1);
+        assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].name, "rho-diagnostics");
+        assert_eq!(skills[1].name, "rho-agent-creator");
     }
 
     #[test]
@@ -352,8 +371,9 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 1);
+        assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].name, "rho-diagnostics");
+        assert_eq!(skills[1].name, "rho-agent-creator");
     }
 
     #[test]
@@ -363,8 +383,9 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 1);
+        assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].name, "rho-diagnostics");
+        assert_eq!(skills[1].name, "rho-agent-creator");
     }
 
     #[test]
@@ -374,8 +395,9 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 1);
+        assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].name, "rho-diagnostics");
+        assert_eq!(skills[1].name, "rho-agent-creator");
     }
 
     #[test]

@@ -1,0 +1,39 @@
+[package]
+name = "rho-providers"
+version = "0.3.2"
+edition = "2021"
+rust-version = "1.92"
+description = "Model provider runtimes, credentials, and model catalog for Rho"
+license = "MIT AND Apache-2.0"
+repository = "https://github.com/matthewyjiang/rho"
+readme = "README.md"
+
+[dependencies]
+rho-sdk = { version = "1.4.0", path = "../rho-sdk" }
+rho-tools = { version = "0.3.2", path = "../rho-tools", package = "rho-agent-tools" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+toml = "0.8"
+async-trait = "0.1"
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rusqlite = { version = "0.32" }
+keyring = "4.1.2"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+webbrowser = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"
+tempfile = "3"
+
+[features]
+default = ["bundled-sqlite"]
+bundled-sqlite = ["rusqlite/bundled"]

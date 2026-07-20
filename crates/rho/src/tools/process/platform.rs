@@ -14,7 +14,7 @@ pub(super) fn shell_command(command: &str) -> Command {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        &super::super::powershell::wrapped_command(command),
+        &rho_tools::powershell::wrapped_command(command),
     ]);
     command_line
 }

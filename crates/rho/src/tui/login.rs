@@ -1,5 +1,80 @@
 use super::*;
-use crate::{model::registry, provider, providers::build_sdk_provider};
+use {
+    rho_providers::auth::login_dispatch::{
+        AuthenticationMethod, CompletedAuthentication, OAuthMode, OAuthUserAction,
+        ProviderAuthentication,
+    },
+    rho_providers::model::registry,
+    rho_providers::provider,
+    rho_providers::providers::build_sdk_provider,
+};
+
+#[derive(Clone, Debug)]
+pub(super) struct SecretInput {
+    pub(super) target: LoginTarget,
+    pub(super) value: String,
+    pub(super) cursor: usize,
+}
+
+impl SecretInput {
+    pub(super) fn new(target: LoginTarget) -> Self {
+        Self {
+            target,
+            value: String::new(),
+            cursor: 0,
+        }
+    }
+
+    pub(super) fn char_len(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    fn byte_index(&self, char_index: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_index)
+            .map(|(index, _)| index)
+            .unwrap_or(self.value.len())
+    }
+
+    pub(super) fn insert_char(&mut self, ch: char) {
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert(byte_index, ch);
+        self.cursor += 1;
+    }
+
+    pub(super) fn insert_text(&mut self, text: &str) {
+        let sanitized = text.replace('\n', "");
+        let byte_index = self.byte_index(self.cursor);
+        self.value.insert_str(byte_index, &sanitized);
+        self.cursor += sanitized.chars().count();
+    }
+
+    pub(super) fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.byte_index(self.cursor - 1);
+        let end = self.byte_index(self.cursor);
+        self.value.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    pub(super) fn delete(&mut self) {
+        if self.cursor >= self.char_len() {
+            return;
+        }
+        let start = self.byte_index(self.cursor);
+        let end = self.byte_index(self.cursor + 1);
+        self.value.replace_range(start..end, "");
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct PendingOAuthLogin {
+    pub(super) target: LoginTarget,
+    pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
+}
 
 impl App {
     pub(super) async fn execute_login_command(
@@ -9,7 +84,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
-            self.open_provider_picker("login", PickerAction::LoginProvider);
+            self.open_login_picker();
             return Ok(());
         }
         self.start_login_for_provider(&invocation.args, terminal, agent)
@@ -37,9 +112,9 @@ impl App {
         self.logout_provider(&invocation.args, agent).await
     }
 
-    pub(super) fn open_provider_picker(&mut self, verb: &str, action: PickerAction) {
-        self.composer = ComposerMode::Picker(provider_picker::provider_picker(verb, action));
-        self.status = format!("select provider to {verb}");
+    pub(super) fn open_login_picker(&mut self) {
+        self.composer = ComposerMode::Picker(provider_picker::login_group_picker());
+        self.status = "select provider to login".into();
     }
 
     pub(super) async fn start_login_for_provider(
@@ -58,23 +133,18 @@ impl App {
             return Ok(());
         };
 
-        let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
-            unreachable!("catalog returned unsupported login provider")
-        };
-        match descriptor.auth_kind {
-            ProviderAuthKind::ApiKey { entry_label, .. } => {
+        match ProviderAuthentication::method(&target.provider)
+            .expect("catalog returned unsupported login provider")
+        {
+            AuthenticationMethod::ApiKey { entry_label } => {
                 self.composer = ComposerMode::SecretInput(SecretInput::new(target));
                 self.status = format!("enter {entry_label}");
                 Ok(())
             }
-            ProviderAuthKind::CodexOAuth { .. } => {
-                self.start_codex_login(target, terminal, agent).await
-            }
-            ProviderAuthKind::GithubCopilotDevice { .. } => {
-                self.start_github_copilot_login(target, terminal, agent)
+            AuthenticationMethod::OAuth { provider_label } => {
+                self.start_oauth_login(target, provider_label, terminal, agent)
                     .await
             }
-            ProviderAuthKind::XaiOAuth { .. } => self.start_xai_login(target, terminal).await,
         }
     }
 
@@ -91,7 +161,11 @@ impl App {
             return Ok(());
         }
         self.cancel_limits_command().await;
-        let saved = save_provider_api_key(self.credential_store.as_ref(), &target.provider, &key);
+        let saved = ProviderAuthentication::save_api_key(
+            self.credential_store.as_ref(),
+            &target.provider,
+            &key,
+        );
         match saved {
             Ok(()) => self.finish_login(target, terminal, agent).await,
             Err(err) => {
@@ -102,9 +176,10 @@ impl App {
         }
     }
 
-    async fn start_codex_login(
+    async fn start_oauth_login(
         &mut self,
         target: LoginTarget,
+        provider_label: &'static str,
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
@@ -115,38 +190,20 @@ impl App {
             return Ok(());
         }
 
-        if std::env::var_os("SSH_CONNECTION").is_some()
+        let mode = if std::env::var_os("SSH_CONNECTION").is_some()
             || std::env::var_os("SSH_TTY").is_some()
             || std::env::var_os("HERDR_ENV").is_some()
         {
-            self.start_codex_device_login(target, terminal).await
+            OAuthMode::Device
         } else {
-            self.status = "waiting for Codex login; press esc to cancel".into();
-            self.composer = ComposerMode::OAuthPending(target.clone());
-            self.pending_oauth_login = Some(PendingOAuthLogin {
-                target,
-                handle: tokio::spawn(async {
-                    codex_oauth::run_codex_oauth_flow()
-                        .await
-                        .map(PendingOAuthResult::Codex)
-                        .map_err(|err| err.to_string())
-                }),
-            });
-            self.insert_entry(&Entry::Notice(
-                "opening browser for Codex login. Press esc to cancel.".into(),
-            ));
-            Ok(())
-        }
-    }
-
-    async fn start_codex_device_login(
-        &mut self,
-        target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        self.status = "starting Codex device login".into();
+            OAuthMode::Browser
+        };
+        self.status = match mode {
+            OAuthMode::Browser => format!("starting {provider_label} login"),
+            OAuthMode::Device => format!("starting {provider_label} device login"),
+        };
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match codex_oauth::start_codex_device_login().await {
+        let login = match ProviderAuthentication::start_oauth(&target.provider, mode).await {
             Ok(login) => login,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
@@ -155,134 +212,37 @@ impl App {
             }
         };
 
-        self.insert_entry(&Entry::Notice(format!(
-            "Codex login: visit {} and enter code {}",
-            login.verification_uri, login.user_code
-        )));
-
-        self.status = "waiting for Codex device login; press esc to cancel".into();
-        self.composer = ComposerMode::OAuthPending(target.clone());
-        self.pending_oauth_login = Some(PendingOAuthLogin {
-            target,
-            handle: tokio::spawn(async move {
-                codex_oauth::complete_codex_device_login(login)
-                    .await
-                    .map(PendingOAuthResult::Codex)
-                    .map_err(|err| err.to_string())
-            }),
-        });
-        Ok(())
-    }
-
-    async fn start_xai_login(
-        &mut self,
-        target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        if self.pending_oauth_login.is_some() {
-            self.insert_entry(&Entry::Notice(
-                "OAuth login is already in progress. Press esc to cancel.".into(),
-            ));
-            return Ok(());
-        }
-
-        if std::env::var_os("SSH_CONNECTION").is_some()
-            || std::env::var_os("SSH_TTY").is_some()
-            || std::env::var_os("HERDR_ENV").is_some()
-        {
-            self.status = "starting xAI device login".into();
-            terminal.draw(|frame| self.draw(frame))?;
-            let login = match xai_oauth::start_xai_device_login().await {
-                Ok(login) => login,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(err.to_string()));
-                    self.status = "login failed".into();
-                    return Ok(());
-                }
-            };
-            self.insert_entry(&Entry::Notice(format!(
-                "xAI login: visit {} and enter code {}",
-                login.verification_uri, login.user_code
-            )));
-            if let Some(uri) = &login.verification_uri_complete {
+        let provider_label = login.provider_label;
+        let device_flow = matches!(&login.user_action, OAuthUserAction::DeviceCode { .. });
+        match login.user_action {
+            OAuthUserAction::BrowserOpened => {
                 self.insert_entry(&Entry::Notice(format!(
-                    "Or open this URL to continue: {uri}"
+                    "opening browser for {provider_label} login. Press esc to cancel."
                 )));
             }
-            self.status = "waiting for xAI device login; press esc to cancel".into();
-            self.composer = ComposerMode::OAuthPending(target.clone());
-            self.pending_oauth_login = Some(PendingOAuthLogin {
-                target,
-                handle: tokio::spawn(async move {
-                    xai_oauth::complete_xai_device_login(login)
-                        .await
-                        .map(PendingOAuthResult::Xai)
-                        .map_err(|err| err.to_string())
-                }),
-            });
-        } else {
-            self.status = "waiting for xAI login; press esc to cancel".into();
-            self.composer = ComposerMode::OAuthPending(target.clone());
-            self.pending_oauth_login = Some(PendingOAuthLogin {
-                target,
-                handle: tokio::spawn(async {
-                    xai_oauth::run_xai_oauth_flow()
-                        .await
-                        .map(PendingOAuthResult::Xai)
-                        .map_err(|err| err.to_string())
-                }),
-            });
-            self.insert_entry(&Entry::Notice(
-                "opening browser for xAI login. Press esc to cancel.".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    async fn start_github_copilot_login(
-        &mut self,
-        target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-        _agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.pending_oauth_login.is_some() {
-            self.insert_entry(&Entry::Notice(
-                "OAuth login is already in progress. Press esc to cancel.".into(),
-            ));
-            return Ok(());
-        }
-
-        self.status = "starting GitHub Copilot device login".into();
-        terminal.draw(|frame| self.draw(frame))?;
-        let login = match github_copilot_device::start_github_copilot_device_login().await {
-            Ok(login) => login,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "login failed".into();
-                return Ok(());
+            OAuthUserAction::DeviceCode {
+                verification_uri,
+                user_code,
+                verification_uri_complete,
+            } => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "{provider_label} login: visit {verification_uri} and enter code {user_code}"
+                )));
+                if let Some(uri) = verification_uri_complete {
+                    self.insert_entry(&Entry::Notice(format!(
+                        "Or open this URL to continue: {uri}"
+                    )));
+                }
             }
-        };
-
-        self.insert_entry(&Entry::Notice(format!(
-            "GitHub Copilot login: visit {} and enter code {}",
-            login.verification_uri, login.user_code
-        )));
-        if let Some(uri) = &login.verification_uri_complete {
-            self.insert_entry(&Entry::Notice(format!(
-                "Or open this URL to continue: {uri}"
-            )));
         }
-
-        self.status = "waiting for GitHub Copilot device login; press esc to cancel".into();
+        let flow = if device_flow { " device" } else { "" };
+        self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
         self.composer = ComposerMode::OAuthPending(target.clone());
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
-            handle: tokio::spawn(async move {
-                github_copilot_device::complete_github_copilot_device_login(login)
-                    .await
-                    .map(PendingOAuthResult::GithubCopilot)
-                    .map_err(|err| err.to_string())
-            }),
+            handle: tokio::spawn(
+                async move { login.completion.await.map_err(|err| err.to_string()) },
+            ),
         });
         Ok(())
     }
@@ -304,17 +264,7 @@ impl App {
         match pending.handle.await {
             Ok(Ok(result)) => {
                 self.cancel_limits_command().await;
-                let saved = match result {
-                    PendingOAuthResult::Codex(tokens) => {
-                        save_codex_tokens(self.credential_store.as_ref(), &tokens)
-                    }
-                    PendingOAuthResult::GithubCopilot(tokens) => {
-                        save_github_copilot_tokens(self.credential_store.as_ref(), &tokens)
-                    }
-                    PendingOAuthResult::Xai(tokens) => {
-                        save_xai_tokens(self.credential_store.as_ref(), &tokens)
-                    }
-                };
+                let saved = result.save(self.credential_store.as_ref());
                 match saved {
                     Ok(()) => {
                         self.composer = ComposerMode::Input;
@@ -361,16 +311,17 @@ impl App {
             if self.activate_provider_after_login(&target, agent)? {
                 self.insert_entry(&Entry::Notice(format!(
                     "stored credentials for {} and selected {}/{}",
-                    target.provider, self.info.provider, self.info.model
+                    target.provider, self.info.runtime.provider, self.info.runtime.model
                 )));
             }
-        } else if target.provider == self.info.provider {
-            self.reload_active_provider_after_login(&target, agent)?;
-            self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
-                    target.provider
-                )),
-            );
+        } else if target.provider == self.info.runtime.provider {
+            if self.reload_active_provider_after_login(&target, agent)? {
+                self.insert_entry(&Entry::Notice(format!(
+                        "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
+                        target.provider
+                    )),
+                );
+            }
         } else {
             self.insert_entry(&Entry::Notice(format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",
@@ -416,29 +367,67 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn resolve_reasoning_after_login(
+        &mut self,
+        provider: &str,
+        model: &str,
+    ) -> Option<reasoning_metadata::ModelSwitchReasoningResolution> {
+        let capabilities =
+            rho_providers::model::models_dev::current_reasoning_capabilities(provider, model);
+        match reasoning_metadata::resolve_model_switch_reasoning(
+            &capabilities,
+            self.info.runtime.reasoning,
+            self.info.runtime.reasoning_source,
+        ) {
+            Ok(reasoning) => Some(reasoning),
+            Err(requested) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but reasoning level '{requested}' is not supported by {provider}/{model}"
+                )));
+                self.status = "login saved".into();
+                None
+            }
+        }
+    }
+
     fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let new_provider =
-            match build_sdk_provider(&self.info.provider, &self.info.model, self.info.reasoning) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "stored credentials, but could not refresh {}: {err}",
-                        target.provider
-                    )));
-                    self.status = "login saved".into();
-                    return Ok(());
-                }
-            };
+    ) -> anyhow::Result<bool> {
+        let provider = self.info.runtime.provider.clone();
+        let model = self.info.runtime.model.clone();
+        let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
+            return Ok(false);
+        };
+        let new_provider = match build_sdk_provider(&provider, &model, reasoning.effective) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but could not refresh {}: {err}",
+                    target.provider
+                )));
+                self.status = "login saved".into();
+                return Ok(false);
+            }
+        };
 
-        agent.replace_provider(new_provider, self.info.reasoning)?;
-        self.info.auth = target.auth.clone();
-        self.info.auth_unavailable = None;
-        self.status = "login saved".into();
-        Ok(())
+        agent.replace_provider(new_provider, reasoning.effective)?;
+        self.info
+            .set_reasoning(reasoning.effective, reasoning.source);
+        self.info.runtime.auth = target.auth.clone();
+        self.info.services.auth_unavailable = None;
+        self.start_model_metadata_fetch(agent);
+        match self.save_current_config() {
+            Ok(()) => self.status = "login saved".into(),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "login applied, but saving config failed: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(true)
     }
 
     fn activate_provider_after_login(
@@ -448,14 +437,17 @@ impl App {
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
             self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {}, but no cached models are available. Run /refresh-model-list {} before switching to it.",
-                    target.provider, target.provider
+                    "stored credentials for {}, but no cached models are available. Open /config and choose Refresh model lists before switching to it.",
+                    target.provider
                 )),
             );
             self.status = "login saved".into();
             return Ok(false);
         };
-        let new_provider = match build_sdk_provider(&target.provider, &model, self.info.reasoning) {
+        let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
+            return Ok(false);
+        };
+        let new_provider = match build_sdk_provider(&target.provider, &model, reasoning.effective) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -467,25 +459,26 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider, self.info.reasoning)?;
-        self.info.provider = target.provider.clone();
-        self.info.auth = target.auth.clone();
-        self.info.model = model;
-        self.info.diagnostics.update_identity(
-            &self.info.provider,
-            &self.info.model,
-            self.info.reasoning,
-        );
-        self.info.auth_unavailable = None;
+        agent.replace_provider(new_provider, reasoning.effective)?;
+        self.info.runtime.provider = target.provider.clone();
+        self.info.runtime.auth = target.auth.clone();
+        self.info.runtime.model = model;
+        self.info
+            .set_reasoning(reasoning.effective, reasoning.source);
+        self.info.services.auth_unavailable = None;
         self.using_unavailable_provider = false;
+        self.start_model_metadata_fetch(agent);
         match self.save_current_config() {
             Ok(()) => {
-                self.status = format!("model: {}/{}", self.info.provider, self.info.model);
+                self.status = format!(
+                    "model: {}/{}",
+                    self.info.runtime.provider, self.info.runtime.model
+                );
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "selected {}/{}, but saving config failed: {err}",
-                    self.info.provider, self.info.model
+                    self.info.runtime.provider, self.info.runtime.model
                 )));
                 self.status = "config save failed".into();
             }
@@ -509,12 +502,15 @@ impl App {
         };
 
         self.cancel_limits_command().await;
-        let deleted = delete_provider_credentials(self.credential_store.as_ref(), &target.provider);
+        let deleted = ProviderAuthentication::delete_credentials(
+            self.credential_store.as_ref(),
+            &target.provider,
+        );
 
         match deleted {
             Ok(deleted) => {
                 self.refresh_available_auths();
-                let env_active = provider_has_env_override(&target.provider);
+                let env_active = ProviderAuthentication::has_environment_override(&target.provider);
                 let message = if env_active {
                     format!(
                         "deleted stored credentials for {}, but an env override is still active",
@@ -549,11 +545,11 @@ impl App {
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
     ) -> bool {
-        if self.info.provider != target.provider {
+        if self.info.runtime.provider != target.provider {
             self.status = "logout complete".into();
             return false;
         }
-        if provider_has_credentials(self.credential_store.as_ref(), &target.provider)
+        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.provider)
             .unwrap_or(false)
         {
             self.status = "logout complete".into();
@@ -561,13 +557,17 @@ impl App {
         }
 
         let error = registry::missing_credentials_error(&target.provider);
-        self.info.auth_unavailable = Some(error.to_string());
+        self.info.services.auth_unavailable = Some(error.to_string());
         self.using_unavailable_provider = true;
         let _ = agent.replace_provider(
             std::sync::Arc::new(UnavailableProvider::new(error)),
-            self.info.reasoning,
+            self.info.runtime.reasoning,
         );
         self.status = "no providers configured; run /login".into();
         true
     }
 }
+
+#[cfg(test)]
+#[path = "login_tests.rs"]
+mod tests;

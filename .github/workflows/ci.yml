@@ -14,6 +14,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-impact:
+    name: release version impact
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check changed crate release versions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 scripts/check_release_impact.py --base "$BASE_SHA" --title "$PR_TITLE"
+
   quality:
     name: quality and workspace tests
     runs-on: ubuntu-latest
@@ -29,6 +43,8 @@ jobs:
         run: python3 scripts/check_sdk_compatibility.py
       - name: Test SDK redaction evidence schema
         run: python3 scripts/audit_sdk_redaction_tests.py
+      - name: Test shell installer release parsing
+        run: sh scripts/install_tests.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -148,20 +164,37 @@ jobs:
         run: cargo package --locked -p rho-sdk
       - name: Verify SDK publish preparation
         run: cargo publish --dry-run --locked -p rho-sdk
+      - name: Verify rho-agent-tools publish preparation
+        run: >-
+          cargo publish --dry-run --locked -p rho-agent-tools
+          --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+      - name: Verify rho-providers publish preparation
+        run: >-
+          cargo publish --dry-run --locked -p rho-providers
+          --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+          --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
       - name: Build application package contents
         run: >-
           cargo package --locked --no-verify -p rho-coding-agent
           --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
+          --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
+          --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
       - name: Check package file lists
         shell: bash
         run: |
           set -euo pipefail
           cargo package --list -p rho-sdk > /tmp/rho-sdk-package-files
+          cargo package --list -p rho-providers > /tmp/rho-providers-package-files
+          cargo package --list -p rho-agent-tools > /tmp/rho-agent-tools-package-files
           cargo package --list -p rho-coding-agent > /tmp/rho-application-package-files
           grep -Fxq Cargo.toml /tmp/rho-sdk-package-files
           grep -Fxq README.md /tmp/rho-sdk-package-files
           grep -Fxq src/lib.rs /tmp/rho-sdk-package-files
           grep -Fxq examples/simple_completion.rs /tmp/rho-sdk-package-files
+          grep -Fxq Cargo.toml /tmp/rho-providers-package-files
+          grep -Fxq src/lib.rs /tmp/rho-providers-package-files
+          grep -Fxq Cargo.toml /tmp/rho-agent-tools-package-files
+          grep -Fxq src/lib.rs /tmp/rho-agent-tools-package-files
           grep -Fxq Cargo.toml /tmp/rho-application-package-files
           grep -Fxq src/main.rs /tmp/rho-application-package-files
           grep -Fxq tests/automation_cli.rs /tmp/rho-application-package-files

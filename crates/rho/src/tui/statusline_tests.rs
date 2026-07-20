@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::models_dev::ModelCost;
+use rho_providers::model::models_dev::ModelCost;
 
 fn priced_metadata() -> ModelMetadata {
     ModelMetadata {
@@ -23,6 +23,8 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        reasoning_configurable: true,
+        permission_mode: crate::permission::PermissionMode::Auto,
         billing: BillingInfo::Metered,
         model_metadata: Some(priced_metadata()),
         model_metadata_loading: false,
@@ -42,6 +44,15 @@ fn statusline_rows_use_display_width_for_alignment() {
     let text = line_text(&line);
 
     assert_eq!(display_width(&text), 10);
+}
+
+#[test]
+fn statusline_omits_reasoning_for_non_configurable_provider_paths() {
+    let mut state = test_state(ModelUsage::default());
+    state.provider = "github-copilot".into();
+    state.reasoning_configurable = reasoning_is_configurable(&state.provider, &state.model);
+
+    assert_eq!(state.right_bottom(), "◇ Auto • (github-copilot) gpt-test");
 }
 
 #[test]
@@ -232,35 +243,47 @@ fn provider_reported_context_omits_estimate_marker() {
     assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
 }
 
-fn test_info(cwd: PathBuf) -> TuiInfo {
-    use crate::{
-        app::config_repository::ConfigRepository, herdr::HerdrReporter, keybindings::Keybindings,
-    };
+fn test_info(cwd: PathBuf) -> RuntimeModelView {
+    let mut info = crate::tui::tests::test_bootstrap().runtime;
+    info.cwd = cwd;
+    info
+}
 
-    TuiInfo {
-        cwd,
-        provider: "openai".into(),
-        model: "gpt-test".into(),
-        reasoning: ReasoningLevel::Low,
-        show_reasoning_output: true,
-        auth: "api-key".into(),
-        title_provider: None,
-        title_model: None,
-        title_auth: None,
-        favorite_models: Vec::new(),
-        max_tool_output_lines: 10,
-        keybindings: Keybindings::default(),
-        session_id: None,
-        recovered_messages: Vec::new(),
-        prompt_templates: Default::default(),
-        open_resume_picker: false,
-        config_repository: ConfigRepository::new(None),
-        auth_unavailable: None,
-        update_notice: None,
-        pending_update_notice: None,
-        diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
-        herdr: HerdrReporter::default(),
-    }
+#[test]
+fn permission_mode_indicator_is_always_visible_and_prioritized() {
+    let auto = test_info(PathBuf::from("/tmp/project"));
+    assert!(StatusLineState::from_tui(&auto)
+        .right_bottom()
+        .starts_with("◇ Auto • "));
+
+    let mut plan = auto;
+    plan.permission_mode = crate::permission::PermissionMode::Plan;
+    assert!(StatusLineState::from_tui(&plan)
+        .right_bottom()
+        .starts_with("◇ Plan • "));
+
+    plan.permission_mode = crate::permission::PermissionMode::Supervised;
+    assert!(StatusLineState::from_tui(&plan)
+        .right_bottom()
+        .starts_with("◇ Supervised • "));
+}
+
+#[test]
+fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
+    let mut info = test_info(PathBuf::from("/tmp/project"));
+    let mut statusline = StatusLine::new(&info);
+    statusline.lines(18, None);
+    let initial_render_count = statusline.render_count();
+
+    info.permission_mode = crate::permission::PermissionMode::Plan;
+    statusline.update_model(&info);
+    let lines = statusline.lines(18, None).to_vec();
+
+    assert_eq!(statusline.render_count(), initial_render_count + 1);
+    assert!(lines
+        .iter()
+        .all(|line| display_width(&line_text(line)) <= 18));
+    assert!(line_text(&lines[1]).contains("◇ Plan"));
 }
 
 #[test]

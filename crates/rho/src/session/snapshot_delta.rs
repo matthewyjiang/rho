@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Message, ModelIdentity};
+use rho_providers::model::{Message, ModelIdentity};
 
 /// Minimal state retained between appends to validate that history only grew.
 #[derive(Clone, Debug)]

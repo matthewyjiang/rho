@@ -1,0 +1,29 @@
+mermaid-rs-renderer
+===================
+
+Mermaid parsing and public intermediate-representation adaptation use
+mermaid-rs-renderer 0.3.1:
+
+  https://github.com/1jehuang/mermaid-rs-renderer/tree/v0.3.1
+
+Copyright (c) 2026 mermaid-rs-renderer contributors
+Licensed under the MIT License. A copy of the license is provided in
+LICENSE-MIT-MERMAID-RS-RENDERER.
+
+
+Grok Build terminal Mermaid renderer
+====================================
+
+This product includes modified portions of the terminal Mermaid canvas,
+layout, routing, wrapping, and painter implementation from Grok Build:
+
+  https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
+
+Copyright 2023-2026 SpaceXAI
+Licensed under the Apache License, Version 2.0. A copy of the license is
+provided in LICENSE-APACHE-GROK-BUILD.
+
+Rho's modifications replace the original Mermaid parser with adapters from
+mermaid-rs-renderer public parsed IR, separate validation and resource limits,
+and integrate the painter with Rho's panel, styling, caching, and fallback
+behavior.

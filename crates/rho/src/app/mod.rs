@@ -1,11 +1,18 @@
+mod agent_binding;
+pub(crate) mod agent_executor;
 mod automation;
 mod bootstrap;
 mod cli_config;
 pub(crate) mod config_repository;
 mod interactive;
 pub(crate) mod interactive_presenter;
+mod interactive_run_controller;
 pub(crate) mod interactive_runtime;
+mod interactive_session_controller;
+mod interactive_state;
 mod login;
+mod policy;
+mod provider_controller;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 

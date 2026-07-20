@@ -159,49 +159,64 @@ fn provider_and_tool_failures_stay_off_stdout() {
 }
 
 #[test]
-fn cancel_marker_gracefully_stops_output_run() {
+fn output_run_persists_agent_identity() {
     let root = TempDir::new().unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        "provider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+    )
+    .unwrap();
     let output_file = root.path().join("result.json");
-    let mut command = command(&root, "delay");
-    command.args([
+    let mut command = command(&root, "fixed");
+    command.env(RESPONSE_ENV, "done").args([
         "--no-subagents",
-        "run",
-        "--preset",
+        "--agent",
         "worker",
+        "run",
         "--output-file",
         output_file.to_str().unwrap(),
-        "wait for cancellation",
+        "complete the task",
     ]);
-    let mut child = command.spawn().unwrap();
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !output_file.exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    assert!(
-        output_file.exists(),
-        "subagent did not create its result file"
-    );
-    std::fs::write(root.path().join("cancel.requested"), []).unwrap();
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "subagent did not stop after cancellation"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
-    assert!(!status.success());
+    let output = command.output().unwrap();
+    assert_success(&output);
 
     let result: Value =
         serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
-    assert_eq!(result["state"], "stopped");
+    assert_eq!(result["state"], "ok");
+    assert_eq!(result["agent_id"], "worker");
+    assert_eq!(result["agent_fingerprint"].as_str().unwrap().len(), 64);
+    assert_eq!(result["provider"], "openai");
+    assert!(result["model"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
     let events = std::fs::read_to_string(root.path().join("events.jsonl")).unwrap();
-    assert!(events.contains("wait for cancellation"));
+    assert!(events.contains("complete the task"));
+}
+
+#[test]
+fn failed_output_run_persists_resolved_provider_and_model() {
+    let root = TempDir::new().unwrap();
+    let output_file = root.path().join("result.json");
+    let mut command = command(&root, "fail");
+    command.args([
+        "--no-subagents",
+        "run",
+        "--output-file",
+        output_file.to_str().unwrap(),
+        "complete the task",
+    ]);
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
+    assert_eq!(result["state"], "error");
+    assert_eq!(result["provider"], "openai");
+    assert_eq!(result["model"], "gpt-5.5");
+    assert!(result["error"]
+        .as_str()
+        .unwrap()
+        .contains("deterministic provider failure"));
 }
 
 #[test]
@@ -216,6 +231,16 @@ fn final_answer_is_the_only_stdout_content() {
     assert_success(&output);
     assert_eq!(stdout(&output), "answer for a pipeline\n");
     assert!(output.stderr.is_empty());
+
+    let ledger = rusqlite::Connection::open(root.path().join(".rho/usage.sqlite3")).unwrap();
+    let request: (String, String, String) = ledger
+        .query_row(
+            "SELECT provider, model, purpose FROM usage_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
 }
 
 #[cfg(unix)]
@@ -328,6 +353,8 @@ fn command(root: &TempDir, mode: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
     command
         .current_dir(root.path())
+        .env("HOME", root.path())
+        .env("RHO_HOME", root.path().join(".rho"))
         .env(MODE_ENV, mode)
         .env_remove(RESPONSE_ENV)
         .env_remove(COMMAND_ENV)

@@ -43,6 +43,7 @@ pub enum SelectionMode {
 pub struct HostQuestion {
     id: String,
     prompt: String,
+    header: Option<String>,
     choices: Vec<HostChoice>,
     selection: SelectionMode,
     allow_other: bool,
@@ -78,6 +79,7 @@ impl HostQuestion {
         Ok(Self {
             id,
             prompt: prompt.into(),
+            header: None,
             choices,
             selection,
             allow_other: false,
@@ -89,6 +91,13 @@ impl HostQuestion {
 
     pub fn allow_other(mut self) -> Self {
         self.allow_other = true;
+        self
+    }
+
+    /// Very short label hosts may show in place of the full prompt where
+    /// space is tight, such as a question tab.
+    pub fn header(mut self, header: impl Into<String>) -> Self {
+        self.header = Some(header.into());
         self
     }
 
@@ -113,6 +122,10 @@ impl HostQuestion {
 
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    pub fn header_text(&self) -> Option<&str> {
+        self.header.as_deref()
     }
 
     pub fn choices(&self) -> &[HostChoice] {

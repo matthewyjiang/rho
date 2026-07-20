@@ -60,7 +60,13 @@ impl App {
     }
 
     pub(super) fn handle_pending_input_key(&mut self, key: KeyEvent) -> bool {
-        if self.info.keybindings.manage_pending_input.matches(key) {
+        if self
+            .info
+            .runtime
+            .keybindings
+            .manage_pending_input
+            .matches(key)
+        {
             if self.pending_input_count() == 0 {
                 self.notify_status("no pending input");
             } else {
@@ -74,7 +80,13 @@ impl App {
         }
 
         if !self.pending_input_panel.focused {
-            if self.info.keybindings.edit_pending_input.matches(key) {
+            if self
+                .info
+                .runtime
+                .keybindings
+                .edit_pending_input
+                .matches(key)
+            {
                 self.recall_latest_pending_input();
                 self.ctrl_c_streak = 0;
                 return true;
@@ -82,7 +94,13 @@ impl App {
             return false;
         }
 
-        if self.info.keybindings.edit_pending_input.matches(key) {
+        if self
+            .info
+            .runtime
+            .keybindings
+            .edit_pending_input
+            .matches(key)
+        {
             self.recall_latest_pending_input();
             self.ctrl_c_streak = 0;
             return true;

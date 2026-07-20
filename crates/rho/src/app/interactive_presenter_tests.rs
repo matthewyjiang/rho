@@ -6,7 +6,7 @@ use rho_sdk::{
 };
 
 use super::InteractiveToolPresenter;
-use crate::tool::ToolDisplayStyle;
+use rho_tools::tool::ToolDisplayStyle;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
@@ -14,6 +14,20 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
         name: name.into(),
         arguments,
     }
+}
+
+#[test]
+fn shell_preview_uses_prompt_before_arguments_arrive() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+
+    assert_eq!(
+        presenter.preview(0, Some("bash".into()), ""),
+        Some(vec!["$".into()])
+    );
+    assert_eq!(
+        presenter.preview(1, Some("powershell".into()), ""),
+        Some(vec!["PS".into()])
+    );
 }
 
 #[test]
@@ -172,6 +186,315 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
         presenter.updated(&unknown_id, &progress),
         vec!["custom", "halfway", "progress: 1/2"]
     );
+}
+
+#[test]
+fn agent_tools_use_status_first_presentations() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let id = ToolCallId::from_string("call-agent").unwrap();
+    let arguments = serde_json::json!({
+        "agent_id": "explorer",
+        "background": true,
+        "prompt": "Audit the repository\nfor architecture issues"
+    });
+
+    assert_eq!(
+        presenter.preview(0, Some("agent".into()), &arguments.to_string()),
+        Some(vec![
+            "● explorer  starting in background".into(),
+            "  Audit the repository for architecture issues".into(),
+        ])
+    );
+    presenter.proposed(call(id.as_str(), "agent", arguments));
+    let started = presenter.started(id.clone(), "agent".into(), ToolMetadata::default());
+    assert_eq!(started.display_style, ToolDisplayStyle::default_tool());
+    assert_eq!(
+        started.display_lines,
+        vec![
+            "● explorer  starting in background",
+            "  Audit the repository for architecture issues",
+        ]
+    );
+
+    let (ok, finished) = presenter.finished(
+        &id,
+        ToolCompletion::Success(ToolOutput::text(
+            "agent abc123 (explorer) started in background\nattach: rho attach abc123",
+        )),
+    );
+    assert!(ok);
+    assert_eq!(
+        finished.display_lines,
+        vec![
+            "● explorer  running in background",
+            "  Audit the repository for architecture issues",
+            "",
+            "  abc123 · rho attach abc123",
+        ]
+    );
+
+    assert_eq!(
+        presenter.preview(2, Some("agent".into()), r#"{"agent_id":"expl"#),
+        Some(vec!["● expl  starting".into()])
+    );
+    assert_eq!(
+        presenter.preview(
+            2,
+            None,
+            r#"orer","prompt":"Trace module boundaries","background":true}"#,
+        ),
+        Some(vec![
+            "● explorer  starting in background".into(),
+            "  Trace module boundaries".into(),
+        ])
+    );
+
+    let long_prompt = format!("{}tail marker", "architecture ".repeat(30));
+    let long_preview = presenter
+        .preview(
+            1,
+            Some("agent".into()),
+            &serde_json::json!({"agent_id": "explorer", "prompt": long_prompt}).to_string(),
+        )
+        .unwrap();
+    assert!(long_preview[1].ends_with('…'));
+    assert!(!long_preview[1].contains("tail marker"));
+}
+
+#[test]
+fn agent_progress_and_completion_keep_task_state_and_result_distinct() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let id = ToolCallId::from_string("call-agent-foreground").unwrap();
+    presenter.proposed(call(
+        id.as_str(),
+        "agent",
+        serde_json::json!({
+            "agent_id": "reviewer",
+            "prompt": "Review the change",
+            "background": false
+        }),
+    ));
+    presenter.started(id.clone(), "agent".into(), ToolMetadata::default());
+
+    assert_eq!(
+        presenter.updated(
+            &id,
+            &ToolProgress::message("agent def456 running\nattach: rho attach def456")
+        ),
+        vec![
+            "● reviewer  running",
+            "  Review the change",
+            "",
+            "  def456 · rho attach def456",
+        ]
+    );
+
+    let (ok, finished) = presenter.finished(
+        &id,
+        ToolCompletion::Success(ToolOutput::text(
+            "agent def456 (reviewer): ok\nturns: 3 · tokens: 1200 in / 300 out\n\nfirst paragraph\n\nsecond paragraph",
+        )),
+    );
+    assert!(ok);
+    assert_eq!(
+        finished.display_lines,
+        vec![
+            "✓ reviewer  completed · 3 turns",
+            "  Review the change",
+            "",
+            "  def456 · 1200 in / 300 out",
+            "",
+            "first paragraph",
+            "",
+            "second paragraph",
+        ]
+    );
+
+    let failed = presenter.historical(
+        &call(
+            "call-agent-failed",
+            "agent",
+            serde_json::json!({"agent_id": "reviewer", "prompt": "Review the change"}),
+        ),
+        false,
+        "agent def456 (reviewer): error\n\
+         turns: 2 · tokens: 800 in / 120 out\n\
+         error: provider stream failed\n\
+         this delegated task did not complete; treat its work as unverified",
+    );
+    assert_eq!(
+        failed.display_lines,
+        vec![
+            "✗ reviewer  failed · 2 turns",
+            "  Review the change",
+            "error: provider stream failed",
+            "this delegated task did not complete; treat its work as unverified",
+            "",
+            "  def456 · 800 in / 120 out",
+        ]
+    );
+}
+
+#[test]
+fn agents_list_and_status_share_the_agent_state_language() {
+    let presenter = InteractiveToolPresenter::new("/workspace".into());
+    let listed = presenter.historical(
+        &call(
+            "call-agents-list",
+            "agents",
+            serde_json::json!({"action": "list"}),
+        ),
+        true,
+        "abc123  explorer  running  18s  Auditing repository structure\n\
+         def456  reviewer  ok  51s  Review finished",
+    );
+    assert_eq!(
+        listed.display_lines,
+        vec![
+            "delegated agents",
+            "● abc123  explorer  running  18s  Auditing repository structure",
+            "✓ def456  reviewer  completed  51s  Review finished",
+        ]
+    );
+
+    let status = presenter.historical(
+        &call(
+            "call-agents-status",
+            "agents",
+            serde_json::json!({"action": "status", "id": "abc123"}),
+        ),
+        true,
+        "agent abc123 (explorer): running\n\
+         elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
+         activity: searching files\n\
+         latest: first paragraph\n\
+         \n\
+         second paragraph\n\
+         attach: rho attach abc123",
+    );
+    assert_eq!(
+        status.display_lines,
+        vec![
+            "● explorer  running · 1m 30s · 3 turns",
+            "  searching files",
+            "  first paragraph",
+            "",
+            "  second paragraph",
+            "",
+            "  abc123 · 1200 in / 300 out",
+            "  rho attach abc123",
+        ]
+    );
+}
+
+#[test]
+fn historical_legacy_agent_output_keeps_terminal_state() {
+    let presenter = InteractiveToolPresenter::new("/workspace".into());
+    let legacy_agent = call(
+        "call-legacy-agent",
+        "agent",
+        serde_json::json!({"preset": "explorer", "prompt": "Map the repository", "background": true}),
+    );
+    let receipt = presenter.historical(
+        &legacy_agent,
+        true,
+        "subagent abc123 (explorer) started in background\nattach: rho attach abc123",
+    );
+    assert_eq!(
+        receipt.display_lines,
+        vec![
+            "● explorer  running in background",
+            "  Map the repository",
+            "",
+            "  abc123 · rho attach abc123",
+        ]
+    );
+
+    let completion = presenter.historical(
+        &legacy_agent,
+        true,
+        "subagent abc123 (explorer): ok\n\
+         turns: 2 · tokens: 900 in / 140 out\n\
+         \n\
+         legacy result",
+    );
+    assert_eq!(
+        completion.display_lines,
+        vec![
+            "✓ explorer  completed · 2 turns",
+            "  Map the repository",
+            "",
+            "  abc123 · 900 in / 140 out",
+            "",
+            "legacy result",
+        ]
+    );
+
+    let status = presenter.historical(
+        &call(
+            "call-legacy-status",
+            "agents",
+            serde_json::json!({"action": "status", "id": "abc123"}),
+        ),
+        true,
+        "subagent abc123 (explorer): running\n\
+         elapsed: 12s · turns: 1 · tokens: 400 in / 60 out\n\
+         activity: reading files\n\
+         attach: rho attach abc123",
+    );
+    assert_eq!(
+        status.display_lines,
+        vec![
+            "● explorer  running · 12s · 1 turn",
+            "  reading files",
+            "",
+            "  abc123 · 400 in / 60 out",
+            "  rho attach abc123",
+        ]
+    );
+
+    let stopped = presenter.historical(
+        &call(
+            "call-legacy-stop",
+            "agents",
+            serde_json::json!({"action": "stop", "id": "abc123"}),
+        ),
+        true,
+        "subagent abc123 (explorer): stopped\nturns: 1 · tokens: 400 in / 60 out",
+    );
+    assert_eq!(
+        stopped.display_lines,
+        vec![
+            "■ explorer  stopped · 1 turn",
+            "",
+            "  abc123 · 400 in / 60 out",
+        ]
+    );
+
+    let malformed = presenter.historical(
+        &call(
+            "call-malformed-status",
+            "agents",
+            serde_json::json!({"action": "status", "id": "abc123"}),
+        ),
+        true,
+        "unrecognized status payload",
+    );
+    assert_eq!(
+        malformed.display_lines,
+        vec!["○ abc123  status result", "", "unrecognized status payload",]
+    );
+
+    let empty = presenter.historical(
+        &call(
+            "call-legacy-list",
+            "agents",
+            serde_json::json!({"action": "list"}),
+        ),
+        true,
+        "no subagents",
+    );
+    assert_eq!(empty.display_lines, vec!["delegated agents", "  no runs"]);
 }
 
 #[test]

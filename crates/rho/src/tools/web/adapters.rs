@@ -1,9 +1,9 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{
-    config::{Config, SearchProvider},
-    tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+use {
+    crate::config::{Config, SearchProvider},
+    rho_tools::tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 use super::{

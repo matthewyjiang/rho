@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn reasoning_stream_preview_renders_markdown() {
+    let mut app = test_app();
+    app.live_stream_preview = Some(LiveStreamPreview {
+        kind: StreamKind::Reasoning,
+        text: "considering **boldly**".into(),
+        include_leading_blank: false,
+    });
+
+    let lines = app.active_lines(80);
+    let content_line = lines
+        .iter()
+        .find(|line| line_text(line).contains("considering"))
+        .expect("reasoning preview line");
+    assert_eq!(line_text(content_line).trim(), "considering boldly");
+    let bold = content_line
+        .spans
+        .iter()
+        .find(|span| span.content == "boldly")
+        .expect("bold reasoning span");
+    assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+    assert!(bold.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
 fn fullscreen_history_starts_at_bottom() {
     let mut app = test_app();
     for index in 0..20 {
@@ -250,7 +274,82 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
 }
 
 #[test]
-fn jump_button_resets_tool_output_background() {
+fn activity_rail_has_a_solid_full_width_background() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    app.running = true;
+    app.push_transcript_entry(test_tool_entry(
+        true,
+        &[
+            "tool line 0",
+            "tool line 1",
+            "tool line 2",
+            "tool line 3",
+            "tool line 4",
+            "tool line 5",
+            "tool line 6",
+            "tool line 7",
+            "tool line 8",
+            "tool line 9",
+        ],
+    ));
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let rail = layout.activity_rail.unwrap();
+    let activity = layout.activity.unwrap();
+    let scrollbar = layout.history_scrollbar.unwrap();
+    app.reveal_history_scrollbar(Instant::now());
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    assert_eq!(rail, Rect::new(0, rail.y, width, 1));
+    let buffer = terminal.backend().buffer();
+    let rail_background = Theme::activity_rail().bg.unwrap();
+    assert_ne!(
+        buffer[(rail.x, rail.y.saturating_sub(1))].bg,
+        rail_background
+    );
+    for column in rail.x..rail.right() {
+        assert_eq!(buffer[(column, rail.y)].bg, rail_background);
+    }
+    for row in rail.bottom()..height {
+        for column in rail.x..rail.right() {
+            assert_ne!(buffer[(column, row)].bg, rail_background);
+        }
+    }
+    for column in activity.right()..scrollbar.rect.x {
+        assert_eq!(buffer[(column, rail.y)].symbol(), " ");
+    }
+    assert_eq!(buffer[(scrollbar.rect.x, rail.y)].symbol(), "█");
+}
+
+#[test]
+fn activity_rail_clears_inherited_text_modifiers() {
+    let mut app = test_app();
+    let width = 40;
+    let height = 12;
+    for index in 0..20 {
+        app.push_transcript_entry(Entry::Notice(format!("italic status {index}")));
+    }
+    app.running = true;
+    let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
+    let rail = layout.activity_rail.unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    let buffer = terminal.backend().buffer();
+    assert!(buffer[(rail.x, rail.y.saturating_sub(1))]
+        .modifier
+        .contains(Modifier::ITALIC));
+    for column in rail.x..rail.right() {
+        assert!(!buffer[(column, rail.y)].modifier.contains(Modifier::ITALIC));
+    }
+}
+
+#[test]
+fn jump_button_uses_activity_rail_background() {
     let mut app = test_app();
     let width = 40;
     let height = 12;
@@ -280,12 +379,13 @@ fn jump_button_resets_tool_output_background() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     let buffer = terminal.backend().buffer();
+    let rail_background = Theme::activity_rail().bg.unwrap();
     assert_ne!(
         buffer[(button.x.saturating_sub(1), button.y)].bg,
-        Color::Reset
+        rail_background
     );
     for column in button.x..button.right() {
-        assert_eq!(buffer[(column, button.y)].bg, Color::Reset);
+        assert_eq!(buffer[(column, button.y)].bg, rail_background);
     }
 }
 
@@ -585,4 +685,33 @@ fn started_tool_display_ignores_late_argument_previews() {
             .map(|tool| tool.display_lines.as_slice()),
         Some(["edit_file src/main.rs".to_string()].as_slice())
     );
+}
+
+#[test]
+fn web_search_api_key_editor_preserves_parent_picker() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.services.config_repository =
+        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let config = app.info.services.config_repository.load().unwrap();
+    let mut parent = config_picker::config_picker(&app.info.runtime, &config);
+    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
+    app.composer = ComposerMode::Picker(parent);
+    let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
+    app.open_child_picker(child);
+
+    app.open_web_search_api_key_editor(ConfigTextKey::Exa)
+        .unwrap();
+    app.handle_config_text_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
+
+    let ComposerMode::Picker(picker) = &app.composer else {
+        panic!("expected parent picker after API-key editor escape");
+    };
+    assert_eq!(
+        picker.selected_item().unwrap().value,
+        config_picker::WEB_SEARCH_VALUE
+    );
+    assert_eq!(picker.filter, "web");
 }

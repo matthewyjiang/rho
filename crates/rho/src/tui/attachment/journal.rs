@@ -7,9 +7,12 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use crate::{subagent, tool::ToolDisplayStyle};
+use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
-use super::super::event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::super::event_adapter::{
+    compaction_completed_notice, SdkEventAdapter, ViewEvent, ViewModelEvent,
+    COMPACTION_STARTED_NOTICE,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -62,7 +65,7 @@ impl AttachmentWriter {
             ViewEvent::Update(update) => attachment_update(update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
             ViewEvent::Questionnaire(request) => Some(AttachmentEvent::Notice(format!(
-                "input requested but unavailable in a subagent: {}",
+                "input requested but unavailable in a delegated agent: {}",
                 request.title()
             ))),
             ViewEvent::Completed => Some(AttachmentEvent::Completed),
@@ -100,6 +103,7 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
             ok,
             display_style,
             display_lines,
+            ..
         } => Some(AttachmentEvent::ToolFinished {
             ok,
             display_style,
@@ -111,6 +115,17 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
+        ViewModelEvent::ProviderRetry => None,
+        ViewModelEvent::CompactionStarted => {
+            Some(AttachmentEvent::Notice(COMPACTION_STARTED_NOTICE.into()))
+        }
+        ViewModelEvent::CompactionCompleted {
+            previous_messages,
+            current_messages,
+        } => Some(AttachmentEvent::Notice(compaction_completed_notice(
+            previous_messages,
+            current_messages,
+        ))),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

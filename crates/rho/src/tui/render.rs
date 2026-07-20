@@ -1,12 +1,16 @@
 use super::{
+    feed_image::{reserve_entry_image_rows, reserve_optional_image_rows},
     limits_command::usage_limit_lines,
-    markdown::{render_markdown, MarkdownCodeBlock},
+    message_render::{render_assistant_content, render_reasoning_content},
+    rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
-    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
-    DEFAULT_TUI_HEIGHT,
+    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker, DEFAULT_TUI_HEIGHT,
 };
-use crate::tool::ToolDisplayStyle;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use {
+    rho_providers::model::{image_summary, ImageContent},
+    rho_tools::tool::ToolDisplayStyle,
+};
 
 use ratatui::{
     layout::Position,
@@ -28,7 +32,10 @@ impl LineFill {
     }
 }
 
-pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
+pub(super) fn session_header_lines(
+    update_notice: Option<&str>,
+    width: usize,
+) -> Vec<Line<'static>> {
     let divider = "─".repeat(width.max(1));
     let mut lines = vec![
         Line::styled(divider.clone(), Theme::dim()),
@@ -38,7 +45,7 @@ pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'st
             Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
         ]),
     ];
-    if let Some(notice) = &info.update_notice {
+    if let Some(notice) = update_notice {
         lines.push(Line::from(vec![
             Span::styled("update", Theme::warning()),
             Span::raw("  "),
@@ -54,6 +61,13 @@ pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'st
 }
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
+    match picker.layout {
+        super::PickerLayout::List => list_picker_lines(picker, width),
+        super::PickerLayout::MasterDetail => master_detail_picker_lines(picker, width),
+    }
+}
+
+fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(MAX_PICKER_ITEMS + 7);
     lines.push(picker_filter_line(picker, width));
@@ -125,6 +139,121 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     lines
 }
 
+fn master_detail_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
+    const TWO_COLUMN_MIN_WIDTH: usize = 64;
+
+    let matching_indices = picker.matching_indices();
+    if matching_indices.is_empty() {
+        return list_picker_lines(picker, width);
+    }
+
+    let mut lines = vec![picker_filter_line(picker, width), Line::raw("")];
+    let detail = picker
+        .selected_item()
+        .and_then(|item| item.detail.as_deref())
+        .unwrap_or_default();
+
+    if width < TWO_COLUMN_MIN_WIDTH {
+        lines.extend(detail_lines(detail, width.saturating_sub(2), "  "));
+        lines.push(Line::raw(""));
+        let start = visible_picker_match_start(picker, &matching_indices);
+        for index in matching_indices
+            .iter()
+            .copied()
+            .skip(start)
+            .take(MAX_PICKER_ITEMS)
+        {
+            let item = &picker.items[index];
+            lines.push(picker_item_line(
+                item,
+                index == picker.selected,
+                width.saturating_sub(2),
+                width,
+            ));
+        }
+    } else {
+        let start = visible_picker_match_start(picker, &matching_indices);
+        let visible = matching_indices
+            .iter()
+            .copied()
+            .skip(start)
+            .take(MAX_PICKER_ITEMS)
+            .collect::<Vec<_>>();
+        let left_width = picker_label_width(picker, width)
+            .saturating_add(2)
+            .clamp(18, 32);
+        let separator = " │ ";
+        let right_width = width.saturating_sub(left_width + display_width(separator));
+        let details = detail_lines(detail, right_width, "");
+        let row_count = visible.len().max(details.len());
+        for row in 0..row_count {
+            let left = visible.get(row).map_or_else(String::new, |index| {
+                let marker = if *index == picker.selected {
+                    "→"
+                } else {
+                    " "
+                };
+                let label =
+                    truncate_one_line(&picker.items[*index].label, left_width.saturating_sub(2));
+                format!("{marker} {label}")
+            });
+            let selected = visible
+                .get(row)
+                .is_some_and(|index| *index == picker.selected);
+            let left = format!(
+                "{left}{}",
+                " ".repeat(left_width.saturating_sub(display_width(&left)))
+            );
+            let right = details
+                .get(row)
+                .map(|line| line.spans.clone())
+                .unwrap_or_default();
+            let mut spans = vec![Span::styled(
+                left,
+                if selected {
+                    Theme::accent()
+                } else {
+                    Theme::text()
+                },
+            )];
+            spans.push(Span::styled(separator, Theme::dim()));
+            spans.extend(right);
+            lines.push(Line::from(spans));
+        }
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(styled_line(
+        truncate_one_line(&picker_footer_text(picker), width),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    ));
+    lines
+}
+
+fn detail_lines(detail: &str, width: usize, prefix: &str) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(display_width(prefix)).max(1);
+    detail
+        .lines()
+        .flat_map(|line| {
+            if line.is_empty() {
+                vec![Line::raw("")]
+            } else {
+                wrap_line_at_whitespace(line, content_width)
+                    .into_iter()
+                    .map(|line| {
+                        Line::from(vec![
+                            Span::raw(prefix.to_string()),
+                            Span::styled(line, Theme::dim()),
+                        ])
+                    })
+                    .collect()
+            }
+        })
+        .collect()
+}
+
 fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
     if width <= 1 {
         return Line::from(Span::styled(">", Theme::text_strong()));
@@ -146,9 +275,12 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         super::PickerAction::ResumeSession => 36,
         super::PickerAction::Config
         | super::PickerAction::Doctor
+        | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
-        | super::PickerAction::InsertSkillCommand => 30,
+        | super::PickerAction::RefreshModelList
+        | super::PickerAction::InsertSkillCommand
+        | super::PickerAction::ViewAgent => 30,
     };
     let reserved_preview_width = width.saturating_sub(18);
     let available_width = if reserved_preview_width >= 12 {
@@ -218,13 +350,15 @@ fn picker_item_line(
 fn picker_footer_text(picker: &UiPicker) -> String {
     let action = match picker.action {
         super::PickerAction::Config => "change",
-        super::PickerAction::Doctor => "close",
+        super::PickerAction::Doctor | super::PickerAction::ViewAgent => "close",
         super::PickerAction::SelectModel
         | super::PickerAction::SelectTitleModel
+        | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ResumeSession => "select",
+        super::PickerAction::RefreshModelList => "refresh",
     };
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
@@ -236,8 +370,13 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     } else {
         ""
     };
+    let escape = if picker.has_parent() {
+        "back"
+    } else {
+        "cancel"
+    };
     format!(
-        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to cancel",
+        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to {escape}",
         picker.title
     )
 }
@@ -298,12 +437,14 @@ fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'
     std::borrow::Cow::Owned(text[..end].to_string())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct CompleteVisualPrefix {
     pub(super) byte_index: usize,
     pub(super) ends_with_wrap: bool,
 }
 
+#[cfg(test)]
 pub(super) fn complete_visual_prefix(text: &str, width: usize) -> CompleteVisualPrefix {
     complete_visual_line_ends(text, width)
         .last()
@@ -320,6 +461,7 @@ fn complete_visual_prefix_byte_index(text: &str, width: usize) -> usize {
     complete_visual_prefix(text, width).byte_index
 }
 
+#[cfg(test)]
 fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     let width = width.max(1);
     let mut ends = Vec::new();
@@ -348,6 +490,7 @@ fn complete_visual_line_ends(text: &str, width: usize) -> Vec<(usize, char)> {
     ends
 }
 
+#[cfg(test)]
 fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> Vec<(usize, char)> {
     wrap_line_at_whitespace_ranges(line, width)
         .into_iter()
@@ -407,6 +550,63 @@ pub(super) fn input_cursor_index_on_visual_line(
     cursor
 }
 
+pub(super) fn input_lines_with_images(
+    input: &str,
+    images: &[ImageContent],
+    width: usize,
+    highlighted_range: Option<std::ops::Range<usize>>,
+) -> Vec<Line<'static>> {
+    let mut lines = images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| {
+            styled_line(
+                format!("[image {}: {}]", index + 1, image_summary(image)),
+                width.max(1),
+                Theme::dim(),
+                LineFill::Natural,
+            )
+        })
+        .collect::<Vec<_>>();
+    let input_lines = input_visual_lines(input, width);
+    let input_chars = input.chars().collect::<Vec<_>>();
+    let mut input_cursor = 0;
+    for (line_index, visual_line) in input_lines.into_iter().enumerate() {
+        if line_index > 0 && input_chars.get(input_cursor) == Some(&'\n') {
+            input_cursor += 1;
+        }
+        let mut spans = Vec::new();
+        let mut span_text = String::new();
+        let mut span_highlighted = false;
+        for character in visual_line.chars() {
+            let highlighted = highlighted_range
+                .as_ref()
+                .is_some_and(|range| range.contains(&input_cursor));
+            input_cursor += 1;
+            if !span_text.is_empty() && highlighted != span_highlighted {
+                let style = if span_highlighted {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(std::mem::take(&mut span_text), style));
+            }
+            span_highlighted = highlighted;
+            span_text.push(character);
+        }
+        if !span_text.is_empty() {
+            let style = if span_highlighted {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(span_text, style));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
 pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -425,11 +625,6 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub(super) struct RenderedEntry {
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) code_blocks: Vec<MarkdownCodeBlock>,
-}
-
 pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
@@ -445,6 +640,7 @@ pub(super) fn tool_entry_lines(
         max_tool_output_lines,
         tool.expanded,
     );
+    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
     let style = lines
         .first()
         .and_then(|line| line.spans.first())
@@ -471,9 +667,13 @@ pub(super) fn render_entry(
     max_tool_output_lines: usize,
 ) -> RenderedEntry {
     let inner_width = padded_inner_width(width);
-    let (lines, code_blocks) = match entry {
+    let (mut lines, code_blocks) = match entry {
         Entry::Assistant(text) => {
             let rendered = render_assistant_content(text, width);
+            (rendered.lines, rendered.code_blocks)
+        }
+        Entry::Reasoning(text) => {
+            let rendered = render_reasoning_content(text, width);
             (rendered.lines, rendered.code_blocks)
         }
         _ => {
@@ -482,6 +682,8 @@ pub(super) fn render_entry(
             (lines, Vec::new())
         }
     };
+
+    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
 
     let block_style = lines
         .first()
@@ -495,15 +697,7 @@ pub(super) fn render_entry(
     RenderedEntry {
         lines: padded,
         code_blocks,
-    }
-}
-
-pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
-    let mut in_code_block = false;
-    let rendered = render_markdown(text, padded_inner_width(width), &mut in_code_block);
-    RenderedEntry {
-        lines: rendered.lines,
-        code_blocks: rendered.code_blocks,
+        image_placement,
     }
 }
 
@@ -521,14 +715,9 @@ fn render_non_assistant_entry(
             Theme::user_message(),
             LineFill::PadToWidth,
         ),
-        Entry::Assistant(_) => unreachable!("assistant entries are rendered as markdown"),
-        Entry::Reasoning(text) => push_wrapped_text(
-            lines,
-            text,
-            width,
-            Theme::dim().add_modifier(Modifier::DIM),
-            LineFill::Natural,
-        ),
+        Entry::Assistant(_) | Entry::Reasoning(_) => {
+            unreachable!("assistant and reasoning entries are rendered as markdown")
+        }
         Entry::Tool(tool) => push_tool_block(
             lines,
             &tool.display_lines,
@@ -686,7 +875,7 @@ pub(super) fn styled_line(
     Line::from(Span::styled(text, style))
 }
 
-fn padded_inner_width(width: usize) -> usize {
+pub(super) fn padded_inner_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 

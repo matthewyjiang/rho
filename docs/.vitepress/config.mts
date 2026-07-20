@@ -28,7 +28,10 @@ export default defineConfig({
               { text: 'OpenAI', link: '/providers/openai' },
               { text: 'OpenAI (Codex OAuth)', link: '/providers/openai-codex' },
               { text: 'Anthropic', link: '/providers/anthropic' },
+              { text: 'Google Gemini', link: '/providers/google-gemini' },
               { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+              { text: 'OpenRouter', link: '/providers/openrouter' },
+              { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
               { text: 'xAI', link: '/providers/xai' }
             ]
           },

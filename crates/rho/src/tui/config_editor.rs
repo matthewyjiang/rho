@@ -1,8 +1,8 @@
 use ratatui::text::Line;
 
-use crate::{
-    app::config_repository::ConfigRepository,
-    credentials::{
+use {
+    crate::app::config_repository::ConfigRepository,
+    rho_providers::credentials::{
         delete_web_search_api_key, save_web_search_api_key, CredentialError, CredentialResult,
         CredentialStore, WebSearchCredential,
     },
@@ -10,6 +10,7 @@ use crate::{
 
 use super::{
     config_picker,
+    picker::UiPicker,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
 };
@@ -34,6 +35,7 @@ pub(super) struct ConfigTextInput {
     pub(super) key: ConfigTextKey,
     pub(super) value: String,
     pub(super) cursor: usize,
+    return_picker: Option<Box<UiPicker>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,7 +242,21 @@ impl ConfigTextInput {
     pub(super) fn new(key: ConfigTextKey, value: Option<String>) -> Self {
         let value = value.unwrap_or_default();
         let cursor = value.chars().count();
-        Self { key, value, cursor }
+        Self {
+            key,
+            value,
+            cursor,
+            return_picker: None,
+        }
+    }
+
+    pub(super) fn with_return_picker(mut self, picker: UiPicker) -> Self {
+        self.return_picker = Some(Box::new(picker));
+        self
+    }
+
+    pub(super) fn take_return_picker(&mut self) -> Option<UiPicker> {
+        self.return_picker.take().map(|picker| *picker)
     }
 
     pub(super) fn save(&self, credential_store: &dyn CredentialStore) -> CredentialResult<()> {

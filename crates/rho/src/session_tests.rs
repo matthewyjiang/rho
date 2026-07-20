@@ -3,9 +3,11 @@ use std::ops::Deref;
 use tempfile::TempDir;
 
 use super::*;
-use crate::{
-    model::{AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock},
-    tool::{ToolCall, ToolResult},
+use {
+    rho_providers::model::{
+        AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock,
+    },
+    rho_tools::tool::{ToolCall, ToolResult},
 };
 
 #[cfg(unix)]
@@ -238,6 +240,19 @@ fn errors_when_uuid_prefix_is_ambiguous() {
     let err = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
 
     assert!(err.to_string().contains("multiple sessions match"));
+}
+
+#[test]
+fn open_and_export_share_prefix_resolution_errors() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
+    write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
+
+    let open_error = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
+    let export_error = Session::export_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
+
+    assert_eq!(open_error.to_string(), export_error.to_string());
 }
 
 #[test]
@@ -599,6 +614,8 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         id: id.into(),
         timestamp: timestamp.to_string(),
         cwd: cwd.to_path_buf(),
+        agent_id: None,
+        agent_fingerprint: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -612,4 +629,32 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         .join("\n")
         + "\n";
     fs::write(path, contents).unwrap();
+}
+
+#[test]
+fn session_header_persists_agent_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_with_id_in_root(
+        root.path(),
+        cwd.path(),
+        "agent-session",
+        Some(("reviewer", "fingerprint-123")),
+    )
+    .unwrap();
+
+    assert_eq!(
+        session.stored_agent_identity().unwrap(),
+        Some(("reviewer".into(), "fingerprint-123".into()))
+    );
+}
+
+#[test]
+fn legacy_session_reports_missing_agent_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session =
+        Session::create_with_id_in_root(root.path(), cwd.path(), "legacy-session", None).unwrap();
+
+    assert_eq!(session.stored_agent_identity().unwrap(), None);
 }
