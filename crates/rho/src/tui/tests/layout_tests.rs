@@ -694,7 +694,19 @@ fn web_search_api_key_editor_preserves_parent_picker() {
     app.info.services.config_repository =
         ConfigRepository::new(Some(config_dir.path().join("config.toml")));
     let config = app.info.services.config_repository.load().unwrap();
-    let mut parent = config_picker::config_picker(&app.info.runtime, &config);
+    let mut root = config_picker::config_picker(&app.info.runtime, &config);
+    App::restore_picker_position(
+        &mut root,
+        config_picker::TOOLS_CATEGORY_VALUE,
+        String::new(),
+    );
+    let mut parent = config_picker::category_picker(
+        config_picker::TOOLS_CATEGORY_VALUE,
+        &app.info.runtime,
+        &config,
+    )
+    .unwrap()
+    .with_parent(root);
     App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
     app.composer = ComposerMode::Picker(parent);
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
@@ -714,4 +726,37 @@ fn web_search_api_key_editor_preserves_parent_picker() {
         config_picker::WEB_SEARCH_VALUE
     );
     assert_eq!(picker.filter, "web");
+}
+
+#[test]
+fn config_toggle_keeps_its_category_open() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.services.config_repository =
+        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let original = app
+        .info
+        .services
+        .config_repository
+        .load()
+        .unwrap()
+        .check_for_updates;
+
+    app.open_main_config_picker_selected(config_picker::CHECK_FOR_UPDATES_VALUE)
+        .unwrap();
+    app.toggle_check_for_updates().unwrap();
+
+    let ComposerMode::Picker(picker) = &app.composer else {
+        panic!("expected config category picker");
+    };
+    assert_eq!(picker.title, "Config / Updates");
+    assert_eq!(
+        picker.selected_item().unwrap().value,
+        config_picker::CHECK_FOR_UPDATES_VALUE
+    );
+    assert_eq!(
+        picker.selected_item().unwrap().badge.as_ref().unwrap().text,
+        if original { "off" } else { "on" }
+    );
+    assert!(picker.has_parent());
 }

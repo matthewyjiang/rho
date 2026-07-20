@@ -1352,11 +1352,9 @@ impl App {
                 };
                 match saved {
                     ConfigNumberSave::MaxOutputBytes(value) => {
-                        let config = self.info.services.config_repository.load()?;
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info.runtime,
-                            &config,
-                        ));
+                        self.open_main_config_picker_selected(
+                            config_picker::MAX_OUTPUT_BYTES_VALUE,
+                        )?;
                         self.insert_entry(&Entry::Notice(format!(
                             "max output bytes set to {value}; applies next session"
                         )));
@@ -1367,11 +1365,9 @@ impl App {
                             .services
                             .diagnostics
                             .update_max_tool_output_lines(value);
-                        let config = self.info.services.config_repository.load()?;
-                        self.composer = ComposerMode::Picker(config_picker::config_picker(
-                            &self.info.runtime,
-                            &config,
-                        ));
+                        self.open_main_config_picker_selected(
+                            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
+                        )?;
                         self.clamp_history_scroll_for_terminal(terminal)?;
                         self.insert_entry(&Entry::Notice(format!(
                             "max tool output lines set to {value}"
@@ -1434,11 +1430,13 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
+                let ComposerMode::ConfigNumberInput(input) = &self.composer else {
+                    return Ok(true);
+                };
+                let selected_value = input.key.picker_value();
                 let config = self.info.services.config_repository.load()?;
                 self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                self.composer =
-                    ComposerMode::Picker(config_picker::config_picker(&self.info.runtime, &config));
-                self.status = "config".into();
+                self.open_main_config_picker_selected(selected_value)?;
                 Ok(true)
             }
             _ => Ok(true),
@@ -2473,6 +2471,9 @@ impl App {
 
     fn submit_config_selection_during_turn(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
+            value if config_picker::is_category(value) => {
+                self.open_config_category(value)?;
+            }
             config_picker::CONVERSATION_MODEL_VALUE => {
                 self.open_config_conversation_model_picker_during_turn();
             }
@@ -2545,7 +2546,7 @@ impl App {
             }
             config_picker::INLINE_SHELL_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.composer = ComposerMode::Picker(config_picker::inline_shell_picker(&config));
+                self.open_child_picker(config_picker::inline_shell_picker(&config));
                 self.status = "select inline shell".into();
             }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
@@ -2558,17 +2559,11 @@ impl App {
             }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.composer = ComposerMode::Picker(config_picker::web_search_config_picker(
+                self.open_child_picker(config_picker::web_search_config_picker(
                     &config,
                     self.credential_store.as_ref(),
                 ));
                 self.status = "web search config".into();
-            }
-            config_picker::WEB_SEARCH_BACK_VALUE => {
-                let config = self.info.services.config_repository.load()?;
-                self.composer =
-                    ComposerMode::Picker(config_picker::config_picker(&self.info.runtime, &config));
-                self.status = "config".into();
             }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
@@ -5146,13 +5141,25 @@ mod tests {
     }
 
     #[test]
-    fn esc_from_nested_web_search_config_returns_to_main_config() {
+    fn esc_from_nested_web_search_config_returns_to_tools_category() {
         let config_dir = tempfile::tempdir().unwrap();
         let mut app = test_app();
         app.info.services.config_repository =
             ConfigRepository::new(Some(config_dir.path().join("config.toml")));
         let config = app.info.services.config_repository.load().unwrap();
-        let mut parent = config_picker::config_picker(&app.info.runtime, &config);
+        let mut root = config_picker::config_picker(&app.info.runtime, &config);
+        App::restore_picker_position(
+            &mut root,
+            config_picker::TOOLS_CATEGORY_VALUE,
+            String::new(),
+        );
+        let mut parent = config_picker::category_picker(
+            config_picker::TOOLS_CATEGORY_VALUE,
+            &app.info.runtime,
+            &config,
+        )
+        .unwrap()
+        .with_parent(root);
         App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
         app.composer = ComposerMode::Picker(parent);
         let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());

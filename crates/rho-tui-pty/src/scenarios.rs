@@ -1,5 +1,8 @@
 //! Built-in Rho TUI PTY scenarios.
 
+mod config;
+
+use config::OPEN_CONFIG_PICKER_STEPS;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -384,20 +387,26 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Phase("enable_supervised_mode"),
     Step::SubmitText("/config"),
     Step::WaitText {
-        text: "Permission mode",
+        text: "Agent behavior",
         timeout: SETTLE,
     },
     Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Permission mode",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Enter),
     Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "◇ Supervised",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Models & reasoning",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
@@ -545,42 +554,6 @@ const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,
     },
-    Step::ExitCommand,
-];
-
-const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
-    Step::Phase("open_config"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("/config"),
-    Step::WaitText {
-        text: "Conversation model",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Session title model"),
-    Step::AssertText("Refresh model lists"),
-    Step::AssertText("Log in to provider"),
-    Step::AssertText("Permission mode"),
-    Step::Phase("open_refresh_models"),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "All configured providers",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "no refreshable providers are configured",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Conversation model",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
 

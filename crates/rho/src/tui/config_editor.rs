@@ -153,6 +153,17 @@ impl ConfigNumberKey {
             ConfigNumberKey::CompactTargetPercent => "compact target percent",
         }
     }
+
+    pub(super) fn picker_value(self) -> &'static str {
+        match self {
+            ConfigNumberKey::MaxOutputBytes => config_picker::MAX_OUTPUT_BYTES_VALUE,
+            ConfigNumberKey::MaxToolOutputLines => config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
+            ConfigNumberKey::CompactThresholdPercent => {
+                config_picker::COMPACT_THRESHOLD_PERCENT_VALUE
+            }
+            ConfigNumberKey::CompactTargetPercent => config_picker::COMPACT_TARGET_PERCENT_VALUE,
+        }
+    }
 }
 
 impl ConfigTextKey {

@@ -357,18 +357,21 @@ fn picker_item_line(
 }
 
 fn picker_footer_text(picker: &UiPicker) -> String {
-    let action = match picker.action {
-        super::PickerAction::Config => "change",
-        super::PickerAction::Doctor | super::PickerAction::ViewAgent => "close",
-        super::PickerAction::SelectModel
-        | super::PickerAction::SelectTitleModel
-        | super::PickerAction::LoginGroup
-        | super::PickerAction::LoginProvider
-        | super::PickerAction::LogoutProvider
-        | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ResumeSession => "select",
-        super::PickerAction::RefreshModelList => "refresh",
-    };
+    let action = picker
+        .confirm_verb
+        .as_deref()
+        .unwrap_or(match picker.action {
+            super::PickerAction::Config => "change",
+            super::PickerAction::Doctor | super::PickerAction::ViewAgent => "close",
+            super::PickerAction::SelectModel
+            | super::PickerAction::SelectTitleModel
+            | super::PickerAction::LoginGroup
+            | super::PickerAction::LoginProvider
+            | super::PickerAction::LogoutProvider
+            | super::PickerAction::InsertSkillCommand
+            | super::PickerAction::ResumeSession => "select",
+            super::PickerAction::RefreshModelList => "refresh",
+        });
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
     } else {
