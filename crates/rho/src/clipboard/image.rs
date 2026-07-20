@@ -61,10 +61,11 @@ pub(super) fn available_image_helpers_with(
 ) -> Vec<&'static str> {
     match session {
         SessionKind::Remote => Vec::new(),
+        // WSL is always a Linux guest, even when these unit tests compile on
+        // macOS or Windows CI hosts.
         SessionKind::Wsl => {
-            let mut helpers = platform_image_helpers()
-                .iter()
-                .copied()
+            let mut helpers = ["wl-paste", "xclip"]
+                .into_iter()
                 .filter(|command| host_command_available(command))
                 .collect::<Vec<_>>();
             if host_command_available("powershell.exe") {
