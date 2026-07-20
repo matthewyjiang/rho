@@ -27,6 +27,10 @@ features:
     details: Rho is built in Rust instead of TypeScript to avoid the runtime overhead of a Node.js-based harness.
 ---
 
+## Rho in action
+
+[![Animated demo of Rho tracing code, editing a Rust file, and running tests](./assets/rho-ui-demo.svg)](/interactive-tui)
+
 ## Concept docs
 
 - [Getting started](/getting-started)

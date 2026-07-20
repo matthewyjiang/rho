@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Rho interactive terminal UI demo</title>
+  <desc id="desc">An animated Rho session traces request logging, edits Rust code, runs tests, and reports completion.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#05070b" flood-opacity="0.5"/>
+    </filter>
+    <clipPath id="terminal-clip">
+      <rect x="24" y="24" width="1152" height="627" rx="18"/>
+    </clipPath>
+    <style>
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+      .text { fill: #e8edf2; font-size: 17px; }
+      .small { font-size: 14px; }
+      .dim { fill: #8b95a5; }
+      .faint { fill: #7d8796; }
+      .cyan { fill: #67e8f9; }
+      .green { fill: #7ee787; }
+      .yellow { fill: #f2cc60; }
+      .magenta { fill: #d2a8ff; }
+      .bold { font-weight: 700; }
+      .stage { opacity: 0; }
+      .stage-one { animation: stage-one 12s linear infinite; }
+      .stage-two { animation: stage-two 12s linear infinite; }
+      .stage-three { animation: stage-three 12s linear infinite; }
+      .cursor { animation: blink 1.1s steps(2, jump-none) infinite; }
+      .pulse { animation: pulse 1.6s ease-in-out infinite; transform-origin: center; }
+      .progress-one { animation: progress-one 12s linear infinite; }
+      .progress-two { animation: progress-two 12s linear infinite; }
+      .progress-three { animation: progress-three 12s linear infinite; }
+      @keyframes stage-one {
+        0%, 3% { opacity: 0; transform: translateY(5px); }
+        7%, 27% { opacity: 1; transform: translateY(0); }
+        32%, 100% { opacity: 0; transform: translateY(-4px); }
+      }
+      @keyframes stage-two {
+        0%, 29% { opacity: 0; transform: translateY(5px); }
+        34%, 62% { opacity: 1; transform: translateY(0); }
+        67%, 100% { opacity: 0; transform: translateY(-4px); }
+      }
+      @keyframes stage-three {
+        0%, 64% { opacity: 0; transform: translateY(5px); }
+        69%, 95% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(-4px); }
+      }
+      @keyframes blink { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0.15; } }
+      @keyframes pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+      @keyframes progress-one { 0%, 4% { width: 0; } 27%, 100% { width: 310px; } }
+      @keyframes progress-two { 0%, 29% { width: 0; } 62%, 100% { width: 700px; } }
+      @keyframes progress-three { 0%, 64% { width: 0; } 95%, 100% { width: 1052px; } }
+      @media (prefers-reduced-motion: reduce) {
+        .stage, .cursor, .pulse, .progress-one, .progress-two, .progress-three { animation: none; }
+        .stage-one, .stage-two { display: none; }
+        .stage-three { opacity: 1; }
+        .cursor, .pulse { opacity: 1; }
+        .progress-three { width: 1052px; }
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="675" rx="24" fill="#0b0e14"/>
+  <path d="M0 560 C210 505 370 625 590 582 C810 540 972 472 1200 535 V675 H0 Z" fill="#101621" opacity="0.75"/>
+  <g filter="url(#shadow)">
+    <rect x="24" y="24" width="1152" height="627" rx="18" fill="#0d1117" stroke="#303846" stroke-width="1.5"/>
+  </g>
+
+  <g clip-path="url(#terminal-clip)">
+    <rect x="24" y="24" width="1152" height="52" fill="#171c25"/>
+    <line x1="24" y1="76" x2="1176" y2="76" stroke="#303846"/>
+    <circle cx="52" cy="50" r="6" fill="#ff6b6b"/>
+    <circle cx="74" cy="50" r="6" fill="#f2cc60"/>
+    <circle cx="96" cy="50" r="6" fill="#7ee787"/>
+    <text x="132" y="56" class="mono small bold cyan">rho</text>
+    <text x="164" y="56" class="mono small dim">• ~/code/atlas</text>
+    <circle cx="1012" cy="50" r="4" fill="#7ee787" class="pulse"/>
+    <text x="1025" y="55" class="mono small dim">interactive</text>
+
+    <rect x="74" y="104" width="1052" height="70" rx="4" fill="#1a2029" stroke="#67e8f9" stroke-width="1" stroke-opacity="0.35"/>
+    <text x="98" y="133" class="mono small bold cyan">YOU</text>
+    <text x="98" y="158" class="mono text">Add request IDs to API logs and update the tests.</text>
+
+    <g class="stage stage-one">
+      <text x="82" y="216" class="mono text dim">I’ll trace the request path and current logging tests first.</text>
+      <rect x="74" y="245" width="1052" height="86" rx="3" fill="#19202a"/>
+      <text x="94" y="274" class="mono small bold magenta">◇ AGENT</text>
+      <text x="178" y="274" class="mono small" fill="#e8edf2">explorer</text>
+      <circle cx="1008" cy="269" r="4" fill="#67e8f9" class="pulse"/>
+      <text x="1022" y="274" class="mono small cyan">running</text>
+      <text x="94" y="307" class="mono text dim">↳ tracing middleware, log spans, and integration tests</text>
+      <text x="82" y="371" class="mono small faint">One focused subagent is reading the request path in parallel.</text>
+    </g>
+
+    <g class="stage stage-two">
+      <text x="82" y="211" class="mono text">The request boundary already owns a span. I can record the ID there</text>
+      <text x="82" y="237" class="mono text">without changing each handler.</text>
+
+      <rect x="74" y="263" width="1052" height="54" rx="3" fill="#14261c"/>
+      <text x="94" y="296" class="mono small bold green">✓ READ</text>
+      <text x="171" y="296" class="mono small" fill="#dce5df">crates/api/src/middleware/request_id.rs</text>
+      <text x="1028" y="296" class="mono small dim">42 lines</text>
+
+      <rect x="74" y="333" width="1052" height="127" rx="3" fill="#14261c"/>
+      <text x="94" y="363" class="mono small bold green">✓ EDIT</text>
+      <text x="180" y="363" class="mono small" fill="#dce5df">crates/api/src/middleware/request_id.rs</text>
+      <text x="1022" y="363" class="mono small green">+6 −1</text>
+      <text x="94" y="397" class="mono small dim">  let request_id = RequestId::from_headers(request.headers());</text>
+      <text x="94" y="426" class="mono small green">+ span.record("request_id", request_id.as_str());</text>
+      <text x="94" y="449" class="mono small green">+ response.headers_mut().insert(REQUEST_ID, request_id.into());</text>
+    </g>
+
+    <g class="stage stage-three">
+      <rect x="74" y="204" width="1052" height="58" rx="3" fill="#14261c"/>
+      <text x="94" y="239" class="mono small bold green">✓ BASH</text>
+      <text x="180" y="239" class="mono small" fill="#dce5df">cargo test -p atlas-api -- request_id</text>
+      <text x="994" y="239" class="mono small green">28 passed</text>
+
+      <text x="82" y="314" class="mono text bold green">Done.</text>
+      <text x="82" y="352" class="mono text">• Added stable request IDs at the middleware boundary.</text>
+      <text x="82" y="386" class="mono text">• Included the ID in log spans and response headers.</text>
+      <text x="82" y="420" class="mono text">• Added coverage for generated and forwarded IDs.</text>
+      <text x="82" y="468" class="mono small dim">3 files changed  ·  +47 −6  ·  tests passing</text>
+    </g>
+
+    <line x1="74" y1="505" x2="1126" y2="505" stroke="#f2cc60" stroke-width="1.5" opacity="0.85"/>
+    <text x="82" y="542" class="mono text faint">Ask a follow-up…</text>
+    <rect x="82" y="551" width="9" height="20" rx="1" fill="#e8edf2" class="cursor"/>
+    <line x1="74" y1="583" x2="1126" y2="583" stroke="#303846"/>
+
+    <text x="82" y="610" class="mono small dim">~/code/atlas (main)</text>
+    <text x="82" y="634" class="mono small dim">↑18.2k  ↓1.4k  $0.08</text>
+    <text x="1118" y="634" text-anchor="end" class="mono small dim">◇ Auto  •  (openai-codex) gpt-5.4  •  high</text>
+
+    <rect x="74" y="648" width="1052" height="3" fill="#253040"/>
+    <rect x="74" y="648" height="3" fill="#67e8f9" class="progress-one"/>
+    <rect x="74" y="648" height="3" fill="#67e8f9" class="progress-two"/>
+    <rect x="74" y="648" height="3" fill="#67e8f9" class="progress-three"/>
+  </g>
+</svg>
