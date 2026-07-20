@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{collections::HashSet, fs, path::PathBuf, sync::OnceLock, time::Duration};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -221,6 +221,23 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_capabilities_known
         || metadata.reasoning_metadata_complete
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
+}
+
+pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
+    let response = fetch_models_dev_api().await?;
+    write_cached_api(&response);
+    Some(deprecated_provider_models_from_api(&response, provider))
+}
+
+fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<String> {
+    api.get(provider)
+        .and_then(|provider| provider.get("models"))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(_, model)| model.get("status").and_then(Value::as_str) == Some("deprecated"))
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 async fn fetch_models_dev_api() -> Option<Value> {

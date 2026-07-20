@@ -37,45 +37,35 @@ fn non_thinking_models_are_not_configurable() {
 }
 
 #[test]
-fn probe_classifier_hides_retired_models_and_keeps_transient_failures() {
+fn deprecation_filter_matches_exact_model_ids() {
+    let response: ModelsResponse = serde_json::from_str(
+        r#"{"models":[{"name":"models/gemini-active","supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-retired","supportedGenerationMethods":["generateContent"]}]}"#,
+    )
+    .unwrap();
+    let mut models = response
+        .models
+        .into_iter()
+        .map(|model| model.into_provider_model("google"))
+        .collect::<Vec<_>>();
+    let deprecated = HashSet::from(["gemini-retired".to_string()]);
+    hide_deprecated_models(&mut models, &deprecated);
     assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::NOT_FOUND,
-            r#"{"error":{"message":"This model models/gemini-2.5-flash is no longer available to new users.","status":"NOT_FOUND"}}"#
-        ),
-        ModelAvailability::Unavailable
-    );
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            r#"{"error":{"status":"RESOURCE_EXHAUSTED"}}"#
-        ),
-        ModelAvailability::Transient
-    );
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            r#"{"error":{"message":"high demand"}}"#
-        ),
-        ModelAvailability::Transient
-    );
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}"#
-        ),
-        ModelAvailability::Unavailable
+        models
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["gemini-active"]
     );
 }
 
 #[tokio::test]
-async fn fetch_paginates_probes_availability_and_hides_retired_models() {
+async fn fetch_paginates_deduplicates_and_filters_non_chat_models() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let mut requests = Vec::new();
-        // 2 list pages + 3 availability probes (image models are filtered first).
-        for _ in 0..5 {
+        // Two pages from Google's model-list API.
+        for _ in 0..2 {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
             let mut buffer = [0_u8; 8192];
@@ -110,16 +100,6 @@ async fn fetch_paginates_probes_availability_and_hides_retired_models() {
                     "200 OK",
                     r#"{"models":[{"name":"models/gemini-a","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-z","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-retired","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-3.1-flash-image","thinking":true,"supportedGenerationMethods":["generateContent"]}]}"#,
                 )
-            } else if request.contains("gemini-retired") && request.contains("generateContent") {
-                (
-                    "404 Not Found",
-                    r#"{"error":{"code":404,"message":"This model models/gemini-retired is no longer available to new users.","status":"NOT_FOUND"}}"#,
-                )
-            } else if request.contains("generateContent") {
-                (
-                    "200 OK",
-                    r#"{"candidates":[{"content":{"parts":[{"text":"."}]},"finishReason":"STOP"}]}"#,
-                )
             } else {
                 ("404 Not Found", r#"{"error":{"status":"NOT_FOUND"}}"#)
             };
@@ -152,7 +132,7 @@ async fn fetch_paginates_probes_availability_and_hides_retired_models() {
             .iter()
             .map(|model| model.model.as_str())
             .collect::<Vec<_>>(),
-        ["gemini-a", "gemini-z"]
+        ["gemini-a", "gemini-retired", "gemini-z"]
     );
     assert!(requests.iter().any(|request| {
         request.starts_with("GET /v1beta/models HTTP/1.1")
@@ -165,11 +145,5 @@ async fn fetch_paginates_probes_availability_and_hides_retired_models() {
         .any(|request| request.starts_with("GET /v1beta/models?pageToken=next HTTP/1.1")));
     assert!(requests
         .iter()
-        .any(|request| request.contains("gemini-retired") && request.contains("generateContent")));
-    assert!(requests
-        .iter()
-        .any(|request| request.contains("gemini-a") && request.contains("generateContent")));
-    assert!(!requests
-        .iter()
-        .any(|request| request.contains("flash-image") && request.contains("generateContent")));
+        .all(|request| !request.contains("generateContent")));
 }

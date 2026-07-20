@@ -10,6 +10,29 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]
+fn deprecated_provider_models_only_returns_exact_deprecation_flags() {
+    let api = json!({
+        "google": {
+            "models": {
+                "gemini-active": {},
+                "gemini-alpha": {"status": "alpha"},
+                "gemini-beta": {"status": "beta"},
+                "gemini-retired": {"status": "deprecated"}
+            }
+        }
+    });
+
+    assert_eq!(
+        deprecated_provider_models_from_api(&api, "google"),
+        HashSet::from(["gemini-retired".to_string()])
+    );
+    assert_eq!(
+        deprecated_provider_models_from_api(&api, "missing"),
+        HashSet::new()
+    );
+}
+
+#[test]
 fn openrouter_resolves_models_dev_identity_from_model_prefix() {
     let api = json!({
         "anthropic": {
