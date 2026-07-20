@@ -8,17 +8,26 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 #[test]
-fn loading_spinner_advances_frames() {
+fn loading_spinner_advances_and_wraps_frames() {
     let started_at = Instant::now();
     let spinner = LoadingSpinner {
         started_at: Some(started_at),
     };
+    let frames = ["◜", "◠", "◝", "◞", "◡", "◟", "◜"];
 
-    assert_eq!(spinner.frame_at(started_at), "⠋");
-    assert_eq!(
-        spinner.frame_at(started_at + LoadingSpinner::FRAME_INTERVAL),
-        "⠙"
-    );
+    for (step, expected) in frames.into_iter().enumerate() {
+        assert_eq!(
+            spinner.frame_at(started_at + LoadingSpinner::FRAME_INTERVAL * step as u32),
+            expected
+        );
+    }
+}
+
+#[test]
+fn loading_spinner_frames_keep_a_stable_one_cell_width() {
+    for frame in LoadingSpinner::FRAMES {
+        assert_eq!(display_width(frame), 1, "frame {frame}");
+    }
 }
 
 #[test]
@@ -34,7 +43,7 @@ fn loading_spinner_line_separates_frame_from_text() {
             40,
             ActivityStatus::Parent(ActivityPhase::WaitingForProvider),
         )),
-        "⠋ waiting for provider"
+        "◜ waiting for provider"
     );
 }
 
@@ -48,11 +57,11 @@ fn activity_line_combines_parent_and_subagent_work() {
             40,
             ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
         )),
-        "⠋ thinking  ·  2 agents"
+        "◜ thinking  ·  2 agents"
     );
     assert_eq!(
         line_text(&spinner.line(Instant::now(), 40, ActivityStatus::Subagents(2))),
-        "⠋ 2 agents working"
+        "◜ 2 agents working"
     );
 }
 
@@ -65,7 +74,7 @@ fn spinner_line_compacts_to_available_width() {
         ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
     ));
 
-    assert_eq!(rendered, "⠋");
+    assert_eq!(rendered, "◜");
     assert_eq!(
         activity_width(
             1,
@@ -78,6 +87,6 @@ fn spinner_line_compacts_to_available_width() {
             40,
             ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
         ),
-        display_width("⠋ thinking  ·  2 agents")
+        display_width("◜ thinking  ·  2 agents")
     );
 }
