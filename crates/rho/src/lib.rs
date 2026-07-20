@@ -1,7 +1,7 @@
 mod agent;
 mod app;
 mod cli;
-mod clipboard_image;
+mod clipboard;
 mod commands;
 mod compaction;
 mod config;

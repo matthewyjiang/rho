@@ -4,7 +4,6 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
-    clipboard::CopyOutcome,
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
     expandable_tool_entry, is_tool_entry,
     render::tool_entry_lines,
@@ -243,10 +242,10 @@ impl App {
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {
         let character_count = text.chars().count();
-        self.copy_notice = Some(match self.clipboard.copy(text) {
-            Ok(CopyOutcome::Confirmed) => CopyNotice::copied(character_count, now),
-            Ok(CopyOutcome::SentToTerminal) => CopyNotice::sent_to_terminal(character_count, now),
-            Err(error) => CopyNotice::failed(&error, now),
-        });
+        self.copy_notice = Some(CopyNotice::from_copy_result(
+            self.clipboard.copy(text),
+            character_count,
+            now,
+        ));
     }
 }

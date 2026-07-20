@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 use ratatui::{buffer::Buffer, layout::Rect, style::Modifier, text::Line};
 
 use super::*;
+use crate::clipboard::CopyOutcome;
 
 #[test]
 fn extracts_forward_selection_across_rendered_lines() {
@@ -69,18 +70,36 @@ fn excludes_code_block_copy_button_from_drag_selection() {
 }
 
 #[test]
-fn copy_notice_distinguishes_confirmed_and_terminal_writes() {
+fn copy_notice_maps_copy_results() {
     let now = Instant::now();
 
-    assert_eq!(CopyNotice::copied(1, now).message(), "1 char copied");
-    assert_eq!(CopyNotice::copied(12, now).message(), "12 chars copied");
     assert_eq!(
-        CopyNotice::sent_to_terminal(1, now).message(),
+        CopyNotice::from_copy_result(Ok(CopyOutcome::Confirmed), 1, now).message(),
+        "1 char copied"
+    );
+    assert_eq!(
+        CopyNotice::from_copy_result(Ok(CopyOutcome::Confirmed), 12, now).message(),
+        "12 chars copied"
+    );
+    assert_eq!(
+        CopyNotice::from_copy_result(Ok(CopyOutcome::SentToTerminal), 1, now).message(),
         "1 char sent to terminal"
     );
     assert_eq!(
-        CopyNotice::sent_to_terminal(12, now).message(),
+        CopyNotice::from_copy_result(Ok(CopyOutcome::SentToTerminal), 12, now).message(),
         "12 chars sent to terminal"
+    );
+    assert_eq!(
+        CopyNotice::from_copy_result(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "terminal closed"
+            )),
+            12,
+            now
+        )
+        .message(),
+        "copy failed: terminal closed"
     );
 }
 

@@ -101,6 +101,7 @@ mod tool_diff;
 mod turn_prompt;
 mod view;
 
+use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer};
 use clipboard::{ClipboardWriter, SystemClipboard};
@@ -145,7 +146,6 @@ use turn_prompt::TurnPrompt;
 use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
-    crate::clipboard_image::read_clipboard_image,
     crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,

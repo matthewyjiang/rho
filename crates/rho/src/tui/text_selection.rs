@@ -15,7 +15,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::theme::Theme;
+use super::{clipboard::CopyOutcome, theme::Theme};
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(2);
 
@@ -151,36 +151,43 @@ pub(super) struct CopyNotice {
 }
 
 impl CopyNotice {
-    pub(super) fn copied(character_count: usize, now: Instant) -> Self {
+    pub(super) fn from_copy_result(
+        result: io::Result<CopyOutcome>,
+        character_count: usize,
+        now: Instant,
+    ) -> Self {
+        match result {
+            Ok(CopyOutcome::Confirmed) => {
+                Self::count_message(character_count, "copied", CopyNoticeTone::Success, now)
+            }
+            Ok(CopyOutcome::SentToTerminal) => Self::count_message(
+                character_count,
+                "sent to terminal",
+                CopyNoticeTone::Warning,
+                now,
+            ),
+            Err(error) => Self {
+                message: format!("copy failed: {error}"),
+                tone: CopyNoticeTone::Error,
+                visible_until: now + COPY_NOTICE_DURATION,
+            },
+        }
+    }
+
+    fn count_message(
+        character_count: usize,
+        suffix: &str,
+        tone: CopyNoticeTone,
+        now: Instant,
+    ) -> Self {
         let unit = if character_count == 1 {
             "char"
         } else {
             "chars"
         };
         Self {
-            message: format!("{character_count} {unit} copied"),
-            tone: CopyNoticeTone::Success,
-            visible_until: now + COPY_NOTICE_DURATION,
-        }
-    }
-
-    pub(super) fn sent_to_terminal(character_count: usize, now: Instant) -> Self {
-        let unit = if character_count == 1 {
-            "char"
-        } else {
-            "chars"
-        };
-        Self {
-            message: format!("{character_count} {unit} sent to terminal"),
-            tone: CopyNoticeTone::Warning,
-            visible_until: now + COPY_NOTICE_DURATION,
-        }
-    }
-
-    pub(super) fn failed(error: &io::Error, now: Instant) -> Self {
-        Self {
-            message: format!("copy failed: {error}"),
-            tone: CopyNoticeTone::Error,
+            message: format!("{character_count} {unit} {suffix}"),
+            tone,
             visible_until: now + COPY_NOTICE_DURATION,
         }
     }

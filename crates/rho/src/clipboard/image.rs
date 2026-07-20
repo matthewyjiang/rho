@@ -6,6 +6,11 @@ use std::{
 
 use rho_providers::model::ImageContent;
 
+use super::{
+    session::{is_wsl_host, SessionKind},
+    write::command_available,
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClipboardImageError {
     #[error("no supported image found on clipboard")]
@@ -18,7 +23,8 @@ const SUPPORTED_IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/
 
 pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
     let image = if cfg!(target_os = "linux") {
-        read_linux_clipboard_image().or_else(|| is_wsl().then(read_wsl_clipboard_image).flatten())
+        read_linux_clipboard_image()
+            .or_else(|| is_wsl_host().then(read_wsl_clipboard_image).flatten())
     } else if cfg!(target_os = "macos") {
         read_macos_clipboard_image()
     } else if cfg!(target_os = "windows") {
@@ -38,6 +44,31 @@ pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
         data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
         mime_type,
     })
+}
+
+pub(super) fn available_image_helpers(session: SessionKind) -> Vec<&'static str> {
+    let mut helpers = Vec::new();
+    for command in platform_image_helpers() {
+        if command_available(command) {
+            helpers.push(*command);
+        }
+    }
+    if matches!(session, SessionKind::Wsl) && command_available("powershell.exe") {
+        helpers.push("powershell.exe");
+    }
+    helpers
+}
+
+fn platform_image_helpers() -> &'static [&'static str] {
+    if cfg!(target_os = "linux") {
+        &["wl-paste", "xclip"]
+    } else if cfg!(target_os = "macos") {
+        &["pngpaste"]
+    } else if cfg!(target_os = "windows") {
+        &["powershell"]
+    } else {
+        &[]
+    }
 }
 
 fn read_linux_clipboard_image() -> Option<(Vec<u8>, String)> {
@@ -170,24 +201,6 @@ fn base_mime_type(mime_type: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_wsl() -> bool {
-    env::var_os("WSL_DISTRO_NAME").is_some()
-        || env::var_os("WSLENV").is_some()
-        || fs::read_to_string("/proc/version")
-            .map(|version| version.to_ascii_lowercase().contains("microsoft"))
-            .unwrap_or(false)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::select_preferred_image_mime_type;
-
-    #[test]
-    fn selects_only_supported_image_mime_types() {
-        assert_eq!(
-            select_preferred_image_mime_type("image/tiff\nimage/jpeg"),
-            Some("image/jpeg".into())
-        );
-        assert_eq!(select_preferred_image_mime_type("image/tiff"), None);
-    }
-}
+#[path = "image_tests.rs"]
+mod tests;
