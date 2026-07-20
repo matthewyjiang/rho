@@ -22,7 +22,8 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_notification, format_running,
+    format_snapshot, SnapshotFormat,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -44,7 +45,7 @@ struct AgentEntry {
     started: Instant,
     handle: AgentRunHandle,
     session_id: Option<String>,
-    notified: bool,
+    observed: bool,
 }
 
 impl AgentEntry {
@@ -131,7 +132,7 @@ impl SubagentManager {
                 started: Instant::now(),
                 handle,
                 session_id,
-                notified: false,
+                observed: false,
             },
         );
         Ok((id, directory.join(subagent::LOG_FILE_NAME)))
@@ -164,7 +165,7 @@ impl SubagentManager {
                 let snapshot = entry.snapshot(id);
                 !snapshot.done
                     || (entry.background
-                        && !entry.notified
+                        && !entry.observed
                         && entry.session_id.as_deref() == Some(session_id))
             })
     }
@@ -180,10 +181,10 @@ impl SubagentManager {
                 let snapshot = entry.snapshot(id);
                 (entry.background
                     && snapshot.done
-                    && !entry.notified
+                    && !entry.observed
                     && entry.session_id.as_deref() == Some(session_id))
                 .then(|| {
-                    entry.notified = true;
+                    entry.observed = true;
                     (entry.started, SubagentNotification { snapshot })
                 })
             })
@@ -207,7 +208,7 @@ impl SubagentManager {
         let entry = entries.get_mut(id)?;
         let snapshot = entry.snapshot(id);
         if snapshot.done {
-            entry.notified = true;
+            entry.observed = true;
         }
         Some(snapshot)
     }
@@ -284,17 +285,14 @@ fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
     anyhow::bail!("could not allocate a unique delegated run ID")
 }
 
-/// Formats a drained batch of terminal runs as one notification message with
-/// one section per run, so any number of completions costs one model turn.
+/// Formats a drained batch of terminal runs as one bounded notification. The
+/// formatter puts every run's status before the result excerpts.
 pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
-    let sections = notifications
+    let snapshots = notifications
         .iter()
-        .map(|notification| format_snapshot(&notification.snapshot, SnapshotFormat::Completion))
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-    let model = format!(
-        "[agent notification]\n\n{sections}\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details."
-    );
+        .map(|notification| &notification.snapshot)
+        .collect::<Vec<_>>();
+    let model = format_notification(&snapshots);
     let display = notifications
         .iter()
         .map(|notification| {
@@ -310,6 +308,10 @@ pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, 
         .join("\n");
     (model, display)
 }
+
+pub(crate) use super::agent_output::merge_notification_context;
+#[cfg(test)]
+pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BackgroundSubagents {
