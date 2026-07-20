@@ -77,7 +77,7 @@ pub(crate) fn split_system_and_messages(
                 push_message(&mut converted, AnthropicRole::Assistant, content);
             }
             Message::AbortedAssistant(message) => {
-                let mut content = message
+                let content = message
                     .content
                     .into_iter()
                     .map(|block| match block {

@@ -12,6 +12,9 @@ use crate::{
 pub(super) struct StreamCapture {
     content: Vec<ContentBlock>,
     merge_output_text: bool,
+    /// When set, the next text block is sealed and must not absorb later deltas.
+    /// Used after provider-context boundaries such as Gemini thought signatures.
+    seal_next_text_part: bool,
     /// Maps provider tool-call stream indexes onto `content` positions.
     tool_call_content_index: BTreeMap<usize, usize>,
     reasoning: String,
@@ -27,16 +30,8 @@ impl StreamCapture {
         &self.usage
     }
 
-    pub(super) fn usage_mut(&mut self) -> &mut ModelUsage {
-        &mut self.usage
-    }
-
     pub(super) fn take_failed_attempts(&mut self) -> Vec<(ProviderErrorKind, ModelUsage)> {
         std::mem::take(&mut self.failed_attempts)
-    }
-
-    pub(super) fn push_failed_attempt(&mut self, kind: ProviderErrorKind, usage: ModelUsage) {
-        self.failed_attempts.push((kind, usage));
     }
 
     pub(super) fn record_request_attempt_failure(
@@ -123,23 +118,29 @@ pub(super) fn capture_provider_event(
             if capture.merge_output_text {
                 let Some(ContentBlock::Text(existing)) = capture.content.last_mut() else {
                     capture.content.push(ContentBlock::Text(text.clone()));
-                    capture.merge_output_text = true;
+                    capture.merge_output_text = !capture.seal_next_text_part;
+                    capture.seal_next_text_part = false;
                     return RunEvent::AssistantTextDelta { text };
                 };
                 existing.push_str(&text);
             } else {
                 capture.content.push(ContentBlock::Text(text.clone()));
-                capture.merge_output_text = true;
+                // Text that starts after provider-context (for example a Gemini
+                // thought signature) must remain a standalone part.
+                capture.merge_output_text = !capture.seal_next_text_part;
+                capture.seal_next_text_part = false;
             }
             RunEvent::AssistantTextDelta { text }
         }
         ModelEvent::ReasoningDelta(text) => {
             capture.merge_output_text = false;
+            capture.seal_next_text_part = false;
             capture.reasoning.push_str(&text);
             RunEvent::ReasoningDelta { text }
         }
         ModelEvent::ReasoningSummaryDelta(text) => {
             capture.merge_output_text = false;
+            capture.seal_next_text_part = false;
             capture.reasoning_summary.push_str(&text);
             RunEvent::ReasoningSummaryDelta { text }
         }
@@ -154,6 +155,7 @@ pub(super) fn capture_provider_event(
             arguments,
         } => {
             capture.merge_output_text = false;
+            capture.seal_next_text_part = false;
             let partial =
                 capture
                     .partial_tool_calls
@@ -186,6 +188,7 @@ pub(super) fn capture_provider_event(
             // Provider-native boundaries (for example Gemini thought signatures)
             // must not be collapsed into a single cancelled text block.
             capture.merge_output_text = false;
+            capture.seal_next_text_part = true;
             capture.provider_context.push(ProviderContextBlock {
                 identity: identity.clone(),
                 kind: kind.clone(),
