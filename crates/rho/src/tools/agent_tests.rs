@@ -42,14 +42,10 @@ async fn stopping_unknown_run_is_actionable() {
 }
 
 #[tokio::test]
-async fn background_start_resolves_without_waiting_for_activity() {
+async fn background_start_receipt_is_the_registration() {
     let root = tempfile::tempdir().unwrap();
-    let tool = AgentTool::new(
-        manager(root.path()),
-        root.path(),
-        BackgroundSubagents::Enabled,
-    );
-    let started = Instant::now();
+    let manager = manager(root.path());
+    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
     let result = tool
         .call(
             serde_json::json!({
@@ -65,13 +61,40 @@ async fn background_start_resolves_without_waiting_for_activity() {
         )
         .await
         .unwrap();
-    // The start receipt is registration: the result must resolve immediately
-    // instead of polling for the run's first activity.
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The start receipt reports registration only: no live run state, no
+    // activity lines, nothing that depends on how far the spawned task got.
+    let runs = manager.list();
+    assert_eq!(runs.len(), 1);
+    let run_id = &runs[0].id;
     assert!(result.ok);
-    assert!(result.content.contains("started in background"));
-    assert!(result.content.contains("state: "));
-    assert!(result.content.contains("attach: rho attach"));
+    assert_eq!(
+        result.content,
+        format!("agent {run_id} (default) started in background\nattach: rho attach {run_id}")
+    );
+}
+
+#[test]
+fn background_guidance_is_gated_by_capability() {
+    let root = tempfile::tempdir().unwrap();
+    let enabled = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Enabled,
+    );
+    let disabled = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Disabled,
+    );
+    assert!(enabled
+        .spec()
+        .description
+        .contains("delivered automatically"));
+    let disabled_spec = disabled.spec();
+    assert!(!disabled_spec.description.contains("background"));
+    assert!(disabled_spec.input_schema["properties"]
+        .get("background")
+        .is_none());
 }
 
 #[test]

@@ -886,7 +886,8 @@ pub fn all_scenarios() -> &'static [Scenario] {
         },
         Scenario {
             id: "background_agent_auto_delivery",
-            description: "Spawn a background agent whose start reports first activity, end the turn, and receive its completion automatically",
+            description:
+                "Spawn a background agent, end the turn, and receive its completion automatically",
             size: DEFAULT_SIZE,
             steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
             smoke: false,

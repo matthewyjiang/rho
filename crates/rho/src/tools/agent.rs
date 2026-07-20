@@ -355,10 +355,17 @@ impl Tool for AgentTool {
                 "description": "Run concurrently and return an id immediately"
             });
         }
+        // Behavioral guidance must match registered capabilities: describe
+        // background delivery only when background runs can actually start.
+        let background_guidance = if self.background_subagents.is_enabled() {
+            " A background run's completion is delivered automatically as a new turn: after starting one, end your turn once no other work remains - never sleep or poll for the result."
+        } else {
+            ""
+        };
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. A background run's completion is delivered automatically as a new turn: after starting one, end your turn once no other work remains - never sleep or poll for the result. The agents tool exists for checking on a long-running run while doing other work, not for waiting. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance} Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -409,16 +416,11 @@ impl Tool for AgentTool {
 
         if args.background {
             // Registration is the start receipt; instant failures still reach
-            // the parent through automatic completion delivery. The state is a
-            // single synchronous read, never a wait.
-            let state = self
-                .manager
-                .status(&run_id)
-                .map_or(RunState::Starting, |snapshot| snapshot.status.state);
+            // the parent through automatic completion delivery.
             return Ok(ToolResult {
                 id,
                 ok: true,
-                content: format_background_start(&run_id, &definition_id, state),
+                content: format_background_start(&run_id, &definition_id),
             });
         }
 

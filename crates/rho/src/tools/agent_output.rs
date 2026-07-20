@@ -11,11 +11,8 @@ pub(super) enum SnapshotFormat {
     Status,
 }
 
-pub(super) fn format_background_start(id: &str, agent_id: &str, state: RunState) -> String {
-    format!(
-        "agent {id} ({agent_id}) started in background\nstate: {}\nattach: rho attach {id}",
-        state.as_str()
-    )
+pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
+    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
 pub(super) fn format_running(id: &str) -> String {

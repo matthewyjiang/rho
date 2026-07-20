@@ -31,9 +31,8 @@ fn snapshot(done: bool) -> SubagentSnapshot {
 #[test]
 fn formats_agent_start_output() {
     assert_eq!(
-        format_background_start("abc123", "explorer", RunState::Starting),
+        format_background_start("abc123", "explorer"),
         "agent abc123 (explorer) started in background\n\
-         state: starting\n\
          attach: rho attach abc123"
     );
     assert_eq!(
