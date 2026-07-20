@@ -85,16 +85,15 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             item(
                 "Models & reasoning",
                 "Conversation model, session title model, reasoning level, and reasoning output.",
-                Some(format!("{} · {}", info.model, info.reasoning)),
+                Some(info.model.clone()),
                 MODELS_CATEGORY_VALUE,
             ),
             item(
                 "Agent behavior",
                 "Permission mode and delegation.",
                 Some(format!(
-                    "{} · delegation {}",
-                    info.permission_mode.label(),
-                    on_off(config.enable_subagents)
+                    "permissions: {}",
+                    info.permission_mode.as_str()
                 )),
                 AGENT_CATEGORY_VALUE,
             ),
@@ -102,28 +101,34 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
                 "Context & limits",
                 "Auto compact, compact threshold, compact target, maximum output bytes, and tool output lines.",
                 Some(if config.auto_compact {
-                    format!("auto · {}%", config.compact_threshold_percent)
+                    format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
-                    "manual".into()
+                    "auto compaction off".into()
                 }),
                 CONTEXT_CATEGORY_VALUE,
             ),
             item(
                 "Tools",
                 "Inline shell, Web search provider, and Web search API keys.",
-                Some(format!("{} · {}", config.inline_shell, config.web_search_provider)),
+                Some(format!(
+                    "{} shell · search {}",
+                    config.inline_shell, config.web_search_provider
+                )),
                 TOOLS_CATEGORY_VALUE,
             ),
             item(
                 "Providers",
                 "Log in to providers, log out, and refresh cached model lists.",
-                Some("credentials & models".into()),
+                None,
                 PROVIDERS_CATEGORY_VALUE,
             ),
             item(
                 "Updates",
                 "Check for Rho updates at startup.",
-                Some(on_off(config.check_for_updates)),
+                Some(format!(
+                    "startup checks {}",
+                    on_off(config.check_for_updates)
+                )),
                 UPDATES_CATEGORY_VALUE,
             ),
         ],

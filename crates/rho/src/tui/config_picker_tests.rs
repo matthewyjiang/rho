@@ -29,9 +29,23 @@ fn config_picker_lists_scannable_categories_with_summaries() {
             UPDATES_CATEGORY_VALUE,
         ]
     );
+    assert_eq!(picker.items[0].badge.as_ref().unwrap().text, "gpt-5.5");
     assert_eq!(
-        picker.items[0].badge.as_ref().unwrap().text,
-        format!("gpt-5.5 · {}", app.info.runtime.reasoning)
+        picker.items[1].badge.as_ref().unwrap().text,
+        "permissions: auto"
+    );
+    assert_eq!(
+        picker.items[2].badge.as_ref().unwrap().text,
+        "auto compaction off"
+    );
+    assert_eq!(
+        picker.items[3].badge.as_ref().unwrap().text,
+        "bash shell · search auto"
+    );
+    assert!(picker.items[4].badge.is_none());
+    assert_eq!(
+        picker.items[5].badge.as_ref().unwrap().text,
+        "startup checks on"
     );
     assert!(picker.items[0]
         .detail
