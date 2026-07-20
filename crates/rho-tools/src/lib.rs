@@ -7,7 +7,9 @@
 //!   truncation, diffs, and display formatting.
 //! - SDK adapters ([`sdk_adapter`], [`sdk_shell`]) wrap those implementations
 //!   in the public [`rho_sdk::tool::Tool`] contract so hosts can register them
-//!   on an SDK runtime with explicit workspace policies.
+//!   on an SDK runtime with explicit workspace policies. The
+//!   [`legacy_sdk_adapter`] module keeps the application adapter separate from
+//!   that public contract.
 
 pub mod cancellation;
 mod paths;
