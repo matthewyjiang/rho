@@ -62,6 +62,7 @@ mod local_commands;
 mod local_diff;
 mod login;
 mod markdown;
+mod markdown_image;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -362,6 +363,8 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
     pending_session_title: Option<PendingSessionTitle>,
+    markdown_images: markdown_image::MarkdownImageCache,
+    markdown_images_dirty_from: Option<usize>,
     history_scroll: HistoryScroll,
     history_scrollbar_drag: Option<HistoryScrollbarDrag>,
     history_scrollbar_visible_until: Option<Instant>,
@@ -693,6 +696,8 @@ impl App {
             pending_update_notice,
             pending_model_selection: None,
             pending_session_title: None,
+            markdown_images: markdown_image::MarkdownImageCache::default(),
+            markdown_images_dirty_from: None,
             history_scroll: HistoryScroll::Bottom,
             history_scrollbar_drag: None,
             history_scrollbar_visible_until: None,
@@ -746,6 +751,7 @@ impl App {
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_oauth_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
+            needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.running {
                 self.insert_deferred_inline_shell_context(agent)?;
@@ -776,6 +782,7 @@ impl App {
                 || self.pending_oauth_login.is_some()
                 || self.pending_usage_limits.is_some()
                 || !self.pending_inline_shells.is_empty()
+                || self.markdown_images.has_pending()
             {
                 Duration::from_millis(100)
             } else if subagents_active {
@@ -2610,6 +2617,8 @@ impl App {
     fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
         if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
+            self.markdown_images.clear();
+            self.mark_markdown_images_dirty_from(start);
             self.history_lines.invalidate_from(start);
         }
         self.status = "retrying provider response".into();
@@ -2993,6 +3002,8 @@ impl App {
         if let Entry::Assistant(text) = &mut self.transcript[*first] {
             *text = answer.to_string();
         }
+        self.markdown_images.clear();
+        self.mark_markdown_images_dirty_from(*first);
         self.history_lines.invalidate_from(*first);
         for index in stale.iter().rev() {
             self.transcript.remove(*index);
@@ -3276,17 +3287,24 @@ impl App {
 
     fn push_transcript_entry(&mut self, entry: Entry) {
         match entry {
-            Entry::Assistant(text) => match self.transcript.last_mut() {
-                Some(Entry::Assistant(previous)) => {
-                    previous.push_str(&text);
-                    self.history_lines
-                        .assistant_appended(self.transcript.len().saturating_sub(1));
+            Entry::Assistant(text) => {
+                let index = if matches!(self.transcript.last(), Some(Entry::Assistant(_))) {
+                    self.transcript.len().saturating_sub(1)
+                } else {
+                    self.transcript.len()
+                };
+                match self.transcript.last_mut() {
+                    Some(Entry::Assistant(previous)) => {
+                        previous.push_str(&text);
+                        self.history_lines.assistant_appended(index);
+                    }
+                    _ => {
+                        self.history_lines.invalidate_from(index);
+                        self.transcript.push(Entry::Assistant(text));
+                    }
                 }
-                _ => {
-                    self.history_lines.invalidate_from(self.transcript.len());
-                    self.transcript.push(Entry::Assistant(text));
-                }
-            },
+                self.mark_markdown_images_dirty_from(index);
+            }
             Entry::Reasoning(text) => match self.transcript.last_mut() {
                 Some(Entry::Reasoning(previous)) => {
                     previous.push_str(&text);

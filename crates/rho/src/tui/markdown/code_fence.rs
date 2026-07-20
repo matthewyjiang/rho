@@ -1,5 +1,5 @@
 #[derive(Clone, Copy)]
-pub(super) struct CodeFence {
+pub(in crate::tui) struct CodeFence {
     pub(super) marker: char,
     pub(super) length: usize,
 }
@@ -41,7 +41,7 @@ pub(in crate::tui) fn update_code_block_state(text: &str, state: &mut CodeFenceS
     }
 }
 
-pub(super) fn parse_opening_fence(line: &str) -> Option<CodeFence> {
+pub(in crate::tui) fn parse_opening_fence(line: &str) -> Option<CodeFence> {
     let indent = line.len() - line.trim_start_matches(' ').len();
     if indent > 3 {
         return None;
@@ -65,7 +65,7 @@ pub(super) fn parse_opening_fence(line: &str) -> Option<CodeFence> {
     Some(CodeFence { marker, length })
 }
 
-pub(super) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
+pub(in crate::tui) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
     let indent = line.len() - line.trim_start_matches(' ').len();
     if indent > 3 {
         return false;

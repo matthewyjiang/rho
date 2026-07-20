@@ -144,6 +144,8 @@ impl App {
         self.pending_session_title = None;
         self.current_turn_start = None;
         self.transcript.clear();
+        self.markdown_images.clear();
+        self.markdown_images_dirty_from = None;
         self.history_lines.invalidate_from(0);
         self.last_inserted_was_tool = false;
         self.scroll_history_to_bottom();

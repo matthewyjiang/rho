@@ -10,6 +10,8 @@ pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntr
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
         image_placement: None,
+        image_sources: rendered.image_sources,
+        image_rows: rendered.image_rows,
     }
 }
 

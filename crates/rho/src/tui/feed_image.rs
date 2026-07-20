@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt, io::Cursor, ops::Range, rc::Rc};
 
-use image::{ImageReader, Limits};
+use image::{DynamicImage, ImageReader, Limits};
 use ratatui::{
     layout::{Rect, Size},
     text::Line,
@@ -23,6 +23,13 @@ pub(super) struct FeedImage {
     state: Rc<RefCell<StatefulProtocol>>,
 }
 
+/// A decoded image that can cross a background task boundary before
+/// terminal-specific render state is created on the UI thread.
+pub(super) struct DecodedFeedImage {
+    image: DynamicImage,
+    estimated_bytes: usize,
+}
+
 impl fmt::Debug for FeedImage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("FeedImage").finish_non_exhaustive()
@@ -31,15 +38,21 @@ impl fmt::Debug for FeedImage {
 
 impl FeedImage {
     pub(super) fn load(asset: &ToolAsset, picker: &Picker) -> image::ImageResult<Self> {
-        let mut reader = ImageReader::new(Cursor::new(asset.bytes())).with_guessed_format()?;
+        Self::decode(asset.bytes()).map(|image| image.to_feed_image(picker))
+    }
+
+    pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
+        let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         let mut limits = Limits::default();
         limits.max_image_width = Some(MAX_THUMBNAIL_WIDTH);
         limits.max_image_height = Some(MAX_THUMBNAIL_HEIGHT);
         limits.max_alloc = Some(MAX_THUMBNAIL_ALLOCATION);
         reader.limits(limits);
-        let thumbnail = reader.decode()?;
-        Ok(Self {
-            state: Rc::new(RefCell::new(picker.new_resize_protocol(thumbnail))),
+        let image = reader.decode()?;
+        let estimated_bytes = image.as_bytes().len();
+        Ok(DecodedFeedImage {
+            image,
+            estimated_bytes,
         })
     }
 
@@ -60,6 +73,58 @@ impl FeedImage {
             area,
             &mut *self.state.borrow_mut(),
         );
+    }
+}
+
+impl DecodedFeedImage {
+    pub(super) fn estimated_bytes(&self) -> usize {
+        self.estimated_bytes
+    }
+
+    pub(super) fn to_feed_image(&self, picker: &Picker) -> FeedImage {
+        FeedImage {
+            state: Rc::new(RefCell::new(picker.new_resize_protocol(self.image.clone()))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct RenderedImagePlacements {
+    placements: Vec<RenderedImagePlacement>,
+}
+
+impl RenderedImagePlacements {
+    pub(super) fn single(placement: RenderedImagePlacement) -> Self {
+        Self {
+            placements: vec![placement],
+        }
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &RenderedImagePlacement> {
+        self.placements.iter()
+    }
+
+    pub(super) fn offset_rows(&self, offset: usize) -> Self {
+        Self {
+            placements: self
+                .placements
+                .iter()
+                .cloned()
+                .map(|placement| placement.offset_rows(offset))
+                .collect(),
+        }
+    }
+
+    /// Keeps only placements that start before `line`, used when the cache
+    /// truncates rendered history.
+    pub(super) fn retain_starting_before(&self, line: usize) -> Option<Self> {
+        let placements: Vec<_> = self
+            .placements
+            .iter()
+            .filter(|placement| placement.rows.start < line)
+            .cloned()
+            .collect();
+        (!placements.is_empty()).then_some(Self { placements })
     }
 }
 
@@ -100,16 +165,42 @@ pub(super) fn reserve_optional_image_rows(
     }
 }
 
+/// Replaces loaded markdown image fallback rows with image placements. Images
+/// retain their source indices, so failed loads cannot shift later images.
+pub(super) fn reserve_markdown_image_rows(
+    lines: &mut Vec<Line<'static>>,
+    placeholder_rows: &[usize],
+    images: &[(usize, FeedImage)],
+    width: usize,
+) -> Option<RenderedImagePlacements> {
+    let mut offset = 0usize;
+    let mut placements = Vec::new();
+    for (source_index, image) in images {
+        let Some(&placeholder_row) = placeholder_rows.get(*source_index) else {
+            continue;
+        };
+        let start = placeholder_row + offset;
+        lines[start] = Line::raw("");
+        let extra_rows = image.height_for_width(width).saturating_sub(1);
+        lines.splice(start + 1..start + 1, (0..extra_rows).map(|_| Line::raw("")));
+        placements.push(RenderedImagePlacement {
+            image: image.clone(),
+            rows: start..start + 1 + extra_rows,
+        });
+        offset += extra_rows;
+    }
+    (!placements.is_empty()).then_some(RenderedImagePlacements { placements })
+}
+
 pub(super) fn reserve_entry_image_rows(
     lines: &mut Vec<Line<'static>>,
     entry: &super::Entry,
     width: usize,
-) -> Option<RenderedImagePlacement> {
+) -> Option<RenderedImagePlacements> {
     match entry {
-        super::Entry::Tool(tool) => tool
-            .image
-            .as_ref()
-            .map(|image| reserve_image_rows(lines, image, width).offset_rows(1)),
+        super::Entry::Tool(tool) => tool.image.as_ref().map(|image| {
+            RenderedImagePlacements::single(reserve_image_rows(lines, image, width).offset_rows(1))
+        }),
         _ => None,
     }
 }
@@ -150,12 +241,15 @@ impl super::App {
         };
         let transcript_start = start.saturating_sub(header_len);
         let transcript_count = count.saturating_sub(visible_header_lines);
+        let cwd = self.info.runtime.cwd.clone();
+        let markdown_images = &self.markdown_images;
         let mut placements = self.history_lines.visible_image_placements(
             &self.transcript,
             width,
             self.info.runtime.max_tool_output_lines,
             transcript_start,
             transcript_count,
+            &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
         );
         placements.iter_mut().for_each(|placement| {
             placement.row = placement.row.saturating_add(visible_header_lines);
@@ -178,7 +272,13 @@ impl super::App {
             }
             placement.image.render(
                 frame,
-                Rect::new(history_area.x, image_y, history_area.width, visible_height),
+                // History lines are padded by one column on each side.
+                Rect::new(
+                    history_area.x.saturating_add(1),
+                    image_y,
+                    history_area.width.saturating_sub(2),
+                    visible_height,
+                ),
             );
         }
     }

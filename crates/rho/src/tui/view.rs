@@ -11,10 +11,11 @@ use ratatui::{
 };
 
 use super::{
-    activity, file_picker, inline_shell, App, CachedCodeBlock, CodeBlockCopyTarget, ComposerMode,
-    Entry, GoalStatus, HistoryScroll, HistoryScrollbar, InlineShellMode, LineFill,
-    SessionHeaderCache, StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
-    MAX_COMMAND_SUGGESTIONS, MIN_COMMAND_DESCRIPTION_WIDTH, RECOVERED_HISTORY_LINE_LIMIT,
+    activity, file_picker, history_cache::HistoryLineSlice, inline_shell, App, CachedCodeBlock,
+    CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, HistoryScroll, HistoryScrollbar,
+    InlineShellMode, LineFill, SessionHeaderCache, StreamKind, Theme,
+    HISTORY_SCROLLBAR_REVEAL_DURATION, MAX_COMMAND_SUGGESTIONS, MIN_COMMAND_DESCRIPTION_WIDTH,
+    RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
@@ -381,13 +382,18 @@ impl App {
         if lines.len() < count {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
+            let cwd = self.info.runtime.cwd.clone();
+            let markdown_images = &self.markdown_images;
             self.history_lines.extend_visible_lines(
                 &self.transcript,
                 width,
                 self.info.runtime.max_tool_output_lines,
-                transcript_start,
-                transcript_count,
+                HistoryLineSlice {
+                    start: transcript_start,
+                    count: transcript_count,
+                },
                 &mut lines,
+                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
             );
         }
 
@@ -410,21 +416,27 @@ impl App {
             .saturating_add(self.cached_transcript_line_count(width))
     }
 
-    fn cached_transcript_line_count(&mut self, width: usize) -> usize {
+    pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
+        let cwd = self.info.runtime.cwd.clone();
+        let markdown_images = &self.markdown_images;
         self.history_lines.line_count(
             &self.transcript,
             width,
             self.info.runtime.max_tool_output_lines,
+            &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
         )
     }
 
     pub(super) fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
         let header_len = self.session_header_lines(width).len();
+        let cwd = self.info.runtime.cwd.clone();
+        let markdown_images = &self.markdown_images;
         self.history_lines
             .code_blocks(
                 &self.transcript,
                 width,
                 self.info.runtime.max_tool_output_lines,
+                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
             )
             .iter()
             .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
@@ -888,6 +900,8 @@ impl App {
         }
         transcript.extend(visible_entries);
         self.transcript = transcript;
+        self.markdown_images.clear();
+        self.mark_markdown_images_dirty_from(0);
         self.history_lines.invalidate_from(0);
         self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
             Entry::Notice(text) => Some(text.clone()),
