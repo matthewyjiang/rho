@@ -100,3 +100,24 @@ fn highlights_selected_screen_cells() {
     assert!(buffer[(4, 1)].modifier.is_empty());
     assert!(buffer[(0, 2)].modifier.is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn clipboard_helper_succeeds_when_the_command_accepts_stdin() {
+    assert!(run_clipboard_helper("cat", &[], "copied text"));
+}
+
+#[test]
+fn clipboard_helper_fails_when_the_command_is_missing() {
+    assert!(!run_clipboard_helper(
+        "rho-missing-clipboard-helper",
+        &[],
+        "copied text"
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn clipboard_helper_fails_when_the_command_exits_nonzero() {
+    assert!(!run_clipboard_helper("false", &[], "copied text"));
+}

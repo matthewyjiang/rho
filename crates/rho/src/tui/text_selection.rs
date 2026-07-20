@@ -1,6 +1,7 @@
 use std::{
-    io,
+    io::{self, Write},
     ops::Range,
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -33,9 +34,51 @@ pub(super) struct TerminalClipboard;
 
 impl ClipboardWriter for TerminalClipboard {
     fn copy(&mut self, text: &str) -> io::Result<()> {
+        // A local helper confirms the write; OSC 52 only asks the terminal and
+        // is silently ignored by terminals that do not implement it.
+        if clipboard_write_helpers()
+            .iter()
+            .any(|(command, arguments)| run_clipboard_helper(command, arguments, text))
+        {
+            return Ok(());
+        }
         let mut stdout = io::stdout();
         execute!(stdout, CopyToClipboard::to_clipboard_from(text))
     }
+}
+
+fn clipboard_write_helpers() -> &'static [(&'static str, &'static [&'static str])] {
+    if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else if cfg!(target_os = "linux") {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    } else if cfg!(target_os = "windows") {
+        &[("clip.exe", &[])]
+    } else {
+        &[]
+    }
+}
+
+fn run_clipboard_helper(command: &str, arguments: &[&str], text: &str) -> bool {
+    let Ok(mut child) = Command::new(command)
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        if stdin.write_all(text.as_bytes()).is_err() {
+            return false;
+        }
+    }
+    matches!(child.wait(), Ok(status) if status.success())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
