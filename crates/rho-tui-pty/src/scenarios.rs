@@ -11,6 +11,8 @@ use crate::{
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
 };
 
+mod background_agents;
+
 /// Stable scenario identifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScenarioId {
@@ -33,6 +35,7 @@ pub enum ScenarioId {
     LoginProviderGroups,
     GoalBlockedAndResumed,
     BackgroundAgentAutoDelivery,
+    BackgroundAgentDraftPriority,
 }
 
 impl ScenarioId {
@@ -57,6 +60,7 @@ impl ScenarioId {
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
             Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
+            Self::BackgroundAgentDraftPriority => "background_agent_draft_priority",
         }
     }
 
@@ -81,6 +85,7 @@ impl ScenarioId {
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
             "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
+            "background_agent_draft_priority" => Some(Self::BackgroundAgentDraftPriority),
             _ => None,
         }
     }
@@ -719,74 +724,6 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    if screen.contains("\"agent_id\"")
-        || screen.contains("\"background\":true")
-        || screen.contains("\"action\":\"list\"")
-    {
-        anyhow::bail!("agent tool exposed raw JSON:\n{screen}");
-    }
-    Ok(())
-}
-
-const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("spawn_background_agent"),
-    Step::SubmitText("fixture background agent"),
-    Step::WaitText {
-        text: "● wor  starting",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "● worker  running in background",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "fixture stream",
-        timeout: STREAM,
-    },
-    Step::Custom(assert_agent_tool_hides_raw_json),
-    // The fixture echoes the spawn receipt's first line, proving the tool
-    // resolved with a start line and the parent turn ended.
-    Step::WaitText {
-        text: "background agent dispatched: agent",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "(worker) started in background",
-        timeout: STREAM,
-    },
-    Step::Phase("automatic_completion_delivery"),
-    // The fixture validates the notification's real payload (agent identity,
-    // terminal state, delegated result) and counts notification turns, so
-    // this asserts a well-formed, exactly-once delivery.
-    Step::WaitText {
-        text: "background agent completion received with delegated result (delivery 1)",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::Phase("list_agents"),
-    Step::SubmitText("fixture agents list"),
-    Step::WaitText {
-        text: "delegated agents",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "worker  completed",
-        timeout: STREAM,
-    },
-    Step::Custom(assert_agent_tool_hides_raw_json),
-    Step::ExitCommand,
-];
-
 /// All registered scenarios.
 pub fn all_scenarios() -> &'static [Scenario] {
     &[
@@ -924,7 +861,14 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description:
                 "Spawn a background agent, end the turn, and receive its completion automatically",
             size: DEFAULT_SIZE,
-            steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
+            steps: background_agents::AUTO_DELIVERY_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "background_agent_draft_priority",
+            description: "Prioritize a pending user draft over background completion delivery",
+            size: DEFAULT_SIZE,
+            steps: background_agents::DRAFT_PRIORITY_STEPS,
             smoke: false,
         },
     ]

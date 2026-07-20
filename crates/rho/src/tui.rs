@@ -754,7 +754,6 @@ impl App {
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_subagent_panel(agent);
-            needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
@@ -801,6 +800,7 @@ impl App {
                 _ = tokio::time::sleep(timeout) => {
                     needs_redraw |= self.flush_due_paste_burst();
                     needs_redraw |= redraw_on_timeout;
+                    needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
                 }
             }
         }
@@ -1062,7 +1062,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.running {
+        if self.running || self.user_interaction_pending() {
             return Ok(false);
         }
         let Some(manager) = agent.subagents().cloned() else {
@@ -1093,6 +1093,13 @@ impl App {
             }
         }
         Ok(true)
+    }
+
+    fn user_interaction_pending(&self) -> bool {
+        !matches!(self.composer, ComposerMode::Input)
+            || !self.input.is_empty()
+            || !self.pending_images.is_empty()
+            || self.paste_burst.has_pending()
     }
 
     fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
@@ -3781,6 +3788,19 @@ mod tests {
         let store = Arc::new(MemoryCredentialStore::default());
         save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
         App::new_with_credentials(test_bootstrap(), store)
+    }
+
+    #[test]
+    fn subagent_delivery_waits_for_pending_user_input() {
+        let mut app = test_app();
+        assert!(!app.user_interaction_pending());
+
+        app.input = "draft message".into();
+        assert!(app.user_interaction_pending());
+
+        app.input.clear();
+        app.paste_burst.push_plain_char('x', Instant::now());
+        assert!(app.user_interaction_pending());
     }
 
     #[test]

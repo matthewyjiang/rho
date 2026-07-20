@@ -189,7 +189,18 @@ async fn fixture_stream(
                 serde_json::json!({}),
             )
         }
-        "fixture background agent" if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() => {
+        "fixture background worker delay" => {
+            fixture_sleep(&request.cancellation, Duration::from_millis(1_500)).await?;
+            completed("delayed delegated result")
+        }
+        "fixture background agent" | "fixture background agent draft race"
+            if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() =>
+        {
+            let worker_prompt = if prompt == "fixture background agent draft race" {
+                "fixture background worker delay"
+            } else {
+                "fixture stream"
+            };
             events
                 .send(ModelEvent::ToolCallDelta {
                     index: 0,
@@ -212,7 +223,7 @@ async fn fixture_stream(
                 "agent",
                 serde_json::json!({
                     "agent_id": "worker",
-                    "prompt": "fixture stream",
+                    "prompt": worker_prompt,
                     "background": true,
                 }),
             )
@@ -396,6 +407,8 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         format!(
             "background agent completion received with delegated result (delivery {deliveries})"
         )
+    } else if prompt.contains("(worker): ok") && prompt.contains("delayed delegated result") {
+        format!("draft-safe background completion received (delivery {deliveries})")
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }
