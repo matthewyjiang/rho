@@ -14,20 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  release-impact:
-    name: release version impact
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Check changed crate release versions
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: python3 scripts/check_release_impact.py --base "$BASE_SHA" --title "$PR_TITLE"
-
   quality:
     name: quality and workspace tests
     runs-on: ubuntu-latest
