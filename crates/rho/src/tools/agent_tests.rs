@@ -70,6 +70,7 @@ async fn background_start_resolves_without_waiting_for_activity() {
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(result.ok);
     assert!(result.content.contains("started in background"));
+    assert!(result.content.contains("state: "));
     assert!(result.content.contains("attach: rho attach"));
 }
 

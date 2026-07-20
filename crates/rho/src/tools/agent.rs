@@ -409,11 +409,16 @@ impl Tool for AgentTool {
 
         if args.background {
             // Registration is the start receipt; instant failures still reach
-            // the parent through automatic completion delivery.
+            // the parent through automatic completion delivery. The state is a
+            // single synchronous read, never a wait.
+            let state = self
+                .manager
+                .status(&run_id)
+                .map_or(RunState::Starting, |snapshot| snapshot.status.state);
             return Ok(ToolResult {
                 id,
                 ok: true,
-                content: format_background_start(&run_id, &definition_id),
+                content: format_background_start(&run_id, &definition_id, state),
             });
         }
 
