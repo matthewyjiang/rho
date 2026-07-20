@@ -9,7 +9,12 @@
       <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.42"/>
     </filter>
     <style>
-      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 15px; }
+      .mono {
+        font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+        font-size: 16px;
+        font-variant-ligatures: none;
+        font-feature-settings: "liga" 0, "calt" 0;
+      }
       .body { fill: #c9d1d9; }
       .bright { fill: #f0f3f6; }
       .dim { fill: #6e7681; }
@@ -17,7 +22,6 @@
       .green { fill: #3fb950; }
       .yellow { fill: #d29922; }
       .bold { font-weight: 700; }
-      .italic { font-style: italic; }
       .stage { opacity: 0; }
       .stage-one { animation: stage-one 12s linear infinite; }
       .stage-two { animation: stage-two 12s linear infinite; }
@@ -63,59 +67,55 @@
     <text x="65" y="50" class="mono dim">rho · ~/rho</text>
     <text x="1152" y="50" text-anchor="end" class="mono dim">115×35</text>
 
-    <text x="48" y="89" textLength="1104" lengthAdjust="spacing" class="mono dim">───────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-    <text x="48" y="113" class="mono bold cyan">rho</text>
-    <text x="84" y="113" class="mono body">v</text>
-    <text x="94" y="113" class="mono bold green">1.8.2</text>
-    <text x="48" y="137" textLength="1104" lengthAdjust="spacing" class="mono dim">───────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="32" y="90" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="32" y="114" class="mono"><tspan class="bold cyan">rho</tspan><tspan class="body">  v</tspan><tspan class="bold green">0.1.0</tspan></text>
+    <text x="32" y="138" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 
-    <rect x="48" y="157" width="1104" height="66" fill="#222629"/>
-    <text x="57" y="197" class="mono bright">Add request IDs to API logs and update the tests.</text>
+    <rect x="32" y="150" width="1136" height="72" fill="#222629"/>
+    <text x="42" y="186" class="mono bright">Add request IDs to API logs and update the tests.</text>
 
     <g class="stage stage-one">
-      <text x="57" y="253" class="mono dim">I’ll trace the request path and current logging tests before editing.</text>
-      <rect x="48" y="276" width="1104" height="66" fill="#222629"/>
-      <text x="57" y="316" class="mono bright">read_file crates/api/src/middleware/request_id.rs</text>
+      <text x="42" y="258" class="mono dim">I’ll trace the request path and current logging tests before editing.</text>
+      <rect x="32" y="270" width="1136" height="72" fill="#222629"/>
+      <text x="42" y="306" class="mono bright">read_file crates/api/src/middleware/request_id.rs</text>
 
-      <rect x="48" y="433" width="1104" height="50" fill="#222629"/>
-      <text x="57" y="455" class="mono cyan spin-one">⠋</text>
-      <text x="57" y="455" class="mono cyan spin-two">⡆</text>
-      <text x="76" y="455" class="mono dim">running tool</text>
-      <text x="57" y="477" class="mono dim">  └ </text>
-      <text x="90" y="477" class="mono bold body">explorer</text>
-      <text x="165" y="477" class="mono dim">  bg-a13f · read_file                              2s</text>
+      <rect x="32" y="432" width="1136" height="48" fill="#222629"/>
+      <text x="42" y="450" class="mono cyan spin-one">⠋</text>
+      <text x="42" y="450" class="mono cyan spin-two">⡆</text>
+      <text x="62" y="450" class="mono dim">running tool</text>
+      <text x="42" y="474" class="mono"><tspan class="dim">  └ </tspan><tspan class="bold body">explorer</tspan><tspan class="dim">  bg-a13f · read_file                              2s</tspan></text>
     </g>
 
     <g class="stage stage-two">
-      <text x="57" y="253" class="mono body">The middleware already owns a tracing span, so the request ID can stay at</text>
-      <text x="57" y="276" class="mono body">that boundary.</text>
+      <text x="42" y="258" class="mono body">The middleware already owns a tracing span, so the request ID can stay at</text>
+      <text x="42" y="282" class="mono body">that boundary.</text>
 
-      <rect x="48" y="298" width="1104" height="88" fill="#2a2f25"/>
-      <text x="57" y="329" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
-      <text x="57" y="359" class="mono green">+ span.record("request_id", request_id.as_str());</text>
+      <rect x="32" y="294" width="1136" height="96" fill="#2a2f25"/>
+      <text x="42" y="330" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
+      <text x="42" y="354" class="mono green">+ span.record("request_id", request_id.as_str());</text>
 
-      <rect x="48" y="408" width="1104" height="66" fill="#222629"/>
-      <text x="57" y="447" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
-      <text x="1089" y="447" text-anchor="end" class="mono dim">running</text>
+      <rect x="32" y="408" width="1136" height="72" fill="#222629"/>
+      <text x="42" y="450" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
+      <text x="1158" y="450" text-anchor="end" class="mono dim">running</text>
     </g>
 
     <g class="stage stage-three">
-      <rect x="48" y="252" width="1104" height="88" fill="#2a2f25"/>
-      <text x="57" y="283" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
-      <text x="57" y="313" class="mono green">test result: ok. 28 passed; 0 failed</text>
+      <rect x="32" y="246" width="1136" height="96" fill="#2a2f25"/>
+      <text x="42" y="282" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
+      <text x="42" y="306" class="mono green">test result: ok. 28 passed; 0 failed</text>
 
-      <text x="57" y="376" class="mono body">Done.</text>
-      <text x="57" y="407" class="mono body">• Added stable request IDs at the middleware boundary.</text>
-      <text x="57" y="438" class="mono body">• Included the ID in log spans and response headers.</text>
-      <text x="57" y="469" class="mono body">• Added coverage for generated and forwarded IDs.</text>
+      <text x="42" y="378" class="mono body">Done.</text>
+      <text x="42" y="402" class="mono body">• Added stable request IDs at the middleware boundary.</text>
+      <text x="42" y="426" class="mono body">• Included the ID in log spans and response headers.</text>
+      <text x="42" y="450" class="mono body">• Added coverage for generated and forwarded IDs.</text>
     </g>
 
-    <text x="48" y="512" textLength="1104" lengthAdjust="spacing" class="mono yellow">───────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-    <rect x="57" y="529" width="8" height="17" fill="#c9d1d9" class="cursor"/>
-    <text x="48" y="566" textLength="1104" lengthAdjust="spacing" class="mono yellow">───────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="32" y="522" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <rect x="42" y="534" width="9" height="18" fill="#c9d1d9" class="cursor"/>
+    <text x="32" y="570" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 
-    <text x="48" y="592" class="mono dim">~/rho (docs/rho-ui-demo)</text>
-    <text x="48" y="618" class="mono dim">$0.08 (sub) ~2.0%/372.0k</text>
-    <text x="1152" y="618" text-anchor="end" class="mono dim">◇ Auto • (openai-codex) gpt-5.6-sol • high</text>
+    <text x="32" y="594" class="mono dim">~/rho (docs/rho-ui-demo)</text>
+    <text x="32" y="618" class="mono dim">$0.08 (sub) ~2.0%/372.0k</text>
+    <text x="1168" y="618" text-anchor="end" class="mono dim">◇ Auto • (openai-codex) gpt-5.6-sol • high</text>
   </g>
 </svg>
