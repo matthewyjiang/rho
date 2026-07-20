@@ -137,11 +137,21 @@ pub(super) async fn execute_process(
 
     let start = Instant::now();
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Aborts on drop so timeout, cancel, and normal-exit paths all stop readers.
+    let mut readers = StreamReaderGuards::default();
     if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(read_stream(StreamKind::Stdout, stdout, chunk_tx.clone()));
+        readers.push(tokio::spawn(read_stream(
+            StreamKind::Stdout,
+            stdout,
+            chunk_tx.clone(),
+        )));
     }
     if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(read_stream(StreamKind::Stderr, stderr, chunk_tx));
+        readers.push(tokio::spawn(read_stream(
+            StreamKind::Stderr,
+            stderr,
+            chunk_tx,
+        )));
     }
 
     let mut stdout = Vec::new();
@@ -176,11 +186,10 @@ pub(super) async fn execute_process(
                 let _ = child.start_kill();
                 drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
-                let _ = tokio::time::timeout(
-                    FINAL_OUTPUT_GRACE,
-                    drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
-                )
-                .await;
+                drain_final_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+                // Drop the receiver before aborting so any late send fails closed.
+                drop(chunk_rx);
+                readers.abort();
                 let seconds = timeout.unwrap_or_default().as_secs();
                 return Err(ToolError::Message(truncate(
                     timeout_content(&stdout, &stderr, seconds),
@@ -191,12 +200,9 @@ pub(super) async fn execute_process(
     };
 
     process_group.kill();
-    let _ = tokio::time::timeout(
-        FINAL_OUTPUT_GRACE,
-        drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr),
-    )
-    .await;
-    drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
+    drain_final_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
+    drop(chunk_rx);
+    readers.abort();
 
     let elapsed_secs = start.elapsed().as_secs_f64();
     let exit_code = status
@@ -239,6 +245,29 @@ impl Drop for ProcessGroupGuard {
     }
 }
 
+#[derive(Default)]
+struct StreamReaderGuards {
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl StreamReaderGuards {
+    fn push(&mut self, handle: tokio::task::JoinHandle<()>) {
+        self.handles.push(handle);
+    }
+
+    fn abort(&mut self) {
+        for handle in self.handles.drain(..) {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for StreamReaderGuards {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
 #[cfg(unix)]
 fn kill_process_group(pid: Option<u32>) {
     let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) else {
@@ -260,7 +289,11 @@ async fn read_stream<R>(
         match reader.read(&mut buffer).await {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                let _ = chunk_tx.send((kind, buffer[..n].to_vec()));
+                // Stop once the consumer is gone so escaped writers cannot keep
+                // these tasks allocating and discarding output forever.
+                if chunk_tx.send((kind, buffer[..n].to_vec())).is_err() {
+                    break;
+                }
             }
         }
     }
@@ -296,6 +329,20 @@ async fn drain_stream_chunks(
     while let Some((kind, bytes)) = chunk_rx.recv().await {
         append_stream_chunk(kind, bytes, stdout, stderr);
     }
+}
+
+async fn drain_final_stream_chunks(
+    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+) {
+    let _ = tokio::time::timeout(
+        FINAL_OUTPUT_GRACE,
+        drain_stream_chunks(chunk_rx, stdout, stderr),
+    )
+    .await;
+    // Capture anything queued at the grace-period boundary.
+    drain_ready_stream_chunks(chunk_rx, stdout, stderr);
 }
 
 fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
@@ -392,16 +439,56 @@ mod tests {
         assert!(message.contains("started"));
     }
 
+    // Kills the PID written to `path` on drop. Waits briefly for the file so
+    // assertion failures still clean up a slow-to-start escaped child.
+    struct KillPidFileOnDrop(std::path::PathBuf);
+
+    impl Drop for KillPidFileOnDrop {
+        fn drop(&mut self) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            let pid = loop {
+                if let Ok(contents) = std::fs::read_to_string(&self.0) {
+                    if let Ok(pid) = contents.trim().parse::<i32>() {
+                        break Some(pid);
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            if let Some(pid) = pid {
+                let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+        }
+    }
+
     #[tokio::test]
     async fn timeout_returns_when_an_escaped_process_holds_the_output_pipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_path = dir.path().join("escaped.pid");
+        // Install before the call so panics and assertion failures still reap the child.
+        let _kill_escaped = KillPidFileOnDrop(pid_path.clone());
+        let pid_path_arg = pid_path.display().to_string();
+        let command = format!(
+            "python3 -c 'import os,time\n\
+if os.fork() == 0:\n\
+    os.setsid()\n\
+    open({pid_path_arg:?}, \"w\").write(str(os.getpid()))\n\
+    time.sleep(10)'; sleep 10"
+        );
+
         let start = std::time::Instant::now();
         let err = Bash::new(false)
             .call(
                 json!({
-                    "command": "python3 -c 'import os,time\nif os.fork() == 0:\n    os.setsid()\n    time.sleep(10)'; sleep 10",
+                    "command": command,
                     "timeout_seconds": 1
                 }),
-                test_context(),
+                ToolContext {
+                    cwd: dir.path().to_path_buf(),
+                    max_output_bytes: 12_000,
+                },
                 "call_1".into(),
             )
             .await
