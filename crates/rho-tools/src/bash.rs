@@ -458,14 +458,17 @@ mod tests {
     async fn timeout_returns_when_an_escaped_process_holds_the_output_pipe() {
         let dir = tempfile::tempdir().unwrap();
         let pid_path = dir.path().join("escaped.pid");
+        // Use Python os.setsid rather than setsid(1): the binary is Linux-only and
+        // missing on macOS CI, while Python is present on both runner images.
+        // Keep the script on one Rust string so indentation inside the Python
+        // block is not eaten by `\` line continuations.
+        let command = "python3 -c 'import os,time\nif os.fork()==0:\n os.setsid()\n open(\"escaped.pid\",\"w\").write(str(os.getpid()))\n time.sleep(10)'; sleep 10";
 
         let start = std::time::Instant::now();
         let result = Bash::new(false)
             .call(
                 json!({
-                    // New session leaves the tool process group; inherited stdout
-                    // keeps the output pipe open after the timed-out shell is killed.
-                    "command": "setsid sh -c 'printf %s $$ > escaped.pid; sleep 10' & sleep 10",
+                    "command": command,
                     "timeout_seconds": 1
                 }),
                 ToolContext {
