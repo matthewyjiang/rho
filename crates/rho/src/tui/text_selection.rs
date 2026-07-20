@@ -1,11 +1,9 @@
 use std::{
-    io::{self, Write},
+    io,
     ops::Range,
-    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
-use crossterm::{clipboard::CopyToClipboard, execute};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -20,66 +18,6 @@ use unicode_width::UnicodeWidthStr;
 use super::theme::Theme;
 
 const COPY_NOTICE_DURATION: Duration = Duration::from_secs(2);
-
-/// Writes transcript text to a clipboard synchronously.
-///
-/// Implementors must preserve the supplied text exactly and return any clipboard or terminal
-/// error to the caller so the TUI can report copy failures.
-pub(super) trait ClipboardWriter {
-    fn copy(&mut self, text: &str) -> io::Result<()>;
-}
-
-#[derive(Default)]
-pub(super) struct TerminalClipboard;
-
-impl ClipboardWriter for TerminalClipboard {
-    fn copy(&mut self, text: &str) -> io::Result<()> {
-        // A local helper confirms the write; OSC 52 only asks the terminal and
-        // is silently ignored by terminals that do not implement it.
-        if clipboard_write_helpers()
-            .iter()
-            .any(|(command, arguments)| run_clipboard_helper(command, arguments, text))
-        {
-            return Ok(());
-        }
-        let mut stdout = io::stdout();
-        execute!(stdout, CopyToClipboard::to_clipboard_from(text))
-    }
-}
-
-fn clipboard_write_helpers() -> &'static [(&'static str, &'static [&'static str])] {
-    if cfg!(target_os = "macos") {
-        &[("pbcopy", &[])]
-    } else if cfg!(target_os = "linux") {
-        &[
-            ("wl-copy", &[]),
-            ("xclip", &["-selection", "clipboard"]),
-            ("xsel", &["--clipboard", "--input"]),
-        ]
-    } else if cfg!(target_os = "windows") {
-        &[("clip.exe", &[])]
-    } else {
-        &[]
-    }
-}
-
-fn run_clipboard_helper(command: &str, arguments: &[&str], text: &str) -> bool {
-    let Ok(mut child) = Command::new(command)
-        .args(arguments)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(text.as_bytes()).is_err() {
-            return false;
-        }
-    }
-    matches!(child.wait(), Ok(status) if status.success())
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct SelectionPosition {
@@ -201,6 +139,7 @@ pub(super) fn highlight_selection(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CopyNoticeTone {
     Success,
+    Warning,
     Error,
 }
 
@@ -221,6 +160,19 @@ impl CopyNotice {
         Self {
             message: format!("{character_count} {unit} copied"),
             tone: CopyNoticeTone::Success,
+            visible_until: now + COPY_NOTICE_DURATION,
+        }
+    }
+
+    pub(super) fn sent_to_terminal(character_count: usize, now: Instant) -> Self {
+        let unit = if character_count == 1 {
+            "char"
+        } else {
+            "chars"
+        };
+        Self {
+            message: format!("{character_count} {unit} sent to terminal"),
+            tone: CopyNoticeTone::Warning,
             visible_until: now + COPY_NOTICE_DURATION,
         }
     }
@@ -270,6 +222,7 @@ pub(super) fn render_copy_notice(
     );
     let style = match notice.tone {
         CopyNoticeTone::Success => Theme::success(),
+        CopyNoticeTone::Warning => Theme::warning(),
         CopyNoticeTone::Error => Theme::error(),
     };
 

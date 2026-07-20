@@ -69,11 +69,19 @@ fn excludes_code_block_copy_button_from_drag_selection() {
 }
 
 #[test]
-fn copy_notice_reports_the_character_count() {
+fn copy_notice_distinguishes_confirmed_and_terminal_writes() {
     let now = Instant::now();
 
     assert_eq!(CopyNotice::copied(1, now).message(), "1 char copied");
     assert_eq!(CopyNotice::copied(12, now).message(), "12 chars copied");
+    assert_eq!(
+        CopyNotice::sent_to_terminal(1, now).message(),
+        "1 char sent to terminal"
+    );
+    assert_eq!(
+        CopyNotice::sent_to_terminal(12, now).message(),
+        "12 chars sent to terminal"
+    );
 }
 
 #[test]
@@ -99,25 +107,4 @@ fn highlights_selected_screen_cells() {
     assert!(buffer[(3, 1)].modifier.contains(Modifier::REVERSED));
     assert!(buffer[(4, 1)].modifier.is_empty());
     assert!(buffer[(0, 2)].modifier.is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn clipboard_helper_succeeds_when_the_command_accepts_stdin() {
-    assert!(run_clipboard_helper("cat", &[], "copied text"));
-}
-
-#[test]
-fn clipboard_helper_fails_when_the_command_is_missing() {
-    assert!(!run_clipboard_helper(
-        "rho-missing-clipboard-helper",
-        &[],
-        "copied text"
-    ));
-}
-
-#[cfg(unix)]
-#[test]
-fn clipboard_helper_fails_when_the_command_exits_nonzero() {
-    assert!(!run_clipboard_helper("false", &[], "copied text"));
 }

@@ -1,3 +1,5 @@
+use crate::tui::clipboard::CopyOutcome;
+
 use super::*;
 
 #[derive(Clone)]
@@ -6,10 +8,55 @@ struct RecordingClipboard {
 }
 
 impl ClipboardWriter for RecordingClipboard {
-    fn copy(&mut self, text: &str) -> std::io::Result<()> {
+    fn copy(&mut self, text: &str) -> std::io::Result<CopyOutcome> {
         self.copied.lock().unwrap().push(text.to_string());
-        Ok(())
+        Ok(CopyOutcome::Confirmed)
     }
+}
+
+struct OutcomeClipboard(CopyOutcome);
+
+impl ClipboardWriter for OutcomeClipboard {
+    fn copy(&mut self, _text: &str) -> std::io::Result<CopyOutcome> {
+        Ok(self.0)
+    }
+}
+
+struct FailingClipboard;
+
+impl ClipboardWriter for FailingClipboard {
+    fn copy(&mut self, _text: &str) -> std::io::Result<CopyOutcome> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "terminal closed",
+        ))
+    }
+}
+
+#[test]
+fn terminal_clipboard_request_is_not_reported_as_a_confirmed_copy() {
+    let mut app = test_app();
+    app.clipboard = Box::new(OutcomeClipboard(CopyOutcome::SentToTerminal));
+
+    app.copy_text("hello", Instant::now());
+
+    assert_eq!(
+        app.copy_notice.as_ref().unwrap().message(),
+        "5 chars sent to terminal"
+    );
+}
+
+#[test]
+fn clipboard_write_failure_is_reported() {
+    let mut app = test_app();
+    app.clipboard = Box::new(FailingClipboard);
+
+    app.copy_text("hello", Instant::now());
+
+    assert_eq!(
+        app.copy_notice.as_ref().unwrap().message(),
+        "copy failed: terminal closed"
+    );
 }
 
 #[test]

@@ -38,6 +38,7 @@ mod activity;
 mod agent_picker;
 mod approval;
 mod attachment;
+mod clipboard;
 mod command_palette;
 mod config_editor;
 mod config_picker;
@@ -94,6 +95,7 @@ mod turn_prompt;
 
 use activity::{ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer};
+use clipboard::{ClipboardWriter, SystemClipboard};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
@@ -127,10 +129,7 @@ use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
-use text_selection::{
-    highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
-    TextSelection,
-};
+use text_selection::{highlight_selection, render_copy_notice, CopyNotice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
@@ -686,7 +685,7 @@ impl App {
             hovered_code_block_copy: None,
             text_selection: None,
             copy_notice: None,
-            clipboard: Box::new(TerminalClipboard),
+            clipboard: Box::new(SystemClipboard::default()),
             session_header_cache: None,
             last_mouse_position: None,
         }
