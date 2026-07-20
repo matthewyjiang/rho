@@ -242,7 +242,7 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
     let result = super::fetch::fetch_url_text(&client, &url).await;
     server.join().unwrap();
 
-    assert!(matches!(result, Err(crate::tool::ToolError::Utf8(_))));
+    assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
 }
 
 #[tokio::test]
@@ -280,5 +280,5 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
     let result = super::fetch::fetch_url_text(&client, &url).await;
     server.join().unwrap();
 
-    assert!(matches!(result, Err(crate::tool::ToolError::Utf8(_))));
+    assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
 }
