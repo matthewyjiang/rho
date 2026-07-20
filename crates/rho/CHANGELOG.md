@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.8.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.0...rho-coding-agent-v1.8.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **agents:** batch completion notifications and acknowledge observed results ([#422](https://github.com/matthewyjiang/rho/issues/422)) ([1169791](https://github.com/matthewyjiang/rho/commit/11697919d3149581a40bf0b7dc02950c0afe4b13))
+* **tui:** improve agent tool displays ([#413](https://github.com/matthewyjiang/rho/issues/413)) ([062edd0](https://github.com/matthewyjiang/rho/commit/062edd0851848c4fbd7754b47ec5dd588605989f))
+* **tui:** isolate test config from user settings ([#419](https://github.com/matthewyjiang/rho/issues/419)) ([274df7f](https://github.com/matthewyjiang/rho/commit/274df7fa121b677f76ee2f36ddb33934c6e0ef32))
+* **tui:** use stable braille spinner ([#423](https://github.com/matthewyjiang/rho/issues/423)) ([de62286](https://github.com/matthewyjiang/rho/commit/de622866c76987cddbb653c625f92797a3aff4aa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.3.0 to 0.3.1
+
 ## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.7.0...rho-coding-agent-v1.8.0) (2026-07-20)
 
 
