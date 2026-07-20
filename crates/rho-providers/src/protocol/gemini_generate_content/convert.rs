@@ -230,7 +230,6 @@ fn aborted_content_blocks(
     message: &crate::model::AbortedAssistant,
     target: &ModelIdentity,
 ) -> Vec<ContentBlock> {
-    let mut blocks = message.content.clone();
     let needs_native_calls = message.provider_context.iter().any(|context| {
         context.is_replayable_to(target)
             && matches!(
@@ -239,8 +238,15 @@ fn aborted_content_blocks(
             )
     });
     if !needs_native_calls {
-        return blocks;
+        // Foreign or unsigned cancelled tool calls must not become Gemini functionCall history.
+        return message
+            .content
+            .iter()
+            .filter(|block| !matches!(block, ContentBlock::ToolCall(_)))
+            .cloned()
+            .collect();
     }
+    let mut blocks = message.content.clone();
     let mut existing_call_ids = blocks
         .iter()
         .filter_map(|block| match block {

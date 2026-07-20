@@ -77,8 +77,16 @@ pub(crate) fn split_system_and_messages(
                 push_message(&mut converted, AnthropicRole::Assistant, content);
             }
             Message::AbortedAssistant(message) => {
+                let mut content = message
+                    .content
+                    .into_iter()
+                    .map(|block| match block {
+                        ContentBlock::ToolCall(call) => ContentBlock::Text(render_tool_call(&call)),
+                        other => other,
+                    })
+                    .collect::<Vec<_>>();
                 let mut enriched = crate::model::AssistantMessage {
-                    content: message.content,
+                    content,
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
                     provider_context: message.provider_context,
