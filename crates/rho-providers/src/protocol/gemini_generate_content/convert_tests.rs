@@ -282,17 +282,19 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
     let messages = vec![
         Message::user_text("run it"),
         Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
-            content: vec![ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({"command":"pwd"}),
-            })],
+            // Real cancellation stores text-only content and keeps tool calls separately.
+            content: Vec::new(),
             provenance: Some(identity.clone()),
             provider_context: vec![ProviderContextBlock {
                 identity: identity.clone(),
                 kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                 position: Some(0),
                 data: json!("opaque-signature"),
+            }],
+            tool_calls: vec![crate::model::PartialToolCall {
+                id: Some("call-1".into()),
+                name: Some("bash".into()),
+                arguments: r#"{"command":"pwd"}"#.into(),
             }],
             ..crate::model::AbortedAssistant::default()
         })),
@@ -320,6 +322,45 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
         body.contents[1].parts[1].text.as_deref(),
         Some("[Operation aborted]")
     );
+}
+
+#[test]
+fn signed_text_parts_are_not_merged_with_neighbors() {
+    let mut collector = ResponseCollector::default();
+    let mut events = Vec::new();
+    collector
+        .apply(
+            serde_json::from_value(json!({
+                "candidates":[{"content":{"parts":[
+                    {"text":"hello"},
+                    {"text":" world","thoughtSignature":"sig-1"},
+                    {"text":"!"}
+                ]}}]
+            }))
+            .unwrap(),
+            Some(&mut |event| {
+                events.push(event);
+                Ok(())
+            }),
+        )
+        .unwrap();
+
+    assert_eq!(
+        collector.finish().unwrap(),
+        crate::model::ModelResponse::Assistant(vec![
+            ContentBlock::Text("hello".into()),
+            ContentBlock::Text(" world".into()),
+            ContentBlock::Text("!".into()),
+        ])
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        crate::model::ModelEvent::ProviderContext {
+            kind,
+            position: Some(1),
+            data,
+        } if kind == THOUGHT_SIGNATURE_CONTEXT && data == "sig-1"
+    )));
 }
 
 #[test]

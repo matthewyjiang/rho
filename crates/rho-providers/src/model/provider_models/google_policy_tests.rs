@@ -28,6 +28,13 @@ fn reasoning_capabilities_are_exact_for_known_families() {
         reasoning_capabilities("gemini-3-pro-preview", Some(true)),
         ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
             ReasoningLevel::Low,
+            ReasoningLevel::High,
+        ]))
+    );
+    assert_eq!(
+        reasoning_capabilities("gemini-3.1-pro-preview", Some(true)),
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Low,
             ReasoningLevel::Medium,
             ReasoningLevel::High,
         ]))

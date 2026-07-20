@@ -59,6 +59,13 @@ fn probe_classifier_hides_retired_models_and_keeps_transient_failures() {
         ),
         ModelAvailability::Transient
     );
+    assert_eq!(
+        classify_probe_status(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}"#
+        ),
+        ModelAvailability::Unavailable
+    );
 }
 
 #[tokio::test]

@@ -157,6 +157,9 @@ fn classify_probe_status(status: StatusCode, body: &str) -> ModelAvailability {
     if status == StatusCode::NOT_FOUND || body_indicates_retired_model(body) {
         return ModelAvailability::Unavailable;
     }
+    if body_indicates_permanent_key_or_region_block(body) {
+        return ModelAvailability::Unavailable;
+    }
     if matches!(
         status.as_u16(),
         401 | 403 | 408 | 429 | 500 | 502 | 503 | 504
@@ -171,6 +174,14 @@ fn classify_probe_status(status: StatusCode, body: &str) -> ModelAvailability {
 fn body_indicates_retired_model(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     lower.contains("no longer available")
+}
+
+fn body_indicates_permanent_key_or_region_block(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("failed_precondition")
+        || lower.contains("not available in your country")
+        || lower.contains("user location is not supported")
+        || lower.contains("consumer_suspended")
 }
 
 fn generate_content_base(models_endpoint: &str) -> Result<String, ModelError> {

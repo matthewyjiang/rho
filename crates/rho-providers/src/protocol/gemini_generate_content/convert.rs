@@ -63,7 +63,7 @@ pub fn build_request(
             Message::AbortedAssistant(message) => {
                 let prepared = prepare_assistant(
                     crate::model::AssistantMessage {
-                        content: message.content.clone(),
+                        content: aborted_content_blocks(message),
                         provenance: message.provenance.clone(),
                         reasoning_summary: message.reasoning_summary.clone(),
                         provider_context: message.provider_context.clone(),
@@ -220,6 +220,53 @@ fn replay_provider_context(
     Ok(())
 }
 
+/// Rebuilds portable blocks for an aborted turn.
+///
+/// Cancellation history keeps completed text in `content` and tool-call fragments
+/// in `tool_calls`. Gemini thought-signature positions refer to the original
+/// collector content order, which includes tool-call blocks, so complete tool
+/// fragments must be restored before replay.
+fn aborted_content_blocks(message: &crate::model::AbortedAssistant) -> Vec<ContentBlock> {
+    let mut blocks = message.content.clone();
+    let mut existing_call_ids = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) => Some(call.id.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>();
+    let mut tool_calls = message.tool_calls.clone();
+    tool_calls.sort_by(|left, right| {
+        left.id
+            .as_deref()
+            .unwrap_or_default()
+            .cmp(right.id.as_deref().unwrap_or_default())
+    });
+    for call in tool_calls {
+        let Some(id) = call.id.filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        if !existing_call_ids.insert(id.clone()) {
+            continue;
+        }
+        let Some(name) = call.name.filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&call.arguments) else {
+            continue;
+        };
+        if !arguments.is_object() {
+            continue;
+        }
+        blocks.push(ContentBlock::ToolCall(ToolCall {
+            id,
+            name,
+            arguments,
+        }));
+    }
+    blocks
+}
+
 fn blocks_to_parts(
     blocks: &[ContentBlock],
     call_names: &mut HashMap<String, CallInfo>,
@@ -312,10 +359,13 @@ impl ResponseCollector {
             };
             for part in content.parts {
                 let has_text = part.text.is_some();
+                let has_signature = part.thought_signature.is_some();
                 self.has_emitted_output |= has_text || part.function_call.is_some();
+                // Gemini forbids merging a signed part with an unsigned neighbor.
                 let merges_with_previous_text = !part.thought
                     && part.function_call.is_none()
                     && part.text.is_some()
+                    && !has_signature
                     && self.can_merge_output_text;
                 let portable_position = if merges_with_previous_text {
                     self.content.len().saturating_sub(1)
@@ -369,7 +419,7 @@ impl ResponseCollector {
                         emit(&mut on_event, ModelEvent::ReasoningSummaryDelta(text))?;
                     } else {
                         emit(&mut on_event, ModelEvent::OutputDelta(text.clone()))?;
-                        if self.can_merge_output_text {
+                        if merges_with_previous_text {
                             let Some(ContentBlock::Text(previous)) = self.content.last_mut() else {
                                 return Err(ModelError::InvalidResponse(
                                     "Gemini text merge state is inconsistent".into(),
@@ -379,7 +429,8 @@ impl ResponseCollector {
                         } else {
                             self.content.push(ContentBlock::Text(text));
                         }
-                        self.can_merge_output_text = true;
+                        // Signed text must remain a standalone native part.
+                        self.can_merge_output_text = !has_signature;
                     }
                 }
                 if let Some(call) = part.function_call {

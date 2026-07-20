@@ -180,6 +180,18 @@ fn reasoning_uses_levels_for_gemini_3_and_bounded_budgets_for_gemini_2_5() {
         thinking_config("gemini-3-pro", ReasoningLevel::Off),
         Err(ModelError::UnsupportedReasoning { .. })
     ));
+    assert!(matches!(
+        thinking_config("gemini-3-pro-preview", ReasoningLevel::Medium),
+        Err(ModelError::UnsupportedReasoning { .. })
+    ));
+    assert_eq!(
+        thinking_config("gemini-3.1-pro-preview", ReasoningLevel::Medium).unwrap(),
+        Some(ThinkingConfig {
+            thinking_budget: None,
+            thinking_level: Some(ThinkingLevel::Medium),
+            include_thoughts: true,
+        })
+    );
     assert_eq!(
         thinking_config("gemini-2.0-flash", ReasoningLevel::Off).unwrap(),
         None

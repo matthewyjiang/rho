@@ -464,7 +464,9 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
         return Err(ModelError::UnsupportedProvider(provider.to_string()));
     };
     if let Ok(key) = std::env::var(env_var) {
-        return Ok(key);
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
     }
     load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing))
 }

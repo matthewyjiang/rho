@@ -82,7 +82,10 @@ enum Family {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Gemini3Variant {
+    /// Original Gemini 3 Pro previews: low/high only.
     Pro,
+    /// Gemini 3.1 Pro previews: low/medium/high.
+    Pro31,
     FlashLiteImage,
     Standard,
 }
@@ -100,7 +103,11 @@ fn family(model: &str) -> Family {
         return Family::Gemini3(if lower.contains("flash-lite-image") {
             Gemini3Variant::FlashLiteImage
         } else if lower.contains("pro") {
-            Gemini3Variant::Pro
+            if lower.starts_with("gemini-3.1") || lower.contains("gemini-3.1") {
+                Gemini3Variant::Pro31
+            } else {
+                Gemini3Variant::Pro
+            }
         } else {
             Gemini3Variant::Standard
         });
@@ -117,7 +124,8 @@ fn family(model: &str) -> Family {
 
 fn gemini3_levels(variant: Gemini3Variant) -> &'static [ReasoningLevel] {
     match variant {
-        Gemini3Variant::Pro => &[
+        Gemini3Variant::Pro => &[ReasoningLevel::Low, ReasoningLevel::High],
+        Gemini3Variant::Pro31 => &[
             ReasoningLevel::Low,
             ReasoningLevel::Medium,
             ReasoningLevel::High,
