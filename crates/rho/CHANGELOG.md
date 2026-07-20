@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.1...rho-coding-agent-v1.8.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** align dependent tool versions ([#426](https://github.com/matthewyjiang/rho/issues/426)) ([7b9ea52](https://github.com/matthewyjiang/rho/commit/7b9ea5211419bd600000466a0aab2d3d0405cda8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.3.1 to 0.3.2
+
 ## [1.8.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.0...rho-coding-agent-v1.8.1) (2026-07-20)
 
 

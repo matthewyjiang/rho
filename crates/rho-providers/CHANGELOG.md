@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.3.1...rho-providers-v0.3.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** align dependent tool versions ([#426](https://github.com/matthewyjiang/rho/issues/426)) ([7b9ea52](https://github.com/matthewyjiang/rho/commit/7b9ea5211419bd600000466a0aab2d3d0405cda8))
+
 ## [0.3.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.3.0...rho-providers-v0.3.1) (2026-07-20)
 
 
