@@ -29,7 +29,7 @@ features:
 
 ## Rho in action
 
-[![Animated demo of Rho tracing code, editing a Rust file, and running tests](./assets/rho-ui-demo.svg)](/interactive-tui)
+[![Rho terminal UI showing a code inspection, Rust edit, and focused test run](./assets/rho-ui-demo.svg)](/interactive-tui)
 
 ## Concept docs
 

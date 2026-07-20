@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">Rho interactive terminal UI demo</title>
-  <desc id="desc">An animated, terminal-accurate Rho session reads and edits Rust code, runs tests, and reports completion.</desc>
+  <title id="title">Rho interactive terminal UI</title>
+  <desc id="desc">A static Rho terminal session that inspects request middleware, edits Rust code, runs focused tests, and reports completion.</desc>
   <defs>
     <clipPath id="screen-clip">
       <rect x="24" y="24" width="1152" height="627" rx="12"/>
@@ -22,37 +22,6 @@
       .green { fill: #3fb950; }
       .yellow { fill: #d29922; }
       .bold { font-weight: 700; }
-      .stage { opacity: 0; }
-      .stage-one { animation: stage-one 12s linear infinite; }
-      .stage-two { animation: stage-two 12s linear infinite; }
-      .stage-three { opacity: 1; animation: stage-three 12s linear infinite; }
-      .cursor { animation: cursor 1.05s steps(2, jump-none) infinite; }
-      .spin-one { animation: spin-one 800ms steps(1) infinite; }
-      .spin-two { animation: spin-two 800ms steps(1) infinite; }
-      @keyframes stage-one {
-        0%, 3% { opacity: 0; }
-        7%, 28% { opacity: 1; }
-        33%, 100% { opacity: 0; }
-      }
-      @keyframes stage-two {
-        0%, 30% { opacity: 0; }
-        35%, 63% { opacity: 1; }
-        68%, 100% { opacity: 0; }
-      }
-      @keyframes stage-three {
-        0%, 65% { opacity: 0; }
-        70%, 96% { opacity: 1; }
-        100% { opacity: 0; }
-      }
-      @keyframes cursor { 0%, 48% { opacity: 1; } 52%, 100% { opacity: 0; } }
-      @keyframes spin-one { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
-      @keyframes spin-two { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
-      @media (prefers-reduced-motion: reduce) {
-        .stage, .cursor, .spin-one, .spin-two { animation: none; }
-        .stage-one, .stage-two { display: none; }
-        .stage-three, .cursor, .spin-one { opacity: 1; }
-        .spin-two { display: none; }
-      }
     </style>
   </defs>
 
@@ -62,60 +31,36 @@
   </g>
 
   <g clip-path="url(#screen-clip)">
-    <rect x="24" y="24" width="1152" height="42" fill="#161b22"/>
-    <circle cx="48" cy="45" r="5" fill="#6e7681"/>
-    <text x="65" y="50" class="mono dim">rho · ~/rho</text>
-    <text x="1152" y="50" text-anchor="end" class="mono dim">115×35</text>
+    <text x="32" y="45" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="32" y="66" class="mono"><tspan class="bold cyan">rho</tspan><tspan class="body">  v</tspan><tspan class="bold green">0.1.0</tspan></text>
+    <text x="32" y="87" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 
-    <text x="32" y="90" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-    <text x="32" y="114" class="mono"><tspan class="bold cyan">rho</tspan><tspan class="body">  v</tspan><tspan class="bold green">0.1.0</tspan></text>
-    <text x="32" y="138" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <rect x="32" y="99" width="1136" height="63" fill="#222629"/>
+    <text x="42" y="136" class="mono bright">Add request IDs to API logs and update the tests.</text>
 
-    <rect x="32" y="150" width="1136" height="72" fill="#222629"/>
-    <text x="42" y="186" class="mono bright">Add request IDs to API logs and update the tests.</text>
+    <text x="42" y="183" class="mono dim">I’ll inspect the request middleware and its tests before changing the request path.</text>
 
-    <g class="stage stage-one">
-      <text x="42" y="258" class="mono dim">I’ll trace the request path and current logging tests before editing.</text>
-      <rect x="32" y="270" width="1136" height="72" fill="#222629"/>
-      <text x="42" y="306" class="mono bright">read_file crates/api/src/middleware/request_id.rs</text>
+    <rect x="32" y="195" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="226" class="mono bright">read_file crates/api/src/middleware/request_id.rs</text>
+    <text x="42" y="247" class="mono body">pub async fn request_id(mut request: Request, next: Next) -&gt; Response {</text>
 
-      <rect x="32" y="432" width="1136" height="48" fill="#222629"/>
-      <text x="42" y="450" class="mono cyan spin-one">⠋</text>
-      <text x="42" y="450" class="mono cyan spin-two">⡆</text>
-      <text x="62" y="450" class="mono dim">running tool</text>
-      <text x="42" y="474" class="mono"><tspan class="dim">  └ </tspan><tspan class="bold body">explorer</tspan><tspan class="dim">  bg-a13f · read_file                              2s</tspan></text>
-    </g>
+    <rect x="32" y="288" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="319" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
+    <text x="42" y="340" class="mono green">+ span.record("request_id", request_id.as_str());</text>
 
-    <g class="stage stage-two">
-      <text x="42" y="258" class="mono body">The middleware already owns a tracing span, so the request ID can stay at</text>
-      <text x="42" y="282" class="mono body">that boundary.</text>
+    <rect x="32" y="381" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="412" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
+    <text x="42" y="433" class="mono green">test result: ok. 28 passed; 0 failed; 0 ignored</text>
 
-      <rect x="32" y="294" width="1136" height="96" fill="#2a2f25"/>
-      <text x="42" y="330" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
-      <text x="42" y="354" class="mono green">+ span.record("request_id", request_id.as_str());</text>
+    <text x="42" y="496" class="mono body">Done. Request IDs now flow through log spans and response headers.</text>
+    <text x="42" y="517" class="mono body">Focused tests cover both generated and forwarded IDs.</text>
 
-      <rect x="32" y="408" width="1136" height="72" fill="#222629"/>
-      <text x="42" y="450" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
-      <text x="1158" y="450" text-anchor="end" class="mono dim">running</text>
-    </g>
+    <text x="32" y="548" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <rect x="42" y="559" width="9" height="18" fill="#c9d1d9"/>
+    <text x="32" y="590" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 
-    <g class="stage stage-three">
-      <rect x="32" y="246" width="1136" height="96" fill="#2a2f25"/>
-      <text x="42" y="282" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
-      <text x="42" y="306" class="mono green">test result: ok. 28 passed; 0 failed</text>
-
-      <text x="42" y="378" class="mono body">Done.</text>
-      <text x="42" y="402" class="mono body">• Added stable request IDs at the middleware boundary.</text>
-      <text x="42" y="426" class="mono body">• Included the ID in log spans and response headers.</text>
-      <text x="42" y="450" class="mono body">• Added coverage for generated and forwarded IDs.</text>
-    </g>
-
-    <text x="32" y="522" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-    <rect x="42" y="534" width="9" height="18" fill="#c9d1d9" class="cursor"/>
-    <text x="32" y="570" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-
-    <text x="32" y="594" class="mono dim">~/rho (docs/rho-ui-demo)</text>
-    <text x="32" y="618" class="mono dim">$0.08 (sub) ~2.0%/372.0k</text>
-    <text x="1168" y="618" text-anchor="end" class="mono dim">◇ Auto • (openai-codex) gpt-5.6-sol • high</text>
+    <text x="32" y="614" class="mono dim">~/rho (docs/rho-ui-demo)</text>
+    <text x="32" y="638" class="mono dim">$0.08 (sub) ~2.0%/372.0k</text>
+    <text x="1168" y="638" text-anchor="end" class="mono dim">◇ Auto • (openai-codex) gpt-5.6-sol • high</text>
   </g>
 </svg>
