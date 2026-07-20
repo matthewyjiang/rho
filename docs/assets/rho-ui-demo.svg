@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Rho interactive terminal UI</title>
+  <desc id="desc">A static Rho terminal session that inspects request middleware, edits Rust code, runs focused tests, and reports completion.</desc>
+  <defs>
+    <clipPath id="screen-clip">
+      <rect x="24" y="24" width="1152" height="627" rx="12"/>
+    </clipPath>
+    <filter id="terminal-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <style>
+      .mono {
+        font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+        font-size: 16px;
+        font-variant-ligatures: none;
+        font-feature-settings: "liga" 0, "calt" 0;
+      }
+      .body { fill: #c9d1d9; }
+      .bright { fill: #f0f3f6; }
+      .dim { fill: #6e7681; }
+      .cyan { fill: #39c5cf; }
+      .green { fill: #3fb950; }
+      .yellow { fill: #d29922; }
+      .bold { font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="675" rx="18" fill="#090c10"/>
+  <g filter="url(#terminal-shadow)">
+    <rect x="24" y="24" width="1152" height="627" rx="12" fill="#0d1117" stroke="#30363d"/>
+  </g>
+
+  <g clip-path="url(#screen-clip)">
+    <text x="32" y="45" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <text x="32" y="66" class="mono"><tspan class="bold cyan">rho</tspan><tspan class="body">  v</tspan><tspan class="bold green">0.1.0</tspan></text>
+    <text x="32" y="87" class="mono dim">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+
+    <rect x="32" y="99" width="1136" height="63" fill="#222629"/>
+    <text x="42" y="136" class="mono bright">Add request IDs to API logs and update the tests.</text>
+
+    <text x="42" y="183" class="mono dim">I’ll inspect the request middleware and its tests before changing the request path.</text>
+
+    <rect x="32" y="195" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="226" class="mono bright">read_file crates/api/src/middleware/request_id.rs</text>
+    <text x="42" y="247" class="mono body">pub async fn request_id(mut request: Request, next: Next) -&gt; Response {</text>
+
+    <rect x="32" y="288" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="319" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
+    <text x="42" y="340" class="mono green">+ span.record("request_id", request_id.as_str());</text>
+
+    <rect x="32" y="381" width="1136" height="84" fill="#2a2f25"/>
+    <text x="42" y="412" class="mono bright">bash cargo test -p atlas-api -- request_id</text>
+    <text x="42" y="433" class="mono green">test result: ok. 28 passed; 0 failed; 0 ignored</text>
+
+    <text x="42" y="496" class="mono body">Done. Request IDs now flow through log spans and response headers.</text>
+    <text x="42" y="517" class="mono body">Focused tests cover both generated and forwarded IDs.</text>
+
+    <text x="32" y="548" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+    <rect x="42" y="559" width="9" height="18" fill="#c9d1d9"/>
+    <text x="32" y="590" class="mono yellow">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+
+    <text x="32" y="614" class="mono dim">~/rho (docs/rho-ui-demo)</text>
+    <text x="32" y="638" class="mono dim">$0.08 (sub) ~2.0%/372.0k</text>
+    <text x="1168" y="638" text-anchor="end" class="mono dim">◇ Auto • (openai-codex) gpt-5.6-sol • high</text>
+  </g>
+</svg>
