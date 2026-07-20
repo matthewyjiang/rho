@@ -63,7 +63,7 @@ pub fn build_request(
             Message::AbortedAssistant(message) => {
                 let prepared = prepare_assistant(
                     crate::model::AssistantMessage {
-                        content: aborted_content_blocks(message),
+                        content: aborted_content_blocks(message, target),
                         provenance: message.provenance.clone(),
                         reasoning_summary: message.reasoning_summary.clone(),
                         provider_context: message.provider_context.clone(),
@@ -222,12 +222,25 @@ fn replay_provider_context(
 
 /// Rebuilds portable blocks for an aborted turn.
 ///
-/// Cancellation history keeps completed text in `content` and tool-call fragments
-/// in `tool_calls`. Gemini thought-signature positions refer to the original
-/// collector content order, which includes tool-call blocks, so complete tool
-/// fragments must be restored before replay.
-fn aborted_content_blocks(message: &crate::model::AbortedAssistant) -> Vec<ContentBlock> {
+/// Cancellation history keeps text blocks in `content` and tool-call fragments
+/// in `tool_calls` (stream-index order). Gemini thought-signature positions refer
+/// to collector content that included those tool-call blocks, so complete tool
+/// fragments are restored before replay when Gemini context needs them.
+fn aborted_content_blocks(
+    message: &crate::model::AbortedAssistant,
+    target: &ModelIdentity,
+) -> Vec<ContentBlock> {
     let mut blocks = message.content.clone();
+    let needs_native_calls = message.provider_context.iter().any(|context| {
+        context.is_replayable_to(target)
+            && matches!(
+                context.kind.as_str(),
+                THOUGHT_SIGNATURE_CONTEXT | THOUGHT_PART_CONTEXT | MISSING_FUNCTION_CALL_ID_CONTEXT
+            )
+    });
+    if !needs_native_calls {
+        return blocks;
+    }
     let mut existing_call_ids = blocks
         .iter()
         .filter_map(|block| match block {
@@ -235,21 +248,15 @@ fn aborted_content_blocks(message: &crate::model::AbortedAssistant) -> Vec<Conte
             _ => None,
         })
         .collect::<std::collections::HashSet<_>>();
-    let mut tool_calls = message.tool_calls.clone();
-    tool_calls.sort_by(|left, right| {
-        left.id
-            .as_deref()
-            .unwrap_or_default()
-            .cmp(right.id.as_deref().unwrap_or_default())
-    });
-    for call in tool_calls {
-        let Some(id) = call.id.filter(|id| !id.is_empty()) else {
+    // Preserve stream-index order from the SDK BTreeMap (already sorted by index).
+    for call in &message.tool_calls {
+        let Some(id) = call.id.as_ref().filter(|id| !id.is_empty()) else {
             continue;
         };
         if !existing_call_ids.insert(id.clone()) {
             continue;
         }
-        let Some(name) = call.name.filter(|name| !name.is_empty()) else {
+        let Some(name) = call.name.as_ref().filter(|name| !name.is_empty()) else {
             continue;
         };
         let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&call.arguments) else {
@@ -259,8 +266,8 @@ fn aborted_content_blocks(message: &crate::model::AbortedAssistant) -> Vec<Conte
             continue;
         }
         blocks.push(ContentBlock::ToolCall(ToolCall {
-            id,
-            name,
+            id: id.clone(),
+            name: name.clone(),
             arguments,
         }));
     }

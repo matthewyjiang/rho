@@ -325,6 +325,122 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
 }
 
 #[test]
+fn aborted_parallel_tool_calls_keep_stream_order_not_id_order() {
+    let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
+    let messages = vec![
+        Message::user_text("run both"),
+        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+            content: Vec::new(),
+            provenance: Some(identity.clone()),
+            provider_context: vec![
+                ProviderContextBlock {
+                    identity: identity.clone(),
+                    kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                    position: Some(0),
+                    data: json!("sig-z"),
+                },
+                ProviderContextBlock {
+                    identity: identity.clone(),
+                    kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                    position: Some(1),
+                    data: json!("sig-a"),
+                },
+            ],
+            // Stream order is z then a; lexical ID order is the opposite.
+            tool_calls: vec![
+                crate::model::PartialToolCall {
+                    id: Some("z-call".into()),
+                    name: Some("bash".into()),
+                    arguments: r#"{"command":"echo z"}"#.into(),
+                },
+                crate::model::PartialToolCall {
+                    id: Some("a-call".into()),
+                    name: Some("bash".into()),
+                    arguments: r#"{"command":"echo a"}"#.into(),
+                },
+            ],
+            ..crate::model::AbortedAssistant::default()
+        })),
+    ];
+
+    let body = build_request(&messages, &[], &identity, None).unwrap();
+    let parts = &body.contents[1].parts;
+    assert_eq!(
+        parts[0].function_call.as_ref().unwrap().id.as_deref(),
+        Some("z-call")
+    );
+    assert_eq!(parts[0].thought_signature.as_deref(), Some("sig-z"));
+    assert_eq!(
+        parts[1].function_call.as_ref().unwrap().id.as_deref(),
+        Some("a-call")
+    );
+    assert_eq!(parts[1].thought_signature.as_deref(), Some("sig-a"));
+}
+
+#[test]
+fn foreign_aborted_tool_calls_are_not_promoted_to_gemini_function_calls() {
+    let target = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
+    let messages = vec![
+        Message::user_text("continue"),
+        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+            content: vec![ContentBlock::Text("partial".into())],
+            provenance: Some(ModelIdentity::new("openai", "openai-responses", "gpt-test")),
+            tool_calls: vec![crate::model::PartialToolCall {
+                id: Some("call-foreign".into()),
+                name: Some("bash".into()),
+                arguments: r#"{"command":"pwd"}"#.into(),
+            }],
+            ..crate::model::AbortedAssistant::default()
+        })),
+        Message::user_text("next"),
+    ];
+
+    let body = build_request(&messages, &[], &target, None).unwrap();
+    assert_eq!(body.contents[1].parts.len(), 2);
+    assert_eq!(body.contents[1].parts[0].text.as_deref(), Some("partial"));
+    assert_eq!(
+        body.contents[1].parts[1].text.as_deref(),
+        Some("[Operation aborted]")
+    );
+    assert!(body.contents[1]
+        .parts
+        .iter()
+        .all(|part| part.function_call.is_none()));
+}
+
+#[test]
+fn aborted_signed_text_keeps_nonzero_signature_position() {
+    let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
+    let messages = vec![
+        Message::user_text("hi"),
+        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+            content: vec![
+                ContentBlock::Text("hello".into()),
+                ContentBlock::Text(" world".into()),
+            ],
+            provenance: Some(identity.clone()),
+            provider_context: vec![ProviderContextBlock {
+                identity: identity.clone(),
+                kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                position: Some(1),
+                data: json!("sig-world"),
+            }],
+            ..crate::model::AbortedAssistant::default()
+        })),
+        Message::user_text("next"),
+    ];
+
+    let body = build_request(&messages, &[], &identity, None).unwrap();
+    assert_eq!(body.contents[1].parts[0].text.as_deref(), Some("hello"));
+    assert!(body.contents[1].parts[0].thought_signature.is_none());
+    assert_eq!(body.contents[1].parts[1].text.as_deref(), Some(" world"));
+    assert_eq!(
+        body.contents[1].parts[1].thought_signature.as_deref(),
+        Some("sig-world")
+    );
+}
+
+#[test]
 fn signed_text_parts_are_not_merged_with_neighbors() {
     let mut collector = ResponseCollector::default();
     let mut events = Vec::new();

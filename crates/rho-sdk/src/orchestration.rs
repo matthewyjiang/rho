@@ -31,7 +31,8 @@ use tool_turn::{execute_tool, StagedToolTurn};
 
 #[derive(Default)]
 struct StreamCapture {
-    text: String,
+    content: Vec<ContentBlock>,
+    merge_output_text: bool,
     reasoning: String,
     reasoning_summary: String,
     provider_context: Vec<ProviderContextBlock>,
@@ -741,14 +742,26 @@ fn capture_provider_event(
 ) -> RunEvent {
     match event {
         ModelEvent::OutputDelta(text) => {
-            capture.text.push_str(&text);
+            if capture.merge_output_text {
+                let Some(ContentBlock::Text(existing)) = capture.content.last_mut() else {
+                    capture.content.push(ContentBlock::Text(text.clone()));
+                    capture.merge_output_text = true;
+                    return RunEvent::AssistantTextDelta { text };
+                };
+                existing.push_str(&text);
+            } else {
+                capture.content.push(ContentBlock::Text(text.clone()));
+                capture.merge_output_text = true;
+            }
             RunEvent::AssistantTextDelta { text }
         }
         ModelEvent::ReasoningDelta(text) => {
+            capture.merge_output_text = false;
             capture.reasoning.push_str(&text);
             RunEvent::ReasoningDelta { text }
         }
         ModelEvent::ReasoningSummaryDelta(text) => {
+            capture.merge_output_text = false;
             capture.reasoning_summary.push_str(&text);
             RunEvent::ReasoningSummaryDelta { text }
         }
@@ -762,6 +775,7 @@ fn capture_provider_event(
             name,
             arguments,
         } => {
+            capture.merge_output_text = false;
             let partial =
                 capture
                     .partial_tool_calls
@@ -790,6 +804,9 @@ fn capture_provider_event(
             position,
             data,
         } => {
+            // Provider-native boundaries (for example Gemini thought signatures)
+            // must not be collapsed into a single cancelled text block.
+            capture.merge_output_text = false;
             capture.provider_context.push(ProviderContextBlock {
                 identity: identity.clone(),
                 kind: kind.clone(),
@@ -874,19 +891,14 @@ async fn commit_cancellation(
     capture: StreamCapture,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
-    if !capture.text.is_empty()
+    if !capture.content.is_empty()
         || !capture.reasoning_summary.is_empty()
         || !capture.provider_context.is_empty()
         || !capture.partial_tool_calls.is_empty()
         || capture.usage != ModelUsage::default()
     {
-        let content = if capture.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![ContentBlock::Text(capture.text)]
-        };
         history.push(Message::AbortedAssistant(Box::new(AbortedAssistant {
-            content,
+            content: capture.content,
             reasoning: String::new(),
             provenance: None,
             reasoning_summary: (!capture.reasoning_summary.is_empty())
