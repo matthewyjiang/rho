@@ -719,6 +719,17 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if screen.contains("\"agent_id\"")
+        || screen.contains("\"background\":true")
+        || screen.contains("\"action\":\"list\"")
+    {
+        anyhow::bail!("agent tool exposed raw JSON:\n{screen}");
+    }
+    Ok(())
+}
+
 const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -727,6 +738,19 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     },
     Step::Phase("spawn_background_agent"),
     Step::SubmitText("fixture background agent"),
+    Step::WaitText {
+        text: "● wor  starting",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "● worker  running in background",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "fixture stream",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_agent_tool_hides_raw_json),
     // The fixture echoes the spawn receipt's first line, proving the tool
     // resolved with a start line and the parent turn ended.
     Step::WaitText {
@@ -749,6 +773,17 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(250),
         timeout: SETTLE,
     },
+    Step::Phase("list_agents"),
+    Step::SubmitText("fixture agents list"),
+    Step::WaitText {
+        text: "delegated agents",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "worker  completed",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_agent_tool_hides_raw_json),
     Step::ExitCommand,
 ];
 
