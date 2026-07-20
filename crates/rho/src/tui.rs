@@ -1072,25 +1072,25 @@ impl App {
         if notifications.is_empty() {
             return Ok(false);
         }
-        for notification in notifications {
-            let (model_prompt, display_prompt) =
-                crate::tools::agent::notification_prompts(&notification);
-            if self.goal.is_some() || !self.queued_prompts.is_empty() {
-                self.queued_prompts.push_back(QueuedPrompt {
-                    prompt: model_prompt,
-                    display_prompt,
-                    paste_segments: Vec::new(),
-                });
-                self.select_pending_recall_target();
-            } else {
-                self.run_prompt_turn(
-                    TurnPrompt::standard(model_prompt, display_prompt),
-                    Vec::new(),
-                    terminal,
-                    agent,
-                )
-                .await?;
-            }
+        // The whole drained batch is one message and one model request, no
+        // matter how many runs finished while the parent was busy.
+        let (model_prompt, display_prompt) =
+            crate::tools::agent::notification_prompts(&notifications);
+        if self.goal.is_some() || !self.queued_prompts.is_empty() {
+            self.queued_prompts.push_back(QueuedPrompt {
+                prompt: model_prompt,
+                display_prompt,
+                paste_segments: Vec::new(),
+            });
+            self.select_pending_recall_target();
+        } else {
+            self.run_prompt_turn(
+                TurnPrompt::standard(model_prompt, display_prompt),
+                Vec::new(),
+                terminal,
+                agent,
+            )
+            .await?;
         }
         Ok(true)
     }

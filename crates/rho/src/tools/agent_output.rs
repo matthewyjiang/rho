@@ -37,12 +37,11 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
                 "elapsed: {} · {metrics}",
                 format_elapsed(snapshot.elapsed.as_secs())
             ));
+            // Progress metadata only: a running run's streamed text stays
+            // private so the parent cannot act on results before delivery.
             if !snapshot.done {
                 if let Some(activity) = &snapshot.status.last_activity {
                     lines.push(format!("activity: {activity}"));
-                }
-                if let Some(text) = &snapshot.status.last_text {
-                    lines.push(format!("latest: {text}"));
                 }
             }
         }
@@ -61,9 +60,6 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         }
     }
     if matches!(format, SnapshotFormat::Status) {
-        if snapshot.background && snapshot.done {
-            lines.push("completion result uses automatic delivery".into());
-        }
         lines.push(format!("attach: rho attach {}", snapshot.id));
     }
     if snapshot.done && matches!(format, SnapshotFormat::Completion) {
@@ -81,11 +77,12 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
 }
 
 pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
+    // Activity labels only: streamed text stays out of model-facing listings
+    // so results are consumed through delivery, not previews.
     let detail = snapshot
         .status
         .last_activity
         .as_deref()
-        .or(snapshot.status.last_text.as_deref())
         .unwrap_or(if snapshot.done { "finished" } else { "working" });
     let detail = detail.lines().next().unwrap_or_default().trim();
     format!(

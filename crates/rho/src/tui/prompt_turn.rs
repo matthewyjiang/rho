@@ -61,16 +61,37 @@ impl App {
                 {
                     self.start_session_title_generation(prompt.history.clone(), agent);
                 }
+                // Background completions pending at this turn boundary ride
+                // in the same model request as the prompt, so queued agent
+                // results never displace a waiting user message.
+                let notification_batch = agent
+                    .subagents()
+                    .cloned()
+                    .map(|manager| manager.take_notifications(agent.session_id().as_str()))
+                    .filter(|notifications| !notifications.is_empty())
+                    .map(|notifications| crate::tools::agent::notification_prompts(&notifications));
+                if let Some((_, batch_display)) = &notification_batch {
+                    self.insert_entry(&Entry::Notice(format!(
+                        "delivered with this message:\n{batch_display}"
+                    )));
+                }
                 self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
 
-                let mut content = Vec::with_capacity(1 + images.len());
+                let batch_model = notification_batch.map(|(model, _)| model);
+                let mut content = Vec::with_capacity(2 + images.len());
+                if let Some(batch) = &batch_model {
+                    content.push(ContentBlock::Text(batch.clone()));
+                }
                 if !prompt.model.is_empty() {
                     content.push(ContentBlock::Text(prompt.model));
                 }
                 content.extend(images.iter().cloned().map(ContentBlock::Image));
                 let input = rho_sdk::UserInput::content(content)?;
                 let display_user = prompt.persisted_display.map(|display| {
-                    let mut content = Vec::with_capacity(1 + images.len());
+                    let mut content = Vec::with_capacity(2 + images.len());
+                    if let Some(batch) = batch_model {
+                        content.push(ContentBlock::Text(batch));
+                    }
                     content.push(ContentBlock::Text(display));
                     content.extend(images.into_iter().map(ContentBlock::Image));
                     Message::User(content)
