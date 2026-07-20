@@ -1,5 +1,8 @@
 use super::*;
-use crate::{app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics};
+use crate::{
+    app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics,
+    tools::agent_output::MODEL_NOTIFICATION_BYTES,
+};
 
 fn manager(root: &Path) -> SubagentManager {
     SubagentManager::new(AgentExecutor::new(
@@ -95,6 +98,146 @@ fn background_guidance_is_gated_by_capability() {
     assert!(disabled_spec.input_schema["properties"]
         .get("background")
         .is_none());
+}
+
+fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotification {
+    SubagentNotification {
+        snapshot: SubagentSnapshot {
+            id: id.into(),
+            agent_id: agent_id.into(),
+            background: true,
+            elapsed: Duration::from_secs(5),
+            status: crate::subagent::RunStatus {
+                state,
+                turns: 1,
+                input_tokens: 10,
+                output_tokens: 2,
+                result: Some(format!("{id} result")),
+                ..crate::subagent::RunStatus::default()
+            },
+            done: true,
+        },
+    }
+}
+
+#[test]
+fn notification_prompts_batch_terminal_runs_into_one_message() {
+    let first = notification("aaa111", "worker", RunState::Ok);
+    let mut second = notification("bbb222", "reviewer", RunState::Stopped);
+    second.snapshot.status.error = Some("review stopped before completion".into());
+    second.snapshot.status.attachment_error = Some("log unavailable".into());
+    let notifications = vec![first, second];
+    let (model, display) = notification_prompts(&notifications);
+    assert_eq!(model.matches("[agent notification]").count(), 1);
+    assert!(model.contains("agent aaa111 (worker): ok"));
+    assert!(model.contains("aaa111 result"));
+    assert!(model.contains("agent bbb222 (reviewer): stopped"));
+    assert!(model.contains("error: review stopped before completion"));
+    assert!(model.contains("attachment error: log unavailable"));
+    assert!(model.contains("treat its work as unverified"));
+    assert_eq!(
+        display,
+        "agent aaa111 (worker) finished - ok\nagent bbb222 (reviewer) finished - stopped"
+    );
+}
+
+#[test]
+fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
+    let notifications = (0..96)
+        .map(|index| {
+            let id = format!("run{index:03}");
+            let mut notification = notification(&id, "worker", RunState::Ok);
+            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
+            notification
+        })
+        .collect::<Vec<_>>();
+
+    let (model, _) = notification_prompts(&notifications);
+
+    assert!(
+        model.len() <= MODEL_NOTIFICATION_BYTES,
+        "{}-byte notification exceeded the {}-byte budget",
+        model.len(),
+        MODEL_NOTIFICATION_BYTES
+    );
+    for index in 0..notifications.len() {
+        assert!(
+            model.contains(&format!("agent run{index:03} (worker): ok")),
+            "missing status for run {index}"
+        );
+    }
+    assert!(model.contains("Any omitted or truncated result details remain available"));
+    assert!(model.contains("`agents status`"));
+    assert!(model.contains("`rho attach <run-id>`"));
+    assert_eq!(model, notification_prompts(&notifications).0);
+
+    let newer = (0..96)
+        .map(|index| {
+            let id = format!("new{index:03}");
+            let mut notification = notification(&id, "reviewer", RunState::Ok);
+            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
+            notification
+        })
+        .collect::<Vec<_>>();
+    let newer = notification_prompts(&newer).0;
+    let retried_context = merge_notification_context(Some(&model), &newer);
+    assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
+    assert!(retried_context.contains("agent new000 (reviewer): ok"));
+}
+
+async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
+    let tool = AgentTool::new(manager.clone(), root, BackgroundSubagents::Enabled);
+    tool.call(
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "background task",
+            "background": true,
+        }),
+        ToolContext {
+            cwd: root.to_path_buf(),
+            max_output_bytes: 16 * 1024,
+        },
+        "call".into(),
+    )
+    .await
+    .unwrap();
+    manager.list().last().unwrap().id.clone()
+}
+
+#[tokio::test]
+async fn observed_terminal_run_is_not_redelivered() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.set_session("session-1".into());
+    let id = spawn_background_run(&manager, root.path()).await;
+    let snapshot = manager.wait_done(&id).await.unwrap();
+    assert!(snapshot.done);
+    // Reading the terminal snapshot counts as delivery.
+    let observed = manager.observe(&id).unwrap();
+    assert!(observed.done);
+    assert!(manager.take_notifications("session-1").is_empty());
+    assert!(!manager.has_active_or_pending_notification("session-1"));
+}
+
+#[tokio::test]
+async fn unobserved_terminal_runs_drain_as_one_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.set_session("session-1".into());
+    let first = spawn_background_run(&manager, root.path()).await;
+    let second = spawn_background_run(&manager, root.path()).await;
+    manager.wait_done(&first).await.unwrap();
+    manager.wait_done(&second).await.unwrap();
+    let batch = manager.take_notifications("session-1");
+    let ids = batch
+        .iter()
+        .map(|notification| notification.snapshot.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![first, second], "batch drains in launch order");
+    assert!(
+        manager.take_notifications("session-1").is_empty(),
+        "a drained batch is observed and never redelivered"
+    );
 }
 
 #[test]

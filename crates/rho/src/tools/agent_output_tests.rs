@@ -21,6 +21,7 @@ fn snapshot(done: bool) -> SubagentSnapshot {
             input_tokens: 1_200,
             output_tokens: 300,
             last_activity: Some("searching files".into()),
+            last_text: Some("streamed partial answer".into()),
             result: done.then(|| "found it".into()),
             ..RunStatus::default()
         },
@@ -56,22 +57,6 @@ fn formats_status_with_runtime_details() {
         "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
-         attach: rho attach abc123"
-    );
-}
-
-#[test]
-fn completed_status_defers_result_to_automatic_delivery() {
-    let mut snapshot = snapshot(true);
-    snapshot.status.state = RunState::Error;
-    snapshot.status.error = Some("provider stream failed".into());
-    snapshot.status.last_text = Some("found it".into());
-
-    assert_eq!(
-        format_snapshot(&snapshot, SnapshotFormat::Status),
-        "agent abc123 (explorer): error\n\
-         elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
-         completion result uses automatic delivery\n\
          attach: rho attach abc123"
     );
 }

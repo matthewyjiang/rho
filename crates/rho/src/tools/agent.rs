@@ -22,7 +22,8 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_notification, format_running,
+    format_snapshot, SnapshotFormat,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -44,7 +45,7 @@ struct AgentEntry {
     started: Instant,
     handle: AgentRunHandle,
     session_id: Option<String>,
-    notified: bool,
+    observed: bool,
 }
 
 impl AgentEntry {
@@ -131,7 +132,7 @@ impl SubagentManager {
                 started: Instant::now(),
                 handle,
                 session_id,
-                notified: false,
+                observed: false,
             },
         );
         Ok((id, directory.join(subagent::LOG_FILE_NAME)))
@@ -164,28 +165,52 @@ impl SubagentManager {
                 let snapshot = entry.snapshot(id);
                 !snapshot.done
                     || (entry.background
-                        && !entry.notified
+                        && !entry.observed
                         && entry.session_id.as_deref() == Some(session_id))
             })
     }
 
+    /// Atomically drains every unobserved terminal background run for the
+    /// session and marks the whole batch observed, in launch order so batched
+    /// delivery is deterministic.
     pub fn take_notifications(&self, session_id: &str) -> Vec<SubagentNotification> {
-        self.inner
-            .lock()
-            .expect("delegated registry lock")
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
                 let snapshot = entry.snapshot(id);
                 (entry.background
                     && snapshot.done
-                    && !entry.notified
+                    && !entry.observed
                     && entry.session_id.as_deref() == Some(session_id))
                 .then(|| {
-                    entry.notified = true;
-                    SubagentNotification { snapshot }
+                    entry.observed = true;
+                    (entry.started, SubagentNotification { snapshot })
                 })
             })
+            .collect::<Vec<_>>();
+        notifications.sort_by(|(a_started, a), (b_started, b)| {
+            a_started
+                .cmp(b_started)
+                .then_with(|| a.snapshot.id.cmp(&b.snapshot.id))
+        });
+        notifications
+            .into_iter()
+            .map(|(_, notification)| notification)
             .collect()
+    }
+
+    /// Returns the run snapshot; a terminal snapshot counts as delivered, so
+    /// automatic notification will not repeat a result the parent already
+    /// read through `status` or `stop`.
+    pub fn observe(&self, id: &str) -> Option<SubagentSnapshot> {
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        let entry = entries.get_mut(id)?;
+        let snapshot = entry.snapshot(id);
+        if snapshot.done {
+            entry.observed = true;
+        }
+        Some(snapshot)
     }
 
     pub async fn wait_done(&self, id: &str) -> Option<SubagentSnapshot> {
@@ -213,7 +238,9 @@ impl SubagentManager {
         tokio::time::timeout(SHUTDOWN_TIMEOUT, handle.wait())
             .await
             .map_err(|_| anyhow::anyhow!("timed out stopping delegated run '{id}'"))?;
-        self.status(id)
+        // Stopping hands the terminal snapshot to the caller, so it counts
+        // as delivered and is not repeated by automatic notification.
+        self.observe(id)
             .ok_or_else(|| anyhow::anyhow!("delegated run '{id}' disappeared"))
     }
 
@@ -258,20 +285,33 @@ fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
     anyhow::bail!("could not allocate a unique delegated run ID")
 }
 
-pub fn notification_prompts(notification: &SubagentNotification) -> (String, String) {
-    let snapshot = &notification.snapshot;
-    let model = format!(
-        "[agent notification]\n\n{}\n\nThis is an automated notification, not a user message. Fold the result into your ongoing work; use the agents tool for details.",
-        format_snapshot(snapshot, SnapshotFormat::Completion)
-    );
-    let display = format!(
-        "agent {} ({}) finished - {}",
-        snapshot.id,
-        snapshot.agent_id,
-        snapshot.status.state.as_str()
-    );
+/// Formats a drained batch of terminal runs as one bounded notification. The
+/// formatter puts every run's status before the result excerpts.
+pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
+    let snapshots = notifications
+        .iter()
+        .map(|notification| &notification.snapshot)
+        .collect::<Vec<_>>();
+    let model = format_notification(&snapshots);
+    let display = notifications
+        .iter()
+        .map(|notification| {
+            let snapshot = &notification.snapshot;
+            format!(
+                "agent {} ({}) finished - {}",
+                snapshot.id,
+                snapshot.agent_id,
+                snapshot.status.state.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     (model, display)
 }
+
+pub(crate) use super::agent_output::merge_notification_context;
+#[cfg(test)]
+pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BackgroundSubagents {
@@ -361,7 +401,7 @@ impl Tool for AgentTool {
         // Behavioral guidance must match registered capabilities: describe
         // background delivery only when background runs can actually start.
         let background_guidance = if self.background_subagents.is_enabled() {
-            " A background run's completion is delivered automatically as a new turn: after starting one, end your turn once no other work remains - never sleep or poll for the result."
+            " A background run's completion is delivered automatically at the next turn boundary (multiple completions arrive batched in one notification): after starting one, end your turn once no other work remains - never sleep or poll for the result."
         } else {
             ""
         };
@@ -511,7 +551,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check on or stop a delegated background run. Completions are delivered automatically as a new turn, so waiting for a result means ending your turn, not calling status. Use status only to check on a long-running run while doing other foreground work.".into(),
+            description: "Check on or stop a delegated background run. Completions are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -555,9 +595,16 @@ impl Tool for AgentsTool {
                 let id = required_id(&args)?;
                 let snapshot = self
                     .manager
-                    .status(id)
+                    .observe(id)
                     .ok_or_else(|| ToolError::Message(format!("unknown delegated run '{id}'")))?;
-                format_snapshot(&snapshot, SnapshotFormat::Status)
+                // A finished run hands over its full result here and counts
+                // as delivered; a running run reports progress only.
+                let format = if snapshot.done {
+                    SnapshotFormat::Completion
+                } else {
+                    SnapshotFormat::Status
+                };
+                format_snapshot(&snapshot, format)
             }
             "stop" => {
                 let id = required_id(&args)?;
@@ -566,7 +613,7 @@ impl Tool for AgentsTool {
                     .stop(id)
                     .await
                     .map_err(|error| ToolError::Message(error.to_string()))?;
-                format_snapshot(&snapshot, SnapshotFormat::Status)
+                format_snapshot(&snapshot, SnapshotFormat::Completion)
             }
             other => {
                 return Err(ToolError::Message(format!(
