@@ -1,20 +1,37 @@
 use std::{
     io::{self, Write},
+    path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
 };
 
-/// Returns true when the OS can resolve and spawn `command`.
+/// Returns true when `command` resolves to an executable on `PATH`.
 ///
-/// Exit status is ignored: many helpers reject `--help` or return non-zero while
-/// still being installed and usable.
+/// The command is never spawned: some clipboard helpers copy their stdin to the
+/// clipboard regardless of arguments (`clip.exe` ignores `--help` and copies
+/// stdin; `xclip` reads stdin into the primary selection), so executing them to
+/// probe availability would mutate the clipboard.
 pub(super) fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--help")
-        .output()
-        .is_ok()
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    command_available_in(command, std::env::split_paths(&path))
+}
+
+fn command_available_in(command: &str, mut dirs: impl Iterator<Item = PathBuf>) -> bool {
+    dirs.any(|dir| is_executable_file(&dir.join(command)))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 pub(super) fn command_output(command: &str, args: &[&str]) -> Option<Vec<u8>> {
