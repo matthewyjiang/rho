@@ -277,6 +277,52 @@ fn foreign_reasoning_summary_uses_shared_handoff_format() {
 }
 
 #[test]
+fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
+    let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
+    let messages = vec![
+        Message::user_text("run it"),
+        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+            content: vec![ContentBlock::ToolCall(ToolCall {
+                id: "call-1".into(),
+                name: "bash".into(),
+                arguments: json!({"command":"pwd"}),
+            })],
+            provenance: Some(identity.clone()),
+            provider_context: vec![ProviderContextBlock {
+                identity: identity.clone(),
+                kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                position: Some(0),
+                data: json!("opaque-signature"),
+            }],
+            ..crate::model::AbortedAssistant::default()
+        })),
+        Message::ToolResult(ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: "/tmp".into(),
+        }),
+    ];
+
+    let body = build_request(&messages, &[], &identity, None).unwrap();
+
+    assert_eq!(
+        body.contents[1].parts[0]
+            .function_call
+            .as_ref()
+            .and_then(|call| call.id.as_deref()),
+        Some("call-1")
+    );
+    assert_eq!(
+        body.contents[1].parts[0].thought_signature.as_deref(),
+        Some("opaque-signature")
+    );
+    assert_eq!(
+        body.contents[1].parts[1].text.as_deref(),
+        Some("[Operation aborted]")
+    );
+}
+
+#[test]
 fn blocked_response_reports_usage_before_error() {
     let response: GenerateContentResponse = serde_json::from_value(json!({
         "promptFeedback": {"blockReason":"SAFETY"},

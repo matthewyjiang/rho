@@ -1,9 +1,13 @@
 use crate::{
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{
+        provider_models::{thinking_policy, ThinkingPolicy},
+        ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
+    },
     protocol::gemini_generate_content::{
         build_request, collect_stream, GenerateContentResponse, ResponseCollector, ThinkingConfig,
         ThinkingLevel,
     },
+    reasoning::ReasoningLevel,
 };
 
 pub const API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -114,71 +118,61 @@ impl GoogleProvider {
 
 fn thinking_config(
     model: &str,
-    level: crate::reasoning::ReasoningLevel,
+    level: ReasoningLevel,
 ) -> Result<Option<ThinkingConfig>, ModelError> {
-    use crate::reasoning::ReasoningLevel;
-
+    let policy = thinking_policy(model);
+    if !policy.allows(level) {
+        return Err(ModelError::UnsupportedReasoning {
+            provider: "google",
+            model: model.to_string(),
+            requested: level,
+        });
+    }
     let include_thoughts = level != ReasoningLevel::Off;
-    if model.starts_with("gemini-3") {
-        if level == ReasoningLevel::Off
-            || (model.contains("pro") && level == ReasoningLevel::Minimal)
-            || (model.contains("flash-lite-image")
-                && matches!(level, ReasoningLevel::Low | ReasoningLevel::Medium))
-        {
-            return Err(ModelError::UnsupportedReasoning {
-                provider: "google",
-                model: model.to_string(),
-                requested: level,
-            });
+    match policy {
+        ThinkingPolicy::Level { .. } => {
+            let thinking_level = match level {
+                ReasoningLevel::Minimal => ThinkingLevel::Minimal,
+                ReasoningLevel::Low => ThinkingLevel::Low,
+                ReasoningLevel::Medium => ThinkingLevel::Medium,
+                ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => {
+                    ThinkingLevel::High
+                }
+                ReasoningLevel::Off => {
+                    return Err(ModelError::UnsupportedReasoning {
+                        provider: "google",
+                        model: model.to_string(),
+                        requested: level,
+                    });
+                }
+            };
+            Ok(Some(ThinkingConfig {
+                thinking_budget: None,
+                thinking_level: Some(thinking_level),
+                include_thoughts,
+            }))
         }
-        let thinking_level = match level {
-            ReasoningLevel::Off | ReasoningLevel::Minimal => ThinkingLevel::Minimal,
-            ReasoningLevel::Low => ThinkingLevel::Low,
-            ReasoningLevel::Medium => ThinkingLevel::Medium,
-            ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => {
-                ThinkingLevel::High
+        ThinkingPolicy::Budget { flash_cap, .. } => {
+            let mut budget = match level {
+                ReasoningLevel::Off => 0,
+                ReasoningLevel::Minimal => 1_024,
+                ReasoningLevel::Low => 2_048,
+                ReasoningLevel::Medium => 8_192,
+                ReasoningLevel::High => 16_384,
+                ReasoningLevel::Xhigh => 24_576,
+                ReasoningLevel::Max => 32_768,
+            };
+            if flash_cap {
+                budget = budget.min(24_576);
             }
-        };
-        return Ok(Some(ThinkingConfig {
-            thinking_budget: None,
-            thinking_level: Some(thinking_level),
-            include_thoughts,
-        }));
-    }
-    if !model.starts_with("gemini-2.5") {
-        if level == ReasoningLevel::Off {
-            return Ok(None);
+            Ok(Some(ThinkingConfig {
+                thinking_budget: Some(budget),
+                thinking_level: None,
+                include_thoughts,
+            }))
         }
-        return Err(ModelError::UnsupportedReasoning {
-            provider: "google",
-            model: model.to_string(),
-            requested: level,
-        });
+        ThinkingPolicy::None => Ok(None),
     }
-    if model.contains("pro") && level == ReasoningLevel::Off {
-        return Err(ModelError::UnsupportedReasoning {
-            provider: "google",
-            model: model.to_string(),
-            requested: level,
-        });
-    }
-    let mut budget = match level {
-        ReasoningLevel::Off => 0,
-        ReasoningLevel::Minimal => 1_024,
-        ReasoningLevel::Low => 2_048,
-        ReasoningLevel::Medium => 8_192,
-        ReasoningLevel::High => 16_384,
-        ReasoningLevel::Xhigh => 24_576,
-        ReasoningLevel::Max => 32_768,
-    };
-    if model.contains("flash") {
-        budget = budget.min(24_576);
-    }
-    Ok(Some(ThinkingConfig {
-        thinking_budget: Some(budget),
-        thinking_level: None,
-        include_thoughts,
-    }))
 }
 
 crate::impl_sdk_model_provider!(GoogleProvider);

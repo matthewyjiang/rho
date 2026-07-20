@@ -27,13 +27,13 @@ Run `/logout google` to remove the Google API key from the OS credential store. 
 
 ## Models
 
-Open `/config` and choose **Refresh model lists**. Rho reads Google's Models API, keeps models that support `generateContent`, and caches their input and output token limits. Then select a model, for example:
+Open `/config` and choose **Refresh model lists**. Rho reads Google's Models API, keeps text chat models that support `generateContent`, and caches their input and output token limits. Then select a model, for example:
 
 ```text
-/model google/gemini-3.5-flash
+/model google/gemini-3.1-flash-lite
 ```
 
-Google may add, rename, or retire models, so refresh the list when a model is missing.
+Google may add, rename, or retire models, so refresh the list when a model is missing. Refresh probes each candidate with a tiny `generateContent` call and hides models that Google reports as permanently unavailable for the current API key, such as retired Gemini 2.5 ids that still appear in the Models API. Temporary failures such as rate limits or high demand keep the model visible.
 
 ## Reasoning and tools
 

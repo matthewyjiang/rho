@@ -60,10 +60,30 @@ pub fn build_request(
                     parts,
                 }
             }
-            Message::AbortedAssistant(message) => Content {
-                role: Some(Role::Model),
-                parts: blocks_to_parts(&message.content, &mut call_names),
-            },
+            Message::AbortedAssistant(message) => {
+                let prepared = prepare_assistant(
+                    crate::model::AssistantMessage {
+                        content: message.content.clone(),
+                        provenance: message.provenance.clone(),
+                        reasoning_summary: message.reasoning_summary.clone(),
+                        provider_context: message.provider_context.clone(),
+                    },
+                    target,
+                );
+                let mut parts = blocks_to_parts(&prepared.content, &mut call_names);
+                replay_provider_context(
+                    &mut parts,
+                    &prepared.replay_context,
+                    target,
+                    &mut call_names,
+                )?;
+                // Append after replay so provider-context positions stay exact.
+                parts.push(Part::text("[Operation aborted]"));
+                Content {
+                    role: Some(Role::Model),
+                    parts,
+                }
+            }
             Message::ToolResult(result) => {
                 let info = call_names.get(&result.id);
                 let name = info

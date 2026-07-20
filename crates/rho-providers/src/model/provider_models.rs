@@ -31,6 +31,7 @@ use crate::paths;
 
 #[path = "provider_models/google.rs"]
 mod google;
+pub(crate) use google::{thinking_policy, ThinkingPolicy};
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
 

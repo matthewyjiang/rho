@@ -49,7 +49,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model openai/gpt-5.6-sol
 /model openai-codex/gpt-5.6-sol
 /model anthropic/claude-sonnet-4-5
-/model google/gemini-3.5-flash
+/model google/gemini-3.1-flash-lite
 /model github-copilot/gpt-4.1
 /model openrouter/anthropic/claude-sonnet-4
 /model xai/grok-4.5

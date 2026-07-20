@@ -169,7 +169,7 @@ fn static_catalog_default_model(provider: &str) -> Option<String> {
 fn builtin_default_model(provider: &str) -> Option<String> {
     match provider {
         "anthropic" => Some("claude-sonnet-4-5".into()),
-        "google" => Some("gemini-3.5-flash".into()),
+        "google" => Some("gemini-3.1-flash-lite".into()),
         _ => None,
     }
 }
