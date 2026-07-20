@@ -727,15 +727,22 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     },
     Step::Phase("spawn_background_agent"),
     Step::SubmitText("fixture background agent"),
-    // The spawn result must already carry the delegated run's first activity,
-    // and the parent turn must end without any agents status call.
+    // The fixture echoes the spawn receipt's first line, proving the tool
+    // resolved with a start line and the parent turn ended.
     Step::WaitText {
-        text: "background agent dispatched with first activity; ending turn",
+        text: "background agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "(worker) started in background",
         timeout: STREAM,
     },
     Step::Phase("automatic_completion_delivery"),
+    // The fixture validates the notification's real payload (agent identity,
+    // terminal state, delegated result) and counts notification turns, so
+    // this asserts a well-formed, exactly-once delivery.
     Step::WaitText {
-        text: "background agent completion received",
+        text: "background agent completion received with delegated result (delivery 1)",
         timeout: STREAM,
     },
     Step::WaitQuiet {

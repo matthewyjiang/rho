@@ -11,22 +11,8 @@ pub(super) enum SnapshotFormat {
     Status,
 }
 
-pub(super) fn format_background_start(
-    id: &str,
-    agent_id: &str,
-    snapshot: Option<&SubagentSnapshot>,
-) -> String {
-    let mut lines = vec![format!("agent {id} ({agent_id}) started in background")];
-    if let Some(snapshot) = snapshot {
-        if let Some(activity) = &snapshot.status.last_activity {
-            lines.push(format!("activity: {activity}"));
-        }
-        if let Some(text) = &snapshot.status.last_text {
-            lines.push(format!("latest: {text}"));
-        }
-    }
-    lines.push(format!("attach: rho attach {id}"));
-    lines.join("\n")
+pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
+    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
 pub(super) fn format_running(id: &str) -> String {

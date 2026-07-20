@@ -31,26 +31,13 @@ fn snapshot(done: bool) -> SubagentSnapshot {
 #[test]
 fn formats_agent_start_output() {
     assert_eq!(
-        format_background_start("abc123", "explorer", None),
+        format_background_start("abc123", "explorer"),
         "agent abc123 (explorer) started in background\n\
          attach: rho attach abc123"
     );
     assert_eq!(
         format_running("abc123"),
         "agent abc123 running\nattach: rho attach abc123"
-    );
-}
-
-#[test]
-fn background_start_includes_first_activity_when_available() {
-    let mut snapshot = snapshot(false);
-    snapshot.status.last_text = Some("I'll inspect the config flow.".into());
-    assert_eq!(
-        format_background_start("abc123", "explorer", Some(&snapshot)),
-        "agent abc123 (explorer) started in background\n\
-         activity: searching files\n\
-         latest: I'll inspect the config flow.\n\
-         attach: rho attach abc123"
     );
 }
 

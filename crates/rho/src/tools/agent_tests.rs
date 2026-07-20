@@ -41,6 +41,38 @@ async fn stopping_unknown_run_is_actionable() {
     assert!(error.to_string().contains("unknown delegated run"));
 }
 
+#[tokio::test]
+async fn background_start_resolves_without_waiting_for_activity() {
+    let root = tempfile::tempdir().unwrap();
+    let tool = AgentTool::new(
+        manager(root.path()),
+        root.path(),
+        BackgroundSubagents::Enabled,
+    );
+    let started = Instant::now();
+    let result = tool
+        .call(
+            serde_json::json!({
+                "agent_id": "default",
+                "prompt": "background task",
+                "background": true,
+            }),
+            ToolContext {
+                cwd: root.path().to_path_buf(),
+                max_output_bytes: 16 * 1024,
+            },
+            "call-1".into(),
+        )
+        .await
+        .unwrap();
+    // The start receipt is registration: the result must resolve immediately
+    // instead of polling for the run's first activity.
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(result.ok);
+    assert!(result.content.contains("started in background"));
+    assert!(result.content.contains("attach: rho attach"));
+}
+
 #[test]
 fn lifecycle_tool_schema_is_stable() {
     let root = tempfile::tempdir().unwrap();

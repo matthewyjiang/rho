@@ -24,9 +24,6 @@ use super::agent_output::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// How long a background spawn waits for the agent's first activity so the
-/// start result already answers "did it start" without a follow-up status call.
-const BACKGROUND_START_GRACE: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
@@ -187,22 +184,6 @@ impl SubagentManager {
                 })
             })
             .collect()
-    }
-
-    /// Waits up to `grace` for a newly spawned run to report its first
-    /// activity, returning the freshest snapshot either way.
-    pub async fn wait_first_activity(&self, id: &str, grace: Duration) -> Option<SubagentSnapshot> {
-        let deadline = Instant::now() + grace;
-        loop {
-            let snapshot = self.status(id)?;
-            if snapshot.done
-                || snapshot.status.last_activity.is_some()
-                || Instant::now() >= deadline
-            {
-                return Some(snapshot);
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
     }
 
     pub async fn wait_done(&self, id: &str) -> Option<SubagentSnapshot> {
@@ -427,14 +408,12 @@ impl Tool for AgentTool {
             })?;
 
         if args.background {
-            let snapshot = self
-                .manager
-                .wait_first_activity(&run_id, BACKGROUND_START_GRACE)
-                .await;
+            // Registration is the start receipt; instant failures still reach
+            // the parent through automatic completion delivery.
             return Ok(ToolResult {
                 id,
                 ok: true,
-                content: format_background_start(&run_id, &definition_id, snapshot.as_ref()),
+                content: format_background_start(&run_id, &definition_id),
             });
         }
 

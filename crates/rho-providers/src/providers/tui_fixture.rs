@@ -299,20 +299,15 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         ));
     }
     if let Some(result) = tool_result(request, BACKGROUND_AGENT_CALL_ID) {
-        // Echo whether the spawn result already carried the delegated run's
-        // first activity, so PTY scenarios can assert it from screen text.
-        let activity = if result.content.contains("activity:") {
-            "with"
-        } else {
-            "without"
-        };
-        return completed(format!(
-            "background agent dispatched {activity} first activity; ending turn"
-        ));
+        // Echo the spawn receipt so PTY scenarios can assert from screen text
+        // that the tool resolved immediately with a start line, then end the
+        // turn so completion arrives through automatic delivery.
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!("background agent dispatched: {receipt}"));
     }
     let prompt = last_user_text(request).unwrap_or_default();
     if prompt.starts_with("[agent notification]") {
-        return completed("background agent completion received");
+        return completed(describe_agent_notification(request, &prompt));
     }
     if prompt.starts_with("Resume the following goal after it was blocked") {
         return completed("verified that the fixture release is now published");
@@ -349,6 +344,33 @@ fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
                 .collect::<String>(),
         )
     })
+}
+
+/// Validates the automatic completion notification's real payload - agent
+/// identity, terminal state, and delegated result - and reports how many
+/// notification turns the conversation has seen so scenarios can assert
+/// exactly-once delivery from screen text.
+fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> String {
+    let deliveries = request
+        .messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                Message::User(content) if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text(text) if text.starts_with("[agent notification]")
+                ))
+            )
+        })
+        .count();
+    if prompt.contains("(worker): ok") && prompt.contains("assistant stream part one part two") {
+        format!(
+            "background agent completion received with delegated result (delivery {deliveries})"
+        )
+    } else {
+        format!("unexpected agent notification payload: {prompt}")
+    }
 }
 
 fn current_turn_tool_results<'a>(
