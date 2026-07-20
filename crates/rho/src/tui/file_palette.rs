@@ -83,7 +83,7 @@ impl App {
                 return std::sync::Arc::clone(&cache.matches);
             }
         }
-        file_picker::matching_file_paths(&self.info.cwd, &mention.query)
+        file_picker::matching_file_paths(&self.info.runtime.cwd, &mention.query)
     }
 
     fn refresh_file_match_cache(&mut self) {
@@ -99,7 +99,7 @@ impl App {
         }
         self.file_match_cache = Some(FileMatchCache {
             query: mention.query.clone(),
-            matches: file_picker::matching_file_paths(&self.info.cwd, &mention.query),
+            matches: file_picker::matching_file_paths(&self.info.runtime.cwd, &mention.query),
             refreshed_at: std::time::Instant::now(),
         });
     }

@@ -243,37 +243,10 @@ fn provider_reported_context_omits_estimate_marker() {
     assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
 }
 
-fn test_info(cwd: PathBuf) -> TuiInfo {
-    use crate::{
-        app::config_repository::ConfigRepository, herdr::HerdrReporter, keybindings::Keybindings,
-    };
-
-    TuiInfo {
-        cwd,
-        provider: "openai".into(),
-        model: "gpt-test".into(),
-        reasoning: ReasoningLevel::Low,
-        reasoning_source: rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
-        permission_mode: crate::permission::PermissionMode::Auto,
-        show_reasoning_output: true,
-        auth: "api-key".into(),
-        title_provider: None,
-        title_model: None,
-        title_auth: None,
-        favorite_models: Vec::new(),
-        max_tool_output_lines: 10,
-        keybindings: Keybindings::default(),
-        session_id: None,
-        recovered_messages: Vec::new(),
-        prompt_templates: Default::default(),
-        open_resume_picker: false,
-        config_repository: ConfigRepository::new(None),
-        auth_unavailable: None,
-        update_notice: None,
-        pending_update_notice: None,
-        diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
-        herdr: HerdrReporter::default(),
-    }
+fn test_info(cwd: PathBuf) -> RuntimeModelView {
+    let mut info = crate::tui::tests::test_bootstrap().runtime;
+    info.cwd = cwd;
+    info
 }
 
 #[test]

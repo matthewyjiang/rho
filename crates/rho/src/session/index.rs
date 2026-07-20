@@ -15,14 +15,14 @@ static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>
 #[cfg(test)]
 use rho_providers::model::Message;
 
-use super::{
+use super::persistence::{
     clamp_u64_to_i64, session_dir_in_root, session_file_stats, session_id_from_path,
-    set_private_dir_permissions, summarize_session_file, workspace_key, Session,
-    SessionIndexRecord, SessionSummary,
+    set_private_dir_permissions, summarize_session_file, workspace_key,
 };
+use super::{Session, SessionIndexRecord, SessionSummary};
 
 #[cfg(test)]
-use super::{unix_timestamp_secs, user_message_text};
+use super::persistence::{unix_timestamp_secs, user_message_text};
 
 pub(super) fn list_workspace_sessions(
     session_root: &Path,

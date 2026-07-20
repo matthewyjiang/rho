@@ -1,32 +1,105 @@
-use std::{fmt, str::FromStr};
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use rho_providers::reasoning::ReasoningLevel;
 
-/// Tool capabilities understood by the Rho host.
-///
-/// Catalog validation happens before binding, so misspelled tool names cannot
-/// silently produce an agent with fewer capabilities than intended.
-pub const KNOWN_TOOLS: &[&str] = &[
-    "agent",
-    "agents",
-    "bash",
-    "edit_file",
-    "fetch_content",
-    "get_search_content",
-    "list_dir",
-    "powershell",
-    "process",
-    "questionnaire",
-    "read_file",
-    "rho",
-    "shell",
-    "skill",
-    "web_search",
-    "write_file",
-];
+macro_rules! define_tool_capabilities {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        /// A parsed tool capability in an agent definition.
+        ///
+        /// Built-ins have stable variants so policy code does not parse names again.
+        /// Extension names are reserved for capabilities supplied by the host.
+        #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum ToolCapability {
+            $($variant,)+
+            Extension(String),
+        }
+
+        /// Every built-in tool capability understood by the Rho host.
+        pub const BUILTIN_TOOL_CAPABILITIES: &[ToolCapability] = &[
+            $(ToolCapability::$variant,)+
+        ];
+
+        impl ToolCapability {
+            pub fn parse(name: String) -> Self {
+                match name.as_str() {
+                    $($name => Self::$variant,)+
+                    _ => Self::Extension(name),
+                }
+            }
+
+            pub fn as_str(&self) -> &str {
+                match self {
+                    $(Self::$variant => $name,)+
+                    Self::Extension(name) => name,
+                }
+            }
+        }
+    };
+}
+
+define_tool_capabilities! {
+    Agent => "agent",
+    Agents => "agents",
+    Bash => "bash",
+    EditFile => "edit_file",
+    FetchContent => "fetch_content",
+    GetSearchContent => "get_search_content",
+    ListDir => "list_dir",
+    Powershell => "powershell",
+    Process => "process",
+    Questionnaire => "questionnaire",
+    ReadFile => "read_file",
+    Rho => "rho",
+    Shell => "shell",
+    Skill => "skill",
+    WebSearch => "web_search",
+    WriteFile => "write_file",
+}
+
+impl fmt::Display for ToolCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+pub type ToolCapabilitySet = BTreeSet<ToolCapability>;
+
+/// Tool capabilities resolved against the current host and invocation role.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentCapabilities {
+    tools: ToolCapabilitySet,
+}
+
+impl AgentCapabilities {
+    pub fn new(tools: ToolCapabilitySet) -> Self {
+        Self { tools }
+    }
+
+    pub fn all_host_tools() -> Self {
+        Self::new(BUILTIN_TOOL_CAPABILITIES.iter().cloned().collect())
+    }
+
+    pub fn contains(&self, capability: &ToolCapability) -> bool {
+        self.tools.contains(capability)
+    }
+
+    pub fn insert(&mut self, capability: ToolCapability) {
+        self.tools.insert(capability);
+    }
+
+    pub fn remove(&mut self, capability: &ToolCapability) {
+        self.tools.remove(capability);
+    }
+}
+
+impl From<ToolCapabilitySet> for AgentCapabilities {
+    fn from(tools: ToolCapabilitySet) -> Self {
+        Self::new(tools)
+    }
+}
 
 /// Stable identifier used to select an agent across invocations.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -110,7 +183,7 @@ pub enum ModelPolicy {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolPolicy {
     All,
-    Allow(Vec<String>),
+    Allow(ToolCapabilitySet),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,7 +226,7 @@ impl AgentDefinition {
             ToolPolicy::Allow(tools) => {
                 hash_field(&mut hash, b"tools:allow");
                 for tool in tools {
-                    hash_field(&mut hash, tool.as_bytes());
+                    hash_field(&mut hash, tool.as_str().as_bytes());
                 }
             }
         }

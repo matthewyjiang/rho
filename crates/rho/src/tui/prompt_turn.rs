@@ -50,8 +50,9 @@ impl App {
                 self.reset_input_history_navigation();
                 self.ensure_session(agent)?;
                 self.info
+                    .services
                     .herdr
-                    .report_session(self.info.session_id.as_deref())
+                    .report_session(self.info.session.session_id.as_deref())
                     .await;
                 if !agent
                     .history()
@@ -82,8 +83,9 @@ impl App {
             PromptTurnRequest::Retry(failed_turn) => {
                 self.ensure_session(agent)?;
                 self.info
+                    .services
                     .herdr
-                    .report_session(self.info.session_id.as_deref())
+                    .report_session(self.info.session.session_id.as_deref())
                     .await;
                 self.insert_entry(&Entry::Notice(
                     "retrying the previous goal turn without duplicating the prompt".into(),
@@ -92,15 +94,20 @@ impl App {
             }
         };
         self.current_turn_start = Some(self.transcript.len());
-        self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
+        self.active_turn_show_reasoning_output = self.info.runtime.show_reasoning_output;
         self.reset_streams();
         self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
         self.activity_phase = ActivityPhase::Starting;
         self.info
+            .services
             .herdr
-            .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
+            .report_state(
+                HerdrState::Working,
+                None,
+                self.info.session.session_id.as_deref(),
+            )
             .await;
         self.loading_spinner.start();
         self.clamp_history_scroll_for_terminal(terminal)?;
@@ -118,7 +125,7 @@ impl App {
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
+        let mut adapter = SdkEventAdapter::new(self.info.runtime.cwd.clone());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
             rho_sdk::HostInputId,

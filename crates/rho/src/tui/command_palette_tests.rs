@@ -83,6 +83,7 @@ fn goal_lifecycle_action_completion_replaces_placeholder() {
 fn exact_template_match_precedes_builtin_prefix_match() {
     let mut app = test_app();
     app.info
+        .runtime
         .prompt_templates
         .insert("mod".into(), "custom template".into());
     app.input = "/mod argument".into();
@@ -98,6 +99,7 @@ fn exact_template_match_precedes_builtin_prefix_match() {
 fn template_completion_expands_pasted_arguments_and_clears_segments() {
     let mut app = test_app();
     app.info
+        .runtime
         .prompt_templates
         .insert("review".into(), "Review this:".into());
     app.insert_input_text("/review ");
@@ -115,6 +117,7 @@ fn template_completion_expands_pasted_arguments_and_clears_segments() {
 fn template_completion_marks_slash_prefixed_contents_as_prompt() {
     let mut app = test_app();
     app.info
+        .runtime
         .prompt_templates
         .insert("review".into(), "/diff literally".into());
     app.input = "/review".into();

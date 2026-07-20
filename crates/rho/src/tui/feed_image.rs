@@ -153,7 +153,7 @@ impl super::App {
         let mut placements = self.history_lines.visible_image_placements(
             &self.transcript,
             width,
-            self.info.max_tool_output_lines,
+            self.info.runtime.max_tool_output_lines,
             transcript_start,
             transcript_count,
         );

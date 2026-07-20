@@ -691,9 +691,10 @@ fn started_tool_display_ignores_late_argument_previews() {
 fn web_search_api_key_editor_preserves_parent_picker() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut app = test_app();
-    app.info.config_repository = ConfigRepository::new(Some(config_dir.path().join("config.toml")));
-    let config = app.info.config_repository.load().unwrap();
-    let mut parent = config_picker::config_picker(&app.info, &config);
+    app.info.services.config_repository =
+        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
+    let config = app.info.services.config_repository.load().unwrap();
+    let mut parent = config_picker::config_picker(&app.info.runtime, &config);
     App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
     app.composer = ComposerMode::Picker(parent);
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());

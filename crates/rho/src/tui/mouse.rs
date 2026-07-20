@@ -185,12 +185,12 @@ impl App {
             let index = self.history_lines.entry_index_at_line(
                 &self.transcript,
                 width,
-                self.info.max_tool_output_lines,
+                self.info.runtime.max_tool_output_lines,
                 transcript_line,
             );
             if let Some(index) = index.filter(|&index| {
                 self.transcript.get(index).is_some_and(|entry| {
-                    expandable_tool_entry(entry, self.info.max_tool_output_lines)
+                    expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
                 })
             }) {
                 self.toggle_transcript_tool_output(index);
@@ -208,7 +208,7 @@ impl App {
                 pending_start = pending_start.saturating_add(1);
             }
             pending_start = pending_start.saturating_add(
-                tool_entry_lines(&shell, width, self.info.max_tool_output_lines).len(),
+                tool_entry_lines(&shell, width, self.info.runtime.max_tool_output_lines).len(),
             );
         }
         if let Some(pending) = self.pending_tool_call.as_ref() {
@@ -216,10 +216,11 @@ impl App {
                 pending_start = pending_start.saturating_add(1);
             }
             let pending_end = pending_start.saturating_add(
-                tool_entry_lines(pending, width, self.info.max_tool_output_lines).len(),
+                tool_entry_lines(pending, width, self.info.runtime.max_tool_output_lines).len(),
             );
             if (pending_start..pending_end).contains(&line)
-                && tool_display_line_count(&pending.display_lines) > self.info.max_tool_output_lines
+                && tool_display_line_count(&pending.display_lines)
+                    > self.info.runtime.max_tool_output_lines
             {
                 let pending = self
                     .pending_tool_call

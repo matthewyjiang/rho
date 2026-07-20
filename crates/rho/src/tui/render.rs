@@ -4,8 +4,7 @@ use super::{
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
-    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, TuiInfo, UiPicker,
-    DEFAULT_TUI_HEIGHT,
+    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker, DEFAULT_TUI_HEIGHT,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use {
@@ -33,7 +32,10 @@ impl LineFill {
     }
 }
 
-pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'static>> {
+pub(super) fn session_header_lines(
+    update_notice: Option<&str>,
+    width: usize,
+) -> Vec<Line<'static>> {
     let divider = "─".repeat(width.max(1));
     let mut lines = vec![
         Line::styled(divider.clone(), Theme::dim()),
@@ -43,7 +45,7 @@ pub(super) fn session_header_lines(info: &TuiInfo, width: usize) -> Vec<Line<'st
             Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
         ]),
     ];
-    if let Some(notice) = &info.update_notice {
+    if let Some(notice) = update_notice {
         lines.push(Line::from(vec![
             Span::styled("update", Theme::warning()),
             Span::raw("  "),

@@ -15,7 +15,7 @@ impl ClipboardWriter for RecordingClipboard {
 #[test]
 fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
     let mut app = test_app();
-    app.info.max_tool_output_lines = 1;
+    app.info.runtime.max_tool_output_lines = 1;
     app.record_inserted_entry(test_tool_entry(
         true,
         &["write_file", "first\nsecond\nthird"],
@@ -135,7 +135,7 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
 #[test]
 fn clicking_expandable_pending_tool_output_toggles_it() {
     let mut app = test_app();
-    app.info.max_tool_output_lines = 1;
+    app.info.runtime.max_tool_output_lines = 1;
     app.pending_tool_call = Some(ToolEntry {
         state: ToolEntryState::Running,
         display_lines: vec!["bash".into(), "first\nsecond\nthird".into()],

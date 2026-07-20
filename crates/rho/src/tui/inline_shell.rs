@@ -279,7 +279,7 @@ impl super::App {
             self.status = "enter a shell command after ! or !!".into();
             return Ok(());
         }
-        let config = self.info.config_repository.load()?;
+        let config = self.info.services.config_repository.load()?;
         let shell = if config.inline_shell.trim().is_empty() {
             default_shell()
         } else {
@@ -294,7 +294,7 @@ impl super::App {
             },
             command
         ));
-        let cwd = self.info.cwd.clone();
+        let cwd = self.info.runtime.cwd.clone();
         let task_shell = shell.clone();
         let task_command = command.clone();
         let (updates_tx, updates_rx) = mpsc::unbounded_channel();

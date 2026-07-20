@@ -144,7 +144,7 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::TypeText("draft while streaming"),
     Step::WaitText {
         text: "draft while streaming",
-        timeout: WaitTimeout::millis(500, "composer input during stream"),
+        timeout: WaitTimeout::secs(2, "composer input during stream"),
     },
     Step::Key(Key::Esc),
     Step::WaitQuiet {

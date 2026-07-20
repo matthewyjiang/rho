@@ -1,5 +1,14 @@
 use super::*;
-use crate::agent::{ModelPolicy, PromptPolicy, ToolPolicy};
+use crate::agent::{ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy};
+
+fn capability_set(names: &[&str]) -> AgentCapabilities {
+    AgentCapabilities::new(
+        names
+            .iter()
+            .map(|name| ToolCapability::parse((*name).to_string()))
+            .collect(),
+    )
+}
 
 fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
     Arc::new(AgentDefinition {
@@ -12,17 +21,14 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
     })
 }
 
-fn capabilities() -> BTreeSet<String> {
-    [
+fn capabilities() -> AgentCapabilities {
+    capability_set(&[
         "read_file",
         "write_file",
         "agent",
         "agents",
         "questionnaire",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+    ])
 }
 
 #[test]
@@ -46,7 +52,7 @@ fn root_roles_bind_equivalently() {
         &config,
     )
     .unwrap();
-    assert_eq!(interactive.tools(), automation.tools());
+    assert_eq!(interactive.capabilities(), automation.capabilities());
     assert_eq!(interactive.fingerprint(), automation.fingerprint());
 }
 
@@ -62,21 +68,39 @@ fn delegated_role_removes_recursive_and_interactive_capabilities() {
     )
     .unwrap();
     assert_eq!(
-        bound.tools(),
-        &["read_file", "write_file"]
-            .into_iter()
-            .map(String::from)
-            .collect()
+        bound.capabilities(),
+        &capability_set(&["read_file", "write_file"])
     );
+}
+
+#[test]
+fn extension_capability_name_survives_binding() {
+    let extension = ToolCapability::Extension("acme_custom".into());
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::InteractiveRoot,
+            available_tools: AgentCapabilities::new([extension.clone()].into_iter().collect()),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+
+    assert!(bound.capabilities().contains(&extension));
 }
 
 #[test]
 fn unavailable_explicit_tool_fails_before_execution() {
     let error = AgentBinder::bind(
-        definition(ToolPolicy::Allow(vec!["write_file".into()])),
+        definition(ToolPolicy::Allow(
+            ["write_file".to_string()]
+                .into_iter()
+                .map(crate::agent::ToolCapability::parse)
+                .collect(),
+        )),
         AgentInvocation {
             role: AgentRole::AutomationRoot,
-            available_tools: ["read_file"].into_iter().map(String::from).collect(),
+            available_tools: capability_set(&["read_file"]),
         },
         &Config::default(),
     )

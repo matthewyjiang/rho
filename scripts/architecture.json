@@ -2,7 +2,7 @@
   "default_production_line_budget": 1000,
   "legacy_file_budgets": {
     "crates/rho-providers/src/providers/openai/codex_ws.rs": 1036,
-    "crates/rho/src/tui.rs": 7753
+    "crates/rho/src/tui.rs": 5400
   },
   "generated_files": {},
   "thin_binary_budgets": {

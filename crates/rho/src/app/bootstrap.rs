@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     io::{self, IsTerminal},
     sync::Arc,
 };
@@ -163,27 +162,32 @@ fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
     role: AgentRole,
-) -> BTreeSet<String> {
+) -> crate::agent::AgentCapabilities {
+    use crate::agent::ToolCapability;
+
     if cli.no_tools {
-        return BTreeSet::new();
+        return crate::agent::AgentCapabilities::default();
     }
-    let mut tools = crate::agent::KNOWN_TOOLS
-        .iter()
-        .map(|tool| (*tool).to_string())
-        .collect::<BTreeSet<_>>();
+    let mut tools = crate::agent::AgentCapabilities::all_host_tools();
     if !crate::tools::web::access_tools(config).is_available() {
-        tools.remove("web_search");
+        tools.remove(&ToolCapability::WebSearch);
     }
     #[cfg(windows)]
-    tools.remove("bash");
+    tools.remove(&ToolCapability::Bash);
     #[cfg(not(windows))]
-    tools.remove("powershell");
+    tools.remove(&ToolCapability::Powershell);
     if cli.no_subagents || !config.enable_subagents {
-        tools.remove("agent");
-        tools.remove("agents");
+        tools.remove(&ToolCapability::Agent);
+        tools.remove(&ToolCapability::Agents);
     }
     if role != AgentRole::InteractiveRoot {
-        tools.remove("questionnaire");
+        tools.remove(&ToolCapability::Questionnaire);
+    }
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
+        tools.insert(ToolCapability::Extension(
+            crate::tools::tui_fixture::NAME.into(),
+        ));
     }
     tools
 }

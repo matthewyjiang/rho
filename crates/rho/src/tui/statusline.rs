@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
-    TuiInfo,
+    RuntimeModelView,
 };
 use {
     crate::permission::PermissionMode,
@@ -79,7 +79,7 @@ impl Default for StatusLineState {
 }
 
 impl StatusLineState {
-    fn from_tui(info: &TuiInfo) -> Self {
+    fn from_tui(info: &RuntimeModelView) -> Self {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
@@ -120,7 +120,7 @@ impl StatusLineState {
 }
 
 impl StatusLine {
-    pub(super) fn new(info: &TuiInfo) -> Self {
+    pub(super) fn new(info: &RuntimeModelView) -> Self {
         Self {
             state: StatusLineState::from_tui(info),
             cache: StatusLineCache::default(),
@@ -135,7 +135,7 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn update_model(&mut self, info: &TuiInfo) {
+    pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let billing = BillingInfo::from_provider_auth(&info.provider, &info.auth);
         let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         if self.state.provider != info.provider
