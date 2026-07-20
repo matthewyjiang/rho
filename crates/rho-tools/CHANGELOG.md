@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.3](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.3.2...rho-agent-tools-v0.3.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* **tools:** bound the timeout drain so escaped processes cannot stall bash ([#342](https://github.com/matthewyjiang/rho/issues/342)) ([414850f](https://github.com/matthewyjiang/rho/commit/414850fd374315f85691323d6bcf5615880da0d2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.4.0 to 1.5.0
+
 ## [0.3.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.3.1...rho-agent-tools-v0.3.2) (2026-07-20)
 
 

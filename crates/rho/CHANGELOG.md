@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.2...rho-coding-agent-v1.9.0) (2026-07-20)
+
+
+### Features
+
+* **providers:** add native Google Gemini support ([#430](https://github.com/matthewyjiang/rho/issues/430)) ([34ef307](https://github.com/matthewyjiang/rho/commit/34ef3076d08afb9b1261973318e2173a7d14a613))
+* **tui:** render markdown image previews ([#434](https://github.com/matthewyjiang/rho/issues/434)) ([bb1f857](https://github.com/matthewyjiang/rho/commit/bb1f857fc4c826b8489d4765dfb3c5c51a3bce05))
+
+
+### Bug Fixes
+
+* **tools:** correct ToolError path in web fetch tests ([#433](https://github.com/matthewyjiang/rho/issues/433)) ([814d22c](https://github.com/matthewyjiang/rho/commit/814d22c5bf94d60ddd5a9cb9f5973cd6e1e92965))
+* **tools:** keep truncated web fetches when the byte cap splits a character ([#339](https://github.com/matthewyjiang/rho/issues/339)) ([f762a88](https://github.com/matthewyjiang/rho/commit/f762a88d2999651e22f53900782ff431947627db))
+* **tui:** use native clipboard APIs before OSC 52 ([#416](https://github.com/matthewyjiang/rho/issues/416)) ([3dee5bb](https://github.com/matthewyjiang/rho/commit/3dee5bba112a8a8ce7c6389458e194a432e5e911))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.4.0 to 1.5.0
+    * rho-providers bumped from 0.3.2 to 0.4.0
+
 ## [1.8.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.1...rho-coding-agent-v1.8.2) (2026-07-20)
 
 

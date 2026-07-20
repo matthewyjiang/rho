@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.4.0...rho-sdk-v1.5.0) (2026-07-20)
+
+
+### Features
+
+* **providers:** add native Google Gemini support ([#430](https://github.com/matthewyjiang/rho/issues/430)) ([34ef307](https://github.com/matthewyjiang/rho/commit/34ef3076d08afb9b1261973318e2173a7d14a613))
+
 ## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.3.0...rho-sdk-v1.4.0) (2026-07-20)
 
 
