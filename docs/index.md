@@ -35,6 +35,7 @@ features:
   - [OpenAI](/providers/openai)
   - [OpenAI (Codex OAuth)](/providers/openai-codex)
   - [Anthropic](/providers/anthropic)
+  - [Google Gemini](/providers/google-gemini)
   - [GitHub Copilot](/providers/github-copilot)
   - [OpenRouter](/providers/openrouter)
   - [Moonshot and Kimi Code](/providers/moonshot-kimi)

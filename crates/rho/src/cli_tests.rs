@@ -10,6 +10,7 @@ fn parses_new_provider_auth_modes() {
         "kimi-oauth",
         "xai-api-key",
         "xai-oauth",
+        "google-api-key",
     ] {
         let cli = Cli::try_parse_from(["rho", "--auth", auth]).unwrap();
         assert_eq!(cli.auth.as_deref(), Some(auth));

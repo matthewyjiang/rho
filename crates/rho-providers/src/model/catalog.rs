@@ -91,6 +91,7 @@ pub fn login_groups() -> Vec<LoginGroup> {
             &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
         ),
         ("anthropic", "Anthropic", &[("API Key", "anthropic")][..]),
+        ("google", "Google Gemini", &[("API Key", "google")][..]),
         (
             "github-copilot",
             "GitHub Copilot",
@@ -168,6 +169,7 @@ fn static_catalog_default_model(provider: &str) -> Option<String> {
 fn builtin_default_model(provider: &str) -> Option<String> {
     match provider {
         "anthropic" => Some("claude-sonnet-4-5".into()),
+        "google" => Some("gemini-3.1-flash-lite".into()),
         _ => None,
     }
 }
@@ -578,12 +580,16 @@ mod tests {
         assert!(providers.contains(&("openai", "api-key")));
         assert!(providers.contains(&("openai-codex", "codex")));
         assert!(providers.contains(&("anthropic", "anthropic-api-key")));
+        assert!(providers.contains(&("google", "google-api-key")));
         assert!(providers.contains(&("github-copilot", "github-copilot")));
         assert!(providers.contains(&("moonshot", "moonshot-api-key")));
         assert!(providers.contains(&("openrouter", "openrouter-api-key")));
         assert!(providers.contains(&("kimi-code", "kimi-oauth")));
         assert!(providers.contains(&("xai", "xai-api-key")));
         assert!(providers.contains(&("xai-oauth", "xai-oauth")));
+        let google = login_group("google").expect("Google login group");
+        assert_eq!(google.methods.len(), 1);
+        assert_eq!(google.methods[0].target.provider, "google");
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());

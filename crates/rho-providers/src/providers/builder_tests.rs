@@ -74,6 +74,19 @@ fn explicit_builder_constructs_provider_without_environment_or_keychain_lookup()
 }
 
 #[test]
+fn explicit_builder_constructs_google_provider() {
+    let options =
+        ProviderBuildOptions::new("google", "gemini-3.5-flash", ReasoningLevel::Medium).unwrap();
+    let credential = ProviderCredential::GoogleApiKey(SecretString::new("explicit-secret"));
+
+    let provider = ProviderBuilder::new(options, credential).build().unwrap();
+
+    assert_eq!(provider.identity().provider, "google");
+    assert_eq!(provider.identity().api, "gemini-generate-content");
+    assert_eq!(provider.identity().model, "gemini-3.5-flash");
+}
+
+#[test]
 fn explicit_builder_constructs_openrouter_provider() {
     let options = ProviderBuildOptions::new(
         "openrouter",

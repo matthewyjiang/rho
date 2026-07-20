@@ -70,6 +70,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             ProviderRuntime::Anthropic => Ok(ProviderCredential::AnthropicApiKey(
                 SecretString::new(load_anthropic_api_key(self.store.as_ref())?),
             )),
+            ProviderRuntime::Google => Ok(ProviderCredential::GoogleApiKey(SecretString::new(
+                load_provider_api_key_auth("google", self.store.as_ref())?,
+            ))),
             ProviderRuntime::GithubCopilot => Ok(ProviderCredential::GitHubCopilot(
                 GitHubCopilotAuthManager::new(self.store.clone())?,
             )),
@@ -162,7 +165,9 @@ fn load_provider_api_key_auth(
         return Err(ModelError::UnsupportedProvider(provider_name.into()));
     };
     if let Ok(key) = std::env::var(env_var) {
-        return Ok(key);
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
     }
     load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
 }
@@ -177,7 +182,9 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
         return Err(ModelError::UnsupportedProvider("openai".into()));
     };
     if let Ok(key) = std::env::var(env_var) {
-        return Ok(Auth::ApiKey(key));
+        if !key.trim().is_empty() {
+            return Ok(Auth::ApiKey(key));
+        }
     }
     let key = load_provider_api_key(store, descriptor.name)?
         .ok_or_else(|| missing_credential_error(missing))?;
@@ -216,7 +223,9 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         return Err(ModelError::UnsupportedProvider("anthropic".into()));
     };
     if let Ok(key) = std::env::var(env_var) {
-        return Ok(key);
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
     }
     load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
 }

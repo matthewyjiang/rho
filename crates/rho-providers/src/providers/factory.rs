@@ -79,6 +79,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingApiKey => ModelError::MissingApiKey,
         ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
         ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
+        ModelError::MissingGoogleApiKey => ModelError::MissingGoogleApiKey,
         ModelError::MissingGithubCopilotAuth => ModelError::MissingGithubCopilotAuth,
         ModelError::MissingXaiApiKey => ModelError::MissingXaiApiKey,
         ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,

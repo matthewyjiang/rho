@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use tokio::sync::mpsc;
 
@@ -6,8 +6,8 @@ use crate::{
     client::Rho,
     event::{RunOutcome, StopReason},
     model::{
-        AbortedAssistant, AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest,
-        ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
+        AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
+        ModelUsage,
     },
     provider::{provider_event_channel, ModelProvider, ProviderCancellationMode},
     run::RunCommand,
@@ -25,20 +25,11 @@ const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
+mod stream_capture;
 mod tool_turn;
 
+use stream_capture::{capture_provider_event, StreamCapture};
 use tool_turn::{execute_tool, StagedToolTurn};
-
-#[derive(Default)]
-struct StreamCapture {
-    text: String,
-    reasoning: String,
-    reasoning_summary: String,
-    provider_context: Vec<ProviderContextBlock>,
-    partial_tool_calls: BTreeMap<usize, PartialToolCall>,
-    usage: ModelUsage,
-    failed_attempts: Vec<(ProviderErrorKind, ModelUsage)>,
-}
 
 pub(crate) async fn execute_run(
     core: Arc<SessionCore>,
@@ -122,7 +113,7 @@ pub(crate) async fn execute_run(
             commands: &mut commands,
             steering: &mut steering,
         };
-        let (response, capture) = match request_valid_response(
+        let (response, mut capture) = match request_valid_response(
             request_scope,
             &history,
             &tool_specs,
@@ -144,7 +135,7 @@ pub(crate) async fn execute_run(
                 return Err(sdk_error);
             }
         };
-        accumulated_usage = accumulated_usage.saturating_add(&capture.usage);
+        accumulated_usage = accumulated_usage.saturating_add(capture.usage());
 
         let ModelResponse::Assistant(content) = response;
         let tool_calls = content
@@ -154,12 +145,12 @@ pub(crate) async fn execute_run(
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
+        let (reasoning_summary, provider_context) = capture.take_assistant_context();
         let assistant = AssistantMessage {
             content,
             provenance: Some(runtime.provider.identity()),
-            reasoning_summary: (!capture.reasoning_summary.is_empty())
-                .then_some(capture.reasoning_summary),
-            provider_context: capture.provider_context,
+            reasoning_summary,
+            provider_context,
         };
         history.push(Message::assistant(assistant));
         drain_commands(control.commands, control.steering);
@@ -380,7 +371,7 @@ async fn request_valid_response(
                 } else {
                     crate::ProviderRequestOutcome::InvalidResponse
                 };
-                record_request_usage(&scope, next_attempt_index, capture.usage.clone(), outcome)
+                record_request_usage(&scope, next_attempt_index, capture.usage().clone(), outcome)
                     .await;
                 next_attempt_index += 1;
                 (response, capture)
@@ -400,7 +391,7 @@ async fn request_valid_response(
                 record_request_usage(
                     &scope,
                     next_attempt_index,
-                    failure.capture.usage.clone(),
+                    failure.capture.usage().clone(),
                     outcome,
                 )
                 .await;
@@ -481,7 +472,7 @@ async fn record_failed_provider_attempts(
     mut next_attempt_index: usize,
     capture: &mut StreamCapture,
 ) -> usize {
-    for (kind, usage) in capture.failed_attempts.drain(..) {
+    for (kind, usage) in capture.take_failed_attempts() {
         record_request_usage(
             scope,
             next_attempt_index,
@@ -704,9 +695,7 @@ async fn handle_provider_request_event(
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
     let crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } = event;
-    let attempt_usage = capture.usage.saturating_add(&usage);
-    capture.usage = ModelUsage::default();
-    capture.failed_attempts.push((kind, attempt_usage));
+    capture.record_request_attempt_failure(kind, usage);
     emit(
         events,
         cancellation,
@@ -733,83 +722,6 @@ async fn handle_provider_event(
         .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
-fn capture_provider_event(
-    event: ModelEvent,
-    identity: &crate::model::ModelIdentity,
-    accumulated_usage: &ModelUsage,
-    capture: &mut StreamCapture,
-) -> RunEvent {
-    match event {
-        ModelEvent::OutputDelta(text) => {
-            capture.text.push_str(&text);
-            RunEvent::AssistantTextDelta { text }
-        }
-        ModelEvent::ReasoningDelta(text) => {
-            capture.reasoning.push_str(&text);
-            RunEvent::ReasoningDelta { text }
-        }
-        ModelEvent::ReasoningSummaryDelta(text) => {
-            capture.reasoning_summary.push_str(&text);
-            RunEvent::ReasoningSummaryDelta { text }
-        }
-        ModelEvent::WebSearch(detail) => RunEvent::ProviderActivity {
-            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
-            detail,
-        },
-        ModelEvent::ToolCallDelta {
-            index,
-            id,
-            name,
-            arguments,
-        } => {
-            let partial =
-                capture
-                    .partial_tool_calls
-                    .entry(index)
-                    .or_insert_with(|| PartialToolCall {
-                        id: None,
-                        name: None,
-                        arguments: String::new(),
-                    });
-            if id.is_some() {
-                partial.id.clone_from(&id);
-            }
-            if name.is_some() {
-                partial.name.clone_from(&name);
-            }
-            partial.arguments.push_str(&arguments);
-            RunEvent::ToolCallUpdated {
-                index,
-                id,
-                name,
-                arguments_delta: arguments,
-            }
-        }
-        ModelEvent::ProviderContext {
-            kind,
-            position,
-            data,
-        } => {
-            capture.provider_context.push(ProviderContextBlock {
-                identity: identity.clone(),
-                kind: kind.clone(),
-                position,
-                data,
-            });
-            RunEvent::ProviderContextUpdated { kind }
-        }
-        ModelEvent::Usage(usage) => {
-            // Providers may emit partial usage across multiple stream events
-            // (for example Anthropic input/cache at message_start and later
-            // output deltas). Merge within the turn instead of overwriting.
-            capture.usage = capture.usage.saturating_add(&usage);
-            RunEvent::UsageUpdated {
-                usage: accumulated_usage.saturating_add(&capture.usage),
-            }
-        }
-    }
-}
-
 async fn drain_cooperative_provider_on_cancellation(
     future: &mut crate::provider::ProviderFuture<'_>,
     receiver: &mut crate::provider::ProviderEventReceiver,
@@ -833,9 +745,7 @@ async fn drain_cooperative_provider_on_cancellation(
                     Some(crate::provider::ProviderStreamEvent::Request(
                         crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage }
                     )) => {
-                        let attempt_usage = capture.usage.saturating_add(&usage);
-                        capture.usage = ModelUsage::default();
-                        capture.failed_attempts.push((kind, attempt_usage));
+                        capture.record_request_attempt_failure(kind, usage);
                     }
                     None => stream_open = false,
                 }
@@ -860,9 +770,7 @@ fn drain_cancelled_provider_events(
             crate::provider::ProviderStreamEvent::Request(
                 crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage },
             ) => {
-                let attempt_usage = capture.usage.saturating_add(&usage);
-                capture.usage = ModelUsage::default();
-                capture.failed_attempts.push((kind, attempt_usage));
+                capture.record_request_attempt_failure(kind, usage);
             }
         }
     }
@@ -874,27 +782,8 @@ async fn commit_cancellation(
     capture: StreamCapture,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
-    if !capture.text.is_empty()
-        || !capture.reasoning_summary.is_empty()
-        || !capture.provider_context.is_empty()
-        || !capture.partial_tool_calls.is_empty()
-        || capture.usage != ModelUsage::default()
-    {
-        let content = if capture.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![ContentBlock::Text(capture.text)]
-        };
-        history.push(Message::AbortedAssistant(Box::new(AbortedAssistant {
-            content,
-            reasoning: String::new(),
-            provenance: None,
-            reasoning_summary: (!capture.reasoning_summary.is_empty())
-                .then_some(capture.reasoning_summary),
-            provider_context: capture.provider_context,
-            tool_calls: capture.partial_tool_calls.into_values().collect(),
-            usage: capture.usage,
-        })));
+    if let Some(aborted) = capture.into_aborted_assistant() {
+        history.push(Message::AbortedAssistant(Box::new(aborted)));
     }
     commit_cancelled_history(core, history, events).await
 }

@@ -13,6 +13,7 @@ mod automation_fixture;
 pub mod builder;
 pub mod factory;
 pub mod github_copilot;
+pub mod google;
 pub mod openai;
 pub mod openai_compatible;
 pub mod sdk_contract;

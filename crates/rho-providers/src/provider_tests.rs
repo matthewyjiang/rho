@@ -74,6 +74,18 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
+    let google = super::provider_descriptor_by_id(ProviderId::Google);
+    assert_eq!(google.auth, "google-api-key");
+    assert_eq!(google.auth_kind.env_var(), "GEMINI_API_KEY");
+    assert_eq!(google.auth_kind.account(), super::GOOGLE_API_KEY_ACCOUNT);
+    assert!(matches!(
+        google.auth_kind,
+        ProviderAuthKind::ApiKey {
+            account: super::GOOGLE_API_KEY_ACCOUNT,
+            ..
+        }
+    ));
+
     let moonshot = super::provider_descriptor_by_id(ProviderId::Moonshot);
     assert_eq!(moonshot.auth, "moonshot-api-key");
     assert_eq!(moonshot.auth_kind.env_var(), "MOONSHOT_API_KEY");

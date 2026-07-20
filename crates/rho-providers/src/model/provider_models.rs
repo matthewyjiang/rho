@@ -29,6 +29,9 @@ use crate::{
 #[cfg(not(test))]
 use crate::paths;
 
+#[path = "provider_models/google.rs"]
+mod google;
+pub(crate) use google::{thinking_policy, ThinkingPolicy};
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
 
@@ -144,6 +147,9 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {
             fetch_anthropic_models(provider, store).await?
+        }
+        Some(ProviderModelRefreshKind::Google) => {
+            google::fetch(provider, load_api_key_auth(provider, store)?).await?
         }
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             fetch_github_copilot_models(provider, store).await?
@@ -458,7 +464,9 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
         return Err(ModelError::UnsupportedProvider(provider.to_string()));
     };
     if let Ok(key) = std::env::var(env_var) {
-        return Ok(key);
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
     }
     load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing))
 }

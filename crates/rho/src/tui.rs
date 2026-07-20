@@ -4852,25 +4852,32 @@ mod tests {
 
     #[test]
     fn login_provider_picker_uses_readable_group_prompts() {
+        let labels = catalog::login_groups()
+            .into_iter()
+            .map(|group| group.prompt.to_string())
+            .collect::<Vec<_>>();
+        for prompt in [
+            "OpenAI",
+            "Anthropic",
+            "Google Gemini",
+            "GitHub Copilot",
+            "Moonshot AI",
+            "xAI",
+        ] {
+            assert!(
+                labels.iter().any(|label| label == prompt),
+                "missing {prompt} in {labels:?}"
+            );
+        }
+
         let mut app = test_app();
         app.open_login_picker();
-
         let rendered = app
             .active_lines(80)
             .iter()
             .map(line_text)
             .collect::<Vec<_>>()
             .join("\n");
-
-        for prompt in [
-            "OpenAI",
-            "Anthropic",
-            "GitHub Copilot",
-            "Moonshot AI",
-            "xAI",
-        ] {
-            assert!(rendered.contains(prompt), "{rendered}");
-        }
         for internal_name in ["openai-codex", "kimi-code", "xai-oauth", "api-key"] {
             assert!(!rendered.contains(internal_name), "{rendered}");
         }
