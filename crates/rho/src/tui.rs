@@ -38,6 +38,7 @@ mod activity;
 mod agent_picker;
 mod approval;
 mod attachment;
+mod clipboard;
 mod command_actions;
 mod command_palette;
 mod composer;
@@ -100,8 +101,10 @@ mod tool_diff;
 mod turn_prompt;
 mod view;
 
+use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer};
+use clipboard::{ClipboardWriter, SystemClipboard};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
     ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
@@ -136,17 +139,13 @@ use statusline::{GoalStatus, StatusLine};
 use stream::{AppendOnlyStream, StreamFragment};
 use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
-use text_selection::{
-    highlight_selection, render_copy_notice, ClipboardWriter, CopyNotice, TerminalClipboard,
-    TextSelection,
-};
+use text_selection::{highlight_selection, render_copy_notice, CopyNotice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
 use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
-    crate::clipboard_image::read_clipboard_image,
     crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
@@ -701,7 +700,7 @@ impl App {
             hovered_code_block_copy: None,
             text_selection: None,
             copy_notice: None,
-            clipboard: Box::new(TerminalClipboard),
+            clipboard: Box::new(SystemClipboard::default()),
             session_header_cache: None,
             last_mouse_position: None,
         }

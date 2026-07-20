@@ -6,6 +6,11 @@ use std::{
 
 use rho_providers::model::ImageContent;
 
+use super::{
+    process::{command_available, command_output},
+    session::SessionKind,
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClipboardImageError {
     #[error("no supported image found on clipboard")]
@@ -17,14 +22,20 @@ pub enum ClipboardImageError {
 const SUPPORTED_IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
-    let image = if cfg!(target_os = "linux") {
-        read_linux_clipboard_image().or_else(|| is_wsl().then(read_wsl_clipboard_image).flatten())
-    } else if cfg!(target_os = "macos") {
-        read_macos_clipboard_image()
-    } else if cfg!(target_os = "windows") {
-        read_windows_clipboard_image()
-    } else {
-        None
+    read_clipboard_image_for_session(SessionKind::detect())
+}
+
+pub(super) fn read_clipboard_image_for_session(
+    session: SessionKind,
+) -> Result<ImageContent, ClipboardImageError> {
+    let image = match session {
+        // Remote sessions have no path to the user's local image clipboard.
+        SessionKind::Remote => None,
+        SessionKind::Wsl => read_linux_clipboard_image().or_else(read_wsl_clipboard_image),
+        SessionKind::Local if cfg!(target_os = "linux") => read_linux_clipboard_image(),
+        SessionKind::Local if cfg!(target_os = "macos") => read_macos_clipboard_image(),
+        SessionKind::Local if cfg!(target_os = "windows") => read_windows_clipboard_image(),
+        SessionKind::Local => None,
     };
 
     let Some((bytes, mime_type)) = image else {
@@ -38,6 +49,48 @@ pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
         data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
         mime_type,
     })
+}
+
+pub(super) fn available_image_helpers(session: SessionKind) -> Vec<&'static str> {
+    available_image_helpers_with(session, command_available)
+}
+
+pub(super) fn available_image_helpers_with(
+    session: SessionKind,
+    host_command_available: impl Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    match session {
+        SessionKind::Remote => Vec::new(),
+        // WSL is always a Linux guest, even when these unit tests compile on
+        // macOS or Windows CI hosts.
+        SessionKind::Wsl => {
+            let mut helpers = ["wl-paste", "xclip"]
+                .into_iter()
+                .filter(|command| host_command_available(command))
+                .collect::<Vec<_>>();
+            if host_command_available("powershell.exe") {
+                helpers.push("powershell.exe");
+            }
+            helpers
+        }
+        SessionKind::Local => platform_image_helpers()
+            .iter()
+            .copied()
+            .filter(|command| host_command_available(command))
+            .collect(),
+    }
+}
+
+fn platform_image_helpers() -> &'static [&'static str] {
+    if cfg!(target_os = "linux") {
+        &["wl-paste", "xclip"]
+    } else if cfg!(target_os = "macos") {
+        &["pngpaste"]
+    } else if cfg!(target_os = "windows") {
+        &["powershell"]
+    } else {
+        &[]
+    }
 }
 
 fn read_linux_clipboard_image() -> Option<(Vec<u8>, String)> {
@@ -135,16 +188,6 @@ fn read_macos_clipboard_image() -> Option<(Vec<u8>, String)> {
     Some((bytes, "image/png".into()))
 }
 
-fn command_output(command: &str, args: &[&str]) -> Option<Vec<u8>> {
-    let output = Command::new(command)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    output.status.success().then_some(output.stdout)
-}
-
 fn select_preferred_image_mime_type(types: &str) -> Option<String> {
     let normalized = types
         .lines()
@@ -170,24 +213,6 @@ fn base_mime_type(mime_type: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_wsl() -> bool {
-    env::var_os("WSL_DISTRO_NAME").is_some()
-        || env::var_os("WSLENV").is_some()
-        || fs::read_to_string("/proc/version")
-            .map(|version| version.to_ascii_lowercase().contains("microsoft"))
-            .unwrap_or(false)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::select_preferred_image_mime_type;
-
-    #[test]
-    fn selects_only_supported_image_mime_types() {
-        assert_eq!(
-            select_preferred_image_mime_type("image/tiff\nimage/jpeg"),
-            Some("image/jpeg".into())
-        );
-        assert_eq!(select_preferred_image_mime_type("image/tiff"), None);
-    }
-}
+#[path = "image_tests.rs"]
+mod tests;

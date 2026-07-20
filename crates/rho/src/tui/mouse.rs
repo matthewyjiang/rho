@@ -240,10 +240,12 @@ impl App {
         Ok(false)
     }
 
-    fn copy_text(&mut self, text: &str, now: Instant) {
-        self.copy_notice = Some(match self.clipboard.copy(text) {
-            Ok(()) => CopyNotice::copied(text.chars().count(), now),
-            Err(error) => CopyNotice::failed(&error, now),
-        });
+    pub(super) fn copy_text(&mut self, text: &str, now: Instant) {
+        let character_count = text.chars().count();
+        self.copy_notice = Some(CopyNotice::from_copy_result(
+            self.clipboard.copy(text),
+            character_count,
+            now,
+        ));
     }
 }

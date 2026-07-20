@@ -1,4 +1,4 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 use {
     rho_providers::model::catalog,
@@ -7,6 +7,7 @@ use {
 };
 
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use crate::clipboard::doctor_report as clipboard_doctor_report;
 
 pub(super) struct DoctorContext<'a> {
     pub(super) provider: &'a str,
@@ -106,20 +107,21 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         }
     }
 
-    let helpers = clipboard_helpers();
+    let clipboard = clipboard_doctor_report();
+    items.push(item(
+        "Clipboard text write",
+        clipboard.text_write_status,
+        clipboard.text_write_healthy,
+        format!(
+            "session={}; {}",
+            clipboard.session_label, clipboard.text_write_detail
+        ),
+    ));
     items.push(item(
         "Clipboard image helper",
-        if helpers.is_empty() {
-            "not found"
-        } else {
-            "available"
-        },
-        !helpers.is_empty(),
-        if helpers.is_empty() {
-            "Install a supported platform clipboard helper to paste images.".into()
-        } else {
-            format!("Detected: {}", helpers.join(", "))
-        },
+        clipboard.image_status(),
+        clipboard.image_healthy(),
+        clipboard.image_detail(),
     ));
     let rtk = rho_tools::rtk::is_available();
     items.push(item(
@@ -228,27 +230,6 @@ fn probe_directory(directory: &Path) -> bool {
         .is_ok();
     let _ = fs::remove_file(probe);
     result
-}
-
-fn clipboard_helpers() -> Vec<&'static str> {
-    let candidates: &[&str] = if cfg!(target_os = "linux") {
-        &["wl-paste", "xclip"]
-    } else if cfg!(target_os = "macos") {
-        &["pngpaste"]
-    } else if cfg!(target_os = "windows") {
-        &["powershell"]
-    } else {
-        &[]
-    };
-    candidates
-        .iter()
-        .copied()
-        .filter(|command| command_available(command))
-        .collect()
-}
-
-fn command_available(command: &str) -> bool {
-    Command::new(command).arg("--help").output().is_ok()
 }
 
 #[cfg(test)]
