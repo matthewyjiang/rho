@@ -182,11 +182,14 @@ impl App {
     ) -> Result<bool, B::Error> {
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
+            let cwd = self.info.runtime.cwd.clone();
+            let markdown_images = &self.markdown_images;
             let index = self.history_lines.entry_index_at_line(
                 &self.transcript,
                 width,
                 self.info.runtime.max_tool_output_lines,
                 transcript_line,
+                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
             );
             if let Some(index) = index.filter(|&index| {
                 self.transcript.get(index).is_some_and(|entry| {

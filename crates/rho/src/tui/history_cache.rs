@@ -3,11 +3,12 @@ use std::{ops::Range, sync::Arc};
 use ratatui::text::Line;
 
 use super::{
-    feed_image::RenderedImagePlacement,
+    feed_image::{FeedImage, RenderedImagePlacements},
     is_tool_entry,
     markdown::incremental_markdown_tail_start,
+    markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
-    render::{pad_entry_line, render_entry},
+    render::{apply_markdown_images, pad_entry_line, render_entry},
     Entry,
 };
 
@@ -24,6 +25,17 @@ struct IncrementalAssistantCache {
     stable_line_count: usize,
 }
 
+/// Resolves loaded `FeedImage`s for the image references of one entry.
+/// Each tuple retains its index in `sources`.
+pub(super) type EntryImageResolver<'a> =
+    &'a dyn Fn(usize, &[MarkdownImageSource]) -> Vec<(usize, FeedImage)>;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct HistoryLineSlice {
+    pub(super) start: usize,
+    pub(super) count: usize,
+}
+
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
     settings: Option<HistoryLineCacheSettings>,
@@ -31,7 +43,7 @@ pub(super) struct HistoryLineCache {
     entry_ranges: Vec<Range<usize>>,
     assistant_caches: Vec<Option<IncrementalAssistantCache>>,
     code_blocks: Vec<CachedCodeBlock>,
-    image_placements: Vec<RenderedImagePlacement>,
+    image_placements: Vec<RenderedImagePlacements>,
     dirty_from: Option<usize>,
     appended_assistant: Option<usize>,
 }
@@ -68,8 +80,9 @@ impl HistoryLineCache {
         entries: &[Entry],
         width: usize,
         max_tool_output_lines: usize,
+        image_resolver: EntryImageResolver<'_>,
     ) -> usize {
-        self.ensure_current(entries, width, max_tool_output_lines);
+        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
         self.lines.len()
     }
 
@@ -78,8 +91,9 @@ impl HistoryLineCache {
         entries: &[Entry],
         width: usize,
         max_tool_output_lines: usize,
+        image_resolver: EntryImageResolver<'_>,
     ) -> &[CachedCodeBlock] {
-        self.ensure_current(entries, width, max_tool_output_lines);
+        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
         &self.code_blocks
     }
 
@@ -89,8 +103,9 @@ impl HistoryLineCache {
         width: usize,
         max_tool_output_lines: usize,
         line: usize,
+        image_resolver: EntryImageResolver<'_>,
     ) -> Option<usize> {
-        self.ensure_current(entries, width, max_tool_output_lines);
+        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
         self.entry_ranges
             .iter()
             .position(|range| range.contains(&line))
@@ -101,20 +116,23 @@ impl HistoryLineCache {
         entries: &[Entry],
         width: usize,
         max_tool_output_lines: usize,
-        start: usize,
-        count: usize,
+        slice: HistoryLineSlice,
         target: &mut Vec<Line<'static>>,
+        image_resolver: EntryImageResolver<'_>,
     ) {
-        if count == 0 {
+        if slice.count == 0 {
             return;
         }
 
-        self.ensure_current(entries, width, max_tool_output_lines);
-        let end = start.saturating_add(count).min(self.lines.len());
-        if start >= end {
+        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        let end = slice
+            .start
+            .saturating_add(slice.count)
+            .min(self.lines.len());
+        if slice.start >= end {
             return;
         }
-        target.extend(self.lines[start..end].iter().cloned());
+        target.extend(self.lines[slice.start..end].iter().cloned());
     }
 
     pub(super) fn visible_image_placements(
@@ -124,24 +142,34 @@ impl HistoryLineCache {
         max_tool_output_lines: usize,
         start: usize,
         count: usize,
+        image_resolver: EntryImageResolver<'_>,
     ) -> Vec<super::feed_image::VisibleImagePlacement> {
-        self.ensure_current(entries, width, max_tool_output_lines);
+        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
         let end = start.saturating_add(count);
         self.image_placements
             .iter()
+            .flat_map(|placements| placements.iter())
             .filter_map(|placement| {
                 let visible_start = placement.rows.start.max(start);
                 let visible_end = placement.rows.end.min(end);
-                (visible_start < visible_end).then(|| super::feed_image::VisibleImagePlacement {
-                    image: placement.image.clone(),
-                    row: visible_start - start,
-                    height: visible_end - visible_start,
-                })
+                (visible_start == placement.rows.start && visible_end == placement.rows.end).then(
+                    || super::feed_image::VisibleImagePlacement {
+                        image: placement.image.clone(),
+                        row: visible_start - start,
+                        height: visible_end - visible_start,
+                    },
+                )
             })
             .collect()
     }
 
-    fn ensure_current(&mut self, entries: &[Entry], width: usize, max_tool_output_lines: usize) {
+    fn ensure_current(
+        &mut self,
+        entries: &[Entry],
+        width: usize,
+        max_tool_output_lines: usize,
+        image_resolver: EntryImageResolver<'_>,
+    ) {
         let settings = HistoryLineCacheSettings {
             width,
             max_tool_output_lines,
@@ -181,20 +209,27 @@ impl HistoryLineCache {
         self.entry_ranges.truncate(rebuild_from);
         self.assistant_caches.truncate(rebuild_from);
         self.code_blocks.retain(|block| block.line < line_start);
-        self.image_placements
-            .retain(|placement| placement.rows.start < line_start);
+        self.image_placements = self
+            .image_placements
+            .iter()
+            .filter_map(|placements| placements.retain_starting_before(line_start))
+            .collect();
 
         let mut previous_was_tool = rebuild_from
             .checked_sub(1)
             .and_then(|index| entries.get(index))
             .is_some_and(is_tool_entry);
-        for entry in entries.iter().skip(rebuild_from) {
+        for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             let range_start = self.lines.len();
             if previous_was_tool && is_tool_entry(entry) {
                 self.lines.push(Line::raw(""));
             }
             let entry_start = self.lines.len();
-            let rendered = render_entry(entry, width, max_tool_output_lines);
+            let mut rendered = render_entry(entry, width, max_tool_output_lines);
+            if !rendered.image_sources.is_empty() {
+                let images = image_resolver(entry_index, &rendered.image_sources);
+                apply_markdown_images(&mut rendered, &images, width);
+            }
             self.code_blocks
                 .extend(
                     rendered
@@ -254,6 +289,9 @@ impl HistoryLineCache {
             return false;
         }
         let mutable_source = &text[cache.stable_source_len..];
+        if !super::markdown_image::collect_markdown_image_sources(mutable_source).is_empty() {
+            return false;
+        }
         let new_tail_start = cache
             .stable_source_len
             .saturating_add(incremental_markdown_tail_start(mutable_source));
@@ -266,6 +304,14 @@ impl HistoryLineCache {
             .saturating_add(1)
             .saturating_add(cache.stable_line_count);
         if preserve_end >= range.end || preserve_end > self.lines.len() {
+            return false;
+        }
+        if self
+            .image_placements
+            .iter()
+            .flat_map(|placements| placements.iter())
+            .any(|placement| placement.rows.start < range.end && range.start < placement.rows.end)
+        {
             return false;
         }
         let trailing_blank = self.lines[range.end - 1].clone();

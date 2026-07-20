@@ -115,6 +115,8 @@ impl App {
             self.info.runtime.max_tool_output_lines,
         );
         self.transcript = visible_entries;
+        self.markdown_images.clear();
+        self.mark_markdown_images_dirty_from(0);
         self.history_lines.invalidate_from(0);
         self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();

@@ -6,7 +6,17 @@ use rho_sdk::tool::ToolAsset;
 use rho_tools::tool::ToolDisplayStyle;
 
 use super::{kitty_graphics_environment, FeedImage, IMAGE_HEIGHT};
-use crate::tui::{history_cache::HistoryLineCache, Entry, ToolEntry, ToolEntryState};
+use crate::tui::{
+    history_cache::{HistoryLineCache, HistoryLineSlice},
+    Entry, ToolEntry, ToolEntryState,
+};
+
+fn no_images(
+    _: usize,
+    _: &[crate::tui::markdown_image::MarkdownImageSource],
+) -> Vec<(usize, FeedImage)> {
+    Vec::new()
+}
 
 fn png_asset(width: u32, height: u32) -> ToolAsset {
     let image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
@@ -97,28 +107,62 @@ fn derives_reserved_rows_from_the_thumbnail_aspect_ratio() {
 }
 
 #[test]
-fn tool_entry_history_cache_preserves_partially_visible_image_placement() {
+fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let entries = vec![image_tool()];
     let mut cache = HistoryLineCache::default();
     let width = 40;
-    let line_count = cache.line_count(&entries, width, 20);
+    let line_count = cache.line_count(&entries, width, 20, &no_images);
 
     // A one-line tool has a leading block row and one text row before its image.
-    let full = cache.visible_image_placements(&entries, width, 20, 0, line_count);
+    let full = cache.visible_image_placements(&entries, width, 20, 0, line_count, &no_images);
     assert_eq!(full.len(), 1);
     assert_eq!(full[0].row, 2);
     assert_eq!(full[0].height, IMAGE_HEIGHT as usize);
 
-    // Slice into the middle of the reserved image rows. No marker row is needed.
-    let partial = cache.visible_image_placements(&entries, width, 20, 6, 4);
-    assert_eq!(partial.len(), 1);
-    assert_eq!(partial[0].row, 0);
-    assert_eq!(partial[0].height, 4);
+    // Avoid resizing an image into a partial viewport. Reserved rows remain
+    // blank until the full image fits in the visible history window.
+    let partial = cache.visible_image_placements(&entries, width, 20, 6, 4, &no_images);
+    assert!(partial.is_empty());
 
     let mut visible_lines = Vec::new();
-    cache.extend_visible_lines(&entries, width, 20, 6, 4, &mut visible_lines);
+    cache.extend_visible_lines(
+        &entries,
+        width,
+        20,
+        HistoryLineSlice { start: 6, count: 4 },
+        &mut visible_lines,
+        &no_images,
+    );
     assert_eq!(visible_lines.len(), 4);
     assert!(visible_lines
         .iter()
         .all(|line| line.to_string().trim().is_empty()));
+}
+
+#[test]
+fn markdown_image_placements_reserve_rows_for_ready_images() {
+    use crate::tui::feed_image::reserve_markdown_image_rows;
+
+    let image = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
+    let mut lines: Vec<ratatui::text::Line<'static>> =
+        (0..3).map(|_| ratatui::text::Line::raw("x")).collect();
+    // One placeholder row at index 1 (the standalone image row).
+    let placements = reserve_markdown_image_rows(&mut lines, &[1], &[(0, image)], 40).unwrap();
+
+    let height = IMAGE_HEIGHT as usize;
+    assert_eq!(lines.len(), 3 + height - 1);
+    let placements: Vec<_> = placements.iter().collect();
+    assert_eq!(placements.len(), 1);
+    assert_eq!(placements[0].rows, 1..1 + height);
+}
+
+#[test]
+fn markdown_image_rows_not_ready_keep_their_placeholder() {
+    use crate::tui::feed_image::reserve_markdown_image_rows;
+
+    let mut lines: Vec<ratatui::text::Line<'static>> =
+        (0..2).map(|_| ratatui::text::Line::raw("x")).collect();
+    // No ready images -> no placements and no inserted rows.
+    assert!(reserve_markdown_image_rows(&mut lines, &[1], &[], 40).is_none());
+    assert_eq!(lines.len(), 2);
 }

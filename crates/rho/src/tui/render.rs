@@ -1,10 +1,19 @@
+mod entry_render;
+
+#[cfg(test)]
+pub(super) use entry_render::render_entry_with_images;
+pub(super) use entry_render::{apply_markdown_images, entry_lines, render_entry};
+
 use super::{
-    feed_image::{reserve_entry_image_rows, reserve_optional_image_rows},
+    feed_image::{
+        reserve_entry_image_rows, reserve_markdown_image_rows, reserve_optional_image_rows,
+    },
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::{Theme, ToolStyle},
-    tool_diff, Entry, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker, DEFAULT_TUI_HEIGHT,
+    tool_diff, Entry, FeedImage, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker,
+    DEFAULT_TUI_HEIGHT,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use {
@@ -651,54 +660,6 @@ pub(super) fn tool_entry_lines(
     padded.extend(lines.into_iter().map(pad_line));
     padded.push(styled_blank_line(width, style));
     padded
-}
-
-pub(super) fn entry_lines(
-    entry: &Entry,
-    width: usize,
-    max_tool_output_lines: usize,
-) -> Vec<Line<'static>> {
-    render_entry(entry, width, max_tool_output_lines).lines
-}
-
-pub(super) fn render_entry(
-    entry: &Entry,
-    width: usize,
-    max_tool_output_lines: usize,
-) -> RenderedEntry {
-    let inner_width = padded_inner_width(width);
-    let (mut lines, code_blocks) = match entry {
-        Entry::Assistant(text) => {
-            let rendered = render_assistant_content(text, width);
-            (rendered.lines, rendered.code_blocks)
-        }
-        Entry::Reasoning(text) => {
-            let rendered = render_reasoning_content(text, width);
-            (rendered.lines, rendered.code_blocks)
-        }
-        _ => {
-            let mut lines = Vec::new();
-            render_non_assistant_entry(&mut lines, entry, inner_width, max_tool_output_lines);
-            (lines, Vec::new())
-        }
-    };
-
-    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
-
-    let block_style = lines
-        .first()
-        .and_then(|line| line.spans.first())
-        .map(|span| span.style)
-        .unwrap_or_default();
-    let mut padded = Vec::with_capacity(lines.len() + 2);
-    padded.push(styled_blank_line(width, block_style));
-    padded.extend(lines.into_iter().map(pad_line));
-    padded.push(styled_blank_line(width, block_style));
-    RenderedEntry {
-        lines: padded,
-        code_blocks,
-        image_placement,
-    }
 }
 
 fn render_non_assistant_entry(

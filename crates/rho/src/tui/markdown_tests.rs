@@ -346,3 +346,42 @@ fn mermaid_render_reflows_to_the_requested_transcript_width() {
         narrow.iter().map(line_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn standalone_image_line_renders_fallback_text() {
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        "before\n\n![diagram](docs/arch.png)\n\nafter",
+        120,
+        &mut in_code_block,
+    );
+    let text: Vec<String> = rendered.lines.iter().map(line_text).collect();
+
+    assert_eq!(text, vec!["before", "", "[image: diagram]", "", "after"]);
+    assert_eq!(rendered.image_rows, vec![2]);
+    assert_eq!(rendered.image_sources.len(), 1);
+    assert_eq!(rendered.image_sources[0].alt, "diagram");
+    assert_eq!(rendered.image_sources[0].path, "docs/arch.png");
+}
+
+#[test]
+fn inline_image_renders_as_alt_text() {
+    let mut in_code_block = false;
+    let lines = markdown_lines("see ![icon](i.png) here", 120, &mut in_code_block);
+
+    assert_eq!(line_text(&lines[0]), "see icon here");
+
+    let lines = markdown_lines("great! see ![icon](i.png) here", 120, &mut in_code_block);
+    assert_eq!(line_text(&lines[0]), "great! see icon here");
+}
+
+#[test]
+fn image_syntax_inside_code_fence_stays_literal() {
+    let mut in_code_block = false;
+    let lines = markdown_lines("```\n![diagram](arch.png)\n```", 120, &mut in_code_block);
+    let text: Vec<String> = lines.iter().map(line_text).collect();
+
+    assert!(text
+        .iter()
+        .any(|line| line.contains("![diagram](arch.png)")));
+}
