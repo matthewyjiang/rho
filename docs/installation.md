@@ -47,7 +47,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewy
 $env:RHO_VERSION = "v0.9.0"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
 ```
 
-If a prebuilt binary is not available for your platform, install from crates.io with Cargo:
+If your platform has no prebuilt binary, install from crates.io with Cargo:
 
 ```bash
 cargo install rho-coding-agent

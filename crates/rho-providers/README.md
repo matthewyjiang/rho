@@ -33,7 +33,7 @@ The runtime registry includes:
 
 ## Usage
 
-The following builds an OpenAI provider from an environment variable or the OS
+This example builds an OpenAI provider from an environment variable or the OS
 keyring, attaches it to an SDK runtime, and makes one completion:
 
 ```rust,no_run
