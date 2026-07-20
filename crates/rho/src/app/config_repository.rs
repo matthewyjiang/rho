@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::Arc;
 
 use crate::config::Config;
 
@@ -6,11 +8,26 @@ use crate::config::Config;
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigRepository {
     path: Option<PathBuf>,
+    #[cfg(test)]
+    _temp_dir: Option<Arc<tempfile::TempDir>>,
 }
 
 impl ConfigRepository {
     pub(crate) fn new(path: Option<PathBuf>) -> Self {
-        Self { path }
+        Self {
+            path,
+            #[cfg(test)]
+            _temp_dir: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn temporary_for_tests() -> anyhow::Result<Self> {
+        let temp_dir = Arc::new(tempfile::tempdir()?);
+        Ok(Self {
+            path: Some(temp_dir.path().join("config.toml")),
+            _temp_dir: Some(temp_dir),
+        })
     }
 
     pub(crate) fn configured_path(&self) -> anyhow::Result<PathBuf> {

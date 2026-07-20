@@ -3742,7 +3742,7 @@ mod tests {
                 open_resume_picker: false,
             },
             services: ApplicationServices {
-                config_repository: ConfigRepository::new(None),
+                config_repository: ConfigRepository::temporary_for_tests().unwrap(),
                 auth_unavailable: None,
                 update_notice: None,
                 pending_update_notice: None,

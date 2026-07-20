@@ -9,11 +9,19 @@ use rho_providers::{
     reasoning::ReasoningLevel,
 };
 
-use crate::tui::tests::test_app;
+use crate::{config::Config, tui::tests::test_app};
 
 #[test]
-fn login_state_save_persists_the_effective_reasoning_level() {
+fn login_state_save_persists_the_effective_reasoning_level_without_changing_user_config() {
     let mut app = test_app();
+    assert_ne!(
+        app.info
+            .services
+            .config_repository
+            .configured_path()
+            .unwrap(),
+        Config::default_path().unwrap()
+    );
     app.info.runtime.provider = "kimi-code".into();
     app.info.runtime.model = "login-k3-test".into();
     app.info.runtime.auth = "api-key".into();
