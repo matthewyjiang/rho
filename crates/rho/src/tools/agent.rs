@@ -365,7 +365,7 @@ impl Tool for AgentTool {
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance} Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance}\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
