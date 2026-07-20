@@ -42,37 +42,46 @@ fn join_host_errors_keeps_both_messages() {
     assert_eq!(error.to_string(), "clip.exe missing; native failed");
 }
 
-#[cfg(unix)]
 #[test]
-fn write_command_stdin_succeeds_when_the_command_accepts_bytes() {
-    write_command_stdin("cat", &[], b"copied text").unwrap();
-}
-
-#[test]
-fn write_command_stdin_fails_when_the_command_is_missing() {
-    let error =
-        write_command_stdin("rho-missing-clipboard-helper", &[], b"copied text").unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::NotFound);
-}
-
-#[cfg(unix)]
-#[test]
-fn write_command_stdin_fails_when_the_command_exits_nonzero() {
-    let error = write_command_stdin("false", &[], b"copied text").unwrap_err();
-    assert!(error.to_string().contains("false exited"));
-}
-
-#[test]
-fn remote_probe_uses_osc_52() {
-    let probe = probe_text_write(SessionKind::Remote);
+fn remote_probe_uses_intended_osc_52_path() {
+    let probe = probe_text_write_with(SessionKind::Remote, |_| false, || false);
     assert_eq!(probe.status, "osc 52");
     assert!(probe.healthy);
     assert!(probe.detail.contains("Remote session"));
 }
 
 #[test]
-fn local_probe_mentions_native_or_fallback() {
-    let probe = probe_text_write(SessionKind::Local);
-    assert!(matches!(probe.status, "native" | "osc 52 fallback"));
+fn local_probe_marks_confirmed_native_as_healthy() {
+    let probe = probe_text_write_with(SessionKind::Local, |_| false, || true);
+    assert_eq!(probe.status, "native");
     assert!(probe.healthy);
+}
+
+#[test]
+fn local_probe_marks_osc_only_as_degraded() {
+    let probe = probe_text_write_with(SessionKind::Local, |_| false, || false);
+    assert_eq!(probe.status, "osc 52 fallback");
+    assert!(!probe.healthy);
+}
+
+#[test]
+fn wsl_probe_prefers_windows_host_when_clip_exists() {
+    let probe = probe_text_write_with(SessionKind::Wsl, |command| command == "clip.exe", || false);
+    assert_eq!(probe.status, "windows host");
+    assert!(probe.healthy);
+    assert!(probe.detail.contains("clip.exe"));
+}
+
+#[test]
+fn wsl_probe_uses_native_when_clip_is_missing() {
+    let probe = probe_text_write_with(SessionKind::Wsl, |_| false, || true);
+    assert_eq!(probe.status, "native");
+    assert!(probe.healthy);
+}
+
+#[test]
+fn wsl_probe_marks_osc_only_as_degraded() {
+    let probe = probe_text_write_with(SessionKind::Wsl, |_| false, || false);
+    assert_eq!(probe.status, "osc 52 fallback");
+    assert!(!probe.healthy);
 }

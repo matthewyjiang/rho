@@ -1,6 +1,7 @@
 //! Shared clipboard facade for text write, image read, session policy, and doctor probes.
 
 mod image;
+mod process;
 mod session;
 mod write;
 
@@ -33,7 +34,12 @@ impl ClipboardDoctorReport {
 
     pub fn image_detail(&self) -> String {
         if self.image_helpers.is_empty() {
-            "Install a supported platform clipboard helper to paste images.".into()
+            match self.session_label {
+                "remote" => {
+                    "Remote session detected. Image paste needs a local host clipboard helper and is unavailable over SSH/Mosh.".into()
+                }
+                _ => "Install a supported platform clipboard helper to paste images.".into(),
+            }
         } else {
             format!("Detected: {}", self.image_helpers.join(", "))
         }
@@ -78,5 +84,17 @@ mod tests {
         assert_eq!(report.image_status(), "not found");
         assert!(!report.image_healthy());
         assert!(report.image_detail().contains("Install"));
+    }
+
+    #[test]
+    fn remote_image_detail_explains_session_limit() {
+        let report = ClipboardDoctorReport {
+            session_label: "remote",
+            text_write_status: "osc 52",
+            text_write_healthy: true,
+            text_write_detail: "ok".into(),
+            image_helpers: Vec::new(),
+        };
+        assert!(report.image_detail().contains("Remote session"));
     }
 }

@@ -1,11 +1,11 @@
-use std::{
-    io::{self, Write},
-    process::{Command, Stdio},
-};
+use std::io;
 
 use crossterm::{clipboard::CopyToClipboard, execute};
 
-use super::session::SessionKind;
+use super::{
+    process::{command_available, write_command_stdin},
+    session::SessionKind,
+};
 
 /// Describes how strongly a clipboard write was verified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,16 +69,13 @@ impl SystemClipboard {
                 Ok(()) => Ok(()),
                 Err(error) => {
                     self.native = None;
-                    Err(io::Error::other(error.to_string()))
+                    Err(io_error_from_native(error))
                 }
             };
         }
 
-        let mut clipboard =
-            arboard::Clipboard::new().map_err(|error| io::Error::other(error.to_string()))?;
-        clipboard
-            .set_text(text)
-            .map_err(|error| io::Error::other(error.to_string()))?;
+        let mut clipboard = arboard::Clipboard::new().map_err(io_error_from_native)?;
+        clipboard.set_text(text).map_err(io_error_from_native)?;
         self.native = Some(clipboard);
         Ok(())
     }
@@ -91,20 +88,29 @@ pub(super) struct TextWriteProbe {
 }
 
 pub(super) fn probe_text_write(session: SessionKind) -> TextWriteProbe {
+    probe_text_write_with(session, command_available, native_clipboard_available)
+}
+
+pub(super) fn probe_text_write_with(
+    session: SessionKind,
+    host_command_available: impl Fn(&str) -> bool,
+    native_available: impl Fn() -> bool,
+) -> TextWriteProbe {
     match session {
         SessionKind::Remote => TextWriteProbe {
             status: "osc 52",
+            // Remote has no host clipboard; OSC 52 is the intended path.
             healthy: true,
             detail: "Remote session detected. Text copy uses OSC 52 so the client terminal owns the clipboard.".into(),
         },
         SessionKind::Wsl => {
-            if command_available("clip.exe") {
+            if host_command_available("clip.exe") {
                 TextWriteProbe {
                     status: "windows host",
                     healthy: true,
                     detail: "WSL session. Text copy uses clip.exe on the Windows host, then native API, then OSC 52.".into(),
                 }
-            } else if native_clipboard_available() {
+            } else if native_available() {
                 TextWriteProbe {
                     status: "native",
                     healthy: true,
@@ -113,13 +119,13 @@ pub(super) fn probe_text_write(session: SessionKind) -> TextWriteProbe {
             } else {
                 TextWriteProbe {
                     status: "osc 52 fallback",
-                    healthy: true,
-                    detail: "WSL session without clip.exe or a native clipboard. Text copy falls back to OSC 52.".into(),
+                    healthy: false,
+                    detail: "WSL session without clip.exe or a native clipboard. Text copy falls back to unconfirmed OSC 52.".into(),
                 }
             }
         }
         SessionKind::Local => {
-            if native_clipboard_available() {
+            if native_available() {
                 TextWriteProbe {
                     status: "native",
                     healthy: true,
@@ -128,8 +134,8 @@ pub(super) fn probe_text_write(session: SessionKind) -> TextWriteProbe {
             } else {
                 TextWriteProbe {
                     status: "osc 52 fallback",
-                    healthy: true,
-                    detail: "Native clipboard unavailable. Text copy falls back to OSC 52.".into(),
+                    healthy: false,
+                    detail: "Native clipboard unavailable. Text copy falls back to unconfirmed OSC 52.".into(),
                 }
             }
         }
@@ -153,38 +159,6 @@ fn utf16_le_bom_bytes(text: &str) -> Vec<u8> {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     bytes
-}
-
-fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) -> io::Result<()> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| io::Error::new(error.kind(), format!("spawn {program}: {error}")))?;
-
-    let write_result = (|| {
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, format!("{program} stdin closed"))
-        })?;
-        stdin.write_all(bytes)?;
-        stdin.flush()?;
-        Ok(())
-    })();
-
-    if let Err(error) = write_result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
-
-    let status = child.wait()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("{program} exited with {status}")))
-    }
 }
 
 fn fallback_to_terminal(
@@ -211,23 +185,8 @@ fn native_clipboard_available() -> bool {
     arboard::Clipboard::new().is_ok()
 }
 
-pub(super) fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--help")
-        .status()
-        .map(|status| status.success() || status.code().is_some())
-        .unwrap_or_else(|_| {
-            // Some Windows tools reject --help but still spawn.
-            Command::new(command)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .is_ok()
-        })
+fn io_error_from_native(error: arboard::Error) -> io::Error {
+    io::Error::other(error.to_string())
 }
 
 #[cfg(test)]
