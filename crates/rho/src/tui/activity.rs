@@ -104,7 +104,7 @@ pub(super) struct LoadingSpinner {
 }
 
 impl LoadingSpinner {
-    const FRAMES: [&'static str; 6] = ["◜", "◠", "◝", "◞", "◡", "◟"];
+    const FRAMES: [&'static str; 8] = ["⠙", "⠋", "⠇", "⡆", "⣄", "⣠", "⢰", "⠸"];
     pub(super) const FRAME_INTERVAL: Duration = Duration::from_millis(95);
 
     pub(super) fn start(&mut self) {

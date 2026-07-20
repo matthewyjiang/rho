@@ -13,7 +13,7 @@ fn loading_spinner_advances_and_wraps_frames() {
     let spinner = LoadingSpinner {
         started_at: Some(started_at),
     };
-    let frames = ["◜", "◠", "◝", "◞", "◡", "◟", "◜"];
+    let frames = ["⠙", "⠋", "⠇", "⡆", "⣄", "⣠", "⢰", "⠸", "⠙"];
 
     for (step, expected) in frames.into_iter().enumerate() {
         assert_eq!(
@@ -43,7 +43,7 @@ fn loading_spinner_line_separates_frame_from_text() {
             40,
             ActivityStatus::Parent(ActivityPhase::WaitingForProvider),
         )),
-        "◜ waiting for provider"
+        "⠙ waiting for provider"
     );
 }
 
@@ -57,11 +57,11 @@ fn activity_line_combines_parent_and_subagent_work() {
             40,
             ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
         )),
-        "◜ thinking  ·  2 agents"
+        "⠙ thinking  ·  2 agents"
     );
     assert_eq!(
         line_text(&spinner.line(Instant::now(), 40, ActivityStatus::Subagents(2))),
-        "◜ 2 agents working"
+        "⠙ 2 agents working"
     );
 }
 
@@ -74,7 +74,7 @@ fn spinner_line_compacts_to_available_width() {
         ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
     ));
 
-    assert_eq!(rendered, "◜");
+    assert_eq!(rendered, "⠙");
     assert_eq!(
         activity_width(
             1,
@@ -87,6 +87,6 @@ fn spinner_line_compacts_to_available_width() {
             40,
             ActivityStatus::ParentWithSubagents(ActivityPhase::Thinking, 2),
         ),
-        display_width("◜ thinking  ·  2 agents")
+        display_width("⠙ thinking  ·  2 agents")
     );
 }
