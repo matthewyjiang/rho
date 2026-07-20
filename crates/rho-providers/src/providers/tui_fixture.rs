@@ -21,6 +21,7 @@ const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
+const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
 const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -189,6 +190,23 @@ async fn fixture_stream(
             )
         }
         "fixture background agent" if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() => {
+            events
+                .send(ModelEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some(BACKGROUND_AGENT_CALL_ID.into()),
+                    name: Some("agent".into()),
+                    arguments: r#"{"agent_id":"wor"#.into(),
+                })
+                .await?;
+            fixture_sleep(&request.cancellation, Duration::from_millis(250)).await?;
+            events
+                .send(ModelEvent::ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments: r#"ker","prompt":"fixture stream","background":true}"#.into(),
+                })
+                .await?;
             completed_tool_call(
                 BACKGROUND_AGENT_CALL_ID,
                 "agent",
@@ -197,6 +215,13 @@ async fn fixture_stream(
                     "prompt": "fixture stream",
                     "background": true,
                 }),
+            )
+        }
+        "fixture agents list" if tool_result(&request, AGENTS_LIST_CALL_ID).is_none() => {
+            completed_tool_call(
+                AGENTS_LIST_CALL_ID,
+                "agents",
+                serde_json::json!({"action": "list"}),
             )
         }
         "fixture steering" => {
@@ -304,6 +329,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         // turn so completion arrives through automatic delivery.
         let receipt = result.content.lines().next().unwrap_or_default();
         return completed(format!("background agent dispatched: {receipt}"));
+    }
+    if tool_result(request, AGENTS_LIST_CALL_ID).is_some() {
+        return completed("agents list complete");
     }
     let prompt = last_user_text(request).unwrap_or_default();
     if prompt.starts_with("[agent notification]") {
