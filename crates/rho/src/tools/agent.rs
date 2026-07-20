@@ -355,10 +355,17 @@ impl Tool for AgentTool {
                 "description": "Run concurrently and return an id immediately"
             });
         }
+        // Behavioral guidance must match registered capabilities: describe
+        // background delivery only when background runs can actually start.
+        let background_guidance = if self.background_subagents.is_enabled() {
+            " A background run's completion is delivered automatically as a new turn: after starting one, end your turn once no other work remains - never sleep or poll for the result."
+        } else {
+            ""
+        };
         ToolSpec {
             name: "agent".into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent. Background results start a new turn automatically. To wait for a background result, end the current turn. Do not call sleep or poll when no foreground work remains. Use `rho attach <id>` to watch the returned delegated run ID.\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance}\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -408,6 +415,8 @@ impl Tool for AgentTool {
             })?;
 
         if args.background {
+            // Registration is the start receipt; instant failures still reach
+            // the parent through automatic completion delivery.
             return Ok(ToolResult {
                 id,
                 ok: true,
@@ -499,7 +508,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "agents".into(),
-            description: "Check background-agent progress or stop a run. Completed results are delivered automatically. To wait for a result, end the current turn. Do not call sleep or poll when no foreground work remains.".into(),
+            description: "Check on or stop a delegated background run. Completions are delivered automatically as a new turn, so waiting for a result means ending your turn, not calling status. Use status only to check on a long-running run while doing other foreground work.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

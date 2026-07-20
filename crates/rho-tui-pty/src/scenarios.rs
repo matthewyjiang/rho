@@ -32,6 +32,7 @@ pub enum ScenarioId {
     OpenAgentsPicker,
     LoginProviderGroups,
     GoalBlockedAndResumed,
+    BackgroundAgentAutoDelivery,
 }
 
 impl ScenarioId {
@@ -55,6 +56,7 @@ impl ScenarioId {
             Self::OpenAgentsPicker => "open_agents_picker",
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
+            Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
         }
     }
 
@@ -78,6 +80,7 @@ impl ScenarioId {
             "open_agents_picker" => Some(Self::OpenAgentsPicker),
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
+            "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
             _ => None,
         }
     }
@@ -716,6 +719,39 @@ const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("spawn_background_agent"),
+    Step::SubmitText("fixture background agent"),
+    // The fixture echoes the spawn receipt's first line, proving the tool
+    // resolved with a start line and the parent turn ended.
+    Step::WaitText {
+        text: "background agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "(worker) started in background",
+        timeout: STREAM,
+    },
+    Step::Phase("automatic_completion_delivery"),
+    // The fixture validates the notification's real payload (agent identity,
+    // terminal state, delegated result) and counts notification turns, so
+    // this asserts a well-formed, exactly-once delivery.
+    Step::WaitText {
+        text: "background agent completion received with delegated result (delivery 1)",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 /// All registered scenarios.
 pub fn all_scenarios() -> &'static [Scenario] {
     &[
@@ -846,6 +882,14 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Pause a goal for user action, inspect it, then resume it",
             size: DEFAULT_SIZE,
             steps: GOAL_BLOCKED_AND_RESUMED_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "background_agent_auto_delivery",
+            description:
+                "Spawn a background agent, end the turn, and receive its completion automatically",
+            size: DEFAULT_SIZE,
+            steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
             smoke: false,
         },
     ]

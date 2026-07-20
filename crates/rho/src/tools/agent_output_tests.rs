@@ -33,8 +33,6 @@ fn formats_agent_start_output() {
     assert_eq!(
         format_background_start("abc123", "explorer"),
         "agent abc123 (explorer) started in background\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
     assert_eq!(
@@ -58,8 +56,6 @@ fn formats_status_with_runtime_details() {
         "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
 }

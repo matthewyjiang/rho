@@ -12,12 +12,7 @@ pub(super) enum SnapshotFormat {
 }
 
 pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
-    format!(
-        "agent {id} ({agent_id}) started in background\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
-         attach: rho attach {id}"
-    )
+    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
 pub(super) fn format_running(id: &str) -> String {
@@ -66,16 +61,8 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         }
     }
     if matches!(format, SnapshotFormat::Status) {
-        if snapshot.background {
-            if snapshot.done {
-                lines.push("completion result uses automatic delivery".into());
-            } else {
-                lines.push("completion will be delivered automatically".into());
-                lines.push(
-                    "if this is the only remaining work, end your turn now - do not call sleep or poll"
-                        .into(),
-                );
-            }
+        if snapshot.background && snapshot.done {
+            lines.push("completion result uses automatic delivery".into());
         }
         lines.push(format!("attach: rho attach {}", snapshot.id));
     }
