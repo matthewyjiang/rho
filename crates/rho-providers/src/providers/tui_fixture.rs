@@ -252,6 +252,14 @@ async fn fixture_stream(
             }
             completed(response)
         }
+        "fixture scroll checkpoint" => {
+            let response = (1..=100)
+                .map(|index| format!("scroll checkpoint event {index:03}\n"))
+                .collect::<String>();
+            events.send(ModelEvent::OutputDelta(response)).await?;
+            fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
+            completed("scroll checkpoint unexpectedly completed")
+        }
         "fixture stream failure" => {
             events
                 .send(ModelEvent::OutputDelta(
