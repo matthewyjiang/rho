@@ -163,12 +163,33 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
 
 #[test]
 fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
+    let mut provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "kimi-code",
+        "k3".into(),
+        OpenAiCompatibleDialect::KimiCode,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://example.com".into(),
+    );
+    provider.kimi_reasoning = Some(reasoning::KimiReasoningProfile::new(
+        ReasoningCapabilities::Unknown,
+    ));
+    let messages = [Message::user_text("hello")];
+    let request = provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Medium,
+                prompt_cache_key: None,
+            },
+            /*stream*/ false,
+        )
+        .unwrap();
+
     assert_eq!(
-        request_body(
-            OpenAiCompatibleDialect::KimiCode,
-            "k3",
-            crate::reasoning::ReasoningLevel::Medium,
-        ),
+        serde_json::to_value(request).unwrap(),
         json!({
             "model": "k3",
             "messages": [{

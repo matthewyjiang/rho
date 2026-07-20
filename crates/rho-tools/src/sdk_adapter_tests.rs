@@ -27,6 +27,12 @@ fn workspace(dir: &TempDir) -> Workspace {
 }
 
 #[test]
+fn constructs_one_selected_coding_adapter() {
+    let tool = coding_tool(CodingToolKind::ReadFile, CodingToolOptions::new());
+    assert_eq!(tool.spec().name, "read_file");
+}
+
+#[test]
 fn coding_tools_register_without_granting_capabilities() {
     let mut registry = ToolRegistry::new();
     register_coding_tools(&mut registry, CodingToolOptions::default()).unwrap();

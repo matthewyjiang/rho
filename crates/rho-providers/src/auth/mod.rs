@@ -3,6 +3,7 @@ pub mod github_copilot_device;
 pub mod github_copilot_token;
 pub mod kimi_oauth;
 pub mod kimi_token;
+pub mod login_dispatch;
 pub mod provider_credentials;
 pub mod xai_oauth;
 pub mod xai_token;

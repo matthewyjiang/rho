@@ -8,14 +8,17 @@ use std::{
 use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
 use {
-    crate::agent::PromptPolicy,
+    crate::agent::{PromptPolicy, ToolCapability},
     crate::cli::Command,
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
     crate::prompt,
     crate::subagent::{self, RunState, RunStatus},
-    crate::tools::sdk_registry::{AppToolSet, ToolSetOptions},
+    crate::tools::{
+        agent::BackgroundSubagents,
+        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
+    },
     crate::tui::AttachmentWriter,
     rho_providers::credentials::OsCredentialStore,
     rho_providers::providers::build_automation_provider,
@@ -156,24 +159,27 @@ pub(crate) async fn run_session(
         Arc::new(OsCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let delegation_available = startup.config.enable_subagents && !startup.no_subagents;
-    let launch_delegation_enabled = delegation_available && startup.agent.tools().contains("agent");
-    let delegation_enabled = launch_delegation_enabled
-        || (delegation_available && startup.agent.tools().contains("agents"));
-    let mut tool_set = if startup.no_tools {
+    let mut capabilities = startup.agent.capabilities().clone();
+    if startup.no_subagents {
+        capabilities.remove(&ToolCapability::Agent);
+        capabilities.remove(&ToolCapability::Agents);
+    }
+    let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
+    let delegation_enabled =
+        launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
+    let tool_set = if startup.no_tools {
         AppToolSet::disabled()
     } else {
-        let delegation_cwd = delegation_enabled.then(|| startup.cwd.clone());
-        AppToolSet::new(
-            startup.config,
-            startup.diagnostics.clone(),
-            ToolSetOptions::default()
-                .delegation_tools(delegation_cwd, startup.agent.tools())
-                .subagent_config_path(startup.config_path.clone()),
-        )
+        let mut options = ToolSetOptions::new(capabilities);
+        if delegation_enabled {
+            options = options.delegation(DelegationConfig::new(
+                startup.cwd.clone(),
+                startup.config_path.clone(),
+                BackgroundSubagents::Disabled,
+            ));
+        }
+        AppToolSet::new(startup.config, startup.diagnostics.clone(), options)
     };
-    let allowed = startup.agent.tools().iter().cloned().collect::<Vec<_>>();
-    tool_set.retain_named(&allowed);
     let tool_specs = tool_set.specs();
     let system_prompt = if startup.no_system_prompt {
         startup.diagnostics.update_prompt_sources(Vec::new());

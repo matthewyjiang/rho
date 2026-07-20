@@ -5,8 +5,8 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::{
     catalog::AgentCatalogError,
     definition::{
-        AgentDefinition, AgentId, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
-        KNOWN_TOOLS,
+        AgentDefinition, AgentId, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability,
+        ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
 };
 
@@ -156,20 +156,23 @@ fn parse_model_policy(
     })
 }
 
-fn validate_tools(path: &Path, names: Vec<String>) -> Result<Vec<String>, AgentCatalogError> {
-    let mut unique = BTreeSet::new();
+fn validate_tools(path: &Path, names: Vec<String>) -> Result<ToolCapabilitySet, AgentCatalogError> {
+    let mut capabilities = ToolCapabilitySet::new();
     for name in names {
-        if !KNOWN_TOOLS.contains(&name.as_str()) {
+        let capability = ToolCapability::parse(name.clone());
+        if matches!(capability, ToolCapability::Extension(_)) {
+            let known = BUILTIN_TOOL_CAPABILITIES
+                .iter()
+                .map(ToolCapability::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "tools",
-                format!(
-                    "unknown tool '{name}'; known tools: {}",
-                    KNOWN_TOOLS.join(", ")
-                ),
+                format!("unknown tool '{name}'; known tools: {known}"),
             ));
         }
-        if !unique.insert(name.clone()) {
+        if !capabilities.insert(capability) {
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "tools",
@@ -177,7 +180,7 @@ fn validate_tools(path: &Path, names: Vec<String>) -> Result<Vec<String>, AgentC
             ));
         }
     }
-    Ok(unique.into_iter().collect())
+    Ok(capabilities)
 }
 
 fn split_frontmatter<'a>(

@@ -1,0 +1,154 @@
+use std::sync::atomic::AtomicBool;
+
+use ratatui::DefaultTerminal;
+
+use super::{
+    ActivityPhase, App, CommandId, CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
+    LoadingSpinner, RunningInputMode, StreamControl, ViewModelEvent,
+};
+
+impl App {
+    pub(super) async fn execute_command(
+        &mut self,
+        invocation: CommandInvocation,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        match invocation.id {
+            CommandId::Exit => self.execute_exit_command(),
+            CommandId::New => self.execute_new_command(terminal, agent),
+            CommandId::Model => {
+                self.execute_model_command(invocation, terminal, agent)
+                    .await
+            }
+            CommandId::Login => {
+                self.execute_login_command(invocation, terminal, agent)
+                    .await
+            }
+            CommandId::Logout => self.execute_logout_command(invocation, agent).await,
+            CommandId::Resume => {
+                self.execute_resume_command(invocation, terminal, agent)
+                    .await
+            }
+            CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Info => self.execute_info_command(),
+            CommandId::Compact => self.execute_compact_command(terminal, agent).await,
+            CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
+            CommandId::Skills => self.execute_skills_command(),
+            CommandId::Agents => self.execute_agents_command(),
+            CommandId::Diff => self.execute_diff_command(),
+            CommandId::Doctor => self.execute_doctor_command(),
+            CommandId::Export => self.execute_export_command(&invocation),
+            CommandId::Limits => self.execute_limits_command(terminal),
+        }
+    }
+
+    async fn execute_compact_command(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        self.steering_prompts.clear();
+        self.pending_input_changed();
+        self.status = "compacting context".into();
+        self.running = true;
+        self.activity_phase = ActivityPhase::Compacting;
+        self.loading_spinner.start();
+        terminal.draw(|frame| self.draw(frame))?;
+
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
+        let mut compact_future = Box::pin(agent.compact());
+        let compacted = loop {
+            tokio::select! {
+                result = &mut compact_future => break result,
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                    match self.handle_running_terminal_events(
+                        terminal_event?,
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Compacting,
+                    )? {
+                        StreamControl::Interrupt => {
+                            break Err(anyhow::anyhow!("compaction interrupted"));
+                        }
+                        StreamControl::Continue | StreamControl::Resize => {}
+                    }
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                    terminal.draw(|frame| self.draw(frame))?;
+                }
+            }
+        };
+        drop(compact_future);
+        if let Some(context) = agent.take_context_usage() {
+            self.record_agent_event(ViewModelEvent::ContextUsage(context));
+        }
+        self.running = false;
+        self.loading_spinner.stop();
+
+        match compacted {
+            Ok(true) => {
+                self.insert_entry(&Entry::Notice("compacted conversation context".into()));
+                self.status = "context compacted".into();
+            }
+            Ok(false) => {
+                self.insert_entry(&Entry::Notice(
+                    "not enough conversation history to compact, or the model context window is unknown"
+                        .into(),
+                ));
+                self.status = "context not compacted".into();
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "failed to compact conversation context: {err}"
+                )));
+                self.status = "context compaction failed".into();
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn execute_exit_command(&mut self) -> anyhow::Result<()> {
+        self.insert_entry(&Entry::Notice("exiting rho".into()));
+        self.should_quit = true;
+        self.status = "exiting".into();
+        Ok(())
+    }
+
+    fn execute_new_command(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        agent.reset()?;
+        self.info.session.session_id = None;
+        self.composer = ComposerMode::Input;
+        self.input.clear();
+        self.paste_segments.clear();
+        self.input_cursor = 0;
+        self.command_palette_dismissed = false;
+        self.clamp_command_selection();
+        self.queued_prompts.clear();
+        self.goal = None;
+        self.steering_prompts.clear();
+        self.clear_accepted_steering();
+        self.reset_streams();
+        self.running = false;
+        self.active_tool_call = false;
+        self.reset_usage();
+        self.current_context = None;
+        self.pending_session_title = None;
+        self.current_turn_start = None;
+        self.transcript.clear();
+        self.history_lines.invalidate_from(0);
+        self.last_inserted_was_tool = false;
+        self.scroll_history_to_bottom();
+        self.clamp_history_scroll_for_terminal(terminal)?;
+        self.status = "new session".into();
+        Ok(())
+    }
+}

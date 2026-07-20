@@ -2,7 +2,9 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -271,7 +273,8 @@ pub fn notification_prompts(notification: &SubagentNotification) -> (String, Str
     (model, display)
 }
 
-pub(super) enum BackgroundSubagents {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BackgroundSubagents {
     Disabled,
     Enabled,
 }
@@ -584,6 +587,98 @@ fn required_id(args: &AgentsArgs) -> Result<&str, ToolError> {
         .as_deref()
         .filter(|id| !id.is_empty())
         .ok_or_else(|| ToolError::Message("this action requires a delegated run id".into()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DelegationToolSelection {
+    Launch,
+    Manage,
+    LaunchAndManage,
+}
+
+impl DelegationToolSelection {
+    pub(super) fn from_capabilities(
+        capabilities: &crate::agent::AgentCapabilities,
+    ) -> Option<Self> {
+        use crate::agent::ToolCapability;
+
+        match (
+            capabilities.contains(&ToolCapability::Agent),
+            capabilities.contains(&ToolCapability::Agents),
+        ) {
+            (true, true) => Some(Self::LaunchAndManage),
+            (true, false) => Some(Self::Launch),
+            (false, true) => Some(Self::Manage),
+            (false, false) => None,
+        }
+    }
+
+    fn launches(self) -> bool {
+        matches!(self, Self::Launch | Self::LaunchAndManage)
+    }
+
+    fn manages(self) -> bool {
+        matches!(self, Self::Manage | Self::LaunchAndManage)
+    }
+}
+
+pub(super) struct DelegationBundleOptions {
+    pub cwd: PathBuf,
+    pub tools: DelegationToolSelection,
+    pub config_path: PathBuf,
+    pub background: BackgroundSubagents,
+}
+
+pub(super) struct SdkDelegationBundle {
+    tools: Vec<Arc<dyn rho_sdk::tool::Tool>>,
+    manager: SubagentManager,
+}
+
+impl SdkDelegationBundle {
+    pub(super) fn manager_handle(&self) -> SubagentManager {
+        self.manager.clone()
+    }
+}
+
+impl super::sdk_registry::ToolBundle for SdkDelegationBundle {
+    fn tools(&self) -> &[Arc<dyn rho_sdk::tool::Tool>] {
+        &self.tools
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(self.manager.shutdown())
+    }
+}
+
+pub(super) fn sdk_bundle(
+    config: &crate::config::Config,
+    options: DelegationBundleOptions,
+) -> SdkDelegationBundle {
+    let manager = SubagentManager::new(AgentExecutor::new(
+        config.clone(),
+        options.config_path,
+        options.cwd.clone(),
+    ));
+    let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
+    if options.tools.launches() {
+        tools.push(
+            rho_tools::legacy_sdk_adapter::agent(
+                AgentTool::new(manager.clone(), &options.cwd, options.background),
+                config.max_output_bytes,
+            )
+            .expect("agent is a supported legacy tool"),
+        );
+    }
+    if options.tools.manages() {
+        tools.push(
+            rho_tools::legacy_sdk_adapter::agents(
+                AgentsTool::new(manager.clone()),
+                config.max_output_bytes,
+            )
+            .expect("agents is a supported legacy tool"),
+        );
+    }
+    SdkDelegationBundle { tools, manager }
 }
 
 #[cfg(test)]

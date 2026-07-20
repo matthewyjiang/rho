@@ -14,12 +14,15 @@ pub(super) struct FetchedReasoningResolution {
     pub(super) rejected: Option<ReasoningLevel>,
 }
 
-impl super::TuiInfo {
+impl super::TuiBootstrap {
     pub(super) fn set_reasoning(&mut self, level: ReasoningLevel, source: ReasoningRequestSource) {
-        self.reasoning = level;
-        self.reasoning_source = source;
-        self.diagnostics
-            .update_identity(&self.provider, &self.model, level);
+        self.runtime.reasoning = level;
+        self.runtime.reasoning_source = source;
+        self.services.diagnostics.update_identity(
+            &self.runtime.provider,
+            &self.runtime.model,
+            level,
+        );
     }
 }
 
@@ -89,13 +92,19 @@ pub(super) fn resolve_fetched_reasoning(
 
 impl App {
     pub(super) fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        let capabilities =
-            models_dev::current_reasoning_capabilities(&self.info.provider, &self.info.model);
+        let capabilities = models_dev::current_reasoning_capabilities(
+            &self.info.runtime.provider,
+            &self.info.runtime.model,
+        );
         if capabilities == ReasoningCapabilities::NotConfigurable {
             return Ok(());
         }
-        let reasoning = capabilities.next_level(self.info.reasoning);
-        let provider = match build_sdk_provider(&self.info.provider, &self.info.model, reasoning) {
+        let reasoning = capabilities.next_level(self.info.runtime.reasoning);
+        let provider = match build_sdk_provider(
+            &self.info.runtime.provider,
+            &self.info.runtime.model,
+            reasoning,
+        ) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -108,15 +117,20 @@ impl App {
         agent.replace_provider(provider, reasoning)?;
         self.info
             .set_reasoning(reasoning, ReasoningRequestSource::Explicit);
-        let save_result = self.info.config_repository.update(|config| {
+        let save_result = self.info.services.config_repository.update(|config| {
             config.reasoning = reasoning;
         });
         if matches!(
             &self.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
-            let config = self.info.config_repository.load().unwrap_or_default();
-            self.info.show_reasoning_output = config.show_reasoning_output;
+            let config = self
+                .info
+                .services
+                .config_repository
+                .load()
+                .unwrap_or_default();
+            self.info.runtime.show_reasoning_output = config.show_reasoning_output;
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {

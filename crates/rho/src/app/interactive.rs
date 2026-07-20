@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     herdr::HerdrReporter,
     session::Session,
-    tui::{self, TuiInfo},
+    tui::{self, ApplicationServices, RuntimeModelView, SessionBootstrap, TuiBootstrap},
 };
 
 use super::{
@@ -89,31 +89,37 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     .await?;
     let result = tui::run(
         &mut runtime,
-        TuiInfo {
-            cwd,
-            provider: config.provider,
-            model: config.model,
-            reasoning: config.reasoning,
-            reasoning_source,
-            permission_mode: config.permission_mode,
-            show_reasoning_output: config.show_reasoning_output,
-            auth: config.auth,
-            title_provider: config.title_provider,
-            title_model: config.title_model,
-            title_auth: config.title_auth,
-            favorite_models: config.favorite_models,
-            max_tool_output_lines: config.max_tool_output_lines,
-            keybindings: config.keybindings,
-            prompt_templates,
-            session_id,
-            recovered_messages,
-            open_resume_picker,
-            config_repository,
-            auth_unavailable: missing_auth_error,
-            update_notice: None,
-            pending_update_notice,
-            diagnostics,
-            herdr,
+        TuiBootstrap {
+            runtime: RuntimeModelView {
+                cwd,
+                provider: config.provider,
+                model: config.model,
+                reasoning: config.reasoning,
+                reasoning_source,
+                permission_mode: config.permission_mode,
+                show_reasoning_output: config.show_reasoning_output,
+                auth: config.auth,
+                title_provider: config.title_provider,
+                title_model: config.title_model,
+                title_auth: config.title_auth,
+                favorite_models: config.favorite_models,
+                max_tool_output_lines: config.max_tool_output_lines,
+                keybindings: config.keybindings,
+                prompt_templates,
+            },
+            session: SessionBootstrap {
+                session_id,
+                recovered_messages,
+                open_resume_picker,
+            },
+            services: ApplicationServices {
+                config_repository,
+                auth_unavailable: missing_auth_error,
+                update_notice: None,
+                pending_update_notice,
+                diagnostics,
+                herdr,
+            },
         },
     )
     .await;

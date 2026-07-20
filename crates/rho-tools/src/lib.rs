@@ -18,6 +18,7 @@ pub mod bash;
 pub mod diff;
 pub mod edit_file;
 pub mod edit_file_args;
+pub mod legacy_sdk_adapter;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
@@ -30,7 +31,7 @@ pub mod sdk_support;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;
-pub use sdk_adapter::{coding_tools, CodingToolOptions};
+pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 pub use sdk_shell::shell_tool;
 pub use tool::{
     compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolDisplayStyle, ToolError,

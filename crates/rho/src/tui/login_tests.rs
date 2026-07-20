@@ -14,14 +14,14 @@ use crate::tui::tests::test_app;
 #[test]
 fn login_state_save_persists_the_effective_reasoning_level() {
     let mut app = test_app();
-    app.info.provider = "kimi-code".into();
-    app.info.model = "login-k3-test".into();
-    app.info.auth = "api-key".into();
-    app.info.reasoning = ReasoningLevel::High;
+    app.info.runtime.provider = "kimi-code".into();
+    app.info.runtime.model = "login-k3-test".into();
+    app.info.runtime.auth = "api-key".into();
+    app.info.runtime.reasoning = ReasoningLevel::High;
 
     app.save_current_config().unwrap();
 
-    let saved = app.info.config_repository.load().unwrap();
+    let saved = app.info.services.config_repository.load().unwrap();
     assert_eq!(saved.provider, "kimi-code");
     assert_eq!(saved.model, "login-k3-test");
     assert_eq!(saved.auth, "api-key");
@@ -52,14 +52,14 @@ fn refreshed_login_capabilities_reject_explicit_and_normalize_persisted_reasonin
         )
         .unwrap();
         let mut app = test_app();
-        app.info.reasoning = ReasoningLevel::Medium;
-        app.info.reasoning_source = ReasoningRequestSource::Explicit;
+        app.info.runtime.reasoning = ReasoningLevel::Medium;
+        app.info.runtime.reasoning_source = ReasoningRequestSource::Explicit;
 
         assert!(app
             .resolve_reasoning_after_login("kimi-code", "login-k3-test")
             .is_none());
 
-        app.info.reasoning_source = ReasoningRequestSource::PersistedOrDefault;
+        app.info.runtime.reasoning_source = ReasoningRequestSource::PersistedOrDefault;
         let resolved = app
             .resolve_reasoning_after_login("kimi-code", "login-k3-test")
             .unwrap();
@@ -73,8 +73,8 @@ fn first_login_preserves_explicit_reasoning_when_capabilities_are_unknown() {
     let cache = tempfile::tempdir().unwrap();
     with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
         let mut app = test_app();
-        app.info.reasoning = ReasoningLevel::Off;
-        app.info.reasoning_source = ReasoningRequestSource::Explicit;
+        app.info.runtime.reasoning = ReasoningLevel::Off;
+        app.info.runtime.reasoning_source = ReasoningRequestSource::Explicit;
 
         let resolved = app
             .resolve_reasoning_after_login("kimi-code", "unknown-login-model")

@@ -6,6 +6,15 @@ use {
     rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
+pub(super) fn sdk_bundle(
+    diagnostics: RuntimeDiagnostics,
+    max_output_bytes: usize,
+) -> super::sdk_registry::StaticToolBundle {
+    let tool = rho_tools::legacy_sdk_adapter::rho(Rho::new(diagnostics), max_output_bytes)
+        .expect("rho is a supported legacy tool");
+    super::sdk_registry::StaticToolBundle::new(vec![tool])
+}
+
 pub struct Rho {
     diagnostics: RuntimeDiagnostics,
 }

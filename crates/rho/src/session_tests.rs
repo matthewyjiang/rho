@@ -243,6 +243,19 @@ fn errors_when_uuid_prefix_is_ambiguous() {
 }
 
 #[test]
+fn open_and_export_share_prefix_resolution_errors() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
+    write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
+
+    let open_error = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
+    let export_error = Session::export_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
+
+    assert_eq!(open_error.to_string(), export_error.to_string());
+}
+
+#[test]
 fn errors_when_uuid_prefix_is_missing() {
     let root = temp_session_root();
     let cwd = temp_cwd();

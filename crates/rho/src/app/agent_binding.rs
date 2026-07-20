@@ -1,7 +1,10 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
-    agent::{AgentDefinition, AgentFingerprint, AgentId, ModelPolicy, PromptPolicy, ToolPolicy},
+    agent::{
+        AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, ModelPolicy, PromptPolicy,
+        ToolCapability, ToolPolicy,
+    },
     config::Config,
 };
 
@@ -15,7 +18,7 @@ pub(crate) enum AgentRole {
 #[derive(Clone, Debug)]
 pub(crate) struct AgentInvocation {
     pub(crate) role: AgentRole,
-    pub(crate) available_tools: BTreeSet<String>,
+    pub(crate) available_tools: AgentCapabilities,
 }
 
 #[derive(Clone, Debug)]
@@ -23,7 +26,7 @@ pub(crate) struct BoundAgent {
     definition: Arc<AgentDefinition>,
     fingerprint: AgentFingerprint,
     config: Config,
-    tools: BTreeSet<String>,
+    capabilities: AgentCapabilities,
 }
 
 impl BoundAgent {
@@ -39,8 +42,8 @@ impl BoundAgent {
         &self.config
     }
 
-    pub(crate) fn tools(&self) -> &BTreeSet<String> {
-        &self.tools
+    pub(crate) fn capabilities(&self) -> &AgentCapabilities {
+        &self.capabilities
     }
 
     pub(crate) fn prompt(&self) -> &PromptPolicy {
@@ -58,37 +61,37 @@ impl AgentBinder {
     ) -> anyhow::Result<BoundAgent> {
         let mut capabilities = invocation.available_tools;
         if invocation.role == AgentRole::Delegated {
-            capabilities.remove("agent");
-            capabilities.remove("agents");
-            capabilities.remove("questionnaire");
+            capabilities.remove(&ToolCapability::Agent);
+            capabilities.remove(&ToolCapability::Agents);
+            capabilities.remove(&ToolCapability::Questionnaire);
         }
 
-        let tools = match &definition.tools {
+        let capabilities = match &definition.tools {
             ToolPolicy::All => {
-                capabilities.remove("shell");
+                capabilities.remove(&ToolCapability::Shell);
                 capabilities
             }
             ToolPolicy::Allow(requested) => {
-                let mut resolved = BTreeSet::new();
+                let mut resolved = crate::agent::ToolCapabilitySet::new();
                 let mut unavailable = Vec::new();
                 for tool in requested {
-                    if tool == "shell" {
-                        let shell = if capabilities.contains("bash") {
-                            Some("bash")
-                        } else if capabilities.contains("powershell") {
-                            Some("powershell")
+                    if tool == &ToolCapability::Shell {
+                        let shell = if capabilities.contains(&ToolCapability::Bash) {
+                            Some(ToolCapability::Bash)
+                        } else if capabilities.contains(&ToolCapability::Powershell) {
+                            Some(ToolCapability::Powershell)
                         } else {
                             None
                         };
                         if let Some(shell) = shell {
-                            resolved.insert(shell.to_string());
+                            resolved.insert(shell);
                         } else {
-                            unavailable.push(tool.clone());
+                            unavailable.push(tool.to_string());
                         }
                     } else if capabilities.contains(tool) {
                         resolved.insert(tool.clone());
                     } else {
-                        unavailable.push(tool.clone());
+                        unavailable.push(tool.to_string());
                     }
                 }
                 if !unavailable.is_empty() {
@@ -99,7 +102,7 @@ impl AgentBinder {
                         unavailable.join(", ")
                     );
                 }
-                resolved
+                AgentCapabilities::new(resolved)
             }
         };
 
@@ -146,7 +149,7 @@ impl AgentBinder {
             definition,
             fingerprint,
             config,
-            tools,
+            capabilities,
         })
     }
 }

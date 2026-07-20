@@ -35,8 +35,8 @@ impl App {
         } else {
             format!(
                 "{} edit · {} manage",
-                self.info.keybindings.edit_pending_input,
-                self.info.keybindings.manage_pending_input
+                self.info.runtime.keybindings.edit_pending_input,
+                self.info.runtime.keybindings.manage_pending_input
             )
         };
         let mut lines = vec![pending_header_line(

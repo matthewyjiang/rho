@@ -4,49 +4,47 @@ use rho_sdk::{
     ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
-use super::sdk_support::{required_string, workspace};
+use super::{
+    legacy_sdk_adapter::LegacyToolProfile,
+    sdk_support::{required_string, workspace},
+};
 
-pub fn security_for(name: &str) -> ToolSecurity {
-    let capabilities = match name {
-        "process" => vec![CapabilityKind::Process],
-        "web_search" => vec![CapabilityKind::Network],
-        "skill" => vec![CapabilityKind::Skill],
+pub(crate) fn legacy_security_for(profile: LegacyToolProfile) -> ToolSecurity {
+    let capabilities = match profile {
+        LegacyToolProfile::Process => vec![CapabilityKind::Process],
+        LegacyToolProfile::WebSearch => vec![CapabilityKind::Network],
         _ => Vec::new(),
     };
     ToolSecurity::built_in(capabilities)
 }
 
-pub async fn authorize_builtin(
-    name: &str,
+pub(crate) async fn authorize_legacy(
+    profile: LegacyToolProfile,
     arguments: &serde_json::Value,
     context: &ToolContext,
     max_output_bytes: usize,
 ) -> Result<(), ToolError> {
-    let source = CapabilitySource::built_in_tool(name);
-    match name {
-        "process"
+    let source = CapabilitySource::built_in_tool(profile.name());
+    match profile {
+        LegacyToolProfile::Process
             if arguments.get("action").and_then(serde_json::Value::as_str) == Some("start") =>
         {
             let command = required_string(arguments, "command")?;
             authorize_process(
                 context,
-                ProcessInvocation::shell_from_path(shell_executable(), shell_arguments(), command),
+                process_invocation(command),
                 optional_timeout(arguments)?,
                 max_output_bytes,
                 source,
             )
             .await
         }
-        "web_search" => {
+        LegacyToolProfile::WebSearch => {
             authorize_request(
                 context,
                 CapabilityRequest::network(NetworkTarget::ToolManaged, source),
             )
             .await
-        }
-        "skill" => {
-            let name = required_string(arguments, "name")?;
-            authorize_request(context, CapabilityRequest::skill(name, None, source)).await
         }
         _ => Ok(()),
     }
@@ -113,25 +111,23 @@ fn optional_timeout(
 }
 
 #[cfg(unix)]
-fn shell_executable() -> &'static str {
-    "bash"
+fn process_invocation(command: &str) -> ProcessInvocation {
+    ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command.to_string())
 }
 
 #[cfg(windows)]
-fn shell_executable() -> &'static str {
-    "powershell.exe"
+fn process_invocation(command: &str) -> ProcessInvocation {
+    ProcessInvocation::shell_from_path(
+        "powershell.exe",
+        vec![
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+        ],
+        crate::powershell::wrapped_command(command),
+    )
 }
 
-#[cfg(unix)]
-fn shell_arguments() -> Vec<String> {
-    vec!["-lc".into()]
-}
-
-#[cfg(windows)]
-fn shell_arguments() -> Vec<String> {
-    vec![
-        "-NoProfile".into(),
-        "-NonInteractive".into(),
-        "-Command".into(),
-    ]
-}
+#[cfg(test)]
+#[path = "sdk_security_tests.rs"]
+mod tests;
