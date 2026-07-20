@@ -277,7 +277,8 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("malformed")).await.unwrap();
     let mut fragment_events = 0;
-    let mut retry_events = 0;
+    let mut legacy_retry_events = 0;
+    let mut stream_resets = 0;
     let mut terminal_failures = 0;
 
     while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
@@ -287,8 +288,12 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
         match event {
             RunEvent::ToolCallUpdated { .. } => fragment_events += 1,
             RunEvent::ProviderActivity { kind, .. } if kind == "invalid_response_retry" => {
-                retry_events += 1;
+                legacy_retry_events += 1;
             }
+            RunEvent::ProviderStreamReset {
+                reason: rho_sdk::ProviderStreamResetReason::InvalidResponse,
+                ..
+            } => stream_resets += 1,
             RunEvent::Failed { .. } => terminal_failures += 1,
             _ => {}
         }
@@ -296,7 +301,8 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     let error = run.outcome().await.unwrap_err();
     assert!(matches!(error, Error::Provider(_)));
     assert_eq!(fragment_events, EVENTS_PER_ATTEMPT * 2);
-    assert_eq!(retry_events, 1);
+    assert_eq!(legacy_retry_events, 1);
+    assert_eq!(stream_resets, 1);
     assert_eq!(terminal_failures, 1);
     assert_eq!(provider.recorded_requests().len(), 2);
     assert!(session.history().is_empty());

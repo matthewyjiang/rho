@@ -23,6 +23,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
+        reasoning_configurable: true,
         permission_mode: crate::permission::PermissionMode::Auto,
         billing: BillingInfo::Metered,
         model_metadata: Some(priced_metadata()),
@@ -43,6 +44,15 @@ fn statusline_rows_use_display_width_for_alignment() {
     let text = line_text(&line);
 
     assert_eq!(display_width(&text), 10);
+}
+
+#[test]
+fn statusline_omits_reasoning_for_non_configurable_provider_paths() {
+    let mut state = test_state(ModelUsage::default());
+    state.provider = "github-copilot".into();
+    state.reasoning_configurable = reasoning_is_configurable(&state.provider, &state.model);
+
+    assert_eq!(state.right_bottom(), "◇ Auto • (github-copilot) gpt-test");
 }
 
 #[test]
@@ -233,36 +243,10 @@ fn provider_reported_context_omits_estimate_marker() {
     assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
 }
 
-fn test_info(cwd: PathBuf) -> TuiInfo {
-    use crate::{
-        app::config_repository::ConfigRepository, herdr::HerdrReporter, keybindings::Keybindings,
-    };
-
-    TuiInfo {
-        cwd,
-        provider: "openai".into(),
-        model: "gpt-test".into(),
-        reasoning: ReasoningLevel::Low,
-        permission_mode: crate::permission::PermissionMode::Auto,
-        show_reasoning_output: true,
-        auth: "api-key".into(),
-        title_provider: None,
-        title_model: None,
-        title_auth: None,
-        favorite_models: Vec::new(),
-        max_tool_output_lines: 10,
-        keybindings: Keybindings::default(),
-        session_id: None,
-        recovered_messages: Vec::new(),
-        prompt_templates: Default::default(),
-        open_resume_picker: false,
-        config_repository: ConfigRepository::new(None),
-        auth_unavailable: None,
-        update_notice: None,
-        pending_update_notice: None,
-        diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
-        herdr: HerdrReporter::default(),
-    }
+fn test_info(cwd: PathBuf) -> RuntimeModelView {
+    let mut info = crate::tui::tests::test_bootstrap().runtime;
+    info.cwd = cwd;
+    info
 }
 
 #[test]

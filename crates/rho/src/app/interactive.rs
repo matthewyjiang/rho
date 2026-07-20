@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     herdr::HerdrReporter,
     session::Session,
-    tui::{self, TuiInfo},
+    tui::{self, ApplicationServices, RuntimeModelView, SessionBootstrap, TuiBootstrap},
 };
 
 use super::{
@@ -25,6 +25,7 @@ pub(super) struct Startup<'a> {
     pub(super) diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
     pub(super) agent: super::agent_binding::BoundAgent,
+    pub(super) reasoning_source: rho_providers::model::ReasoningRequestSource,
 }
 
 fn validate_resume_agent(
@@ -48,6 +49,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         diagnostics,
         herdr,
         agent,
+        reasoning_source,
     } = startup;
     let selected_agent_id = agent.id().to_string();
     let selected_agent_fingerprint = agent.fingerprint().to_string();
@@ -87,30 +89,37 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     .await?;
     let result = tui::run(
         &mut runtime,
-        TuiInfo {
-            cwd,
-            provider: config.provider,
-            model: config.model,
-            reasoning: config.reasoning,
-            permission_mode: config.permission_mode,
-            show_reasoning_output: config.show_reasoning_output,
-            auth: config.auth,
-            title_provider: config.title_provider,
-            title_model: config.title_model,
-            title_auth: config.title_auth,
-            favorite_models: config.favorite_models,
-            max_tool_output_lines: config.max_tool_output_lines,
-            keybindings: config.keybindings,
-            prompt_templates,
-            session_id,
-            recovered_messages,
-            open_resume_picker,
-            config_repository,
-            auth_unavailable: missing_auth_error,
-            update_notice: None,
-            pending_update_notice,
-            diagnostics,
-            herdr,
+        TuiBootstrap {
+            runtime: RuntimeModelView {
+                cwd,
+                provider: config.provider,
+                model: config.model,
+                reasoning: config.reasoning,
+                reasoning_source,
+                permission_mode: config.permission_mode,
+                show_reasoning_output: config.show_reasoning_output,
+                auth: config.auth,
+                title_provider: config.title_provider,
+                title_model: config.title_model,
+                title_auth: config.title_auth,
+                favorite_models: config.favorite_models,
+                max_tool_output_lines: config.max_tool_output_lines,
+                keybindings: config.keybindings,
+                prompt_templates,
+            },
+            session: SessionBootstrap {
+                session_id,
+                recovered_messages,
+                open_resume_picker,
+            },
+            services: ApplicationServices {
+                config_repository,
+                auth_unavailable: missing_auth_error,
+                update_notice: None,
+                pending_update_notice,
+                diagnostics,
+                herdr,
+            },
         },
     )
     .await;

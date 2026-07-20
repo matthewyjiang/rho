@@ -1,8 +1,7 @@
 use super::{PickerAction, PickerItem, UiPicker};
-use {
-    rho_providers::credentials::{provider_has_stored_credentials, CredentialStore},
-    rho_providers::model::catalog,
-    rho_providers::provider,
+use rho_providers::{
+    auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore, model::catalog,
+    provider,
 };
 
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
@@ -84,7 +83,7 @@ pub(super) fn logout_provider_picker(
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let mut targets = Vec::new();
     for target in catalog::login_targets() {
-        if provider_has_stored_credentials(store, &target.provider)? {
+        if ProviderAuthentication::has_stored_credentials(store, &target.provider)? {
             targets.push(target);
         }
     }

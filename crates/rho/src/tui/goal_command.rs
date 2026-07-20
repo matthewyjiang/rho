@@ -304,13 +304,15 @@ impl App {
                 (
                     goal.condition.clone(),
                     self.info
+                        .runtime
                         .title_provider
                         .clone()
-                        .unwrap_or_else(|| self.info.provider.clone()),
+                        .unwrap_or_else(|| self.info.runtime.provider.clone()),
                     self.info
+                        .runtime
                         .title_model
                         .clone()
-                        .unwrap_or_else(|| self.info.model.clone()),
+                        .unwrap_or_else(|| self.info.runtime.model.clone()),
                 )
             };
             let history = agent.history();

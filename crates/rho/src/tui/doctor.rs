@@ -1,11 +1,9 @@
 use std::{fs, path::Path, process::Command};
 
 use {
-    rho_providers::credentials::{
-        provider_has_credentials, provider_has_env_override, CredentialStore,
-    },
     rho_providers::model::catalog,
     rho_providers::provider::{self, ProviderModelSource},
+    rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore},
 };
 
 use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
@@ -25,11 +23,11 @@ pub(super) struct DoctorContext<'a> {
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     let mut items = Vec::new();
     for descriptor in provider::providers() {
-        let (healthy, status, detail) = match provider_has_credentials(
+        let (healthy, status, detail) = match ProviderAuthentication::has_credentials(
             context.credential_store,
             descriptor.name,
         ) {
-            Ok(true) if provider_has_env_override(descriptor.name) => (
+            Ok(true) if ProviderAuthentication::has_environment_override(descriptor.name) => (
                 true,
                 "authenticated",
                 "Credentials are provided by an environment variable.",

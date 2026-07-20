@@ -273,7 +273,7 @@ fn maps_model_errors_to_sanitized_provider_errors() {
                 message: "truncated stream".into(),
             },
             ProviderErrorKind::InvalidResponse,
-            false,
+            true,
         ),
         (
             ModelError::InvalidResponse("bad json".into()),

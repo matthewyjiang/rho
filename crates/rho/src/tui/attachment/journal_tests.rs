@@ -41,6 +41,22 @@ fn attachment_stream_ignores_pending_input_acknowledgements() {
 }
 
 #[test]
+fn attachment_stream_preserves_compaction_notices() {
+    assert!(matches!(
+        attachment_update(ViewModelEvent::CompactionStarted),
+        Some(AttachmentEvent::Notice(notice)) if notice == "compacting conversation context"
+    ));
+    assert!(matches!(
+        attachment_update(ViewModelEvent::CompactionCompleted {
+            previous_messages: 12,
+            current_messages: 4,
+        }),
+        Some(AttachmentEvent::Notice(notice))
+            if notice == "compacted conversation context (12 to 4 messages)"
+    ));
+}
+
+#[test]
 fn attachment_stream_skips_malformed_events() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join(subagent::ATTACHMENT_FILE_NAME);

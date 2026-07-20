@@ -6,7 +6,7 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust to stay fast an
 
 ## Install
 
-Recommended install path on macOS and Linux:
+Install on macOS and Linux:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | sh
@@ -45,7 +45,7 @@ rho run "summarize this repository"
 
 ## Docs
 
-See the docs site: <https://matthewyjiang.github.io/rho/>
+Read the documentation at <https://matthewyjiang.github.io/rho/>.
 
 ## Development
 

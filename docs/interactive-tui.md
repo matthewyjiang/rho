@@ -66,7 +66,7 @@ Use a multiline prompt when you need to paste or write a longer request.
 
 ## Commands
 
-Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Slash commands run locally instead of being sent to the AI.
+Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Slash commands run locally. Rho does not send them to the AI.
 
 | Command | Action |
 | --- | --- |

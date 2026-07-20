@@ -433,3 +433,301 @@ fn saved_config_omits_migrated_web_search_secrets() {
     assert!(!saved.contains("web_search_exa_api_key"), "{saved}");
     assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
 }
+
+fn alias_config(path: &std::path::Path, model: &str) {
+    std::fs::write(
+        path,
+        format!(
+            r#"
+[model]
+provider = "openai"
+model = "{model}"
+
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.5-mini"
+"#
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn model_alias_resolves_session_model_at_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "@deep");
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "anthropic");
+    assert_eq!(config.model, "claude-opus-4-8");
+    assert_eq!(config.current_model_alias(), Some("deep"));
+}
+
+#[test]
+fn bare_model_alias_keeps_configured_provider_and_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "@fast");
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-5.5-mini");
+    assert_eq!(config.auth, Config::default().auth);
+    assert_eq!(config.current_model_alias(), Some("fast"));
+}
+
+#[test]
+fn concrete_model_id_wins_over_identically_named_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+provider = "openai"
+model = "gpt-5.5"
+
+[model.aliases]
+"gpt-5.5" = "anthropic/claude-opus-4-8"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-5.5");
+    assert_eq!(config.current_model_alias(), None);
+}
+
+#[test]
+fn model_alias_targeting_unknown_provider_is_a_config_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+model = "@deep"
+
+[model.aliases]
+deep = "nonexistent/model-x"
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("model alias 'deep' targets unknown provider 'nonexistent'"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn undefined_session_model_alias_names_reference_site() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[model]\nmodel = \"@missing\"\n").unwrap();
+
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "session model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn undefined_title_model_alias_names_reference_site() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[model]\nmodel = \"gpt-5.5\"\n\n[title]\nmodel = \"@missing\"\n",
+    )
+    .unwrap();
+
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "title model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn unused_model_alias_targeting_unknown_provider_is_a_config_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+model = "gpt-5.5"
+
+[model.aliases]
+unused = "nonexistent/model-x"
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("model alias 'unused' targets unknown provider 'nonexistent'"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn title_model_alias_resolves_provider_model_and_auth_at_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+provider = "openai"
+model = "gpt-5.5"
+
+[model.aliases]
+titler = "anthropic/claude-haiku-4-5"
+
+[title]
+provider = "anthropic"
+model = "@titler"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.title_provider.as_deref(), Some("anthropic"));
+    assert_eq!(config.title_model.as_deref(), Some("claude-haiku-4-5"));
+    assert_eq!(config.title_auth.as_deref(), Some("anthropic-api-key"));
+    assert_eq!(config.current_title_model_alias(), Some("titler"));
+}
+
+#[test]
+fn title_model_alias_round_trips_through_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "gpt-5.5");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n[title]\nmodel = \"@deep\"\n");
+    std::fs::write(&path, text).unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("[title]"), "{saved}");
+    assert!(saved.contains("model = \"@deep\""), "{saved}");
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.title_provider.as_deref(), Some("anthropic"));
+    assert_eq!(reloaded.title_model.as_deref(), Some("claude-opus-4-8"));
+    assert_eq!(reloaded.current_title_model_alias(), Some("deep"));
+}
+
+#[test]
+fn stale_title_model_alias_saves_the_concrete_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "gpt-5.5");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n[title]\nmodel = \"@deep\"\n");
+    std::fs::write(&path, text).unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let mut config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.title_model = Some("claude-sonnet-4-5".into());
+    assert_eq!(config.current_title_model_alias(), None);
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("model = \"claude-sonnet-4-5\""), "{saved}");
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.title_model.as_deref(), Some("claude-sonnet-4-5"));
+    assert_eq!(reloaded.current_title_model_alias(), None);
+}
+
+#[test]
+fn model_alias_round_trips_through_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "@deep");
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("model = \"@deep\""), "{saved}");
+    assert!(saved.contains("[model.aliases]"), "{saved}");
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.provider, "anthropic");
+    assert_eq!(reloaded.model, "claude-opus-4-8");
+    assert_eq!(reloaded.current_model_alias(), Some("deep"));
+}
+
+#[test]
+fn stale_model_alias_saves_the_concrete_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    alias_config(&path, "@deep");
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let mut config = Config::load_with_store(path.clone(), &store).unwrap();
+    config.model = "claude-haiku-4-5".into();
+    assert_eq!(config.current_model_alias(), None);
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.model, "claude-haiku-4-5");
+    assert_eq!(reloaded.current_model_alias(), None);
+}

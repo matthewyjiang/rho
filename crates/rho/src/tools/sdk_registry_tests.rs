@@ -1,6 +1,6 @@
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, Mutex},
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
 };
 
 use pretty_assertions::assert_eq;
@@ -16,28 +16,84 @@ use serde_json::json;
 
 use super::*;
 
-#[test]
-fn disabled_subagents_are_not_registered() {
-    let config = Config {
-        enable_subagents: false,
-        ..Config::default()
-    };
-    let root = tempfile::tempdir().unwrap();
+fn capabilities(names: &[&str]) -> AgentCapabilities {
+    AgentCapabilities::new(
+        names
+            .iter()
+            .map(|name| ToolCapability::parse((*name).to_string()))
+            .collect(),
+    )
+}
 
-    let allowed = ["agent", "agents"]
-        .into_iter()
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>();
+fn delegation_options(names: &[&str], cwd: std::path::PathBuf) -> ToolSetOptions {
+    ToolSetOptions::new(capabilities(names)).delegation(DelegationConfig::new(
+        cwd,
+        std::path::PathBuf::new(),
+        BackgroundSubagents::Disabled,
+    ))
+}
+
+struct RecordingBundle {
+    tools: Vec<Arc<dyn Tool>>,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl ToolBundle for RecordingBundle {
+    fn tools(&self) -> &[Arc<dyn Tool>] {
+        &self.tools
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move { self.shutdown.store(true, Ordering::SeqCst) })
+    }
+}
+
+#[tokio::test]
+async fn shuts_down_feature_bundles_through_the_generic_lifecycle() {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut tool_set = AppToolSet::disabled();
+    tool_set.add_bundle(RecordingBundle {
+        tools: Vec::new(),
+        shutdown: shutdown.clone(),
+    });
+
+    tool_set.shutdown().await;
+
+    assert!(shutdown.load(Ordering::SeqCst));
+}
+
+#[test]
+fn unselected_subagents_are_not_registered() {
+    let config = Config::default();
     let tool_set = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),
-        ToolSetOptions::default().delegation_tools(Some(root.path().to_path_buf()), &allowed),
+        ToolSetOptions::new(capabilities(&[])),
     );
     let names: Vec<_> = tool_set.specs().into_iter().map(|spec| spec.name).collect();
 
     assert!(!names.contains(&"agent".to_string()));
     assert!(!names.contains(&"agents".to_string()));
     assert!(tool_set.subagents().is_none());
+}
+
+#[test]
+fn constructs_only_selected_tools() {
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["read_file"])),
+    );
+
+    assert_eq!(
+        tool_set
+            .specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>(),
+        vec!["read_file"]
+    );
 }
 
 #[test]
@@ -52,14 +108,10 @@ fn delegation_tools_are_registered_independently() {
     ] {
         let config = Config::default();
         let root = tempfile::tempdir().unwrap();
-        let allowed = allowed
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<BTreeSet<_>>();
         let tool_set = AppToolSet::new(
             &config,
             RuntimeDiagnostics::new(&config),
-            ToolSetOptions::default().delegation_tools(Some(root.path().to_path_buf()), &allowed),
+            delegation_options(allowed, root.path().to_path_buf()),
         );
         let names = tool_set
             .specs()
@@ -327,11 +379,25 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
 
 #[test]
 fn security_declarations_distinguish_network_builtins_from_host_tools() {
-    assert_eq!(security_for("web_search").origin(), ToolOrigin::BuiltIn);
-    assert_eq!(
-        security_for("web_search").capabilities(),
-        [CapabilityKind::Network]
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["web_search", "rho"])),
     );
-    assert_eq!(security_for("rho").origin(), ToolOrigin::BuiltIn);
-    assert!(security_for("rho").capabilities().is_empty());
+    let security = |name: &str| {
+        tool_set
+            .tools()
+            .iter()
+            .find(|tool| tool.spec().name == name)
+            .expect("selected tool")
+            .security()
+    };
+
+    let web_search = security("web_search");
+    assert_eq!(web_search.origin(), ToolOrigin::BuiltIn);
+    assert_eq!(web_search.capabilities(), [CapabilityKind::Network]);
+    let rho = security("rho");
+    assert_eq!(rho.origin(), ToolOrigin::BuiltIn);
+    assert!(rho.capabilities().is_empty());
 }

@@ -28,6 +28,8 @@ fn disabled_delegation_is_not_advertised_as_a_host_capability() {
 
     let capabilities = host_capabilities(&cli, &config, AgentRole::InteractiveRoot);
 
-    assert!(!capabilities.contains("agent"));
-    assert!(!capabilities.contains("agents"));
+    use crate::agent::ToolCapability;
+
+    assert!(!capabilities.contains(&ToolCapability::Agent));
+    assert!(!capabilities.contains(&ToolCapability::Agents));
 }

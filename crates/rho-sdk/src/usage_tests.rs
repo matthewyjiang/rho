@@ -13,7 +13,7 @@ use crate::{
         ModelProvider, ProviderEventSender, ProviderFuture, ProviderRequestEvent,
         ProviderStreamEvent, ScriptedProvider, ScriptedTurn,
     },
-    Rho, RunEvent, SessionId, SessionOptions, UserInput, Workspace,
+    ProviderError, Retryability, Rho, RunEvent, SessionId, SessionOptions, UserInput, Workspace,
 };
 
 #[derive(Clone, Default)]
@@ -319,6 +319,60 @@ async fn records_provider_internal_retries_as_distinct_physical_attempts() {
         ProviderRequestOutcome::Failed(ProviderErrorKind::Unavailable)
     );
     assert_eq!(events[0].usage(), &ModelUsage::default());
+    assert_eq!(events[0].context().attempt_index(), Some(1));
+    assert_eq!(events[1].outcome(), ProviderRequestOutcome::Completed);
+    assert_eq!(events[1].usage(), &final_usage);
+    assert_eq!(events[1].context().attempt_index(), Some(2));
+}
+
+#[tokio::test(start_paused = true)]
+async fn records_failed_stream_retry_usage_as_a_distinct_attempt() {
+    let failed_usage = ModelUsage {
+        output_tokens: Some(3),
+        ..ModelUsage::default()
+    };
+    let final_usage = ModelUsage {
+        output_tokens: Some(5),
+        ..ModelUsage::default()
+    };
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::streaming_failed(
+                vec![ModelEvent::Usage(failed_usage.clone())],
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "provider stream failed after emitting output",
+                    Retryability::Retryable,
+                ),
+            ),
+            ScriptedTurn::streaming(
+                vec![ModelEvent::Usage(final_usage.clone())],
+                ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+            ),
+        ],
+    );
+    let recorder = CapturingRecorder::default();
+    let rho = Rho::builder()
+        .provider(provider)
+        .usage_recorder(recorder.clone())
+        .build()
+        .unwrap();
+
+    rho.session(SessionOptions::new())
+        .await
+        .unwrap()
+        .complete("go")
+        .await
+        .unwrap();
+
+    let events = recorder.events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0].outcome(),
+        ProviderRequestOutcome::Failed(ProviderErrorKind::InvalidResponse)
+    );
+    assert_eq!(events[0].usage(), &failed_usage);
     assert_eq!(events[0].context().attempt_index(), Some(1));
     assert_eq!(events[1].outcome(), ProviderRequestOutcome::Completed);
     assert_eq!(events[1].usage(), &final_usage);

@@ -88,22 +88,44 @@ pub fn register_coding_tools(
     Ok(())
 }
 
-/// Returns the SDK coding tools as shared trait objects.
+/// A workspace coding tool selected by a host capability set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodingToolKind {
+    ListDir,
+    ReadFile,
+    WriteFile,
+    EditFile,
+}
+
+/// Returns one selected SDK coding tool.
+pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn Tool> {
+    match kind {
+        CodingToolKind::ListDir => Arc::new(ListDirTool {
+            max_output_bytes: options.max_output_bytes,
+        }),
+        CodingToolKind::ReadFile => Arc::new(ReadFileTool {
+            max_output_bytes: options.max_output_bytes,
+        }),
+        CodingToolKind::WriteFile => Arc::new(WriteFileTool {
+            max_output_bytes: options.max_output_bytes,
+        }),
+        CodingToolKind::EditFile => Arc::new(EditFileTool {
+            max_output_bytes: options.max_output_bytes,
+        }),
+    }
+}
+
+/// Returns all SDK coding tools as shared trait objects.
 pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
-    vec![
-        Arc::new(ListDirTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
-        Arc::new(ReadFileTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
-        Arc::new(WriteFileTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
-        Arc::new(EditFileTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
+    [
+        CodingToolKind::ListDir,
+        CodingToolKind::ReadFile,
+        CodingToolKind::WriteFile,
+        CodingToolKind::EditFile,
     ]
+    .into_iter()
+    .map(|kind| coding_tool(kind, options.clone()))
+    .collect()
 }
 
 struct ListDirTool {

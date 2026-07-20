@@ -228,6 +228,15 @@ impl ScriptedTurn {
         }
     }
 
+    /// Creates a failed turn that emitted semantic events before the failure.
+    #[doc(hidden)]
+    pub fn streaming_failed(events: Vec<ModelEvent>, error: ProviderError) -> Self {
+        Self {
+            events: events.into_iter().map(ProviderStreamEvent::Model).collect(),
+            result: Err(error),
+        }
+    }
+
     /// Creates a turn with semantic and physical request events.
     #[doc(hidden)]
     pub fn streaming_with_request_events(

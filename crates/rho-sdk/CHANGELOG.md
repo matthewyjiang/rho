@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.3.0...rho-sdk-v1.4.0) (2026-07-20)
+
+
+### Features
+
+* **tui:** show detailed activity stages ([#403](https://github.com/matthewyjiang/rho/issues/403)) ([267a47b](https://github.com/matthewyjiang/rho/commit/267a47bd3894f7a6ed64c82d98920a2c2d585e91))
+
+
+### Bug Fixes
+
+* **kimi:** use provider-native K3 reasoning ([#402](https://github.com/matthewyjiang/rho/issues/402)) ([5453cdc](https://github.com/matthewyjiang/rho/commit/5453cdc5c78df2b11b3e5bbab4ea96c5fba635d9))
+* **sdk:** retry retryable provider failures instead of failing the run ([#401](https://github.com/matthewyjiang/rho/issues/401)) ([b2867da](https://github.com/matthewyjiang/rho/commit/b2867da58eab9636c5e9691fe1de25e669a36dc3))
+
 ## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.2.0...rho-sdk-v1.3.0) (2026-07-18)
 
 

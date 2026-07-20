@@ -56,7 +56,11 @@ fn agent_detail(entry: &AgentCatalogEntry) -> String {
     let tools = match &definition.tools {
         ToolPolicy::All => "all".to_string(),
         ToolPolicy::Allow(tools) if tools.is_empty() => "none".to_string(),
-        ToolPolicy::Allow(tools) => tools.join(", "),
+        ToolPolicy::Allow(tools) => tools
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
     };
     let prompt = match &definition.prompt {
         PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
@@ -99,7 +103,7 @@ fn model_name(selection: &ModelSelection) -> String {
 
 impl super::App {
     pub(super) fn execute_agents_command(&mut self) -> anyhow::Result<()> {
-        let catalog = match AgentCatalog::discover(&self.info.cwd) {
+        let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
             Ok(catalog) => catalog,
             Err(error) => {
                 self.insert_entry(&super::Entry::Error(format!(

@@ -6,6 +6,7 @@ pub mod handoff;
 pub mod image;
 pub mod models_dev;
 pub mod provider_models;
+mod reasoning_capabilities;
 pub mod registry;
 
 pub use crate::providers::UnavailableProvider;
@@ -18,6 +19,9 @@ pub use contract::{
 };
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
+pub use reasoning_capabilities::{
+    ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource, ReasoningResolution,
+};
 
 impl From<crate::credentials::CredentialError> for ModelError {
     fn from(error: crate::credentials::CredentialError) -> Self {

@@ -1,7 +1,7 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use {
-    crate::agent::{AgentDefinition, KNOWN_TOOLS},
+    crate::agent::{AgentCapabilities, AgentDefinition, ToolCapability},
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
@@ -99,17 +99,14 @@ impl AgentExecutor {
 
     pub(crate) fn spawn(&self, request: AgentLaunchRequest) -> anyhow::Result<AgentRunHandle> {
         let config = self.config.read().expect("delegated config lock").clone();
-        let mut capabilities = KNOWN_TOOLS
-            .iter()
-            .map(|tool| (*tool).to_string())
-            .collect::<BTreeSet<_>>();
+        let mut capabilities = AgentCapabilities::all_host_tools();
         if !crate::tools::web::access_tools(&config).is_available() {
-            capabilities.remove("web_search");
+            capabilities.remove(&ToolCapability::WebSearch);
         }
         #[cfg(windows)]
-        capabilities.remove("bash");
+        capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]
-        capabilities.remove("powershell");
+        capabilities.remove(&ToolCapability::Powershell);
         let bound = AgentBinder::bind(
             request.definition,
             AgentInvocation {
@@ -156,19 +153,12 @@ impl AgentExecutor {
                 return Ok(());
             };
             let mut config = bound.config().clone();
-            if config.provider == "anthropic"
-                && rho_providers::model::models_dev::cached_model_metadata(
-                    &config.provider,
-                    &config.model,
-                )
-                .is_none()
-            {
-                let _ = rho_providers::model::models_dev::fetch_model_metadata(
-                    &config.provider,
-                    &config.model,
-                )
-                .await;
-            }
+            super::cli_config::prepare_model_metadata(
+                &config,
+                &rho_providers::credentials::OsCredentialStore,
+                &super::cli_config::ProviderRefreshStatus::NotAttempted,
+            )
+            .await;
             super::cli_config::normalize_reasoning(&mut config);
             let diagnostics = RuntimeDiagnostics::new(&config);
             diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.3.1...rho-agent-tools-v0.3.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** guard publishable crate version bumps ([#424](https://github.com/matthewyjiang/rho/issues/424)) ([4b39b58](https://github.com/matthewyjiang/rho/commit/4b39b58cb09a2815be4d5350c2b0e0a831a426fe))
+
+## [0.3.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.3.0...rho-agent-tools-v0.3.1) (2026-07-20)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.3.0 to 1.4.0
+
 ## [0.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.2.0...rho-agent-tools-v0.3.0) (2026-07-18)
 
 

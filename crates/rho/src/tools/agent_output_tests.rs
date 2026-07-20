@@ -21,6 +21,7 @@ fn snapshot(done: bool) -> SubagentSnapshot {
             input_tokens: 1_200,
             output_tokens: 300,
             last_activity: Some("searching files".into()),
+            last_text: Some("streamed partial answer".into()),
             result: done.then(|| "found it".into()),
             ..RunStatus::default()
         },
@@ -33,8 +34,6 @@ fn formats_agent_start_output() {
     assert_eq!(
         format_background_start("abc123", "explorer"),
         "agent abc123 (explorer) started in background\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
     assert_eq!(
@@ -58,25 +57,24 @@ fn formats_status_with_runtime_details() {
         "agent abc123 (explorer): running\n\
          elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
          activity: searching files\n\
-         completion will be delivered automatically\n\
-         if this is the only remaining work, end your turn now - do not call sleep or poll\n\
          attach: rho attach abc123"
     );
 }
 
 #[test]
-fn completed_status_defers_result_to_automatic_delivery() {
+fn formats_stopped_completion_as_unverified() {
     let mut snapshot = snapshot(true);
-    snapshot.status.state = RunState::Error;
-    snapshot.status.error = Some("provider stream failed".into());
-    snapshot.status.last_text = Some("found it".into());
+    snapshot.status.state = RunState::Stopped;
+    snapshot.status.result = Some("(partial, stopped before finishing)\nfound it".into());
 
     assert_eq!(
-        format_snapshot(&snapshot, SnapshotFormat::Status),
-        "agent abc123 (explorer): error\n\
-         elapsed: 1m 30s · turns: 3 · tokens: 1200 in / 300 out\n\
-         completion result uses automatic delivery\n\
-         attach: rho attach abc123"
+        format_snapshot(&snapshot, SnapshotFormat::Completion),
+        "agent abc123 (explorer): stopped\n\
+         turns: 3 · tokens: 1200 in / 300 out\n\
+         this delegated task did not complete; treat its work as unverified\n\
+         \n\
+         (partial, stopped before finishing)\n\
+         found it"
     );
 }
 
@@ -91,6 +89,7 @@ fn formats_completion_with_result_and_error() {
         "agent abc123 (explorer): error\n\
          turns: 3 · tokens: 1200 in / 300 out\n\
          error: provider stream failed\n\
+         this delegated task did not complete; treat its work as unverified\n\
          \n\
          found it"
     );

@@ -184,9 +184,9 @@ impl PtyHarness {
     }
 
     pub fn submit_text(&mut self, text: &str) -> Result<()> {
-        self.type_text(text)?;
-        // Leave a gap after the final character so Enter is not absorbed as a
-        // paste-burst newline.
+        // Use an explicit paste event so runner load cannot collapse delayed
+        // plain-key input into a paste burst and absorb Enter as a newline.
+        self.paste(text)?;
         self.settle_input();
         self.inject_key(&Key::Enter)
     }

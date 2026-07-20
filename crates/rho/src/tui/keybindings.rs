@@ -9,18 +9,30 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
-        if self.info.keybindings.paste_image.matches(key)
+        if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),
                 (KeyModifiers::ALT, KeyCode::Char('v'))
             )
         {
             self.paste_clipboard_image();
-        } else if self.info.keybindings.toggle_tool_output.matches(key) {
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .toggle_tool_output
+            .matches(key)
+        {
             self.toggle_latest_tool_output(terminal)?;
-        } else if self.info.keybindings.reset_conversation.matches(key) {
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .reset_conversation
+            .matches(key)
+        {
             self.notify_status("reset is unavailable while a model turn is running");
-        } else if self.info.keybindings.insert_newline.matches(key) {
+        } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {
             return Ok(false);
@@ -36,24 +48,36 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> std::io::Result<bool> {
-        if self.info.keybindings.paste_image.matches(key)
+        if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),
                 (KeyModifiers::ALT, KeyCode::Char('v'))
             )
         {
             self.paste_clipboard_image();
-        } else if self.info.keybindings.toggle_tool_output.matches(key) {
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .toggle_tool_output
+            .matches(key)
+        {
             self.toggle_latest_tool_output(terminal)?;
-        } else if self.info.keybindings.reset_conversation.matches(key) {
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .reset_conversation
+            .matches(key)
+        {
             let _ = agent.reset();
-            self.info.session_id = None;
+            self.info.session.session_id = None;
             self.reset_usage();
             self.current_context = None;
             self.insert_entry(&Entry::Notice(
                 "conversation reset; next message starts a new session".into(),
             ));
-        } else if self.info.keybindings.insert_newline.matches(key) {
+        } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {
             return Ok(false);

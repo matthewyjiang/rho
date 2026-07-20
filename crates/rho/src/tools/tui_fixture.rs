@@ -5,11 +5,11 @@ use rho_sdk::tool::{
     ToolOutput, ToolProgress, ToolSecurity,
 };
 
-pub(super) const NAME: &str = "tui_fixture_progress";
+pub(crate) const NAME: &str = "tui_fixture_progress";
 
-pub(super) fn from_env() -> Option<Arc<dyn Tool>> {
+pub(super) fn sdk_bundle() -> Option<super::sdk_registry::StaticToolBundle> {
     (std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")))
-        .then(|| Arc::new(TuiFixtureProgressTool) as Arc<dyn Tool>)
+        .then(|| super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TuiFixtureProgressTool)]))
 }
 
 struct TuiFixtureProgressTool;

@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
     rho_providers::model::{ContentBlock, Message, ToolCall},
-    rho_tools::tool::ToolDisplayStyle,
 };
 
 use super::{Entry, ToolEntry, ToolEntryState};
@@ -51,17 +50,14 @@ pub(super) fn transcript_entries_from_messages(
                     entries.push(Entry::Assistant(text));
                 }
                 if let Some(tool_call) = message.tool_calls.last() {
-                    let mut display_lines =
-                        vec![tool_call.name.clone().unwrap_or_else(|| "tool call".into())];
-                    if !tool_call.arguments.is_empty() {
-                        display_lines.push(tool_call.arguments.clone());
-                    }
+                    let presented =
+                        presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
                     entries.push(Entry::Tool(ToolEntry {
                         state: ToolEntryState::Finished {
                             ok: false,
-                            display_style: ToolDisplayStyle::default_tool(),
+                            display_style: presented.display_style,
                         },
-                        display_lines,
+                        display_lines: presented.display_lines,
                         expanded: false,
                         image: None,
                     }));

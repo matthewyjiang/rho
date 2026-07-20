@@ -6,13 +6,19 @@ use {
     rho_providers::credentials::{
         save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore,
     },
-    rho_providers::model::provider_models::{
-        replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
-        with_provider_models_cache_dir_for_tests, ProviderModel,
+    rho_providers::model::{
+        provider_models::{
+            replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
+            with_provider_models_cache_dir_for_tests, ProviderModel,
+        },
+        ReasoningCapabilities, ReasoningLevelSet,
     },
 };
 
-use super::{apply_overrides, refresh_model_cache, validate};
+use super::{
+    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
+    validate,
+};
 
 fn unique_cache_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
@@ -35,6 +41,7 @@ fn with_cached_provider_models<T>(provider: &str, models: Vec<&str>, f: impl FnO
             display_name: model.into(),
             context_window: None,
             max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
         })
         .collect::<Vec<_>>();
     let result = with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
@@ -276,7 +283,7 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
         command: None,
     };
 
-    let refresh = refresh_model_cache(&cli, &store).await;
+    let refresh = refresh_model_cache(&cli, &cfg, &store).await;
     refresh.unwrap();
     apply_overrides(&mut cfg, &cli).unwrap();
     set_provider_models_cache_dir_for_tests(None);
@@ -285,6 +292,76 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
     assert_eq!(cfg.provider, "github-copilot");
     assert_eq!(cfg.model, "copilot-api-model");
     assert_eq!(cfg.auth, "github-copilot");
+}
+
+#[tokio::test]
+async fn cli_github_copilot_model_alias_refreshes_empty_cache() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let models_url = format!("http://{}/models", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 1024];
+        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        let body = r#"{"data":[{"id":"copilot-api-model"}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+            .await
+            .unwrap();
+        tokio::io::AsyncWriteExt::shutdown(&mut stream)
+            .await
+            .unwrap();
+    });
+    let cache_dir = unique_cache_dir("github-copilot-alias-refresh");
+    let store = MemoryCredentialStore::default();
+    save_github_copilot_tokens(
+        &store,
+        &GitHubCopilotTokens {
+            github_access_token: "github".into(),
+            github_refresh_token: None,
+            github_expires_at_unix: None,
+            copilot_token: Some("copilot-test-token".into()),
+            copilot_expires_at_unix: Some(i64::MAX),
+            copilot_refresh_after_unix: None,
+            copilot_token_endpoint: None,
+            copilot_chat_endpoint: None,
+            copilot_models_endpoint: Some(models_url),
+        },
+    )
+    .unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    let mut cfg = Config {
+        model_aliases: aliases(&[("copilot", "github-copilot/copilot-api-model")]),
+        ..Config::default()
+    };
+    let cli = Cli {
+        provider: None,
+        model: Some("@copilot".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    refresh_model_cache(&cli, &cfg, &store).await.unwrap();
+    apply_overrides(&mut cfg, &cli).unwrap();
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    assert_eq!(cfg.provider, "github-copilot");
+    assert_eq!(cfg.model, "copilot-api-model");
+    assert_eq!(cfg.auth, "github-copilot");
+    assert_eq!(cfg.current_model_alias(), Some("copilot"));
 }
 
 #[test]
@@ -440,5 +517,299 @@ fn cli_reasoning_override_updates_config() {
     assert_eq!(
         cfg.reasoning,
         rho_providers::reasoning::ReasoningLevel::High
+    );
+}
+
+#[test]
+fn authenticated_kimi_capabilities_normalize_stored_reasoning_without_disabling_it() {
+    let cache_dir = unique_cache_dir("kimi-normalization");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        rho_sdk::ReasoningLevel::Off,
+                        rho_sdk::ReasoningLevel::Low,
+                        rho_sdk::ReasoningLevel::High,
+                        rho_sdk::ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            ..Config::default()
+        };
+
+        assert!(normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
+
+        config.reasoning = rho_sdk::ReasoningLevel::Off;
+        assert!(!normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Off);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn explicit_kimi_reasoning_is_preserved_without_authenticated_capabilities() {
+    let cache_dir = unique_cache_dir("kimi-explicit-unknown");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Low,
+            ..Config::default()
+        };
+
+        assert!(!normalize_reasoning_for_cli(
+            &mut config,
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .unwrap());
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn explicit_known_unsupported_reasoning_is_rejected() {
+    let cache_dir = unique_cache_dir("kimi-explicit-unsupported");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "k3".into(),
+                display_name: "Kimi K3".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        rho_sdk::ReasoningLevel::Off,
+                        rho_sdk::ReasoningLevel::Low,
+                        rho_sdk::ReasoningLevel::High,
+                        rho_sdk::ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "k3".into(),
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            ..Config::default()
+        };
+
+        let error = normalize_reasoning_for_cli(
+            &mut config,
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .expect_err("known unsupported reasoning should fail");
+
+        assert!(error
+            .to_string()
+            .contains("does not support reasoning level 'medium'"));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Medium);
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn not_configurable_models_retain_persisted_preference_and_reject_explicit_control() {
+    let cache_dir = unique_cache_dir("kimi-not-configurable");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models_for_tests(
+            "kimi-code",
+            &[ProviderModel {
+                provider: "kimi-code".into(),
+                model: "fixed".into(),
+                display_name: "Fixed".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::NotConfigurable,
+            }],
+        )
+        .unwrap();
+        let mut config = Config {
+            provider: "kimi-code".into(),
+            model: "fixed".into(),
+            reasoning: rho_sdk::ReasoningLevel::High,
+            ..Config::default()
+        };
+
+        assert!(!normalize_reasoning(&mut config));
+        assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
+        let error = normalize_reasoning_for_cli(
+            &mut config,
+            rho_providers::model::ReasoningRequestSource::Explicit,
+        )
+        .expect_err("fixed models should reject an explicit reasoning control");
+        assert!(error
+            .to_string()
+            .contains("does not expose configurable reasoning"));
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[test]
+fn only_kimi_prepares_provider_capabilities_during_startup() {
+    let refresh = super::ProviderRefreshStatus::NotAttempted;
+    let xai = Config {
+        provider: "xai".into(),
+        model: "unseen-model".into(),
+        ..Config::default()
+    };
+    let kimi = Config {
+        provider: "kimi-code".into(),
+        model: "unseen-model".into(),
+        ..Config::default()
+    };
+
+    assert!(!super::needs_startup_capability_refresh(&xai, &refresh));
+    assert!(super::needs_startup_capability_refresh(&kimi, &refresh));
+}
+
+#[test]
+fn only_kimi_requires_synchronous_capability_discovery() {
+    assert!(!super::needs_synchronous_capability_refresh(
+        "xai",
+        "unseen-model"
+    ));
+    assert!(super::needs_synchronous_capability_refresh(
+        "kimi-code",
+        "unseen-model"
+    ));
+}
+
+#[test]
+fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
+    let config = Config {
+        provider: "kimi-code".into(),
+        model: "k3".into(),
+        ..Config::default()
+    };
+
+    assert_eq!(
+        super::selected_model_for_refresh(&config, "kimi-code"),
+        Some("k3".into())
+    );
+}
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn cli_model_override_resolves_user_defined_alias() {
+    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
+        let mut cfg = Config {
+            model_aliases: aliases(&[("deep", "anthropic/claude-sonnet-4-5")]),
+            ..Config::default()
+        };
+        let cli = Cli {
+            provider: None,
+            model: Some("@deep".into()),
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
+
+        assert!(save_config);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.current_model_alias(), Some("deep"));
+    });
+}
+
+#[test]
+fn cli_model_alias_conflicting_with_provider_flag_errors() {
+    let mut cfg = Config {
+        model_aliases: aliases(&[("deep", "openai/gpt-5.5")]),
+        ..Config::default()
+    };
+    let cli = Cli {
+        provider: Some("anthropic".into()),
+        model: Some("@deep".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "model alias '@deep' resolves to provider 'openai', which conflicts with --provider anthropic"
+        ),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn undefined_cli_model_alias_names_flag() {
+    let mut cfg = Config::default();
+    let cli = Cli {
+        provider: None,
+        model: Some("@missing".into()),
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        resume: None,
+        command: None,
+    };
+
+    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "--model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+        ),
+        "{error:#}"
     );
 }

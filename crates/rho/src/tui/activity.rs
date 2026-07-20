@@ -4,29 +4,75 @@ use ratatui::text::{Line, Span};
 
 use super::{render::display_width, theme::Theme};
 
-const WORKING_LABEL: &str = "⠋ working";
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ActivityPhase {
+    #[default]
+    Starting,
+    WaitingForProvider,
+    Thinking,
+    Responding,
+    PreparingTool,
+    RunningTool,
+    RetryingProvider,
+    Compacting,
+    WaitingForApproval,
+    WaitingForInput,
+}
+
+impl ActivityPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::WaitingForProvider => "waiting for provider",
+            Self::Thinking => "thinking",
+            Self::Responding => "responding",
+            Self::PreparingTool => "preparing tool",
+            Self::RunningTool => "running tool",
+            Self::RetryingProvider => "retrying provider",
+            Self::Compacting => "compacting context",
+            Self::WaitingForApproval => "waiting for approval",
+            Self::WaitingForInput => "waiting for input",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
-    Working,
+    Parent(ActivityPhase),
     Subagents(usize),
-    WorkingWithSubagents(usize),
+    ParentWithSubagents(ActivityPhase, usize),
+}
+
+impl ActivityStatus {
+    pub(super) fn from_parent_and_subagents(
+        parent: Option<ActivityPhase>,
+        subagent_count: usize,
+    ) -> Option<Self> {
+        match (parent, subagent_count) {
+            (Some(phase), 0) => Some(Self::Parent(phase)),
+            (Some(phase), count) => Some(Self::ParentWithSubagents(phase, count)),
+            (None, 0) => None,
+            (None, count) => Some(Self::Subagents(count)),
+        }
+    }
 }
 
 pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize {
+    let first_frame = LoadingSpinner::FRAMES[0];
     activity_labels(status)
         .into_iter()
         .find(|label| display_width(label) <= available)
         .map_or_else(
-            || available.min(display_width("⠋")),
+            || available.min(display_width(first_frame)),
             |label| display_width(&label),
         )
 }
 
 fn activity_labels(status: ActivityStatus) -> Vec<String> {
+    let spinner = LoadingSpinner::FRAMES[0];
     let subagent_count = match status {
-        ActivityStatus::Working => 0,
-        ActivityStatus::Subagents(count) | ActivityStatus::WorkingWithSubagents(count) => count,
+        ActivityStatus::Parent(_) => 0,
+        ActivityStatus::Subagents(count) | ActivityStatus::ParentWithSubagents(_, count) => count,
     };
     let agents = if subagent_count == 1 {
         "1 agent".into()
@@ -34,18 +80,20 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
         format!("{subagent_count} agents")
     };
     match status {
-        ActivityStatus::Working => vec![WORKING_LABEL.into(), "⠋".into()],
-        ActivityStatus::WorkingWithSubagents(_) => vec![
-            format!("{WORKING_LABEL}  ·  {agents}"),
-            format!("⠋ working · {subagent_count}"),
-            format!("⠋ {subagent_count}"),
-            "⠋".into(),
+        ActivityStatus::Parent(phase) => {
+            vec![format!("{spinner} {}", phase.label()), spinner.into()]
+        }
+        ActivityStatus::ParentWithSubagents(phase, _) => vec![
+            format!("{spinner} {}  ·  {agents}", phase.label()),
+            format!("{spinner} {} · {subagent_count}", phase.label()),
+            format!("{spinner} {subagent_count}"),
+            spinner.into(),
         ],
         ActivityStatus::Subagents(_) => vec![
-            format!("⠋ {agents} working"),
-            format!("⠋ {subagent_count} agents"),
-            format!("⠋ {subagent_count}"),
-            "⠋".into(),
+            format!("{spinner} {agents} working"),
+            format!("{spinner} {subagent_count} agents"),
+            format!("{spinner} {subagent_count}"),
+            spinner.into(),
         ],
     }
 }
@@ -56,8 +104,8 @@ pub(super) struct LoadingSpinner {
 }
 
 impl LoadingSpinner {
-    const FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    pub(super) const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+    const FRAMES: [&'static str; 8] = ["⠙", "⠋", "⠇", "⡆", "⣄", "⣠", "⢰", "⠸"];
+    pub(super) const FRAME_INTERVAL: Duration = Duration::from_millis(95);
 
     pub(super) fn start(&mut self) {
         self.started_at = Some(Instant::now());
@@ -95,8 +143,8 @@ impl LoadingSpinner {
         let label = activity_labels(status)
             .into_iter()
             .find(|label| display_width(label) <= available)
-            .unwrap_or_else(|| "⠋".chars().take(available).collect());
-        let Some(rest) = label.strip_prefix('⠋') else {
+            .unwrap_or_else(|| Self::FRAMES[0].chars().take(available).collect());
+        let Some(rest) = label.strip_prefix(Self::FRAMES[0]) else {
             return Line::default();
         };
         Line::from(vec![
@@ -110,7 +158,9 @@ pub(super) fn jump_to_bottom_text(width: usize, binding: &str, alongside_activit
     let full = format!("↓ jump to bottom  {binding}");
     let compact = format!("↓ bottom {binding}");
     let shortcut = format!("↓ {binding}");
-    let activity_width = usize::from(alongside_activity) * (display_width(WORKING_LABEL) + 1);
+    // Leave enough room for the compact activity label when both controls share a row.
+    let activity_width = usize::from(alongside_activity)
+        * (display_width(LoadingSpinner::FRAMES[0]) + display_width(" 0") + 1);
     let available = width.saturating_sub(activity_width);
 
     if display_width(&full) <= available {

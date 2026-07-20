@@ -1,10 +1,15 @@
 use std::{fs, path::PathBuf, sync::OnceLock, time::Duration};
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::reasoning::ReasoningLevel;
+use crate::{
+    model::ReasoningCapabilities, provider::CatalogReasoningPolicy, reasoning::ReasoningLevel,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
@@ -18,11 +23,16 @@ pub struct ModelMetadata {
     pub supported_reasoning_levels: Option<Vec<ReasoningLevel>>,
     #[serde(default)]
     pub reasoning_off_behavior: ReasoningOffBehavior,
-    /// True once models.dev has been parsed far enough to know whether this
-    /// model exposes a finite effort list. False/missing means the row still
-    /// needs rehydration or a live refresh.
+    /// Whether the resolved capability itself is exact. This is intentionally
+    /// separate from metadata completeness because some provider policies
+    /// resolve complete catalog data to `Unknown`.
     #[serde(default)]
     pub reasoning_capabilities_known: bool,
+    /// True once the catalog reasoning fields have been fully parsed and the
+    /// provider policy has been applied. A complete row may intentionally have
+    /// unknown capabilities.
+    #[serde(default)]
+    pub reasoning_metadata_complete: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -51,6 +61,13 @@ impl ModelMetadata {
         }
     }
 
+    pub fn reasoning_capabilities(&self) -> ReasoningCapabilities {
+        ReasoningCapabilities::from_metadata(
+            self.supported_reasoning_levels.clone(),
+            self.reasoning_capabilities_known,
+        )
+    }
+
     pub fn reasoning_effort(&self, reasoning: ReasoningLevel) -> Option<&str> {
         match (reasoning, self.reasoning_off_behavior) {
             (ReasoningLevel::Off, ReasoningOffBehavior::Omit) => None,
@@ -68,18 +85,44 @@ pub struct ModelCost {
     pub cache_write_micros_per_m: Option<u64>,
 }
 
-pub fn cached_reasoning_levels(provider: &str, model: &str) -> Option<Vec<ReasoningLevel>> {
-    cached_model_metadata(provider, model)?.supported_reasoning_levels
+pub fn current_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    current_cached_upstream_model_metadata(provider, model)
+        .map(|metadata| apply_overrides(provider, model, metadata))
+        .or_else(|| override_metadata(provider, model))
 }
 
-pub fn cached_reasoning_effort(
-    provider: &str,
-    model: &str,
-    reasoning: ReasoningLevel,
-) -> Option<String> {
+pub fn current_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
+    if provider_reasoning_is_not_configurable(provider) {
+        return ReasoningCapabilities::NotConfigurable;
+    }
+    current_model_metadata(provider, model)
+        .map(|metadata| metadata.reasoning_capabilities())
+        .unwrap_or_default()
+}
+
+pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
+    if provider_reasoning_is_not_configurable(provider) {
+        return ReasoningCapabilities::NotConfigurable;
+    }
     cached_model_metadata(provider, model)
-        .map(|metadata| metadata.reasoning_effort(reasoning).map(str::to_string))
-        .unwrap_or_else(|| reasoning.effort().map(str::to_string))
+        .map(|metadata| metadata.reasoning_capabilities())
+        .unwrap_or_default()
+}
+
+fn provider_reasoning_is_not_configurable(provider: &str) -> bool {
+    crate::provider::provider_descriptor(provider).is_some_and(|descriptor| {
+        descriptor.catalog_reasoning == CatalogReasoningPolicy::NotConfigurable
+    })
+}
+
+pub fn model_metadata_needs_refresh(provider: &str, model: &str) -> bool {
+    if provider_reasoning_is_not_configurable(provider) {
+        return false;
+    }
+    current_cached_upstream_model_metadata(provider, model)
+        .map(|metadata| apply_overrides(provider, model, metadata))
+        .or_else(|| override_metadata(provider, model))
+        .is_none_or(|metadata| !metadata.reasoning_metadata_complete)
 }
 
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -89,7 +132,7 @@ pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadat
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    if let Some(metadata) = cached_upstream_model_metadata(provider, model) {
+    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
         return Some(apply_overrides(provider, model, metadata));
     }
 
@@ -99,31 +142,23 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     if let Some(response) = fetch_models_dev_api().await {
         write_cached_api(&response);
         if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
-            if metadata.reasoning_capabilities_known {
+            if metadata.reasoning_metadata_complete {
                 write_cached_upstream_model_metadata(provider, model, &metadata);
             }
             return Some(apply_overrides(provider, model, metadata));
         }
     }
 
-    if let Some(metadata) = read_cached_api()
-        .as_ref()
-        .and_then(|api| upstream_metadata_from_api(api, provider, model))
-    {
-        if metadata.reasoning_capabilities_known {
-            write_cached_upstream_model_metadata(provider, model, &metadata);
-        }
-        return Some(apply_overrides(provider, model, metadata));
-    }
-
     override_metadata(provider, model)
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
-    model_metadata_from_api(
+    let descriptor = crate::provider::provider_descriptor(provider)?;
+    model_metadata_from_api_with_policy(
         api,
-        upstream_provider(provider, model),
-        upstream_model(provider, model),
+        descriptor.metadata_upstream_for_model(model),
+        descriptor.metadata_model(model),
+        descriptor.catalog_reasoning,
     )
 }
 
@@ -138,7 +173,9 @@ fn apply_provider_capabilities(
     model: &str,
     mut metadata: ModelMetadata,
 ) -> ModelMetadata {
-    let context_window = super::provider_models::cached_provider_model(provider, model)
+    let provider_model = super::provider_models::cached_provider_model(provider, model);
+    let context_window = provider_model
+        .as_ref()
         .and_then(|model| model.context_window)
         .or_else(|| {
             crate::provider::provider_descriptor(provider)
@@ -146,6 +183,23 @@ fn apply_provider_capabilities(
         });
     if let Some(context_window) = context_window {
         metadata.effective_context_window = Some(context_window);
+    }
+    if let Some(provider_model) = provider_model.filter(|_| {
+        !super::provider_models::provider_model_capabilities_need_refresh(provider, model)
+    }) {
+        match provider_model.reasoning_capabilities {
+            ReasoningCapabilities::Unknown => {}
+            ReasoningCapabilities::NotConfigurable => {
+                metadata.supported_reasoning_levels = None;
+                metadata.reasoning_capabilities_known = true;
+                metadata.reasoning_metadata_complete = true;
+            }
+            ReasoningCapabilities::Levels(levels) => {
+                metadata.supported_reasoning_levels = Some(levels.into_levels());
+                metadata.reasoning_capabilities_known = true;
+                metadata.reasoning_metadata_complete = true;
+            }
+        }
     }
     metadata
 }
@@ -164,6 +218,8 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.cost_default.is_some()
         || metadata.cost_long_context.is_some()
         || metadata.supported_reasoning_levels.is_some()
+        || metadata.reasoning_capabilities_known
+        || metadata.reasoning_metadata_complete
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
 }
 
@@ -184,11 +240,6 @@ async fn fetch_models_dev_api() -> Option<Value> {
         .ok()
 }
 
-fn read_cached_api() -> Option<Value> {
-    let contents = fs::read_to_string(models_dev_cache_path()).ok()?;
-    serde_json::from_str(&contents).ok()
-}
-
 fn write_cached_api(value: &Value) {
     let path = models_dev_cache_path();
     if let Some(parent) = path.parent() {
@@ -200,19 +251,37 @@ fn write_cached_api(value: &Value) {
 }
 
 /// Bump when the models.dev parser gains fields that older cache rows omit.
-/// Rows written with a lower version are rehydrated from the cached models.dev
-/// api.json when available, otherwise treated as misses for a live refetch.
-const MODEL_METADATA_CACHE_VERSION: i64 = 3;
+/// Older or incomplete rows remain available as stale offline fallback, while
+/// explicit fetch paths rehydrate and write them from a catalog snapshot.
+const MODEL_METADATA_CACHE_VERSION: i64 = 5;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    let upstream_provider = upstream_provider(provider, model);
-    let upstream_model = upstream_model(provider, model);
+    cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
+}
+
+fn current_cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::CurrentOnly)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CacheFreshness {
+    CurrentOnly,
+    AllowStale,
+}
+
+fn cached_upstream_model_metadata_with_freshness(
+    provider: &str,
+    model: &str,
+    freshness: CacheFreshness,
+) -> Option<ModelMetadata> {
+    let cache_provider = provider;
+    let cache_model = model;
     let connection = open_models_dev_cache().ok()?;
     let (contents, cache_version): (String, i64) = connection
         .query_row(
             "select metadata_json, cache_version from model_metadata
              where provider = ?1 and model = ?2",
-            params![upstream_provider, upstream_model],
+            params![cache_provider, cache_model],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .ok()?;
@@ -221,33 +290,18 @@ fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(cached);
     }
 
-    // Older or incomplete sqlite rows can predate reasoning capability fields.
-    // Prefer the local models.dev snapshot so interactive reasoning cycling works
-    // immediately without waiting for a live network refresh.
-    if let Some(refreshed) = read_cached_api()
-        .as_ref()
-        .and_then(|api| model_metadata_from_api(api, upstream_provider, upstream_model))
-    {
-        if refreshed.reasoning_capabilities_known {
-            write_cached_upstream_model_metadata(provider, model, &refreshed);
-            return Some(refreshed);
-        }
-        // Local api.json also lacks a reasoning capability signal. Do not seal
-        // that incomplete parse as current; fall through so a live fetch can run.
-    }
-
-    // Incomplete reasoning metadata is a miss so fetch_model_metadata can still
-    // pull a live models.dev snapshot instead of trusting a sealed null forever.
-    None
+    // Reads are side-effect free. Explicit fetch paths own catalog rehydration
+    // and only advance the cache after parsing a complete snapshot.
+    (freshness == CacheFreshness::AllowStale).then_some(cached)
 }
 
 fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) -> bool {
-    cache_version < MODEL_METADATA_CACHE_VERSION || !cached.reasoning_capabilities_known
+    cache_version < MODEL_METADATA_CACHE_VERSION || !cached.reasoning_metadata_complete
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
-    let upstream_provider = upstream_provider(provider, model);
-    let upstream_model = upstream_model(provider, model);
+    let cache_provider = provider;
+    let cache_model = model;
     let Ok(connection) = open_models_dev_cache() else {
         return;
     };
@@ -262,8 +316,8 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
            updated_at = excluded.updated_at,
            cache_version = excluded.cache_version",
         params![
-            upstream_provider,
-            upstream_model,
+            cache_provider,
+            cache_model,
             contents,
             MODEL_METADATA_CACHE_VERSION
         ],
@@ -293,18 +347,6 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-fn upstream_provider<'a>(provider: &'a str, model: &'a str) -> &'a str {
-    crate::provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
-        .unwrap_or(provider)
-}
-
-fn upstream_model<'a>(provider: &str, model: &'a str) -> &'a str {
-    crate::provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.metadata_model(model))
-        .unwrap_or(model)
-}
-
 fn models_dev_sqlite_path() -> PathBuf {
     cache_dir().join("models.dev/models-dev-metadata.sqlite3")
 }
@@ -314,6 +356,10 @@ fn models_dev_cache_path() -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_CACHE_DIR.with(|path| path.borrow().clone()) {
+        return path;
+    }
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
         return PathBuf::from(path).join("rho");
     }
@@ -335,7 +381,40 @@ fn cache_dir() -> PathBuf {
     std::env::temp_dir().join("rho-cache")
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_CACHE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    with_models_dev_cache_dir(path, f)
+}
+
+#[cfg(test)]
+fn with_models_dev_cache_dir<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    TEST_CACHE_DIR.with(|cache_dir| {
+        let previous = cache_dir.replace(Some(path));
+        let result = f();
+        cache_dir.replace(previous);
+        result
+    })
+}
+
+#[cfg(test)]
 fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
+    let policy = crate::provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.catalog_reasoning)
+        .unwrap_or(CatalogReasoningPolicy::ExactAdvertised);
+    model_metadata_from_api_with_policy(api, provider, model, policy)
+}
+
+fn model_metadata_from_api_with_policy(
+    api: &Value,
+    provider: &str,
+    model: &str,
+    reasoning_policy: CatalogReasoningPolicy,
+) -> Option<ModelMetadata> {
     let model = api.get(provider)?.get("models")?.get(model).or_else(|| {
         api.get(provider)?
             .get("models")?
@@ -358,17 +437,36 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
             .and_then(|value| value.as_u64()),
         cost_default: model_cost_from_api(cost),
         cost_long_context,
-        supported_reasoning_levels: supported_reasoning_levels(model),
+        supported_reasoning_levels: supported_reasoning_levels(model, reasoning_policy),
         reasoning_off_behavior: if advertised_none_effort(model) {
             ReasoningOffBehavior::EffortNone
         } else {
             ReasoningOffBehavior::Omit
         },
-        reasoning_capabilities_known: reasoning_capabilities_known(model),
+        reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
+        reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
     })
 }
 
-fn reasoning_capabilities_known(model: &Value) -> bool {
+fn reasoning_metadata_complete(model: &Value, policy: CatalogReasoningPolicy) -> bool {
+    if matches!(
+        policy,
+        CatalogReasoningPolicy::Unknown | CatalogReasoningPolicy::NotConfigurable
+    ) {
+        return true;
+    }
+    reasoning_capabilities_known(model, policy)
+}
+
+fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -> bool {
+    if policy == CatalogReasoningPolicy::Unknown {
+        // Anthropic's adaptive, mandatory, disabled, and budget-token protocols
+        // cannot be represented faithfully as one generic exact level set yet.
+        return false;
+    }
+    if policy == CatalogReasoningPolicy::NotConfigurable {
+        return true;
+    }
     let Some(supports_reasoning) = model.get("reasoning").and_then(Value::as_bool) else {
         // Missing capability signal: keep the row incomplete so a fresher
         // models.dev snapshot can still be fetched.
@@ -377,10 +475,32 @@ fn reasoning_capabilities_known(model: &Value) -> bool {
     if !supports_reasoning {
         return true;
     }
-    // Current models.dev schema advertises reasoning_options for reasoning
-    // models, including empty arrays and non-effort schemes. Absence usually
-    // means a stale snapshot rather than an intentional unrestricted model.
-    model.get("reasoning_options").is_some()
+    let Some(options) = model.get("reasoning_options").and_then(Value::as_array) else {
+        return false;
+    };
+    if options.is_empty() {
+        return true;
+    }
+    effort_values(model)
+        .is_some_and(|values| !values.is_empty() && values.iter().all(is_recognized_effort_value))
+}
+
+fn is_recognized_effort_value(value: &Value) -> bool {
+    matches!(
+        value.as_str(),
+        Some("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")
+    )
+}
+
+fn advertised_toggle(model: &Value) -> bool {
+    model
+        .get("reasoning_options")
+        .and_then(Value::as_array)
+        .is_some_and(|options| {
+            options
+                .iter()
+                .any(|option| option.get("type").and_then(Value::as_str) == Some("toggle"))
+        })
 }
 
 fn advertised_none_effort(model: &Value) -> bool {
@@ -398,24 +518,33 @@ fn effort_values(model: &Value) -> Option<&[Value]> {
         .map(Vec::as_slice)
 }
 
-fn supported_reasoning_levels(model: &Value) -> Option<Vec<ReasoningLevel>> {
+fn supported_reasoning_levels(
+    model: &Value,
+    policy: CatalogReasoningPolicy,
+) -> Option<Vec<ReasoningLevel>> {
+    if matches!(
+        policy,
+        CatalogReasoningPolicy::Unknown | CatalogReasoningPolicy::NotConfigurable
+    ) {
+        return None;
+    }
     let supports_reasoning = model.get("reasoning")?.as_bool()?;
+    if !supports_reasoning {
+        return None;
+    }
     let reasoning_options = model.get("reasoning_options").and_then(Value::as_array);
     if reasoning_options.is_some_and(Vec::is_empty) {
-        return Some(vec![ReasoningLevel::Off]);
+        return None;
     }
-    let Some(effort_values) = effort_values(model) else {
-        return if supports_reasoning {
-            None
-        } else {
-            Some(vec![ReasoningLevel::Off])
-        };
-    };
+    let effort_values = effort_values(model)?;
+    if effort_values.is_empty() || !effort_values.iter().all(is_recognized_effort_value) {
+        return None;
+    }
 
     let mut levels = effort_values
         .iter()
         .filter_map(|value| match value.as_str()? {
-            "none" => None,
+            "none" => Some(ReasoningLevel::Off),
             "minimal" => Some(ReasoningLevel::Minimal),
             "low" => Some(ReasoningLevel::Low),
             "medium" => Some(ReasoningLevel::Medium),
@@ -428,7 +557,12 @@ fn supported_reasoning_levels(model: &Value) -> Option<Vec<ReasoningLevel>> {
     if levels.is_empty() && !advertised_none_effort(model) {
         return None;
     }
-    levels.push(ReasoningLevel::Off);
+    if (policy == CatalogReasoningPolicy::OffAsNone
+        || (policy == CatalogReasoningPolicy::OffByAdvertisedToggle && advertised_toggle(model)))
+        && !levels.contains(&ReasoningLevel::Off)
+    {
+        levels.push(ReasoningLevel::Off);
+    }
     levels.sort_unstable();
     levels.dedup();
     (!levels.is_empty()).then_some(levels)
@@ -570,6 +704,8 @@ fn merge_toml_override(
         toml_cost(table, "cost_long_context").or(metadata.cost_long_context);
     if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
         metadata.supported_reasoning_levels = Some(levels);
+        metadata.reasoning_capabilities_known = true;
+        metadata.reasoning_metadata_complete = true;
     }
     metadata
 }
@@ -585,7 +721,6 @@ fn toml_reasoning_levels(
         .filter_map(toml::Value::as_str)
         .filter_map(|value| value.parse().ok())
         .collect::<Vec<_>>();
-    levels.push(ReasoningLevel::Off);
     levels.sort_unstable();
     levels.dedup();
     Some(levels)

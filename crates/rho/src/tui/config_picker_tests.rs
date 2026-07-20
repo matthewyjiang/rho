@@ -8,8 +8,8 @@ use {crate::permission::PermissionMode, rho_providers::credentials::CredentialEr
 #[test]
 fn config_picker_includes_model_and_provider_settings() {
     let app = crate::tui::tests::test_app();
-    let config = app.info.config_repository.load().unwrap();
-    let picker = config_picker(&app.info, &config);
+    let config = app.info.services.config_repository.load().unwrap();
+    let picker = config_picker(&app.info.runtime, &config);
     let values = picker
         .items
         .iter()
@@ -39,8 +39,8 @@ fn config_picker_includes_model_and_provider_settings() {
 #[test]
 fn config_picker_includes_current_permission_mode() {
     let app = crate::tui::tests::test_app();
-    let config = app.info.config_repository.load().unwrap();
-    let picker = config_picker(&app.info, &config);
+    let config = app.info.services.config_repository.load().unwrap();
+    let picker = config_picker(&app.info.runtime, &config);
     let item = picker
         .items
         .iter()

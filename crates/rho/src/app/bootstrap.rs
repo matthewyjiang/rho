@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     io::{self, IsTerminal},
     sync::Arc,
 };
@@ -10,7 +9,7 @@ use {
     crate::herdr::HerdrReporter,
     crate::update,
     rho_providers::credentials::OsCredentialStore,
-    rho_providers::model::{models_dev::cached_model_metadata, ModelError},
+    rho_providers::model::ModelError,
 };
 
 use super::{
@@ -51,10 +50,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = OsCredentialStore;
-    cli_config::refresh_model_cache(&cli, &store).await?;
-    if cli_config::apply_overrides(&mut config, &cli)? {
+    let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
+    let mut save_config = cli_config::apply_overrides(&mut config, &cli)?;
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    save_config |= cli_config::normalize_reasoning_for_cli(
+        &mut config,
+        if cli.reasoning.is_some() {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        },
+    )?;
+    if save_config {
         config_repository.save(&config)?;
     }
+    let reasoning_before_binding = config.reasoning;
     let role = if automation_prompt.is_some() {
         AgentRole::AutomationRoot
     } else {
@@ -71,15 +81,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     config = bound_agent.config().clone();
 
     validate_terminal_mode(&cli)?;
-    if automation_prompt.is_some()
-        && config.provider == "anthropic"
-        && cached_model_metadata(&config.provider, &config.model).is_none()
-    {
-        let _ =
-            rho_providers::model::models_dev::fetch_model_metadata(&config.provider, &config.model)
-                .await;
-    }
-    cli_config::normalize_reasoning(&mut config);
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    let bound_reasoning_source =
+        if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        };
+    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
     let herdr = HerdrReporter::from_env();
     if let Some(prompt) = automation_prompt {
         let diagnostics = RuntimeDiagnostics::new(&config);
@@ -143,6 +152,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         diagnostics,
         herdr,
         agent: bound_agent,
+        reasoning_source: bound_reasoning_source,
     })
     .await;
     result
@@ -152,27 +162,32 @@ fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
     role: AgentRole,
-) -> BTreeSet<String> {
+) -> crate::agent::AgentCapabilities {
+    use crate::agent::ToolCapability;
+
     if cli.no_tools {
-        return BTreeSet::new();
+        return crate::agent::AgentCapabilities::default();
     }
-    let mut tools = crate::agent::KNOWN_TOOLS
-        .iter()
-        .map(|tool| (*tool).to_string())
-        .collect::<BTreeSet<_>>();
+    let mut tools = crate::agent::AgentCapabilities::all_host_tools();
     if !crate::tools::web::access_tools(config).is_available() {
-        tools.remove("web_search");
+        tools.remove(&ToolCapability::WebSearch);
     }
     #[cfg(windows)]
-    tools.remove("bash");
+    tools.remove(&ToolCapability::Bash);
     #[cfg(not(windows))]
-    tools.remove("powershell");
+    tools.remove(&ToolCapability::Powershell);
     if cli.no_subagents || !config.enable_subagents {
-        tools.remove("agent");
-        tools.remove("agents");
+        tools.remove(&ToolCapability::Agent);
+        tools.remove(&ToolCapability::Agents);
     }
     if role != AgentRole::InteractiveRoot {
-        tools.remove("questionnaire");
+        tools.remove(&ToolCapability::Questionnaire);
+    }
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
+        tools.insert(ToolCapability::Extension(
+            crate::tools::tui_fixture::NAME.into(),
+        ));
     }
     tools
 }

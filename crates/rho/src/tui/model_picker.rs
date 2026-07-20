@@ -1,7 +1,7 @@
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, TuiInfo, UiPicker};
+use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, RuntimeModelView, UiPicker};
 use rho_providers::model::{catalog, favorites};
 
-pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPicker {
+pub(super) fn model_picker(info: &RuntimeModelView, available_auths: &[String]) -> UiPicker {
     model_picker_for_current(
         "select model",
         "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
@@ -17,7 +17,7 @@ pub(super) fn model_picker(info: &TuiInfo, available_auths: &[String]) -> UiPick
 }
 
 pub(super) fn model_picker_during_run(
-    info: &TuiInfo,
+    info: &RuntimeModelView,
     pending: Option<&rho_providers::model::catalog::ModelSelection>,
     available_auths: &[String],
 ) -> UiPicker {
@@ -135,7 +135,6 @@ fn model_picker_for_current(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::config_repository::ConfigRepository;
     use rho_providers::credentials::{
         available_auth_modes, save_codex_tokens, MemoryCredentialStore,
     };
@@ -154,31 +153,11 @@ mod tests {
         )
         .unwrap();
         let auths = available_auth_modes(&store);
-        let info = TuiInfo {
-            cwd: std::path::PathBuf::from("/tmp/project"),
-            provider: "openai-codex".into(),
-            model: "gpt-5.6-sol".into(),
-            reasoning: rho_providers::reasoning::ReasoningLevel::Low,
-            permission_mode: crate::permission::PermissionMode::Auto,
-            show_reasoning_output: true,
-            auth: "codex".into(),
-            title_provider: None,
-            title_model: None,
-            title_auth: None,
-            favorite_models: vec!["openai-codex/gpt-5.4-mini".into()],
-            session_id: None,
-            recovered_messages: Vec::new(),
-            open_resume_picker: false,
-            config_repository: ConfigRepository::new(None),
-            auth_unavailable: None,
-            update_notice: None,
-            pending_update_notice: None,
-            diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
-            herdr: crate::herdr::HerdrReporter::default(),
-            max_tool_output_lines: 10,
-            keybindings: crate::keybindings::Keybindings::default(),
-            prompt_templates: Default::default(),
-        };
+        let mut info = crate::tui::tests::test_bootstrap().runtime;
+        info.provider = "openai-codex".into();
+        info.model = "gpt-5.6-sol".into();
+        info.auth = "codex".into();
+        info.favorite_models = vec!["openai-codex/gpt-5.4-mini".into()];
 
         let picker = model_picker(&info, &auths);
 
@@ -203,31 +182,10 @@ mod tests {
         )
         .unwrap();
         let auths = available_auth_modes(&store);
-        let info = TuiInfo {
-            cwd: std::path::PathBuf::from("/tmp/project"),
-            provider: "openai-codex".into(),
-            model: "gpt-5.5".into(),
-            reasoning: rho_providers::reasoning::ReasoningLevel::Low,
-            permission_mode: crate::permission::PermissionMode::Auto,
-            show_reasoning_output: true,
-            auth: "codex".into(),
-            title_provider: None,
-            title_model: None,
-            title_auth: None,
-            favorite_models: Vec::new(),
-            session_id: None,
-            recovered_messages: Vec::new(),
-            open_resume_picker: false,
-            config_repository: ConfigRepository::new(None),
-            auth_unavailable: None,
-            update_notice: None,
-            pending_update_notice: None,
-            diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
-            herdr: crate::herdr::HerdrReporter::default(),
-            max_tool_output_lines: 10,
-            keybindings: crate::keybindings::Keybindings::default(),
-            prompt_templates: Default::default(),
-        };
+        let mut info = crate::tui::tests::test_bootstrap().runtime;
+        info.provider = "openai-codex".into();
+        info.model = "gpt-5.5".into();
+        info.auth = "codex".into();
         let pending = rho_providers::model::catalog::ModelSelection {
             provider: "openai-codex".into(),
             model: "gpt-5.4-mini".into(),

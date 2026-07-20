@@ -2,7 +2,7 @@ use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 
 use rho_tools::tool::{compact_display_path, ToolDisplayStyle};
 
-use super::{ToolKind, ToolPresentation, ToolView};
+use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 
 pub(super) fn presentation(view: &ToolView, mut display_lines: Vec<String>) -> ToolPresentation {
     display_lines.extend(view.metadata.presentation_notices().iter().cloned());
@@ -52,6 +52,8 @@ pub(super) fn preview_lines(
         }];
     };
     match kind {
+        ToolKind::Agent => agent_format::agent_start_lines_for(arguments),
+        ToolKind::Agents => agent_format::agents_start_lines_for(arguments),
         ToolKind::Bash => vec![command_line("$", arguments)],
         ToolKind::PowerShell => vec![command_line("PS", arguments)],
         ToolKind::Process => {
@@ -95,6 +97,8 @@ pub(super) fn finished_lines(
     cwd: &std::path::Path,
 ) -> Vec<String> {
     match view.kind {
+        ToolKind::Agent => agent_format::agent_finished_lines(view, content, ok),
+        ToolKind::Agents => agent_format::agents_finished_lines(view, content, ok),
         ToolKind::Bash => command_result_lines("$", &view.arguments, content),
         ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
         ToolKind::Process => process_result_lines(content),
@@ -114,14 +118,18 @@ pub(super) fn progress_lines(
     view: Option<(&ToolView, &std::path::Path)>,
     progress: &ToolProgress,
 ) -> Vec<String> {
-    if view.is_some_and(|(view, _)| matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell)) {
-        let (view, _) = view.expect("shell view checked above");
-        let prompt = if view.kind == ToolKind::Bash {
-            "$"
-        } else {
-            "PS"
-        };
-        return command_result_lines(prompt, &view.arguments, progress.text());
+    if let Some((view, _)) = view {
+        if view.kind == ToolKind::Agent {
+            return agent_format::agent_progress_lines(view, progress.text());
+        }
+        if matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell) {
+            let prompt = if view.kind == ToolKind::Bash {
+                "$"
+            } else {
+                "PS"
+            };
+            return command_result_lines(prompt, &view.arguments, progress.text());
+        }
     }
     let mut lines = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
     if !progress.text().trim().is_empty() {

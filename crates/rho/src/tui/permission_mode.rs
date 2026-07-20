@@ -9,7 +9,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let previous = agent.permission_mode();
         agent.set_permission_mode(mode).await?;
-        if let Err(error) = self.info.config_repository.update(|config| {
+        if let Err(error) = self.info.services.config_repository.update(|config| {
             config.permission_mode = mode;
         }) {
             if let Err(rollback_error) = agent.set_permission_mode(previous).await {
@@ -19,7 +19,7 @@ impl App {
             }
             return Err(error);
         }
-        self.info.permission_mode = mode;
+        self.info.runtime.permission_mode = mode;
         let notice = format!("permission mode: {}", mode.as_str());
         self.insert_entry(&Entry::Notice(notice.clone()));
         self.status = notice;

@@ -4,6 +4,9 @@ use reqwest::StatusCode;
 #[path = "openai_compatible/dialect.rs"]
 mod dialect;
 
+#[path = "openai_compatible/reasoning.rs"]
+mod reasoning;
+
 pub(crate) use dialect::OpenAiCompatibleDialect;
 
 use crate::{
@@ -12,7 +15,7 @@ use crate::{
     protocol::openai_chat::{
         convert_openai_response, convert_streamed_response, handle_openai_stream_line,
         invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest,
-        ChatResponse, ChatStreamOptions, OpenAiReasoning,
+        ChatResponse, ChatStreamOptions,
     },
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -29,6 +32,9 @@ pub(crate) struct OpenAiCompatibleProvider {
     dialect: OpenAiCompatibleDialect,
     auth: CompatibleAuth,
     api_base: String,
+    openrouter_reasoning: Option<reasoning::OpenRouterReasoningProfile>,
+    moonshot_reasoning: Option<reasoning::MoonshotReasoningProfile>,
+    kimi_reasoning: Option<reasoning::KimiReasoningProfile>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -40,6 +46,22 @@ impl OpenAiCompatibleProvider {
         auth: CompatibleAuth,
         api_base: String,
     ) -> Self {
+        let openrouter_reasoning = (dialect == OpenAiCompatibleDialect::OpenRouter).then(|| {
+            reasoning::OpenRouterReasoningProfile::from_metadata(
+                crate::model::models_dev::current_model_metadata(provider, &model),
+            )
+        });
+        let moonshot_reasoning = (dialect == OpenAiCompatibleDialect::Moonshot).then(|| {
+            reasoning::MoonshotReasoningProfile::from_metadata(
+                &model,
+                crate::model::models_dev::current_model_metadata(provider, &model),
+            )
+        });
+        let kimi_reasoning = (dialect == OpenAiCompatibleDialect::KimiCode).then(|| {
+            reasoning::KimiReasoningProfile::new(
+                crate::model::models_dev::current_reasoning_capabilities(provider, &model),
+            )
+        });
         Self {
             client,
             provider,
@@ -47,6 +69,9 @@ impl OpenAiCompatibleProvider {
             dialect,
             auth,
             api_base,
+            openrouter_reasoning,
+            moonshot_reasoning,
+            kimi_reasoning,
         }
     }
 
@@ -130,6 +155,13 @@ impl OpenAiCompatibleProvider {
             .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
+        let reasoning_fields = self.dialect.reasoning_fields(
+            self.openrouter_reasoning.as_ref(),
+            self.moonshot_reasoning.as_ref(),
+            self.kimi_reasoning.as_ref(),
+            &self.model,
+            request.reasoning_level,
+        );
         Ok(ChatRequest {
             model: self.model.clone(),
             messages,
@@ -139,14 +171,9 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
-            reasoning: self
-                .dialect
-                .reasoning(request.reasoning_level)
-                .map(|effort| OpenAiReasoning { effort }),
-            reasoning_effort: None,
-            thinking: self
-                .dialect
-                .thinking(self.provider, &self.model, request.reasoning_level),
+            reasoning: reasoning_fields.reasoning,
+            reasoning_effort: reasoning_fields.reasoning_effort,
+            thinking: reasoning_fields.thinking,
         })
     }
 

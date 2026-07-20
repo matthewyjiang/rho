@@ -159,6 +159,34 @@ async fn ws_server_closes_after_delta() -> (String, Arc<StdMutex<Vec<Value>>>) {
     (format!("ws://{addr}/responses"), frames)
 }
 
+async fn ws_server_stalls_after_event(events: Vec<Value>) -> (String, Arc<StdMutex<Vec<Value>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let frames = Arc::new(StdMutex::new(Vec::new()));
+    let server_frames = Arc::clone(&frames);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let message = socket.next().await.unwrap().unwrap();
+        let frame = serde_json::from_str(&message.into_text().unwrap()).unwrap();
+        server_frames.lock().unwrap().push(frame);
+        for event in events {
+            socket
+                .send(Message::Text(event.to_string().into()))
+                .await
+                .unwrap();
+        }
+        std::future::pending::<()>().await;
+    });
+    (format!("ws://{addr}/responses"), frames)
+}
+
+async fn immediate<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(1), future)
+        .await
+        .expect("terminal websocket event should return without waiting for the idle timeout")
+}
+
 async fn ws_server_stalls_after_request() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -391,6 +419,184 @@ async fn websocket_keep_alive_frames_do_not_reset_the_idle_timeout() {
             request_submitted: true
         }
     ));
+}
+
+#[test]
+fn terminal_failure_uses_error_type_when_code_is_null() {
+    for (event, expected_type, expected_kind) in [
+        (
+            json!({
+                "type":"error",
+                "error":{
+                    "type":"invalid_request_error",
+                    "code":null,
+                    "message":"invalid request"
+                }
+            }),
+            "invalid_request_error",
+            ProviderReportedErrorKind::InvalidResponse,
+        ),
+        (
+            json!({
+                "type":"response.failed",
+                "response":{
+                    "error":{
+                        "type":"server_error",
+                        "code":null,
+                        "message":"server failed"
+                    }
+                }
+            }),
+            "server_error",
+            ProviderReportedErrorKind::Unavailable,
+        ),
+    ] {
+        assert!(matches!(
+            codex_ws_terminal_failure(&event, /*events_emitted*/ false),
+            Some(CodexWsFailure::Model(ModelError::ProviderReported {
+                kind,
+                error_type,
+                ..
+            })) if kind == expected_kind && error_type == expected_type
+        ));
+    }
+}
+
+#[tokio::test]
+async fn continuation_error_before_output_returns_immediate_full_sse_fallback() {
+    let (url, frames) = ws_server_stalls_after_event(vec![json!({
+        "type":"error",
+        "error":{
+            "type":"invalid_request_error",
+            "code":"previous_response_not_found",
+            "message":"Previous response not found.",
+            "param":"previous_response_id"
+        },
+        "status":400
+    })])
+    .await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let first_body = body(vec![json!({"role":"user","content":"one"})]);
+    let candidate = CodexContinuationCandidate::from_responses_body(&first_body).unwrap();
+    let continuation_response = CodexContinuationResponse::from_response(
+        &ModelResponse::Assistant(vec![ContentBlock::Text("ok1".into())]),
+        Some("resp_1".into()),
+        vec![json!({
+            "id":"msg_1",
+            "type":"message",
+            "role":"assistant",
+            "content":[{"type":"output_text","text":"ok1"}]
+        })],
+    );
+    transport
+        .state
+        .lock()
+        .await
+        .continuation
+        .record_success(&candidate, continuation_response);
+    let mut on_event = None;
+
+    let outcome = immediate(transport.send_responses_turn(
+        body(vec![
+            json!({"role":"user","content":"one"}),
+            json!({"role":"assistant","content":"ok1"}),
+            json!({"role":"user","content":"two"}),
+        ]),
+        &tokens(),
+        CodexRequestMode::Standard,
+        &mut on_event,
+    ))
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: true
+        }
+    ));
+    let frames = frames.lock().unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0]["previous_response_id"], "resp_1");
+    assert_eq!(frames[0]["input"], json!([{"role":"user","content":"two"}]));
+}
+
+#[tokio::test]
+async fn response_failed_after_delta_returns_immediately_without_replay() {
+    let (url, frames) = ws_server_stalls_after_event(vec![
+        json!({"type":"response.output_text.delta","delta":"partial"}),
+        json!({
+            "type":"response.failed",
+            "response":{
+                "id":"resp_failed",
+                "status":"failed",
+                "error":{"code":"server_error","message":"generation failed"}
+            }
+        }),
+    ])
+    .await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let mut deltas = Vec::new();
+    let error = {
+        let mut collect_event = |event| {
+            if let ModelEvent::OutputDelta(delta) = event {
+                deltas.push(delta);
+            }
+            Ok(())
+        };
+        let mut on_event = Some(
+            &mut collect_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        );
+
+        immediate(transport.send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        ))
+        .await
+        .unwrap_err()
+    };
+
+    assert_eq!(deltas, ["partial"]);
+    assert!(matches!(
+        error,
+        ModelError::StreamFailedAfterOutput { message }
+            if message.contains("server_error") && message.contains("generation failed")
+    ));
+    assert_eq!(frames.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn silent_response_incomplete_returns_immediate_model_error() {
+    let (url, frames) = ws_server_stalls_after_event(vec![json!({
+        "type":"response.incomplete",
+        "response":{
+            "id":"resp_incomplete",
+            "status":"incomplete",
+            "incomplete_details":{"reason":"max_output_tokens"}
+        }
+    })])
+    .await;
+    let transport = CodexWsTransport::new_with_url(url);
+
+    let error = immediate(transport.send_responses_turn_silent(
+        body(vec![json!({"role":"user","content":"one"})]),
+        &tokens(),
+        CodexRequestMode::Standard,
+    ))
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ModelError::ProviderReported {
+            kind: ProviderReportedErrorKind::InvalidResponse,
+            error_type,
+            message,
+        } if error_type == "response_incomplete" && message.contains("max_output_tokens")
+    ));
+    assert_eq!(frames.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

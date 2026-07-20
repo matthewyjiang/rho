@@ -34,17 +34,30 @@ pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key"
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 
-pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker {
-    UiPicker::new(
-        "Config",
-        "type regex filter, enter change, esc cancel",
-        vec![
+/// Badge for the conversation model, shown as `alias → provider/model` when
+/// the selection came from a user-defined alias so the mapping is never hidden.
+fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> String {
+    let current = format!("{}/{}", info.provider, info.model);
+    match config.current_model_alias() {
+        Some(alias) if config.provider == info.provider && config.model == info.model => {
+            format!("{alias} → {current}")
+        }
+        _ => current,
+    }
+}
+
+pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
+    let reasoning_capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+        &info.provider,
+        &info.model,
+    );
+    let mut items = vec![
             PickerItem {
                 label: "Conversation model".into(),
                 detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
                 preview: None,
                 badge: Some(PickerBadge {
-                    text: format!("{}/{}", info.provider, info.model),
+                    text: conversation_model_badge(info, config),
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: CONVERSATION_MODEL_VALUE.into(),
@@ -99,13 +112,7 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 detail: Some(format!(
                     "Controls model reasoning. Current: {}; Enter cycles to {}.",
                     info.reasoning,
-                    info.reasoning.next_supported(
-                        rho_providers::model::models_dev::cached_reasoning_levels(
-                            &info.provider,
-                            &info.model,
-                        )
-                        .as_deref(),
-                    )
+                    reasoning_capabilities.next_level(info.reasoning)
                 )),
                 preview: None,
                 badge: Some(PickerBadge {
@@ -246,7 +253,14 @@ pub(super) fn config_picker(info: &super::TuiInfo, config: &Config) -> UiPicker 
                 }),
                 value: WEB_SEARCH_VALUE.into(),
             },
-        ],
+        ];
+    if reasoning_capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+        items.retain(|item| item.value != REASONING_VALUE);
+    }
+    UiPicker::new(
+        "Config",
+        "type regex filter, enter change, esc cancel",
+        items,
         PickerAction::Config,
     )
 }
@@ -405,7 +419,7 @@ fn web_search_api_key_is_set(
 impl App {
     pub(super) fn open_config_conversation_model_picker(&mut self) {
         self.refresh_available_auths();
-        let picker = model_picker::model_picker(&self.info, &self.available_auths);
+        let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
                 "no cached API models. use Config > Refresh model lists after signing in.".into(),
@@ -420,7 +434,7 @@ impl App {
     pub(super) fn open_config_conversation_model_picker_during_turn(&mut self) {
         self.refresh_available_auths();
         let picker = model_picker::model_picker_during_run(
-            &self.info,
+            &self.info.runtime,
             self.pending_model_selection.as_ref(),
             &self.available_auths,
         );
@@ -441,7 +455,7 @@ impl App {
         let picker = model_picker::title_model_picker(
             &provider,
             &model,
-            &self.info.favorite_models,
+            &self.info.runtime.favorite_models,
             &self.available_auths,
         );
         if picker.items.is_empty() {

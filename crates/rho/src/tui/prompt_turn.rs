@@ -4,6 +4,45 @@ use super::*;
 pub(super) struct FailedTurn {
     input: rho_sdk::UserInput,
     display_user: Option<Message>,
+    notification_context: Option<String>,
+}
+
+impl FailedTurn {
+    fn from_prompt(prompt: TurnPrompt, images: Vec<ImageContent>) -> Result<Self, rho_sdk::Error> {
+        let display = prompt.persisted_display.unwrap_or(prompt.display);
+        let mut display_content = Vec::with_capacity(1 + images.len());
+        display_content.push(ContentBlock::Text(display));
+        display_content.extend(images.iter().cloned().map(ContentBlock::Image));
+
+        let mut model_content = Vec::with_capacity(1 + images.len());
+        if !prompt.model.is_empty() {
+            model_content.push(ContentBlock::Text(prompt.model));
+        }
+        model_content.extend(images.into_iter().map(ContentBlock::Image));
+
+        Ok(Self {
+            input: rho_sdk::UserInput::content(model_content)?,
+            display_user: Some(Message::User(display_content)),
+            notification_context: None,
+        })
+    }
+
+    fn attach_notification_context(&mut self, notification: String) {
+        self.notification_context = Some(crate::tools::agent::merge_notification_context(
+            self.notification_context.as_deref(),
+            &notification,
+        ));
+    }
+
+    fn model_input(&self) -> Result<rho_sdk::UserInput, rho_sdk::Error> {
+        let Some(notification) = &self.notification_context else {
+            return Ok(self.input.clone());
+        };
+        let mut content = Vec::with_capacity(1 + self.input.blocks().len());
+        content.push(ContentBlock::Text(notification.clone()));
+        content.extend_from_slice(self.input.blocks());
+        rho_sdk::UserInput::content(content)
+    }
 }
 
 enum PromptTurnRequest {
@@ -42,7 +81,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
-        let failed_turn = match request {
+        let mut failed_turn = match request {
             PromptTurnRequest::New { prompt, images } => {
                 if !prompt.history.is_empty() {
                     self.push_input_history(&prompt.history);
@@ -50,8 +89,9 @@ impl App {
                 self.reset_input_history_navigation();
                 self.ensure_session(agent)?;
                 self.info
+                    .services
                     .herdr
-                    .report_session(self.info.session_id.as_deref())
+                    .report_session(self.info.session.session_id.as_deref())
                     .await;
                 if !agent
                     .history()
@@ -61,29 +101,14 @@ impl App {
                     self.start_session_title_generation(prompt.history.clone(), agent);
                 }
                 self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
-
-                let mut content = Vec::with_capacity(1 + images.len());
-                if !prompt.model.is_empty() {
-                    content.push(ContentBlock::Text(prompt.model));
-                }
-                content.extend(images.iter().cloned().map(ContentBlock::Image));
-                let input = rho_sdk::UserInput::content(content)?;
-                let display_user = prompt.persisted_display.map(|display| {
-                    let mut content = Vec::with_capacity(1 + images.len());
-                    content.push(ContentBlock::Text(display));
-                    content.extend(images.into_iter().map(ContentBlock::Image));
-                    Message::User(content)
-                });
-                FailedTurn {
-                    input,
-                    display_user,
-                }
+                FailedTurn::from_prompt(prompt, images)?
             }
             PromptTurnRequest::Retry(failed_turn) => {
                 self.ensure_session(agent)?;
                 self.info
+                    .services
                     .herdr
-                    .report_session(self.info.session_id.as_deref())
+                    .report_session(self.info.session.session_id.as_deref())
                     .await;
                 self.insert_entry(&Entry::Notice(
                     "retrying the previous goal turn without duplicating the prompt".into(),
@@ -91,15 +116,38 @@ impl App {
                 failed_turn
             }
         };
+
+        // Background completions pending at this turn boundary ride in the
+        // same model request. This runs after retry delays too, while the
+        // persisted display remains the real user-visible prompt.
+        let notification_batch = agent
+            .subagents()
+            .cloned()
+            .map(|manager| manager.take_notifications(agent.session_id().as_str()))
+            .filter(|notifications| !notifications.is_empty())
+            .map(|notifications| crate::tools::agent::notification_prompts(&notifications));
+        if let Some((batch_model, batch_display)) = notification_batch {
+            self.insert_entry(&Entry::Notice(format!(
+                "delivered with this message:\n{batch_display}"
+            )));
+            failed_turn.attach_notification_context(batch_model);
+        }
+        let model_input = failed_turn.model_input()?;
         self.current_turn_start = Some(self.transcript.len());
-        self.active_turn_show_reasoning_output = self.info.show_reasoning_output;
+        self.active_turn_show_reasoning_output = self.info.runtime.show_reasoning_output;
         self.reset_streams();
         self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
         self.status = "running".into();
         self.running = true;
+        self.activity_phase = ActivityPhase::Starting;
         self.info
+            .services
             .herdr
-            .report_state(HerdrState::Working, None, self.info.session_id.as_deref())
+            .report_state(
+                HerdrState::Working,
+                None,
+                self.info.session.session_id.as_deref(),
+            )
             .await;
         self.loading_spinner.start();
         self.clamp_history_scroll_for_terminal(terminal)?;
@@ -108,7 +156,7 @@ impl App {
         self.active_tool_call = false;
         self.pending_tool_call = None;
         agent
-            .start(failed_turn.input.clone(), failed_turn.display_user.clone())
+            .start(model_input, failed_turn.display_user.clone())
             .await?;
         self.insert_runtime_notices(agent);
         if let Some(context) = agent.take_context_usage() {
@@ -117,7 +165,7 @@ impl App {
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let mut adapter = SdkEventAdapter::new(self.info.cwd.clone());
+        let mut adapter = SdkEventAdapter::new(self.info.runtime.cwd.clone());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
             rho_sdk::HostInputId,

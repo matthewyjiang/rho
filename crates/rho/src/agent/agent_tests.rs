@@ -14,13 +14,15 @@ fn builtins_share_one_catalog() {
 }
 
 #[test]
-fn rejects_unknown_fields_and_tools_with_context() {
+fn rejects_unknown_tools_with_context() {
     let root = tempfile::tempdir().unwrap();
     let agents = root.path().join(".rho/agents");
     std::fs::create_dir_all(&agents).unwrap();
     let path = agents.join("bad.md");
     std::fs::write(&path, "---\ndescription: bad\ntools: [teleport]\n---\n").unwrap();
+
     let error = AgentCatalog::discover_with_home(root.path(), Some(root.path())).unwrap_err();
+
     assert_eq!(error.path, path);
     assert_eq!(error.field.as_deref(), Some("tools"));
     assert!(error.to_string().contains("unknown tool 'teleport'"));
