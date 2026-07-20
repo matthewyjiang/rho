@@ -72,9 +72,9 @@ Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are 
 
 Model integrations are split into three layers:
 
-- `crates/rho/src/model/` defines the canonical agent request, response, message, event, usage, and metadata concepts. It must not contain provider wire types.
-- `crates/rho/src/protocol/` converts the canonical model to and from API wire formats. OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages are implemented here. `gemini_generate_content` reserves the boundary for a future Gemini codec but is not a selectable provider.
-- `crates/rho/src/providers/` owns credentials, endpoint selection, headers, retries, continuation state, and transport policy for each provider. Multiple providers may consume one protocol codec.
+- `crates/rho-providers/src/model/` defines provider registry, catalog, and application model support without wire types.
+- `crates/rho-providers/src/protocol/` converts the canonical SDK model to and from API wire formats. OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google Gemini Generate Content are implemented here.
+- `crates/rho-providers/src/providers/` owns credentials, endpoint selection, headers, retries, continuation state, and transport policy for each provider. Multiple providers may consume one protocol codec.
 
 Keep provider-specific fields in protocol or provider modules unless the agent needs the underlying concept. Adding a protocol stub does not make a provider available: provider identity, authentication, model discovery, runtime construction, and documentation must be implemented separately.
 

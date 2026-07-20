@@ -22,6 +22,8 @@ pub enum ModelError {
     MissingCodexAuth,
     #[error("missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override")]
     MissingAnthropicApiKey,
+    #[error("missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override")]
+    MissingGoogleApiKey,
     #[error("missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override")]
     MissingGithubCopilotAuth,
     #[error("missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override")]

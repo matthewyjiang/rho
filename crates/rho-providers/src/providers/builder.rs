@@ -13,6 +13,7 @@ use crate::{
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
+        google::{GoogleProvider, API_BASE as GOOGLE_API_BASE},
         openai::{auth::Auth, OpenAiProvider},
         openai_compatible::{CompatibleAuth, OpenAiCompatibleDialect, OpenAiCompatibleProvider},
         xai::XaiProvider,
@@ -115,6 +116,7 @@ pub enum ProviderCredential {
         refresh_store: Arc<dyn CredentialStore>,
     },
     AnthropicApiKey(SecretString),
+    GoogleApiKey(SecretString),
     GitHubCopilot(GitHubCopilotAuthManager),
     Xai(XaiAuthManager),
     OpenAiCompatible(CompatibleAuth),
@@ -125,6 +127,7 @@ impl fmt::Debug for ProviderCredential {
         let kind = match self {
             Self::OpenAi { .. } => "openai",
             Self::AnthropicApiKey(_) => "anthropic-api-key",
+            Self::GoogleApiKey(_) => "google-api-key",
             Self::GitHubCopilot(_) => "github-copilot",
             Self::Xai(_) => "xai",
             Self::OpenAiCompatible(_) => "openai-compatible",
@@ -194,6 +197,14 @@ impl ProviderBuilder {
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
                 Ok(Arc::new(provider))
+            }
+            (ProviderRuntime::Google, ProviderCredential::GoogleApiKey(api_key)) => {
+                Ok(Arc::new(GoogleProvider::new_with_transport(
+                    self.options.model,
+                    api_key.into_secret(),
+                    client,
+                    endpoint.unwrap_or_else(|| GOOGLE_API_BASE.into()),
+                )))
             }
             (ProviderRuntime::GithubCopilot, ProviderCredential::GitHubCopilot(auth)) => {
                 Ok(Arc::new(GitHubCopilotProvider::new_with_transport(

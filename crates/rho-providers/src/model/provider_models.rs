@@ -29,6 +29,8 @@ use crate::{
 #[cfg(not(test))]
 use crate::paths;
 
+#[path = "provider_models/google.rs"]
+mod google;
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
 
@@ -144,6 +146,9 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {
             fetch_anthropic_models(provider, store).await?
+        }
+        Some(ProviderModelRefreshKind::Google) => {
+            google::fetch(provider, load_api_key_auth(provider, store)?).await?
         }
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             fetch_github_copilot_models(provider, store).await?

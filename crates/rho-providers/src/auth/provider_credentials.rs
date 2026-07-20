@@ -70,6 +70,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             ProviderRuntime::Anthropic => Ok(ProviderCredential::AnthropicApiKey(
                 SecretString::new(load_anthropic_api_key(self.store.as_ref())?),
             )),
+            ProviderRuntime::Google => Ok(ProviderCredential::GoogleApiKey(SecretString::new(
+                load_provider_api_key_auth("google", self.store.as_ref())?,
+            ))),
             ProviderRuntime::GithubCopilot => Ok(ProviderCredential::GitHubCopilot(
                 GitHubCopilotAuthManager::new(self.store.clone())?,
             )),

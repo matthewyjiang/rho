@@ -5,6 +5,7 @@
 
 pub const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
+pub const GOOGLE_API_KEY_ACCOUNT: &str = "provider:google:api-key";
 pub const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
 pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
@@ -18,6 +19,7 @@ pub enum ProviderId {
     OpenAi,
     OpenAiCodex,
     Anthropic,
+    Google,
     GithubCopilot,
     Xai,
     XaiOAuth,
@@ -51,6 +53,7 @@ pub enum CatalogReasoningPolicy {
 pub enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
+    Google,
     GithubCopilot,
     OpenAiCompatible { api_base: &'static str },
 }
@@ -143,6 +146,7 @@ impl ProviderAuthKind {
 pub enum MissingCredential {
     OpenAi,
     Anthropic,
+    Google,
     Moonshot,
     OpenRouter,
     Xai,
@@ -211,6 +215,23 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
         metadata_upstream: "anthropic",
         catalog_reasoning: CatalogReasoningPolicy::Unknown,
+    },
+    ProviderDescriptor {
+        id: ProviderId::Google,
+        name: "google",
+        display_name: "Google Gemini",
+        auth: "google-api-key",
+        login_label: "Google Gemini API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "GEMINI_API_KEY",
+            account: GOOGLE_API_KEY_ACCOUNT,
+            entry_label: "Google Gemini API key",
+            missing: MissingCredential::Google,
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::Google),
+        metadata_upstream: "google",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::GithubCopilot,
