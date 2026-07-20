@@ -134,16 +134,6 @@ fn stale_rows_remain_available_as_offline_fallback() {
             ..ModelMetadata::default()
         };
         write_cached_upstream_model_metadata("anthropic", "claude-test", &stale);
-        write_cached_api(&json!({
-            "anthropic": {
-                "models": {
-                    "claude-test": {
-                        "limit": {"context": 999, "output": 100}
-                    }
-                }
-            }
-        }));
-
         assert_eq!(
             current_cached_upstream_model_metadata("anthropic", "claude-test"),
             None

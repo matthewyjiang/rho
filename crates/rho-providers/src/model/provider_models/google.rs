@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, future::Future, time::Duration};
 
 use serde::Deserialize;
 
@@ -15,27 +15,37 @@ pub(crate) use policy::{
 
 const MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const LIST_TIMEOUT: Duration = Duration::from_secs(5);
+const DEPRECATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(super) async fn fetch(
     provider: &str,
     api_key: String,
 ) -> Result<Vec<ProviderModel>, ModelError> {
-    let (models, deprecated_models) = tokio::join!(
-        fetch_from(provider, api_key, MODELS_URL),
+    fetch_from(
+        provider,
+        api_key,
+        MODELS_URL,
         models_dev::fetch_deprecated_provider_models(provider),
-    );
-    let mut models = models?;
-    if let Some(deprecated_models) = &deprecated_models {
-        hide_deprecated_models(&mut models, deprecated_models);
+    )
+    .await
+}
+
+async fn fetch_from(
+    provider: &str,
+    api_key: String,
+    endpoint: &str,
+    deprecated_models: impl Future<Output = Option<HashSet<String>>>,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let mut models = fetch_google_models(provider, api_key, endpoint).await?;
+    if let Ok(Some(deprecated_models)) =
+        tokio::time::timeout(DEPRECATION_LOOKUP_TIMEOUT, deprecated_models).await
+    {
+        models.retain(|model| !deprecated_models.contains(&model.model));
     }
     Ok(models)
 }
 
-fn hide_deprecated_models(models: &mut Vec<ProviderModel>, deprecated_models: &HashSet<String>) {
-    models.retain(|model| !deprecated_models.contains(&model.model));
-}
-
-async fn fetch_from(
+async fn fetch_google_models(
     provider: &str,
     api_key: String,
     endpoint: &str,
