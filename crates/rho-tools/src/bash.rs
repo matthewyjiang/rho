@@ -136,27 +136,7 @@ pub(super) async fn execute_process(
     let mut process_group = ProcessGroupGuard::new(child.id());
 
     let start = Instant::now();
-    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel();
-    // Aborts on drop so timeout, cancel, and normal-exit paths all stop readers.
-    let mut readers = StreamReaderGuards::default();
-    if let Some(stdout) = child.stdout.take() {
-        readers.push(tokio::spawn(read_stream(
-            StreamKind::Stdout,
-            stdout,
-            chunk_tx.clone(),
-        )));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        readers.push(tokio::spawn(read_stream(
-            StreamKind::Stderr,
-            stderr,
-            chunk_tx,
-        )));
-    }
-
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut output_open = true;
+    let mut streams = StreamSession::attach(&mut child);
     let timeout = execution.output_limits().timeout();
     let mut timeout_sleep = Box::pin(tokio::time::sleep(
         timeout.unwrap_or(std::time::Duration::MAX),
@@ -170,29 +150,20 @@ pub(super) async fn execute_process(
                 return Err(ToolError::Message("tool interrupted".into()));
             }
             status = child.wait() => break status?,
-            chunk = chunk_rx.recv(), if output_open => {
-                match chunk {
-                    Some((kind, bytes)) => {
-                        append_stream_chunk(kind, bytes, &mut stdout, &mut stderr);
-                    }
-                    None => output_open = false,
-                }
+            chunk = streams.recv(), if streams.output_open => {
+                streams.apply_chunk(chunk);
             }
             _ = update_tick.tick() => {
-                on_update(vec![running_content(&stdout, &stderr)]);
+                on_update(vec![streams.running_content()]);
             }
             _ = &mut timeout_sleep, if timeout.is_some() => {
                 process_group.kill();
                 let _ = child.start_kill();
-                drain_ready_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr);
                 let _ = child.wait().await;
-                drain_final_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-                // Drop the receiver before aborting so any late send fails closed.
-                drop(chunk_rx);
-                readers.abort();
+                let output = streams.finish().await;
                 let seconds = timeout.unwrap_or_default().as_secs();
                 return Err(ToolError::Message(truncate(
-                    timeout_content(&stdout, &stderr, seconds),
+                    timeout_content(&output.stdout, &output.stderr, seconds),
                     execution.output_limits().max_output_bytes(),
                 )));
             }
@@ -200,9 +171,7 @@ pub(super) async fn execute_process(
     };
 
     process_group.kill();
-    drain_final_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-    drop(chunk_rx);
-    readers.abort();
+    let output = streams.finish().await;
 
     let elapsed_secs = start.elapsed().as_secs_f64();
     let exit_code = status
@@ -211,8 +180,8 @@ pub(super) async fn execute_process(
         .unwrap_or_else(|| "signal".into());
     let content = truncate(
         finished_content(
-            String::from_utf8_lossy(&stdout).into_owned(),
-            String::from_utf8_lossy(&stderr).into_owned(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
             elapsed_secs,
             &exit_code,
         ),
@@ -245,26 +214,92 @@ impl Drop for ProcessGroupGuard {
     }
 }
 
-#[derive(Default)]
-struct StreamReaderGuards {
-    handles: Vec<tokio::task::JoinHandle<()>>,
+/// Collects child stdout/stderr and owns reader teardown.
+///
+/// `finish` is the only graceful shutdown path. Drop aborts any still-running
+/// readers so cancel/error returns cannot leak tasks behind a live pipe writer.
+struct StreamSession {
+    chunk_rx: tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    output_open: bool,
 }
 
-impl StreamReaderGuards {
-    fn push(&mut self, handle: tokio::task::JoinHandle<()>) {
-        self.handles.push(handle);
+struct CollectedOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl StreamSession {
+    fn attach(child: &mut tokio::process::Child) -> Self {
+        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut readers = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            readers.push(tokio::spawn(read_stream(
+                StreamKind::Stdout,
+                stdout,
+                chunk_tx.clone(),
+            )));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            readers.push(tokio::spawn(read_stream(
+                StreamKind::Stderr,
+                stderr,
+                chunk_tx,
+            )));
+        }
+        Self {
+            chunk_rx,
+            readers,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            output_open: true,
+        }
     }
 
-    fn abort(&mut self) {
-        for handle in self.handles.drain(..) {
+    fn recv(&mut self) -> impl std::future::Future<Output = Option<(StreamKind, Vec<u8>)>> + '_ {
+        self.chunk_rx.recv()
+    }
+
+    fn apply_chunk(&mut self, chunk: Option<(StreamKind, Vec<u8>)>) {
+        match chunk {
+            Some((StreamKind::Stdout, bytes)) => self.stdout.extend(bytes),
+            Some((StreamKind::Stderr, bytes)) => self.stderr.extend(bytes),
+            None => self.output_open = false,
+        }
+    }
+
+    fn running_content(&self) -> String {
+        running_content(&self.stdout, &self.stderr)
+    }
+
+    async fn finish(mut self) -> CollectedOutput {
+        let drain = async {
+            while let Some(chunk) = self.chunk_rx.recv().await {
+                self.apply_chunk(Some(chunk));
+            }
+        };
+        let _ = tokio::time::timeout(FINAL_OUTPUT_GRACE, drain).await;
+        while let Ok(chunk) = self.chunk_rx.try_recv() {
+            self.apply_chunk(Some(chunk));
+        }
+        CollectedOutput {
+            stdout: std::mem::take(&mut self.stdout),
+            stderr: std::mem::take(&mut self.stderr),
+        }
+    }
+
+    fn abort_readers(&mut self) {
+        for handle in self.readers.drain(..) {
             handle.abort();
         }
     }
 }
 
-impl Drop for StreamReaderGuards {
+impl Drop for StreamSession {
     fn drop(&mut self) {
-        self.abort();
+        self.abort_readers();
     }
 }
 
@@ -297,52 +332,6 @@ async fn read_stream<R>(
             }
         }
     }
-}
-
-fn append_stream_chunk(
-    kind: StreamKind,
-    bytes: Vec<u8>,
-    stdout: &mut Vec<u8>,
-    stderr: &mut Vec<u8>,
-) {
-    match kind {
-        StreamKind::Stdout => stdout.extend(bytes),
-        StreamKind::Stderr => stderr.extend(bytes),
-    }
-}
-
-fn drain_ready_stream_chunks(
-    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
-    stdout: &mut Vec<u8>,
-    stderr: &mut Vec<u8>,
-) {
-    while let Ok((kind, bytes)) = chunk_rx.try_recv() {
-        append_stream_chunk(kind, bytes, stdout, stderr);
-    }
-}
-
-async fn drain_stream_chunks(
-    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
-    stdout: &mut Vec<u8>,
-    stderr: &mut Vec<u8>,
-) {
-    while let Some((kind, bytes)) = chunk_rx.recv().await {
-        append_stream_chunk(kind, bytes, stdout, stderr);
-    }
-}
-
-async fn drain_final_stream_chunks(
-    chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
-    stdout: &mut Vec<u8>,
-    stderr: &mut Vec<u8>,
-) {
-    let _ = tokio::time::timeout(
-        FINAL_OUTPUT_GRACE,
-        drain_stream_chunks(chunk_rx, stdout, stderr),
-    )
-    .await;
-    // Capture anything queued at the grace-period boundary.
-    drain_ready_stream_chunks(chunk_rx, stdout, stderr);
 }
 
 fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
@@ -439,27 +428,29 @@ mod tests {
         assert!(message.contains("started"));
     }
 
-    // Kills the PID written to `path` on drop. Waits briefly for the file so
-    // assertion failures still clean up a slow-to-start escaped child.
-    struct KillPidFileOnDrop(std::path::PathBuf);
+    // Kills `pid` on drop. Waiting stays in the test body so Drop stays non-blocking.
+    struct KillOnDrop(i32);
 
-    impl Drop for KillPidFileOnDrop {
+    impl Drop for KillOnDrop {
         fn drop(&mut self) {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            let pid = loop {
-                if let Ok(contents) = std::fs::read_to_string(&self.0) {
-                    if let Ok(pid) = contents.trim().parse::<i32>() {
-                        break Some(pid);
-                    }
+            let _ = unsafe { libc::kill(self.0, libc::SIGKILL) };
+        }
+    }
+
+    async fn wait_for_pid_file(path: &std::path::Path) -> i32 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                if let Ok(pid) = contents.trim().parse::<i32>() {
+                    return pid;
                 }
-                if std::time::Instant::now() >= deadline {
-                    break None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            };
-            if let Some(pid) = pid {
-                let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "escaped child did not write pid file at {}",
+                path.display()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
@@ -467,22 +458,14 @@ mod tests {
     async fn timeout_returns_when_an_escaped_process_holds_the_output_pipe() {
         let dir = tempfile::tempdir().unwrap();
         let pid_path = dir.path().join("escaped.pid");
-        // Install before the call so panics and assertion failures still reap the child.
-        let _kill_escaped = KillPidFileOnDrop(pid_path.clone());
-        let pid_path_arg = pid_path.display().to_string();
-        let command = format!(
-            "python3 -c 'import os,time\n\
-if os.fork() == 0:\n\
-    os.setsid()\n\
-    open({pid_path_arg:?}, \"w\").write(str(os.getpid()))\n\
-    time.sleep(10)'; sleep 10"
-        );
 
         let start = std::time::Instant::now();
-        let err = Bash::new(false)
+        let result = Bash::new(false)
             .call(
                 json!({
-                    "command": command,
+                    // New session leaves the tool process group; inherited stdout
+                    // keeps the output pipe open after the timed-out shell is killed.
+                    "command": "setsid sh -c 'printf %s $$ > escaped.pid; sleep 10' & sleep 10",
                     "timeout_seconds": 1
                 }),
                 ToolContext {
@@ -491,9 +474,12 @@ if os.fork() == 0:\n\
                 },
                 "call_1".into(),
             )
-            .await
-            .unwrap_err();
+            .await;
 
+        let pid = wait_for_pid_file(&pid_path).await;
+        let _kill_escaped = KillOnDrop(pid);
+
+        let err = result.unwrap_err();
         assert!(err.to_string().contains("timed out after 1s"));
         assert!(
             start.elapsed() < std::time::Duration::from_secs(5),
