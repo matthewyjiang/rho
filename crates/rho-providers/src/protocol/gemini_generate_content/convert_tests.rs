@@ -409,6 +409,51 @@ fn foreign_aborted_tool_calls_are_not_promoted_to_gemini_function_calls() {
 }
 
 #[test]
+fn aborted_mixed_tool_and_text_keeps_signature_targets() {
+    let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
+    let messages = vec![
+        Message::user_text("run"),
+        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+            // Cancellation capture now stores tool calls in content at stream positions.
+            content: vec![
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call-1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command":"pwd"}),
+                }),
+                ContentBlock::Text("done".into()),
+            ],
+            provenance: Some(identity.clone()),
+            provider_context: vec![
+                ProviderContextBlock {
+                    identity: identity.clone(),
+                    kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                    position: Some(0),
+                    data: json!("sig-call"),
+                },
+                ProviderContextBlock {
+                    identity: identity.clone(),
+                    kind: THOUGHT_SIGNATURE_CONTEXT.into(),
+                    position: Some(1),
+                    data: json!("sig-text"),
+                },
+            ],
+            ..crate::model::AbortedAssistant::default()
+        })),
+    ];
+
+    let body = build_request(&messages, &[], &identity, None).unwrap();
+    let parts = &body.contents[1].parts;
+    assert_eq!(
+        parts[0].function_call.as_ref().unwrap().id.as_deref(),
+        Some("call-1")
+    );
+    assert_eq!(parts[0].thought_signature.as_deref(), Some("sig-call"));
+    assert_eq!(parts[1].text.as_deref(), Some("done"));
+    assert_eq!(parts[1].thought_signature.as_deref(), Some("sig-text"));
+}
+
+#[test]
 fn aborted_signed_text_keeps_nonzero_signature_position() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![

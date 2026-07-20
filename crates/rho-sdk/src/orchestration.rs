@@ -7,7 +7,7 @@ use crate::{
     event::{RunOutcome, StopReason},
     model::{
         AbortedAssistant, AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest,
-        ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
+        ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall,
     },
     provider::{provider_event_channel, ModelProvider, ProviderCancellationMode},
     run::RunCommand,
@@ -33,6 +33,8 @@ use tool_turn::{execute_tool, StagedToolTurn};
 struct StreamCapture {
     content: Vec<ContentBlock>,
     merge_output_text: bool,
+    /// Maps provider tool-call stream indexes onto `content` positions.
+    tool_call_content_index: BTreeMap<usize, usize>,
     reasoning: String,
     reasoning_summary: String,
     provider_context: Vec<ProviderContextBlock>,
@@ -734,6 +736,38 @@ async fn handle_provider_event(
         .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
+fn upsert_captured_tool_call(capture: &mut StreamCapture, index: usize) {
+    let Some(partial) = capture.partial_tool_calls.get(&index) else {
+        return;
+    };
+    let Some(id) = partial.id.as_ref().filter(|id| !id.is_empty()) else {
+        return;
+    };
+    let Some(name) = partial.name.as_ref().filter(|name| !name.is_empty()) else {
+        return;
+    };
+    let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&partial.arguments) else {
+        return;
+    };
+    if !arguments.is_object() {
+        return;
+    }
+    let call = ContentBlock::ToolCall(ToolCall {
+        id: id.clone(),
+        name: name.clone(),
+        arguments,
+    });
+    if let Some(&content_index) = capture.tool_call_content_index.get(&index) {
+        if let Some(slot) = capture.content.get_mut(content_index) {
+            *slot = call;
+            return;
+        }
+    }
+    let content_index = capture.content.len();
+    capture.tool_call_content_index.insert(index, content_index);
+    capture.content.push(call);
+}
+
 fn capture_provider_event(
     event: ModelEvent,
     identity: &crate::model::ModelIdentity,
@@ -792,6 +826,7 @@ fn capture_provider_event(
                 partial.name.clone_from(&name);
             }
             partial.arguments.push_str(&arguments);
+            upsert_captured_tool_call(capture, index);
             RunEvent::ToolCallUpdated {
                 index,
                 id,
@@ -904,6 +939,8 @@ async fn commit_cancellation(
             reasoning_summary: (!capture.reasoning_summary.is_empty())
                 .then_some(capture.reasoning_summary),
             provider_context: capture.provider_context,
+            // Keep fragments for provider fallbacks even when complete calls were also
+            // placed into `content` to preserve stream positions.
             tool_calls: capture.partial_tool_calls.into_values().collect(),
             usage: capture.usage,
         })));

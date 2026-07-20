@@ -133,17 +133,11 @@ pub(crate) fn codex_input_items_for_target(
             }
             Message::AbortedAssistant(message) => {
                 let mut enriched = crate::model::AssistantMessage {
-                    content: message.content,
+                    content: aborted_content_as_non_executable(&message),
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
                     provider_context: message.provider_context,
                 };
-                enriched.content.extend(
-                    message
-                        .tool_calls
-                        .iter()
-                        .map(|call| ContentBlock::Text(render_partial_tool_call(call))),
-                );
                 enriched
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
@@ -275,7 +269,7 @@ pub(crate) fn to_openai_message_for_target(
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
             let mut enriched = crate::model::AssistantMessage {
-                content: message.content,
+                content: aborted_content_as_non_executable(&message),
                 provenance: message.provenance,
                 reasoning_summary: message.reasoning_summary,
                 provider_context: message.provider_context,
@@ -365,6 +359,33 @@ fn render_partial_tool_call(call: &PartialToolCall) -> String {
         call.name.as_deref().unwrap_or("[unknown]"),
         call.arguments,
     )
+}
+
+fn aborted_content_as_non_executable(
+    message: &crate::model::AbortedAssistant,
+) -> Vec<ContentBlock> {
+    let mut blocks = Vec::with_capacity(message.content.len() + message.tool_calls.len());
+    let mut seen_ids = std::collections::HashSet::new();
+    for block in &message.content {
+        match block {
+            ContentBlock::ToolCall(call) => {
+                seen_ids.insert(call.id.clone());
+                blocks.push(ContentBlock::Text(render_tool_call(call)));
+            }
+            other => blocks.push(other.clone()),
+        }
+    }
+    for call in &message.tool_calls {
+        if call
+            .id
+            .as_ref()
+            .is_some_and(|id| !id.is_empty() && seen_ids.contains(id))
+        {
+            continue;
+        }
+        blocks.push(ContentBlock::Text(render_partial_tool_call(call)));
+    }
+    blocks
 }
 
 #[derive(Deserialize)]
