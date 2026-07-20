@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.3.0...rho-providers-v0.3.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **openai:** handle terminal Codex websocket events ([#421](https://github.com/matthewyjiang/rho/issues/421)) ([c7fb4cd](https://github.com/matthewyjiang/rho/commit/c7fb4cdc1ae5db0ddb78589f03878643fa3df79d))
+* **tui:** improve agent tool displays ([#413](https://github.com/matthewyjiang/rho/issues/413)) ([062edd0](https://github.com/matthewyjiang/rho/commit/062edd0851848c4fbd7754b47ec5dd588605989f))
+
 ## [0.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.2.1...rho-providers-v0.3.0) (2026-07-20)
 
 
