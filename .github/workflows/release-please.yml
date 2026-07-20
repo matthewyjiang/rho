@@ -140,6 +140,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+      - name: Check generated release version consistency
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: python3 scripts/check_release_versions.py
       - name: Install Rust for downstream lockfile
         if: ${{ steps.release.outputs.prs_created == 'true' }}
         uses: dtolnay/rust-toolchain@stable
