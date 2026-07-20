@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
@@ -36,70 +37,78 @@ fn non_thinking_models_are_not_configurable() {
     );
 }
 
-#[test]
-fn probe_classifier_hides_retired_models_and_keeps_transient_failures() {
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::NOT_FOUND,
-            r#"{"error":{"message":"This model models/gemini-2.5-flash is no longer available to new users.","status":"NOT_FOUND"}}"#
-        ),
-        ModelAvailability::Unavailable
+#[tokio::test]
+async fn fetch_paginates_deduplicates_and_filters_deprecated_models() {
+    let (endpoint, server) = spawn_google_models_server().await;
+    let deprecated_models = HashSet::from(["gemini-retired".to_string()]);
+
+    let models = fetch_from("google", "test-key".into(), &endpoint, async move {
+        Some(deprecated_models)
+    })
+    .await
+    .unwrap();
+    let requests = server.await.unwrap();
+
+    assert_eq!(model_ids(&models), ["gemini-a", "gemini-z"]);
+    assert!(requests.iter().any(|request| {
+        request.starts_with("GET /v1beta/models HTTP/1.1")
+            && request
+                .to_ascii_lowercase()
+                .contains("x-goog-api-key: test-key")
+    }));
+    assert!(requests
+        .iter()
+        .any(|request| request.starts_with("GET /v1beta/models?pageToken=next HTTP/1.1")));
+    assert!(requests
+        .iter()
+        .all(|request| !request.contains("generateContent")));
+}
+
+#[tokio::test]
+async fn fetch_bounds_catalog_wait_and_keeps_google_models() {
+    let (endpoint, server) = spawn_google_models_server().await;
+    let fetch = fetch_from(
+        "google",
+        "test-key".into(),
+        &endpoint,
+        std::future::pending(),
     );
+
+    let models = tokio::time::timeout(DEPRECATION_LOOKUP_TIMEOUT + Duration::from_secs(1), fetch)
+        .await
+        .expect("optional catalog lookup must not block refresh")
+        .unwrap();
+    server.await.unwrap();
+
     assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            r#"{"error":{"status":"RESOURCE_EXHAUSTED"}}"#
-        ),
-        ModelAvailability::Transient
-    );
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            r#"{"error":{"message":"high demand"}}"#
-        ),
-        ModelAvailability::Transient
-    );
-    assert_eq!(
-        classify_probe_status(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}"#
-        ),
-        ModelAvailability::Unavailable
+        model_ids(&models),
+        ["gemini-a", "gemini-retired", "gemini-z"]
     );
 }
 
 #[tokio::test]
-async fn fetch_paginates_probes_availability_and_hides_retired_models() {
+async fn fetch_returns_google_errors_without_polling_the_catalog() {
+    let catalog = std::future::poll_fn(|_| -> std::task::Poll<Option<HashSet<String>>> {
+        panic!("catalog lookup should not be polled after Google fails")
+    });
+
+    let result = fetch_from("google", "test-key".into(), "not a valid URL", catalog).await;
+
+    assert!(result.is_err());
+}
+
+fn model_ids(models: &[ProviderModel]) -> Vec<&str> {
+    models.iter().map(|model| model.model.as_str()).collect()
+}
+
+async fn spawn_google_models_server() -> (String, tokio::task::JoinHandle<Vec<String>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let mut requests = Vec::new();
-        // 2 list pages + 3 availability probes (image models are filtered first).
-        for _ in 0..5 {
+        for _ in 0..2 {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 8192];
-            loop {
-                let read = socket.read(&mut buffer).await.unwrap();
-                request.extend_from_slice(&buffer[..read]);
-                let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
-                else {
-                    continue;
-                };
-                let headers = String::from_utf8_lossy(&request[..headers_end]);
-                let content_length = headers
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length: ")
-                            .and_then(|value| value.parse::<usize>().ok())
-                    })
-                    .unwrap_or_default();
-                if request.len() >= headers_end + 4 + content_length {
-                    break;
-                }
-            }
-            let request = String::from_utf8(request).unwrap();
+            let request = read_request(&mut socket).await;
             let (status, body) = if request.starts_with("GET /v1beta/models HTTP/1.1") {
                 (
                     "200 OK",
@@ -109,16 +118,6 @@ async fn fetch_paginates_probes_availability_and_hides_retired_models() {
                 (
                     "200 OK",
                     r#"{"models":[{"name":"models/gemini-a","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-z","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-retired","thinking":true,"supportedGenerationMethods":["generateContent"]},{"name":"models/gemini-3.1-flash-image","thinking":true,"supportedGenerationMethods":["generateContent"]}]}"#,
-                )
-            } else if request.contains("gemini-retired") && request.contains("generateContent") {
-                (
-                    "404 Not Found",
-                    r#"{"error":{"code":404,"message":"This model models/gemini-retired is no longer available to new users.","status":"NOT_FOUND"}}"#,
-                )
-            } else if request.contains("generateContent") {
-                (
-                    "200 OK",
-                    r#"{"candidates":[{"content":{"parts":[{"text":"."}]},"finishReason":"STOP"}]}"#,
                 )
             } else {
                 ("404 Not Found", r#"{"error":{"status":"NOT_FOUND"}}"#)
@@ -137,39 +136,29 @@ async fn fetch_paginates_probes_availability_and_hides_retired_models() {
         }
         requests
     });
+    (format!("http://{address}/v1beta/models"), server)
+}
 
-    let models = fetch_from(
-        "google",
-        "test-key".into(),
-        &format!("http://{address}/v1beta/models"),
-    )
-    .await
-    .unwrap();
-    let requests = server.await.unwrap();
-
-    assert_eq!(
-        models
-            .iter()
-            .map(|model| model.model.as_str())
-            .collect::<Vec<_>>(),
-        ["gemini-a", "gemini-z"]
-    );
-    assert!(requests.iter().any(|request| {
-        request.starts_with("GET /v1beta/models HTTP/1.1")
-            && request
-                .to_ascii_lowercase()
-                .contains("x-goog-api-key: test-key")
-    }));
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("GET /v1beta/models?pageToken=next HTTP/1.1")));
-    assert!(requests
-        .iter()
-        .any(|request| request.contains("gemini-retired") && request.contains("generateContent")));
-    assert!(requests
-        .iter()
-        .any(|request| request.contains("gemini-a") && request.contains("generateContent")));
-    assert!(!requests
-        .iter()
-        .any(|request| request.contains("flash-image") && request.contains("generateContent")));
+async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = socket.read(&mut buffer).await.unwrap();
+        request.extend_from_slice(&buffer[..read]);
+        let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&request[..headers_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .unwrap_or_default();
+        if request.len() >= headers_end + 4 + content_length {
+            return String::from_utf8(request).unwrap();
+        }
+    }
 }

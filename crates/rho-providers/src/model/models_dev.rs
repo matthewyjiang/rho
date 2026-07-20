@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{collections::HashSet, fs, path::PathBuf, sync::OnceLock, time::Duration};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -136,11 +136,7 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(apply_overrides(provider, model, metadata));
     }
 
-    // Prefer a live models.dev snapshot for newly seen models. A stale local
-    // api.json can predate a provider/model and would otherwise hide pricing
-    // until the cache is manually cleared.
     if let Some(response) = fetch_models_dev_api().await {
-        write_cached_api(&response);
         if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
             if metadata.reasoning_metadata_complete {
                 write_cached_upstream_model_metadata(provider, model, &metadata);
@@ -223,6 +219,22 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
 }
 
+pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
+    let response = fetch_models_dev_api().await?;
+    Some(deprecated_provider_models_from_api(&response, provider))
+}
+
+fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<String> {
+    api.get(provider)
+        .and_then(|provider| provider.get("models"))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(_, model)| model.get("status").and_then(Value::as_str) == Some("deprecated"))
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 async fn fetch_models_dev_api() -> Option<Value> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -238,16 +250,6 @@ async fn fetch_models_dev_api() -> Option<Value> {
         .json::<Value>()
         .await
         .ok()
-}
-
-fn write_cached_api(value: &Value) {
-    let path = models_dev_cache_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(contents) = serde_json::to_string(value) {
-        let _ = fs::write(path, contents);
-    }
 }
 
 /// Bump when the models.dev parser gains fields that older cache rows omit.
@@ -349,10 +351,6 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
 
 fn models_dev_sqlite_path() -> PathBuf {
     cache_dir().join("models.dev/models-dev-metadata.sqlite3")
-}
-
-fn models_dev_cache_path() -> PathBuf {
-    cache_dir().join("models.dev/api.json")
 }
 
 fn cache_dir() -> PathBuf {
