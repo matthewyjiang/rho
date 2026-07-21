@@ -68,6 +68,9 @@ fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
         command: Some(Command::Run {
             stdin: true,
             output_file: None,
+            output: crate::cli::OutputFormat::Text,
+            max_steps: None,
+            timeout: None,
             prompt: Vec::new(),
         }),
     };

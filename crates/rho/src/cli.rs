@@ -1,8 +1,20 @@
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use rho_providers::reasoning::ReasoningLevel;
+
+use crate::app::automation_protocol::parse_duration;
+
+/// Output contract used by a non-interactive `rho run` invocation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    /// Print only the authoritative final assistant answer.
+    #[default]
+    Text,
+    /// Stream independently versioned JSON Lines events.
+    Jsonl,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "rho")]
@@ -48,6 +60,15 @@ pub enum Command {
         /// file (JSON) that is updated during the run and finalized on exit.
         #[arg(long, value_name = "PATH")]
         output_file: Option<PathBuf>,
+        /// Select plain final-answer output or a JSON Lines event stream.
+        #[arg(long, value_enum, default_value_t)]
+        output: OutputFormat,
+        /// Override the model-step budget for this run.
+        #[arg(long, value_name = "N")]
+        max_steps: Option<NonZeroUsize>,
+        /// Cancel the run after this wall-clock duration.
+        #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
+        timeout: Option<Duration>,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

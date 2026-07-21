@@ -35,6 +35,20 @@ pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rh
 where
     P: WorkspacePolicy + 'static,
 {
+    build_runtime_with_max_steps(options, None)
+}
+
+/// Builds a runtime with an optional per-run model-step override.
+///
+/// `None` keeps the configured SDK step limit. Automation uses `Some` for the
+/// CLI's `--max-steps` option without changing interactive runtimes.
+pub(crate) fn build_runtime_with_max_steps<P>(
+    options: RuntimeBuildOptions<'_, P>,
+    max_steps: Option<std::num::NonZeroUsize>,
+) -> Result<Rho, Error>
+where
+    P: WorkspacePolicy + 'static,
+{
     let RuntimeBuildOptions {
         provider,
         tools,
@@ -63,7 +77,7 @@ where
         .workspace(workspace)
         .workspace_policy(workspace_policy)
         .reasoning_level(reasoning)
-        .max_steps(super::sdk_config::run_step_limit())
+        .max_steps(max_steps.unwrap_or_else(super::sdk_config::run_step_limit))
         .max_parallel_tools(super::sdk_config::parallel_tool_limit())
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)

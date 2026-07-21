@@ -4,7 +4,7 @@ use std::{
 };
 
 use {
-    crate::cli::{Cli, Command},
+    crate::cli::{Cli, Command, OutputFormat},
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
     crate::update,
@@ -14,13 +14,49 @@ use {
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation, cli_config,
+    automation, automation_protocol, cli_config,
     config_repository::ConfigRepository,
     interactive, login,
     sdk_config::SdkBootstrapOptions,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    let run_output = match &cli.command {
+        Some(Command::Run { output, .. }) => Some(*output),
+        _ => None,
+    };
+    let result = run_inner(cli).await;
+    let Err(error) = result else {
+        return Ok(());
+    };
+    if error.downcast_ref::<automation::AutomationExit>().is_some()
+        || error
+            .downcast_ref::<automation::AutomationInterrupted>()
+            .is_some()
+    {
+        return Err(error);
+    }
+    if run_output == Some(OutputFormat::Jsonl) {
+        automation::emit_startup_failure()?;
+        return Err(automation::AutomationExit::new(
+            2,
+            automation_protocol::TerminalReason::ConfigurationError,
+            "configuration failed",
+        )
+        .into());
+    }
+    if run_output.is_some() {
+        return Err(automation::AutomationExit::new(
+            2,
+            automation_protocol::TerminalReason::ConfigurationError,
+            error.to_string(),
+        )
+        .into());
+    }
+    Err(error)
+}
+
+async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
     if let Some(Command::Attach { id }) = &cli.command {
         return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;
@@ -41,9 +77,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut config = config_repository.load()?;
     let cwd = std::env::current_dir()?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
-    let output_file = match &cli.command {
-        Some(Command::Run { output_file, .. }) => output_file.clone(),
-        _ => None,
+    let (output_file, output, max_steps, timeout) = match &cli.command {
+        Some(Command::Run {
+            output_file,
+            output,
+            max_steps,
+            timeout,
+            ..
+        }) => (output_file.clone(), *output, *max_steps, *timeout),
+        _ => (None, OutputFormat::Text, None, None),
     };
     let catalog = crate::agent::AgentCatalog::discover(&cwd)?;
     let selected_agent = cli.agent.as_deref().unwrap_or("default");
@@ -109,6 +151,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 parent_session_id: None,
                 agent: bound_agent,
                 output_file,
+                output,
+                max_steps,
+                timeout,
                 diagnostics,
                 herdr,
             },

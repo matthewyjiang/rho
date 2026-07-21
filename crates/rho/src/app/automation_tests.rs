@@ -9,15 +9,40 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{complete_run, prompt_from_reader, RunArtifactIdentity, RunReporter};
+use super::{
+    classify_error, complete_run, prompt_from_reader, AutomationExit, RunArtifactIdentity,
+    RunReporter,
+};
 use crate::{
     app::{
+        automation_protocol::TerminalReason,
         policy::AppPolicy,
         runtime_builder::{build_runtime, RuntimeBuildOptions},
     },
     compaction::CompactionConfig,
     permission::PermissionMode,
 };
+
+#[test]
+fn classifies_automation_exit_without_parsing_its_message() {
+    let error = anyhow::Error::new(AutomationExit::new(
+        1,
+        TerminalReason::OutputError,
+        "wording can change",
+    ));
+
+    assert_eq!(classify_error(&error), (TerminalReason::OutputError, 1));
+}
+
+#[test]
+fn classifies_fatal_tool_host_errors() {
+    let error = anyhow::Error::new(rho_sdk::Error::Tool(rho_sdk::tool::ToolError::new(
+        rho_sdk::tool::ToolErrorKind::Execution,
+        "host failed",
+    )));
+
+    assert_eq!(classify_error(&error), (TerminalReason::ToolHostError, 1));
+}
 
 #[test]
 fn reporter_discards_partial_text_when_provider_attempt_resets() {
@@ -137,7 +162,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));
     let session = runtime.session(SessionOptions::default()).await.unwrap();
 
-    let outcome = complete_run(&session, "continue".into(), None, None)
+    let outcome = complete_run(&session, "continue".into(), None, None, None)
         .await
         .unwrap();
 
