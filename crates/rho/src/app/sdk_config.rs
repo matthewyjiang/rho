@@ -39,7 +39,12 @@ pub(crate) struct SdkBootstrapOptions {
 
 impl SdkBootstrapOptions {
     pub(crate) fn from_config(config: &Config, workspace_root: &Path) -> Result<Self, ModelError> {
-        Self::from_config_with_provider_transport(config, workspace_root, None, None)
+        Self::from_config_with_provider_transport(
+            config,
+            workspace_root,
+            config.resolved_provider_endpoint(&config.provider),
+            None,
+        )
     }
 
     pub(crate) fn from_config_with_provider_transport(

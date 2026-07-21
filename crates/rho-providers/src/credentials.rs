@@ -536,7 +536,11 @@ pub fn load_provider_api_key(
     else {
         return Ok(None);
     };
-    store.get_secret(auth_kind.account())
+    store.get_secret(
+        auth_kind
+            .account()
+            .expect("API key provider must declare a credential account"),
+    )
 }
 
 pub fn save_provider_api_key(
@@ -551,7 +555,12 @@ pub fn save_provider_api_key(
             "provider '{provider}' does not use API key credentials"
         )));
     };
-    store.set_secret(auth_kind.account(), key)
+    store.set_secret(
+        auth_kind
+            .account()
+            .expect("API key provider must declare a credential account"),
+        key,
+    )
 }
 
 pub fn delete_provider_credentials(
@@ -563,7 +572,10 @@ pub fn delete_provider_credentials(
     else {
         return Ok(false);
     };
-    store.delete_secret(auth_kind.account())
+    let Some(account) = auth_kind.account() else {
+        return Ok(false);
+    };
+    store.delete_secret(account)
 }
 
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
@@ -645,7 +657,10 @@ fn provider_has_env_override_from(
     let Some(descriptor) = provider::provider_descriptor(provider) else {
         return false;
     };
-    env_value(descriptor.auth_kind.env_var()).is_some_and(|value| !value.trim().is_empty())
+    let Some(env_var) = descriptor.auth_kind.env_var() else {
+        return false;
+    };
+    env_value(env_var).is_some_and(|value| !value.trim().is_empty())
 }
 
 pub fn provider_has_stored_credentials(
@@ -657,7 +672,10 @@ pub fn provider_has_stored_credentials(
     else {
         return Ok(false);
     };
-    Ok(store.get_secret(auth_kind.account())?.is_some())
+    let Some(account) = auth_kind.account() else {
+        return Ok(false);
+    };
+    Ok(store.get_secret(account)?.is_some())
 }
 
 pub fn provider_has_credentials(
@@ -668,9 +686,14 @@ pub fn provider_has_credentials(
         return Ok(true);
     }
     match provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) => {
-            Ok(store.get_secret(auth_kind.account())?.is_some())
-        }
+        Some(ProviderAuthKind::None) => Ok(true),
+        Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) => Ok(store
+            .get_secret(
+                auth_kind
+                    .account()
+                    .expect("API key provider must declare a credential account"),
+            )?
+            .is_some()),
         Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
             Ok(load_github_copilot_tokens(store)?.is_some())

@@ -18,12 +18,13 @@ Rho's implemented providers are:
 | `xai` | `xai-api-key` | [xAI](/providers/xai) |
 | `xai-oauth` | `xai-oauth` | [xAI](/providers/xai) |
 | `openrouter` | `openrouter-api-key` | [OpenRouter](/providers/openrouter) |
+| `ollama` | None | [Ollama](/providers/ollama) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, OpenRouter, Moonshot, and Kimi Code expose refreshable API model lists. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, OpenRouter, Moonshot, and Kimi Code expose refreshable API model lists. Ollama needs no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
-Each provider page documents its `/login` flow, `/logout` behavior, environment override, and how to select its models.
+Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
 
 ## Where credentials live
 
@@ -52,13 +53,14 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model google/gemini-3.1-flash-lite
 /model github-copilot/gpt-4.1
 /model openrouter/anthropic/claude-sonnet-4
+/model ollama/<installed-model>
 /model xai/grok-4.5
 /model xai-oauth/grok-4.5
 ```
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, OpenRouter, Moonshot, and Kimi Code can refresh their provider model lists through **Refresh model lists** in `/config`. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released model.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, OpenRouter, Moonshot, and Kimi Code can refresh their provider model lists through **Refresh model lists** in `/config`. Ollama reads its installed models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
 
 ## Model metadata
 

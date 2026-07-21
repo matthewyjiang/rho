@@ -7,18 +7,29 @@ use {
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
+    if rho_providers::provider::provider_descriptor(provider).is_some_and(|descriptor| {
+        descriptor.auth_kind == rho_providers::provider::ProviderAuthKind::None
+    }) {
+        anyhow::bail!("provider '{provider}' does not require login");
+    }
     let Some(target) = catalog::login_target_for_provider(provider) else {
-        anyhow::bail!(
-            "unsupported login provider '{provider}'. Use one of: {}",
-            catalog::implemented_providers().join(", ")
-        );
+        let providers = catalog::login_targets()
+            .into_iter()
+            .map(|target| target.provider)
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!("unsupported login provider '{provider}'. Use one of: {providers}");
     };
-    if let AuthenticationMethod::ApiKey { entry_label } =
-        ProviderAuthentication::method(&target.provider)?
-    {
-        anyhow::bail!(
-            "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
-        );
+    match ProviderAuthentication::method(&target.provider)? {
+        AuthenticationMethod::None => {
+            anyhow::bail!("provider '{provider}' does not require login")
+        }
+        AuthenticationMethod::ApiKey { entry_label } => {
+            anyhow::bail!(
+                "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
+            );
+        }
+        AuthenticationMethod::OAuth { .. } => {}
     }
 
     let mode = if device_auth {

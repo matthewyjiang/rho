@@ -76,40 +76,47 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             ProviderRuntime::GithubCopilot => Ok(ProviderCredential::GitHubCopilot(
                 GitHubCopilotAuthManager::new(self.store.clone())?,
             )),
-            ProviderRuntime::KimiCode => {
-                let descriptor =
-                    provider::provider_descriptor_by_id(provider::ProviderId::KimiCode);
-                let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
-                    Ok(access_token) if !access_token.trim().is_empty() => (
-                        KimiAuthSource::Env,
-                        KimiTokens {
-                            access_token,
-                            refresh_token: None,
-                            expires_at_unix: None,
-                            scope: String::new(),
-                            token_type: "Bearer".into(),
-                            expires_in: None,
-                        },
+            ProviderRuntime::OpenAiCompatible { .. } => {
+                let descriptor = provider::provider_descriptor(provider)
+                    .expect("compatible provider runtime must be registered");
+                let auth = match descriptor.auth_kind {
+                    ProviderAuthKind::None => CompatibleAuth::None,
+                    ProviderAuthKind::ApiKey { .. } => CompatibleAuth::ApiKey(
+                        load_provider_api_key_auth(provider, self.store.as_ref())?,
                     ),
-                    _ => (
-                        KimiAuthSource::Store,
-                        load_kimi_tokens(self.store.as_ref())?
-                            .ok_or(ModelError::MissingKimiAuth)?,
-                    ),
+                    ProviderAuthKind::KimiOAuth { .. } => {
+                        let env_var = descriptor
+                            .auth_kind
+                            .env_var()
+                            .expect("Kimi OAuth must declare an environment variable");
+                        let (source, tokens) = match std::env::var(env_var) {
+                            Ok(access_token) if !access_token.trim().is_empty() => (
+                                KimiAuthSource::Env,
+                                KimiTokens {
+                                    access_token,
+                                    refresh_token: None,
+                                    expires_at_unix: None,
+                                    scope: String::new(),
+                                    token_type: "Bearer".into(),
+                                    expires_in: None,
+                                },
+                            ),
+                            _ => (
+                                KimiAuthSource::Store,
+                                load_kimi_tokens(self.store.as_ref())?
+                                    .ok_or(ModelError::MissingKimiAuth)?,
+                            ),
+                        };
+                        CompatibleAuth::KimiOAuth(KimiAuthManager::from_tokens(
+                            self.store.clone(),
+                            source,
+                            tokens,
+                        ))
+                    }
+                    _ => return Err(ModelError::UnsupportedProvider(provider.into())),
                 };
-                Ok(ProviderCredential::OpenAiCompatible(
-                    CompatibleAuth::KimiOAuth(KimiAuthManager::from_tokens(
-                        self.store.clone(),
-                        source,
-                        tokens,
-                    )),
-                ))
+                Ok(ProviderCredential::OpenAiCompatible(auth))
             }
-            ProviderRuntime::Moonshot | ProviderRuntime::OpenRouter => Ok(
-                ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(
-                    load_provider_api_key_auth(provider, self.store.as_ref())?,
-                )),
-            ),
             ProviderRuntime::Xai { auth_mode } => {
                 let (source, tokens) = match auth_mode {
                     XaiAuthMode::ApiKey => (
@@ -124,7 +131,12 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     XaiAuthMode::OAuth => {
                         let descriptor = provider::provider_descriptor("xai-oauth")
                             .expect("xAI OAuth provider must be registered");
-                        match std::env::var(descriptor.auth_kind.env_var()) {
+                        match std::env::var(
+                            descriptor
+                                .auth_kind
+                                .env_var()
+                                .expect("xAI OAuth must declare an environment variable"),
+                        ) {
                             Ok(access_token) if !access_token.trim().is_empty() => (
                                 XaiAuthSource::Env,
                                 XaiTokens {
@@ -194,7 +206,8 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
 fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
     let env_var = provider::provider_descriptor_by_id(provider::ProviderId::OpenAiCodex)
         .auth_kind
-        .env_var();
+        .env_var()
+        .expect("Codex OAuth must declare an environment variable");
     if let Ok(access_token) = std::env::var(env_var) {
         return Ok(Auth::Codex {
             tokens: CodexTokens {
@@ -228,4 +241,38 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         }
     }
     load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::{CredentialResult, CredentialStore};
+
+    struct RejectingStore;
+
+    impl CredentialStore for RejectingStore {
+        fn get_secret(&self, _account: &str) -> CredentialResult<Option<String>> {
+            panic!("Ollama credential acquisition must not read the store")
+        }
+
+        fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
+            panic!("Ollama credential acquisition must not write the store")
+        }
+
+        fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
+            panic!("Ollama credential acquisition must not delete from the store")
+        }
+    }
+
+    #[test]
+    fn ollama_acquisition_returns_explicit_no_auth_without_store_access() {
+        let source = ApplicationCredentialSource::new(Arc::new(RejectingStore));
+
+        let credential = source.acquire("ollama").unwrap();
+
+        assert!(matches!(
+            credential,
+            ProviderCredential::OpenAiCompatible(CompatibleAuth::None)
+        ));
+    }
 }

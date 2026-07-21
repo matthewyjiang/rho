@@ -6,7 +6,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 [model]
 provider = "openai"
 model = "gpt-5.6-sol"
-auth = "api-key" # or "codex", "anthropic-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", or "kimi-oauth"
+auth = "api-key" # or "none", "codex", "anthropic-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", or "kimi-oauth"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
 favorite_models = []
 
@@ -39,6 +39,9 @@ compact_target_percent = 50
 [web_search]
 provider = "auto" # auto, openai, exa, brave, or disabled
 
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+
 [behavior]
 check_for_updates = true
 enable_subagents = true
@@ -63,7 +66,16 @@ Settings are grouped by purpose so the file is easier to scan and edit by hand. 
 
 Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
 
-The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the OS credential store rather than config.
+The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` sets the OpenAI-compatible endpoint used for Ollama chat, model refresh, and health checks. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the OS credential store rather than config.
+
+Ollama's provider-specific API base uses its own section and does not affect other providers:
+
+```toml
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+```
+
+See [Ollama](/providers/ollama) for local setup, model refresh, and remote endpoint limits.
 
 ## Prompt templates
 

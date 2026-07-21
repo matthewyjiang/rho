@@ -59,7 +59,12 @@ impl XaiAuthManager {
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
         let descriptor =
             provider::provider_descriptor("xai-oauth").expect("xAI OAuth provider must exist");
-        let (source, tokens) = match std::env::var(descriptor.auth_kind.env_var()) {
+        let (source, tokens) = match std::env::var(
+            descriptor
+                .auth_kind
+                .env_var()
+                .expect("authenticated provider must declare an environment variable"),
+        ) {
             Ok(access_token) if !access_token.trim().is_empty() => (
                 XaiAuthSource::Env,
                 XaiTokens {

@@ -1,6 +1,7 @@
 use ratatui::DefaultTerminal;
 use rho_providers::{
-    credentials::available_auth_modes, model::provider_models::refresh_provider_models_with_store,
+    credentials::available_auth_modes,
+    model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
     providers::build_sdk_provider,
 };
 
@@ -69,9 +70,19 @@ impl App {
 
         self.status = "refreshing model list".into();
         terminal.draw(|frame| self.draw(frame))?;
+        let config = self.info.services.config_repository.load()?;
         for provider in providers {
-            match refresh_provider_models_with_store(&provider, self.credential_store.as_ref())
-                .await
+            let endpoint = config.resolved_provider_endpoint(&provider);
+            let model_endpoint = endpoint.as_ref().map_or(
+                ProviderModelEndpoint::ProviderOwned,
+                ProviderModelEndpoint::OpenAiCompatible,
+            );
+            match refresh_provider_models_with_store(
+                &provider,
+                self.credential_store.as_ref(),
+                model_endpoint,
+            )
+            .await
             {
                 Ok(refresh) => {
                     self.insert_entry(&Entry::Notice(format!(
@@ -130,7 +141,7 @@ impl App {
 
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
-                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+                "no cached provider models. use Config > Refresh model lists.".into(),
             ));
             self.status = "ready".into();
             return Ok(());

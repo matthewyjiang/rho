@@ -1,4 +1,4 @@
-use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials};
+use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials, DEFAULT_OLLAMA_BASE_URL};
 use crate::permission::PermissionMode;
 
 #[test]
@@ -905,5 +905,104 @@ fn empty_legacy_title_section_remains_conversation_fallback() {
     assert!(
         !saved.contains("[internal_agents.session-title]"),
         "{saved}"
+    );
+}
+
+#[test]
+fn ollama_base_url_defaults_and_round_trips() {
+    let default = Config::default();
+    assert_eq!(
+        default.providers.ollama.base_url.as_str(),
+        DEFAULT_OLLAMA_BASE_URL
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let mut config = Config::default();
+    config.providers.ollama.base_url = "http://ollama.internal:22000/custom/v1".parse().unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    config.save_with_store(path.clone(), &store).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("[providers.ollama]"));
+    assert!(saved.contains("base_url = \"http://ollama.internal:22000/custom/v1\""));
+
+    let loaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(
+        loaded.providers.ollama.base_url,
+        config.providers.ollama.base_url
+    );
+}
+
+#[test]
+fn ollama_base_url_rejects_invalid_or_unsupported_urls() {
+    for base_url in [
+        "not a URL",
+        "file:///tmp/ollama",
+        "http://user:secret@localhost:11434/v1",
+        "http://localhost:11434/v1?token=secret",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!("[providers.ollama]\nbase_url = {base_url:?}\n"),
+        )
+        .unwrap();
+
+        let error = Config::load_with_store(
+            path,
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("providers.ollama.base_url"),
+            "{error:#}"
+        );
+    }
+}
+
+#[test]
+fn keyless_provider_inference_sets_no_auth_without_login_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+provider = "openai"
+model = "@local"
+auth = "api-key"
+
+[model.aliases]
+local = "ollama/local-model"
+
+[internal_agents.goal-judge]
+provider = "ollama"
+model = "judge-model"
+
+[title]
+provider = "ollama"
+model = "title-model"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "ollama");
+    assert_eq!(config.auth, "none");
+    assert_eq!(
+        config.internal_agent_model("goal-judge").unwrap().auth,
+        "none"
+    );
+    assert_eq!(
+        config.internal_agent_model("session-title").unwrap().auth,
+        "none"
     );
 }

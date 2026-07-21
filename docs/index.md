@@ -41,6 +41,7 @@ features:
   - [Anthropic](/providers/anthropic)
   - [Google Gemini](/providers/google-gemini)
   - [GitHub Copilot](/providers/github-copilot)
+  - [Ollama](/providers/ollama)
   - [OpenRouter](/providers/openrouter)
   - [Moonshot and Kimi Code](/providers/moonshot-kimi)
   - [xAI](/providers/xai)
