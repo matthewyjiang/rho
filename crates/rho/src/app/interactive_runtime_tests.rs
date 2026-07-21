@@ -428,6 +428,31 @@ async fn a_new_run_resets_the_context_usage_baseline() {
 }
 
 #[tokio::test]
+async fn finished_run_reports_context_from_committed_history() {
+    let mut interactive = pending_compaction_runtime("assistant output").await;
+    interactive.context_window = Some(10_000);
+
+    interactive
+        .start(UserInput::text("user input"), None)
+        .await
+        .unwrap();
+    while interactive.next_event().await.is_some() {}
+    interactive.finish_run().await.unwrap();
+
+    let expected_tokens = rho_sdk::model::context::estimate_context_tokens(
+        &interactive.history(),
+        &interactive.tools.specs(),
+    );
+    assert_eq!(
+        interactive.take_context_usage(),
+        Some(rho_sdk::model::ContextUsage::estimated(
+            expected_tokens,
+            Some(10_000)
+        ))
+    );
+}
+
+#[tokio::test]
 async fn dropping_manual_compaction_does_not_leave_the_runtime_busy() {
     let mut interactive = pending_compaction_runtime("done").await;
 

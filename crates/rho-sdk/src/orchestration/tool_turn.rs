@@ -7,12 +7,12 @@ use crate::{
     session::{SessionCore, SessionState},
     tool::{
         tool_progress_channel, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-        ToolOutput, ToolProgress,
+        ToolInvocationSource, ToolOutput, ToolProgress,
     },
     Error, RunEvent, ToolCallId,
 };
 
-use super::{emit, Rho, RunControl, TOOL_PROGRESS_CAPACITY};
+use super::{emit, emit_failure, Rho, RunControl, TOOL_PROGRESS_CAPACITY};
 
 pub(super) const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted before completion";
 
@@ -20,6 +20,7 @@ pub(super) const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted 
 pub(super) struct PendingToolCall {
     pub(super) call: ToolCall,
     id: ToolCallId,
+    source: ToolInvocationSource,
 }
 
 pub(super) struct StagedToolTurn {
@@ -27,13 +28,22 @@ pub(super) struct StagedToolTurn {
 }
 
 impl StagedToolTurn {
-    pub(super) fn new(calls: Vec<ToolCall>) -> Self {
+    pub(super) fn model_requested(calls: Vec<ToolCall>) -> Self {
+        Self::from_calls(calls, ToolInvocationSource::Model)
+    }
+
+    pub(super) fn host_requested(call: ToolCall) -> Self {
+        Self::from_calls(vec![call], ToolInvocationSource::Host)
+    }
+
+    fn from_calls(calls: Vec<ToolCall>, source: ToolInvocationSource) -> Self {
         let unresolved = calls
             .into_iter()
             .map(|call| PendingToolCall {
                 id: ToolCallId::from_string(call.id.clone())
                     .expect("validated provider tool call ID is nonempty"),
                 call,
+                source,
             })
             .collect();
         Self { unresolved }
@@ -52,8 +62,8 @@ impl StagedToolTurn {
         history.push(Message::ToolResult(result));
     }
 
-    pub(super) fn interrupt_remaining(self, history: &mut Vec<Message>) {
-        history.extend(self.unresolved.into_iter().map(|pending| {
+    pub(super) fn interrupt_remaining(&mut self, history: &mut Vec<Message>) {
+        history.extend(self.unresolved.drain(..).map(|pending| {
             Message::ToolResult(ToolResult {
                 id: pending.id.into_string(),
                 ok: false,
@@ -61,6 +71,61 @@ impl StagedToolTurn {
             })
         }));
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToolTurnStatus {
+    Completed,
+    Cancelled,
+}
+
+impl ToolTurnStatus {
+    pub(super) fn is_cancelled(self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
+}
+
+pub(super) async fn execute_staged_tool_turn(
+    core: &Arc<SessionCore>,
+    runtime: &Rho,
+    tool_turn: &mut StagedToolTurn,
+    history: &mut Vec<Message>,
+    control: &mut RunControl<'_>,
+) -> Result<ToolTurnStatus, Error> {
+    while let Some(pending) = tool_turn.current() {
+        match emit(
+            control.events,
+            control.cancellation,
+            RunEvent::ToolProposed {
+                call: pending.call.clone(),
+            },
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                tool_turn.interrupt_remaining(history);
+                return Ok(ToolTurnStatus::Cancelled);
+            }
+            Err(error) => return Err(error),
+        }
+        match execute_tool(core, runtime, pending, control).await {
+            Ok(result) => tool_turn.resolve_current(result, history),
+            Err(failure) if matches!(&failure.error, Error::Cancelled) => {
+                if let Some(result) = failure.completed_result {
+                    tool_turn.resolve_current(result, history);
+                }
+                tool_turn.interrupt_remaining(history);
+                return Ok(ToolTurnStatus::Cancelled);
+            }
+            Err(failure) => {
+                core.set_state(SessionState::Failed);
+                emit_failure(control.events, &failure.error).await;
+                return Err(failure.error);
+            }
+        }
+    }
+    Ok(ToolTurnStatus::Completed)
 }
 
 pub(super) struct ToolExecutionFailure {
@@ -173,7 +238,12 @@ pub(super) async fn execute_tool(
     .map_err(ToolExecutionFailure::before_completion)?;
     let (progress, mut progress_receiver) =
         tool_progress_channel(NonZeroUsize::new(TOOL_PROGRESS_CAPACITY).unwrap());
-    let invocation = ToolInvocation::new(call_id.clone(), call.arguments.clone());
+    let invocation = match pending.source {
+        ToolInvocationSource::Model => ToolInvocation::new(call_id.clone(), call.arguments.clone()),
+        ToolInvocationSource::Host => {
+            ToolInvocation::from_host(call_id.clone(), call.arguments.clone())
+        }
+    };
     let (host_input, mut host_input_receiver) =
         crate::host_input::channel(TOOL_PROGRESS_CAPACITY, cancellation.clone());
     let context = ToolContext::with_security(

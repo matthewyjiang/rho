@@ -20,12 +20,18 @@ pub struct ToolSpec {
     pub input_schema: Value,
 }
 
-/// Complete tool call requested by a model.
+/// Complete tool call requested by a model or supplied by the host.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: Value,
+}
+
+impl ToolCall {
+    pub(crate) fn has_valid_protocol_fields(&self) -> bool {
+        !self.id.is_empty() && !self.name.is_empty() && self.arguments.is_object()
+    }
 }
 
 /// Result returned to a model after a tool call.

@@ -22,6 +22,7 @@ impl std::fmt::Display for SkillSource {
 pub struct Skill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub source: SkillSource,
     pub contents: String,
 }
@@ -34,36 +35,6 @@ const BUILTIN_SKILLS: &[&str] = &[
 pub fn discover(cwd: &Path) -> Vec<Skill> {
     let home = crate::paths::home_dir();
     discover_with_home(cwd, home.as_deref())
-}
-
-pub fn format_invocation(
-    skill: &Skill,
-    additional_instructions: &str,
-    max_output_bytes: usize,
-) -> String {
-    let body = skill_body(&skill.contents);
-    let body = rho_tools::tool::truncate(body.to_string(), max_output_bytes);
-    let mut invocation = match &skill.source {
-        SkillSource::BuiltIn => format!(
-            "<skill name=\"{}\" location=\"{}\">\n\n{}\n</skill>",
-            skill.name, skill.source, body
-        ),
-        SkillSource::File(path) => {
-            let base_dir = path.parent().unwrap_or(path);
-            format!(
-                "<skill name=\"{}\" location=\"{}\">\nReferences are relative to {}.\n\n{}\n</skill>",
-                skill.name,
-                crate::paths::display(path),
-                crate::paths::display(base_dir),
-                body
-            )
-        }
-    };
-    if !additional_instructions.is_empty() {
-        invocation.push_str("\n\n");
-        invocation.push_str(additional_instructions);
-    }
-    invocation
 }
 
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
@@ -142,6 +113,17 @@ fn parse_skill(
         .map(|(_, value)| value.to_string())
         .ok_or_else(|| anyhow::anyhow!("missing required description"))?;
 
+    let disable_model_invocation = frontmatter
+        .iter()
+        .find(|(key, _)| key == "disable-model-invocation")
+        .map(|(_, value)| match value.to_ascii_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => anyhow::bail!("disable-model-invocation must be true or false"),
+        })
+        .transpose()?
+        .unwrap_or(false);
+
     validate_name(&name)?;
     validate_description(&description)?;
     if let Some(path) = file_path {
@@ -158,20 +140,10 @@ fn parse_skill(
     Ok(Skill {
         name,
         description,
+        disable_model_invocation,
         source,
         contents: contents.into(),
     })
-}
-
-fn skill_body(contents: &str) -> &str {
-    let mut offset = 0;
-    for (index, line) in contents.split_inclusive('\n').enumerate() {
-        offset += line.len();
-        if index > 0 && line.trim_end_matches(['\r', '\n']) == "---" {
-            return contents[offset..].trim();
-        }
-    }
-    contents.trim()
 }
 
 fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
@@ -196,7 +168,10 @@ fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
         };
         let key = key.trim();
         let value = value.trim();
-        if !matches!(key, "name" | "description" | "license" | "compatibility") {
+        if !matches!(
+            key,
+            "name" | "description" | "license" | "compatibility" | "disable-model-invocation"
+        ) {
             continue;
         }
 
@@ -278,38 +253,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_bare_skill_invocation_as_a_model_prompt() {
-        let skill = Skill {
-            name: "inspect".into(),
-            description: "Inspect things".into(),
-            source: SkillSource::File(PathBuf::from("/project/.agents/skills/inspect/SKILL.md")),
-            contents:
-                "---\nname: inspect\ndescription: Inspect things\n---\nUse inspection tools.\n"
-                    .into(),
-        };
-
-        assert_eq!(
-            format_invocation(&skill, "", 12_000),
-            "<skill name=\"inspect\" location=\"/project/.agents/skills/inspect/SKILL.md\">\nReferences are relative to /project/.agents/skills/inspect.\n\nUse inspection tools.\n</skill>"
-        );
-    }
-
-    #[test]
-    fn appends_instructions_to_the_same_skill_invocation() {
-        let skill = Skill {
-            name: "inspect".into(),
-            description: "Inspect things".into(),
-            source: SkillSource::BuiltIn,
-            contents: "---\r\nname: inspect\r\ndescription: Inspect things\r\n---\r\nUse inspection tools.\r\n".into(),
-        };
-
-        assert_eq!(
-            format_invocation(&skill, "Check errors.", 12_000),
-            "<skill name=\"inspect\" location=\"built in to rho\">\n\nUse inspection tools.\n</skill>\n\nCheck errors."
-        );
-    }
-
-    #[test]
     fn discovers_embedded_rho_diagnostics_skill() {
         let root = TempDir::new().unwrap();
 
@@ -335,6 +278,25 @@ mod tests {
 
         assert_eq!(skill.source, SkillSource::BuiltIn);
         assert!(skill.contents.contains("questionnaire"));
+    }
+
+    #[test]
+    fn parses_disable_model_invocation() {
+        let root = TempDir::new().unwrap();
+        let skill_dir = root.path().join(".agents/skills/manual-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: manual-skill\ndescription: manual skill\ndisable-model-invocation: true\n---\nrules\n",
+        )
+        .unwrap();
+
+        let skill = discover_with_home(root.path(), None)
+            .into_iter()
+            .find(|skill| skill.name == "manual-skill")
+            .unwrap();
+
+        assert!(skill.disable_model_invocation);
     }
 
     #[test]

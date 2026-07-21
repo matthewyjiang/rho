@@ -163,6 +163,10 @@ impl AppToolSet {
         self.tools.iter().map(|tool| tool.spec()).collect()
     }
 
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.iter().any(|tool| tool.spec().name == name)
+    }
+
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
     }

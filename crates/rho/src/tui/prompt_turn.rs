@@ -5,6 +5,7 @@ pub(super) struct FailedTurn {
     input: rho_sdk::UserInput,
     display_user: Option<Message>,
     notification_context: Option<String>,
+    initial_tool_call: Option<rho_sdk::model::ToolCall>,
 }
 
 impl FailedTurn {
@@ -24,6 +25,7 @@ impl FailedTurn {
             input: rho_sdk::UserInput::content(model_content)?,
             display_user: Some(Message::User(display_content)),
             notification_context: None,
+            initial_tool_call: prompt.initial_tool_call,
         })
     }
 
@@ -155,9 +157,18 @@ impl App {
 
         self.active_tool_call = false;
         self.pending_tool_call = None;
-        agent
-            .start(model_input, failed_turn.display_user.clone())
-            .await?;
+        match failed_turn.initial_tool_call.clone() {
+            Some(call) => {
+                agent
+                    .start_with_tool_call(model_input, failed_turn.display_user.clone(), call)
+                    .await?;
+            }
+            None => {
+                agent
+                    .start(model_input, failed_turn.display_user.clone())
+                    .await?;
+            }
+        }
         self.insert_runtime_notices(agent);
         if let Some(context) = agent.take_context_usage() {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
@@ -351,6 +362,9 @@ impl App {
             Ok(()) => self.insert_deferred_inline_shell_context(agent).err(),
             Err(error) => Some(error),
         };
+        if let Some(context) = agent.take_context_usage() {
+            self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
+        }
         let outcome = match result {
             _ if inline_shell_error.is_some() => self.finalize_failed_turn(
                 inline_shell_error

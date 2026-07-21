@@ -1,9 +1,10 @@
 use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 
 use rho_sdk::{
-    model::Message, provider::ModelProvider, ApprovalHandler, ApprovalRequestReceiver, Error,
-    HostInputId, HostInputResponse, Rho, RunEvent, RunOutcome, SessionId, SessionOptions,
-    SystemPrompt, UserInput, Workspace,
+    model::{Message, ToolCall},
+    provider::ModelProvider,
+    ApprovalHandler, ApprovalRequestReceiver, Error, HostInputId, HostInputResponse, Rho, RunEvent,
+    RunOutcome, SessionId, SessionOptions, SystemPrompt, UserInput, Workspace,
 };
 
 use {
@@ -72,6 +73,11 @@ pub(crate) struct InteractiveRuntime {
     approval_receiver: Option<ApprovalRequestReceiver>,
     agent_id: String,
     agent_fingerprint: String,
+}
+
+enum TurnPrelude {
+    None,
+    ToolCall(ToolCall),
 }
 
 impl InteractiveRuntime {
@@ -323,6 +329,25 @@ impl InteractiveRuntime {
         input: UserInput,
         display_user: Option<Message>,
     ) -> Result<(), Error> {
+        self.start_run(input, display_user, TurnPrelude::None).await
+    }
+
+    pub(crate) async fn start_with_tool_call(
+        &mut self,
+        input: UserInput,
+        display_user: Option<Message>,
+        tool_call: ToolCall,
+    ) -> Result<(), Error> {
+        self.start_run(input, display_user, TurnPrelude::ToolCall(tool_call))
+            .await
+    }
+
+    async fn start_run(
+        &mut self,
+        input: UserInput,
+        display_user: Option<Message>,
+        prelude: TurnPrelude,
+    ) -> Result<(), Error> {
         if self.runs.state() != InteractiveState::Idle {
             return Err(Error::SessionBusy);
         }
@@ -341,7 +366,15 @@ impl InteractiveRuntime {
             rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
             self.context_window,
         );
-        let run = self.sessions.session().start(input).await?;
+        let run = match prelude {
+            TurnPrelude::None => self.sessions.session().start(input).await?,
+            TurnPrelude::ToolCall(call) => {
+                self.sessions
+                    .session()
+                    .start_with_tool_call(input, call)
+                    .await?
+            }
+        };
         self.runs.begin(run, pending_turn, context_usage)
     }
 
@@ -381,6 +414,7 @@ impl InteractiveRuntime {
             finished.pending_turn.as_ref(),
             finished.outcome.as_ref().ok(),
         )?;
+        self.refresh_context_usage();
         Ok(finished.outcome?)
     }
 
@@ -481,14 +515,29 @@ impl InteractiveRuntime {
             .set_compaction(Some(Arc::new(compactor)), policy)
     }
 
+    fn refresh_context_usage(&mut self) {
+        self.runs
+            .note_context_usage(rho_sdk::model::ContextUsage::estimated(
+                rho_sdk::model::context::estimate_context_tokens(
+                    &self.sessions.history(),
+                    &self.tools.specs(),
+                ),
+                self.context_window,
+            ));
+    }
+
     pub(crate) fn append_user_context_with_display(
         &mut self,
         model: String,
         display: String,
     ) -> anyhow::Result<()> {
-        let message = Message::user_text(model);
-        self.sessions.session().append_message(message.clone())?;
-        self.sessions.save_snapshot(&[Message::user_text(display)])
+        self.sessions
+            .session()
+            .append_message(Message::user_text(model))?;
+        self.sessions
+            .save_snapshot(&[Message::user_text(display)])?;
+        self.refresh_context_usage();
+        Ok(())
     }
 
     pub(crate) async fn shutdown(&mut self) {
@@ -502,6 +551,10 @@ impl InteractiveRuntime {
         }
         self.runtime.shutdown();
         self.tools.shutdown().await;
+    }
+
+    pub(crate) fn has_tool(&self, name: &str) -> bool {
+        self.tools.contains(name)
     }
 
     pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {

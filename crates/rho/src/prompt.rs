@@ -84,6 +84,9 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         skills::discover_with_home(cwd, home)
+            .into_iter()
+            .filter(|skill| !skill.disable_model_invocation)
+            .collect()
     } else {
         Vec::new()
     };
@@ -243,6 +246,26 @@ mod tests {
             crate::paths::display(&skill_dir.join("SKILL.md"))
         )));
         assert!(!prompt.contains("rho skill rules"));
+    }
+
+    #[test]
+    fn excludes_skills_that_disable_model_invocation() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let skill_dir = home.path().join(".rho/skills/manual-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: manual-skill\ndescription: only users may invoke this skill\ndisable-model-invocation: true\n---\nmanual rules",
+        )
+        .unwrap();
+
+        let prompt =
+            system_prompt_with_home(&[skill_tool_spec()], project.path(), Some(home.path())).text;
+
+        assert!(prompt.contains("<available_skills>"));
+        assert!(!prompt.contains("<name>manual-skill</name>"));
+        assert!(!prompt.contains("only users may invoke this skill"));
     }
 
     #[test]

@@ -86,7 +86,7 @@ opaque_id!(SteeringId, "Stable identity for accepted steering input.");
 opaque_id!(HostInputId, "Stable identity for one host input request.");
 opaque_id!(
     ToolCallId,
-    "Stable identity for a provider-requested tool call."
+    "Stable identity for one model- or host-requested tool call."
 );
 
 /// Monotonically increasing revision of a session snapshot.
