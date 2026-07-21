@@ -294,11 +294,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             if error.is::<AutomationInterrupted>() {
                 return Err(error);
             }
-            if let Some(exit) = error.downcast_ref::<AutomationExit>() {
-                Err(AutomationExit::new(exit.exit_code(), exit.reason(), message).into())
-            } else {
-                Err(AutomationExit::new(code, reason, message).into())
-            }
+            Err(AutomationExit::new(code, reason, message).into())
         }
     }
 }
