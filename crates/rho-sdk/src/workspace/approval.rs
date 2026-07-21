@@ -330,6 +330,12 @@ impl ApprovalAuditLog {
 #[derive(Debug, Default)]
 pub(crate) struct SessionApprovals {
     exact_requests: Mutex<Vec<CapabilityRequest>>,
+    /// Serializes approval evaluation so an identical concurrent request observes
+    /// a session approval the first request recorded instead of prompting again.
+    /// ponytail: one gate serializes all approvals, not just identical ones — a
+    /// hung host approval blocks unrelated ones. Key the gate by request if a
+    /// host needs distinct approvals to prompt concurrently.
+    approval_gate: tokio::sync::Mutex<()>,
 }
 
 impl SessionApprovals {
@@ -382,6 +388,7 @@ pub(crate) async fn authorize_for_call(
             ))
         }
         PolicyDecision::RequireApproval { reason } => {
+            let _gate = remembered.approval_gate.lock().await;
             if remembered.contains(&request) {
                 audit.record(
                     capability,

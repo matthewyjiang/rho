@@ -505,3 +505,82 @@ async fn no_approval_handler_returns_typed_host_denial() {
     assert_eq!(error.kind(), super::AuthorizationDenialKind::Host);
     assert_eq!(error.capability(), CapabilityKind::Process);
 }
+
+#[derive(Debug)]
+struct HoldingApproval {
+    prompts: Mutex<u32>,
+    release: tokio::sync::Notify,
+}
+
+impl ApprovalHandler for HoldingApproval {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            let count = {
+                let mut prompts = self
+                    .prompts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                *prompts += 1;
+                *prompts
+            };
+            // Hold the first prompt open so a concurrent identical request must
+            // wait on the in-flight gate rather than prompting a second time.
+            if count == 1 {
+                self.release.notified().await;
+            }
+            ApprovalDecision::AllowForSession
+        })
+    }
+}
+
+#[tokio::test]
+async fn concurrent_identical_requests_prompt_the_host_once() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals = Arc::new(HoldingApproval {
+        prompts: Mutex::new(0),
+        release: tokio::sync::Notify::new(),
+    });
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+    let request = process_request("cargo test");
+
+    let (first, second, ()) = tokio::join!(
+        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
+        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
+        async {
+            while *approvals
+                .prompts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+            // The first request is now parked on the prompt; let the second park
+            // on the gate before releasing.
+            tokio::task::yield_now().await;
+            approvals.release.notify_waiters();
+        },
+    );
+
+    assert_eq!(
+        first.unwrap(),
+        super::AuthorizationOutcome::AllowedForSession
+    );
+    assert_eq!(
+        second.unwrap(),
+        super::AuthorizationOutcome::AllowedByRememberedApproval
+    );
+    assert_eq!(
+        *approvals
+            .prompts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        1
+    );
+}
