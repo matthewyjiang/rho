@@ -20,16 +20,6 @@ use super::{
     sdk_config::SdkBootstrapOptions,
 };
 
-/// Runs the CLI command and converts configured automation failures into protocol-specific exits.
-///
-/// # Examples
-///
-/// ```no_run
-/// # async fn example(cli: Cli) -> anyhow::Result<()> {
-/// run(cli).await?;
-/// # Ok(())
-/// # }
-/// ```
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let run_output = match &cli.command {
         Some(Command::Run { output, .. }) => Some(*output),
@@ -66,16 +56,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     Err(error)
 }
 
-/// Bootstraps configuration and runs the selected CLI command.
-///
-/// # Examples
-///
-/// ```
-/// # async fn example(cli: Cli) -> anyhow::Result<()> {
-/// run_inner(cli).await?;
-/// # Ok(())
-/// # }
-/// ```
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
     if let Some(Command::Attach { id }) = &cli.command {

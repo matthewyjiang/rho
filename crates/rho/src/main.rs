@@ -3,16 +3,6 @@ use std::process::ExitCode;
 use clap::Parser;
 use rho_coding_agent::{run, AutomationExit, AutomationInterrupted, Cli};
 
-/// Runs the command-line agent and maps its outcome to a process exit code.
-///
-/// # Examples
-///
-/// ```
-/// use std::process::ExitCode;
-///
-/// let success = ExitCode::SUCCESS;
-/// assert_eq!(success, ExitCode::from(0));
-/// ```
 #[tokio::main]
 async fn main() -> ExitCode {
     rho_providers::set_rho_version(env!("CARGO_PKG_VERSION"))

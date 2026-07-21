@@ -47,14 +47,6 @@ enum Mode {
 }
 
 impl Mode {
-    /// Parses an automation test mode from its environment variable value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// assert!(matches!(Mode::parse("fixed"), Ok(Mode::Fixed)));
-    /// assert!(Mode::parse("unknown").is_err());
-    /// ```
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "inspect" => Ok(Self::Inspect),
@@ -82,18 +74,6 @@ impl ModelProvider for AutomationFixtureProvider {
         self.identity.clone()
     }
 
-    /// Processes a model request according to the configured automation fixture mode.
-    ///
-    /// The response may be fixed, inspected, delayed, tool-based, or an intentional
-    /// provider error. Some modes vary their behavior across successive turns.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let response = provider.send_turn(request).await?;
-    /// assert!(response.is_assistant());
-    /// # Ok::<(), ProviderError>(())
-    /// ```
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
         Box::pin(async move {
             let turn = self.turn.fetch_add(1, Ordering::SeqCst);
