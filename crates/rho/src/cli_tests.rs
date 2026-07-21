@@ -42,3 +42,39 @@ fn agent_selection_is_global() {
     let run = Cli::try_parse_from(["rho", "run", "--agent", "worker", "ship it"]).unwrap();
     assert_eq!(run.agent.as_deref(), Some("worker"));
 }
+
+#[test]
+fn parses_structured_output_and_execution_bounds() {
+    let cli = Cli::try_parse_from([
+        "rho",
+        "run",
+        "--output",
+        "jsonl",
+        "--max-steps",
+        "12",
+        "--timeout",
+        "20m",
+        "ship it",
+    ])
+    .unwrap();
+
+    assert!(matches!(
+        cli.command,
+        Some(Command::Run {
+            output: OutputFormat::Jsonl,
+            max_steps: Some(max_steps),
+            timeout: Some(timeout),
+            ..
+        }) if max_steps.get() == 12 && timeout == std::time::Duration::from_secs(1_200)
+    ));
+}
+
+#[test]
+fn rejects_zero_steps_and_invalid_durations() {
+    for arguments in [
+        ["rho", "run", "--max-steps", "0"],
+        ["rho", "run", "--timeout", "soon"],
+    ] {
+        assert!(Cli::try_parse_from(arguments).is_err());
+    }
+}

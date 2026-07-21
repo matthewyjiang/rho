@@ -38,6 +38,8 @@ enum Mode {
     Inspect,
     Fixed,
     Fail,
+    AuthFailure,
+    Retry,
     Delay,
     ToolFailure,
     ReadFile,
@@ -50,6 +52,8 @@ impl Mode {
             "inspect" => Ok(Self::Inspect),
             "fixed" => Ok(Self::Fixed),
             "fail" => Ok(Self::Fail),
+            "auth-failure" => Ok(Self::AuthFailure),
+            "retry" => Ok(Self::Retry),
             "delay" => Ok(Self::Delay),
             "tool-failure" => Ok(Self::ToolFailure),
             "read-file" => Ok(Self::ReadFile),
@@ -81,6 +85,18 @@ impl ModelProvider for AutomationFixtureProvider {
                     "deterministic provider failure",
                     Retryability::Permanent,
                 )),
+                Mode::AuthFailure => Err(ProviderError::new(
+                    ProviderErrorKind::Authentication,
+                    "deterministic authentication failure",
+                    Retryability::Permanent,
+                )
+                .with_diagnostic("Authorization: Bearer fixture-secret")),
+                Mode::Retry if turn == 0 => Err(ProviderError::new(
+                    ProviderErrorKind::Unavailable,
+                    "deterministic retryable failure",
+                    Retryability::Retryable,
+                )),
+                Mode::Retry => completed(fixed_response()),
                 Mode::Delay => delayed(request).await,
                 Mode::ToolFailure if turn == 0 => completed_tool_call(
                     "fixture-tool-failure",

@@ -1,15 +1,17 @@
 use std::{
     fmt,
     io::{self, Read, Write},
+    num::NonZeroUsize,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
 
 use {
     crate::agent::{PromptPolicy, ToolCapability},
-    crate::cli::Command,
+    crate::cli::{Command, OutputFormat},
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
@@ -26,10 +28,42 @@ use {
 
 use super::{
     agent_binding::BoundAgent,
+    automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
     policy::AppPolicy,
-    runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions},
+    runtime_builder::{
+        build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
+    },
     sdk_config::SdkBootstrapOptions,
 };
+
+/// Error returned after an automation run has cleaned up and selected a stable exit code.
+#[derive(Debug)]
+pub struct AutomationExit {
+    code: u8,
+    message: String,
+}
+
+impl AutomationExit {
+    pub(super) fn new(code: u8, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// Returns the documented process exit code for this automation result.
+    pub fn exit_code(&self) -> u8 {
+        self.code
+    }
+}
+
+impl fmt::Display for AutomationExit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AutomationExit {}
 
 /// Error returned after an automation run handles an interrupt and completes cleanup.
 #[derive(Debug)]
@@ -44,10 +78,7 @@ impl AutomationInterrupted {
 
     /// Returns the conventional process exit code for the received signal.
     pub fn exit_code(&self) -> u8 {
-        match self.signal {
-            ShutdownSignal::Interrupt => 130,
-            ShutdownSignal::Terminate => 143,
-        }
+        self.signal.exit_code()
     }
 }
 
@@ -63,6 +94,15 @@ impl std::error::Error for AutomationInterrupted {}
 enum ShutdownSignal {
     Interrupt,
     Terminate,
+}
+
+impl ShutdownSignal {
+    fn exit_code(self) -> u8 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
 }
 
 impl fmt::Display for ShutdownSignal {
@@ -96,6 +136,9 @@ pub(super) struct Startup<'a> {
     pub parent_session_id: Option<rho_sdk::SessionId>,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
+    pub output: OutputFormat,
+    pub max_steps: Option<NonZeroUsize>,
+    pub timeout: Option<Duration>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
@@ -109,11 +152,24 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
     }
 }
 
+pub(super) fn emit_startup_failure() -> anyhow::Result<()> {
+    let mut adapter = JsonlAdapter::new();
+    let event = adapter.failed(
+        TerminalReason::ConfigurationError,
+        "configuration failed".into(),
+        None,
+    );
+    emit(event)
+}
+
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
+    let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlAdapter::new);
+    let deadline = startup
+        .timeout
+        .map(|timeout| tokio::time::Instant::now() + timeout);
     // The reporter exists before anything that can fail, so a parent process
-    // watching the output file always sees a terminal state — even when the
-    // run dies during startup (bad auth, broken workspace, ...).
-    let mut reporter = startup
+    // watching the output file always sees a terminal state, including startup failures.
+    let reporter_result = startup
         .output_file
         .as_ref()
         .map(|path| {
@@ -127,25 +183,218 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 },
                 startup.cwd.clone(),
                 &prompt_text,
-                /* stream_output */ true,
+                /* stream_output */ startup.output == OutputFormat::Text,
                 None,
             )
         })
-        .transpose()?;
-    let result = run_session(prompt_text, &startup, reporter.as_mut(), None).await;
-    if let Some(reporter) = reporter.as_mut() {
-        reporter.finish(&result);
-    }
-    let answer = result?;
-    let mut stdout = io::stdout().lock();
-    if reporter.is_some() {
-        // The answer already streamed above and is in the result file.
-        writeln!(stdout, "\n[subagent run complete]")?;
+        .transpose();
+    let mut reporter = match reporter_result {
+        Ok(reporter) => reporter,
+        Err(error) => {
+            emit_failure(&mut jsonl, TerminalReason::OutputError, &error)?;
+            return Err(AutomationExit::new(1, error.to_string()).into());
+        }
+    };
+
+    let cancellation = rho_tools::cancellation::RunCancellation::default();
+    let (result, timed_out) = if let Some(deadline) = deadline {
+        let future = run_session_with_output(
+            prompt_text,
+            &startup,
+            reporter.as_mut(),
+            Some(cancellation.clone()),
+            jsonl.as_mut(),
+        );
+        tokio::pin!(future);
+        tokio::select! {
+            result = &mut future => (result, false),
+            () = tokio::time::sleep_until(deadline) => {
+                cancellation.cancel();
+                (future.await, true)
+            }
+        }
     } else {
-        writeln!(stdout, "{}", answer.text())?;
+        (
+            run_session_with_output(
+                prompt_text,
+                &startup,
+                reporter.as_mut(),
+                None,
+                jsonl.as_mut(),
+            )
+            .await,
+            false,
+        )
+    };
+    if let Some(reporter) = reporter.as_mut() {
+        let reached_step_limit = result.as_ref().is_ok_and(|outcome| {
+            outcome.stop_reason() == rho_sdk::StopReason::MaxSteps
+                && (jsonl.is_some() || startup.max_steps.is_some())
+        });
+        if reached_step_limit {
+            let stopped =
+                Err(AutomationExit::new(124, "rho run reached its model-step limit").into());
+            reporter.finish(&stopped);
+        } else {
+            reporter.finish(&result);
+        }
     }
-    stdout.flush()?;
+
+    if timed_out {
+        emit_stopped(&mut jsonl, TerminalReason::Timeout)?;
+        return Err(AutomationExit::new(124, "rho run timed out").into());
+    }
+
+    match result {
+        Ok(answer) => {
+            let max_steps = answer.stop_reason() == rho_sdk::StopReason::MaxSteps;
+            if max_steps && (jsonl.is_some() || startup.max_steps.is_some()) {
+                if let Some(adapter) = jsonl.as_mut() {
+                    let text = (!answer.text().is_empty()).then(|| answer.text().into());
+                    let event = adapter.stopped(TerminalReason::MaxSteps, text);
+                    emit(event)?;
+                } else {
+                    write_text_answer(&answer, reporter.is_some())?;
+                }
+                return Err(
+                    AutomationExit::new(124, "rho run reached its model-step limit").into(),
+                );
+            }
+            if let Some(adapter) = jsonl.as_mut() {
+                let event = adapter.completed(answer.text().into());
+                emit(event)?;
+            } else {
+                write_text_answer(&answer, reporter.is_some())?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let (reason, code) = classify_error(&error);
+            if reason == TerminalReason::Interrupted {
+                emit_stopped(&mut jsonl, reason)?;
+            } else if reason != TerminalReason::OutputError {
+                emit_failure(&mut jsonl, reason, &error)?;
+            }
+            let message = terminal_error_message(reason, &error);
+            if error.is::<AutomationInterrupted>() {
+                return Err(error);
+            }
+            if let Some(exit) = error.downcast_ref::<AutomationExit>() {
+                Err(AutomationExit::new(exit.exit_code(), message).into())
+            } else {
+                Err(AutomationExit::new(code, message).into())
+            }
+        }
+    }
+}
+
+fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow::Result<()> {
+    let result = (|| -> io::Result<()> {
+        let mut stdout = io::stdout().lock();
+        if has_reporter {
+            writeln!(stdout, "\n[subagent run complete]")?;
+        } else {
+            writeln!(stdout, "{}", answer.text())?;
+        }
+        stdout.flush()
+    })();
+    result
+        .map_err(|error| AutomationExit::new(1, format!("could not write output: {error}")).into())
+}
+
+fn emit(event: WireEvent) -> anyhow::Result<()> {
+    let mut stdout = io::stdout().lock();
+    write_event(&mut stdout, &event).map_err(|error| {
+        AutomationExit::new(1, format!("could not write JSONL output: {error}")).into()
+    })
+}
+
+fn emit_stopped(adapter: &mut Option<JsonlAdapter>, reason: TerminalReason) -> anyhow::Result<()> {
+    if let Some(adapter) = adapter.as_mut() {
+        let text = adapter.partial_text();
+        let event = adapter.stopped(reason, text);
+        emit(event)?;
+    }
     Ok(())
+}
+
+fn emit_failure(
+    adapter: &mut Option<JsonlAdapter>,
+    reason: TerminalReason,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
+    if let Some(adapter) = adapter.as_mut() {
+        let text = adapter.partial_text();
+        let message = terminal_error_message(reason, error);
+        let event = adapter.failed(reason, message, text);
+        emit(event)?;
+    }
+    Ok(())
+}
+
+fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> String {
+    match reason {
+        TerminalReason::Authentication => "authentication failed".to_string(),
+        TerminalReason::ConfigurationError => "configuration failed".to_string(),
+        TerminalReason::OutputError => "output failed".to_string(),
+        TerminalReason::OtherError => "run failed".to_string(),
+        _ => error.to_string(),
+    }
+}
+
+fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
+    if let Some(interrupted) = error.downcast_ref::<AutomationInterrupted>() {
+        return (TerminalReason::Interrupted, interrupted.exit_code());
+    }
+    if let Some(exit) = error.downcast_ref::<AutomationExit>() {
+        return match exit.exit_code() {
+            130 | 143 => (TerminalReason::Interrupted, exit.exit_code()),
+            124 => (TerminalReason::Timeout, 124),
+            _ if exit.to_string().starts_with("could not write JSONL output") => {
+                (TerminalReason::OutputError, 1)
+            }
+            _ => (TerminalReason::OtherError, exit.exit_code()),
+        };
+    }
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
+            return match error {
+                rho_sdk::Error::Authentication { .. } => (TerminalReason::Authentication, 1),
+                rho_sdk::Error::Provider(provider)
+                    if provider.kind() == rho_sdk::ProviderErrorKind::Authentication =>
+                {
+                    (TerminalReason::Authentication, 1)
+                }
+                rho_sdk::Error::Provider(_) => (TerminalReason::ProviderError, 1),
+                rho_sdk::Error::Tool(_) => (TerminalReason::ToolHostError, 1),
+                rho_sdk::Error::InvalidConfiguration { .. } => {
+                    (TerminalReason::ConfigurationError, 2)
+                }
+                _ => (TerminalReason::OtherError, 1),
+            };
+        }
+        if let Some(error) = cause.downcast_ref::<rho_providers::model::ModelError>() {
+            use rho_providers::model::ModelError;
+            return match error {
+                ModelError::MissingApiKey
+                | ModelError::MissingCodexAuth
+                | ModelError::MissingAnthropicApiKey
+                | ModelError::MissingGoogleApiKey
+                | ModelError::MissingGithubCopilotAuth
+                | ModelError::MissingMoonshotApiKey
+                | ModelError::MissingOpenRouterApiKey
+                | ModelError::MissingKimiAuth
+                | ModelError::MissingXaiApiKey
+                | ModelError::MissingXaiAuth
+                | ModelError::Credentials(_) => (TerminalReason::Authentication, 1),
+                ModelError::UnsupportedReasoning { .. } | ModelError::UnsupportedProvider(_) => {
+                    (TerminalReason::ConfigurationError, 2)
+                }
+                _ => (TerminalReason::ProviderError, 1),
+            };
+        }
+    }
+    (TerminalReason::OtherError, 1)
 }
 
 pub(crate) async fn run_session(
@@ -153,6 +402,16 @@ pub(crate) async fn run_session(
     startup: &Startup<'_>,
     reporter: Option<&mut RunReporter>,
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
+) -> anyhow::Result<rho_sdk::RunOutcome> {
+    run_session_with_output(prompt_text, startup, reporter, cancellation, None).await
+}
+
+async fn run_session_with_output(
+    prompt_text: String,
+    startup: &Startup<'_>,
+    reporter: Option<&mut RunReporter>,
+    cancellation: Option<rho_tools::cancellation::RunCancellation>,
+    mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
@@ -208,26 +467,33 @@ pub(crate) async fn run_session(
     };
     startup.diagnostics.update_tools(&tool_specs);
 
-    let workspace = Workspace::new(&sdk_options.workspace.root)?;
+    let workspace_root = sdk_options.workspace.root.clone();
+    let workspace = Workspace::new(&workspace_root)?;
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider,
-        tools: tool_set.tools(),
-        workspace,
-        workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
-        approval_handler: None,
-        system_prompt,
-        reasoning: sdk_options.runtime.reasoning,
-        compaction,
-        context_window,
-        usage_purpose: startup.usage_purpose,
-        usage_parent_session_id: startup.parent_session_id.clone(),
-        usage_recording,
-    })?;
+    let runtime = build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider,
+            tools: tool_set.tools(),
+            workspace,
+            workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+            approval_handler: None,
+            system_prompt,
+            reasoning: sdk_options.runtime.reasoning,
+            compaction,
+            context_window,
+            usage_purpose: startup.usage_purpose,
+            usage_parent_session_id: startup.parent_session_id.clone(),
+            usage_recording,
+        },
+        startup.max_steps,
+    )?;
     let session = runtime.session(SessionOptions::default()).await?;
+    if let Some(adapter) = jsonl.as_deref_mut() {
+        adapter.set_run_context(session.id(), &workspace_root);
+    }
     if let Some(manager) = tool_set.subagents() {
         manager.set_session(session.id().to_string());
     }
@@ -236,7 +502,7 @@ pub(crate) async fn run_session(
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
-    let result = complete_run(&session, prompt_text, reporter, cancellation).await;
+    let result = complete_run(&session, prompt_text, reporter, cancellation, jsonl).await;
 
     runtime.shutdown();
     tool_set.shutdown().await;
@@ -254,12 +520,13 @@ async fn complete_run(
     prompt_text: String,
     reporter: Option<&mut RunReporter>,
     external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
+    jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
-        outcome = drive_headless_run(&mut run, reporter) => outcome,
+        outcome = drive_headless_run(&mut run, reporter, jsonl) => outcome,
         signal = shutdown_signal() => {
             let signal = signal?;
             cancellation.cancel();
@@ -281,6 +548,7 @@ async fn complete_run(
 async fn drive_headless_run(
     run: &mut rho_sdk::Run,
     mut reporter: Option<&mut RunReporter>,
+    mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -299,6 +567,15 @@ async fn drive_headless_run(
         };
         if let Some(reporter) = reporter.as_deref_mut() {
             reporter.on_event(&event);
+        }
+        if let Some(adapter) = jsonl.as_deref_mut() {
+            if let Some(wire_event) = adapter.event(&event) {
+                if let Err(error) = emit(wire_event) {
+                    run.cancel();
+                    let _ = run.outcome().await;
+                    return Err(error);
+                }
+            }
         }
         let request = match event {
             rho_sdk::RunEvent::HostInputRequested { request }
@@ -442,7 +719,11 @@ impl RunReporter {
                 self.status.output_tokens = usage.output_tokens.unwrap_or(0);
             }
             Err(error)
-                if error.is::<AutomationInterrupted>() || error.is::<SubagentCancelled>() =>
+                if error.is::<AutomationInterrupted>()
+                    || error
+                        .downcast_ref::<AutomationExit>()
+                        .is_some_and(|exit| exit.exit_code() == 124)
+                    || error.is::<SubagentCancelled>() =>
             {
                 self.status.state = RunState::Stopped;
                 self.status.result = self

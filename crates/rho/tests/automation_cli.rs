@@ -159,6 +159,214 @@ fn provider_and_tool_failures_stay_off_stdout() {
 }
 
 #[test]
+fn jsonl_success_emits_versioned_events_and_authoritative_text() {
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "fixed");
+    command
+        .env(RESPONSE_ENV, "answer for automation")
+        .args(["run", "--output", "jsonl", "hello"]);
+    let output = command.output().unwrap();
+
+    assert_success(&output);
+    assert!(output.stderr.is_empty());
+    let events = jsonl_events(&output);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event["seq"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        (1..=events.len() as u64).collect::<Vec<_>>()
+    );
+    assert!(events.iter().all(|event| event["schema_version"] == 1));
+    assert_eq!(events.first().unwrap()["type"], "run.started");
+    assert_eq!(
+        events.first().unwrap()["workspace"],
+        root.path().to_string_lossy().as_ref()
+    );
+    assert!(events.iter().any(|event| {
+        event["type"] == "assistant.text_delta"
+            && event["attempt"] == 1
+            && event["text"] == "answer for automation"
+    }));
+    assert_eq!(
+        events.last().unwrap(),
+        &serde_json::json!({
+            "schema_version": 1,
+            "seq": events.len(),
+            "type": "run.completed",
+            "reason": "completed",
+            "text": "answer for automation"
+        })
+    );
+}
+
+#[test]
+fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "retry");
+    command
+        .env(RESPONSE_ENV, "recovered")
+        .args(["run", "--output", "jsonl", "hello"]);
+    let output = command.output().unwrap();
+
+    assert_success(&output);
+    let events = jsonl_events(&output);
+    assert!(events
+        .iter()
+        .any(|event| { event["type"] == "assistant.text_reset" && event["attempt"] == 1 }));
+    assert!(events.iter().any(|event| {
+        event["type"] == "assistant.text_delta"
+            && event["attempt"] == 2
+            && event["text"] == "recovered"
+    }));
+    assert!(!stdout(&output).contains("deterministic retryable failure"));
+}
+
+#[test]
+fn jsonl_reports_recoverable_tool_failure_and_run_completion() {
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "tool-failure");
+    command
+        .env(RESPONSE_ENV, "recovered after tool failure")
+        .args(["run", "--output", "jsonl", "use a tool"]);
+    let output = command.output().unwrap();
+
+    assert_success(&output);
+    let events = jsonl_events(&output);
+    assert!(events.iter().any(|event| {
+        event["type"] == "tool.started"
+            && event["call_id"] == "fixture-tool-failure"
+            && event["name"] == "read_file"
+    }));
+    assert!(events.iter().any(|event| {
+        event["type"] == "tool.finished"
+            && event["call_id"] == "fixture-tool-failure"
+            && event["status"] == "failure"
+    }));
+    assert_eq!(events.last().unwrap()["type"], "run.completed");
+    assert!(!stdout(&output).contains("outside-workspace"));
+}
+
+#[test]
+fn jsonl_reports_provider_failure_as_the_only_terminal_event() {
+    let root = TempDir::new().unwrap();
+    let output = run(&root, "fail", &["run", "--output", "jsonl", "hello"], None);
+
+    assert_eq!(output.status.code(), Some(1));
+    let events = jsonl_events(&output);
+    let terminals = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event["type"].as_str(),
+                Some("run.completed" | "run.failed" | "run.stopped")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0]["type"], "run.failed");
+    assert_eq!(terminals[0]["reason"], "provider_error");
+    assert_eq!(events.last().unwrap(), terminals[0]);
+}
+
+#[test]
+fn jsonl_sanitizes_authentication_failures() {
+    let root = TempDir::new().unwrap();
+    let output = run(
+        &root,
+        "auth-failure",
+        &["run", "--output", "jsonl", "hello"],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    let events = jsonl_events(&output);
+    assert_eq!(events.last().unwrap()["type"], "run.failed");
+    assert_eq!(events.last().unwrap()["reason"], "authentication");
+    assert_eq!(events.last().unwrap()["message"], "authentication failed");
+    assert!(!stdout(&output).contains("fixture-secret"));
+    assert!(!stderr(&output).contains("fixture-secret"));
+}
+
+#[test]
+fn explicit_step_limit_stops_with_status_124() {
+    let root = TempDir::new().unwrap();
+    let output_file = root.path().join("result.json");
+    let output = run(
+        &root,
+        "tool-failure",
+        &[
+            "run",
+            "--output",
+            "jsonl",
+            "--output-file",
+            output_file.to_str().unwrap(),
+            "--max-steps",
+            "1",
+            "use a tool",
+        ],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(124));
+    let events = jsonl_events(&output);
+    assert_eq!(events.last().unwrap()["type"], "run.stopped");
+    assert_eq!(events.last().unwrap()["reason"], "max_steps");
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(output_file).unwrap()).unwrap();
+    assert_eq!(result["state"], "stopped");
+}
+
+#[test]
+fn timeout_stops_with_status_124() {
+    let root = TempDir::new().unwrap();
+    let output = run(
+        &root,
+        "delay",
+        &["run", "--output", "jsonl", "--timeout", "50ms", "wait"],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(124));
+    let events = jsonl_events(&output);
+    assert_eq!(events.last().unwrap()["type"], "run.stopped");
+    assert_eq!(events.last().unwrap()["reason"], "timeout");
+}
+
+#[test]
+fn startup_failure_emits_a_terminal_json_object() {
+    let root = TempDir::new().unwrap();
+    std::fs::write(root.path().join("config.toml"), "not valid toml = [").unwrap();
+    let output = run(&root, "fixed", &["run", "--output", "jsonl", "hello"], None);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        jsonl_events(&output),
+        vec![serde_json::json!({
+            "schema_version": 1,
+            "seq": 1,
+            "type": "run.failed",
+            "reason": "configuration_error",
+            "message": "configuration failed"
+        })]
+    );
+}
+
+#[test]
+fn broken_jsonl_stdout_fails_the_run() {
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "fixed");
+    command.args(["run", "--output", "jsonl", "hello"]);
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    command.stdout(writer);
+
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("output failed"));
+}
+
+#[test]
 fn output_run_persists_agent_identity() {
     let root = TempDir::new().unwrap();
     std::fs::write(
@@ -241,6 +449,29 @@ fn final_answer_is_the_only_stdout_content() {
         )
         .unwrap();
     assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
+}
+
+#[cfg(unix)]
+#[test]
+fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
+    use std::time::Duration;
+
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "delay");
+    command.args(["run", "--output", "jsonl", "wait"]);
+    let child = command.spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let signal_status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signal_status.success());
+
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(143));
+    let events = jsonl_events(&output);
+    assert_eq!(events.last().unwrap()["type"], "run.stopped");
+    assert_eq!(events.last().unwrap()["reason"], "interrupted");
 }
 
 #[cfg(unix)]
@@ -366,6 +597,13 @@ fn command(root: &TempDir, mode: &str) -> Command {
         .arg("--config")
         .arg(root.path().join("config.toml"));
     command
+}
+
+fn jsonl_events(output: &Output) -> Vec<Value> {
+    stdout(output)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 fn inspection(output: &Output) -> Value {

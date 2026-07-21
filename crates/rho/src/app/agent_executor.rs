@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use {
     crate::agent::{AgentCapabilities, AgentDefinition, ToolCapability},
+    crate::cli::OutputFormat,
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
@@ -190,6 +191,9 @@ impl AgentExecutor {
                 parent_session_id,
                 agent: bound,
                 output_file: None,
+                output: OutputFormat::Text,
+                max_steps: None,
+                timeout: None,
                 diagnostics,
                 herdr: HerdrReporter::default(),
             };

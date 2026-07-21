@@ -28,7 +28,7 @@ mod usage;
 mod usage_limits;
 mod workspace;
 
-pub use app::{run, AutomationInterrupted};
+pub use app::{run, AutomationExit, AutomationInterrupted};
 pub use cli::Cli;
 pub use rho_providers as providers_lib;
 pub use rho_sdk as sdk;

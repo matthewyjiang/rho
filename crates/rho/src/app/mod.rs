@@ -1,6 +1,7 @@
 mod agent_binding;
 pub(crate) mod agent_executor;
 mod automation;
+pub(crate) mod automation_protocol;
 mod bootstrap;
 mod cli_config;
 pub(crate) mod config_repository;
@@ -16,5 +17,5 @@ mod provider_controller;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 
-pub use automation::AutomationInterrupted;
+pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
