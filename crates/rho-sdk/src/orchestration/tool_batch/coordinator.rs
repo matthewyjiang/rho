@@ -611,7 +611,7 @@ async fn handle_next(
             emit(
                 control.events,
                 control.cancellation,
-                RunEvent::HostInputRequested {
+                RunEvent::ToolHostInputRequested {
                     call_id: batch[index].id.clone(),
                     request: event_request,
                 },

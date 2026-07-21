@@ -216,7 +216,11 @@ impl SdkEventAdapter {
             RunEvent::ProviderDiagnostic { detail } => {
                 ViewEvent::Notice(format!("provider diagnostic:\n{}", detail.as_str()))
             }
-            RunEvent::HostInputRequested { call_id, request } => {
+            RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire {
+                call_id: rho_sdk::ToolCallId::new(),
+                request,
+            },
+            RunEvent::ToolHostInputRequested { call_id, request } => {
                 ViewEvent::Questionnaire { call_id, request }
             }
             RunEvent::CompactionStarted { .. } => {

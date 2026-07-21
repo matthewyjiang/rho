@@ -502,7 +502,7 @@ async fn cancellation_while_awaiting_host_input_interrupts_the_call() {
     loop {
         if matches!(
             next_event(&mut run).await,
-            RunEvent::HostInputRequested { .. }
+            RunEvent::ToolHostInputRequested { .. }
         ) {
             break;
         }

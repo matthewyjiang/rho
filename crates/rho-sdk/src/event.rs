@@ -171,6 +171,10 @@ pub enum RunEvent {
         kind: String,
     },
     HostInputRequested {
+        request: crate::HostInputRequest,
+    },
+    /// Host input requested by a correlated tool call.
+    ToolHostInputRequested {
         call_id: ToolCallId,
         request: crate::HostInputRequest,
     },

@@ -412,7 +412,9 @@ async fn multiple_host_input_requests_are_correlated_and_answered_once() {
     let mut pending = BTreeMap::new();
 
     while pending.len() < 2 {
-        if let RunEvent::HostInputRequested { call_id, request } = run.next_event().await.unwrap() {
+        if let RunEvent::ToolHostInputRequested { call_id, request } =
+            run.next_event().await.unwrap()
+        {
             pending.insert(call_id.to_string(), request);
         }
     }
@@ -468,7 +470,7 @@ async fn duplicate_host_input_ids_fail_closed_without_losing_the_first_request()
         .unwrap();
     let mut requests = Vec::new();
     while let Some(event) = run.next_event().await {
-        if let RunEvent::HostInputRequested { request, .. } = event {
+        if let RunEvent::ToolHostInputRequested { request, .. } = event {
             requests.push(request);
         }
     }
@@ -498,7 +500,7 @@ async fn duplicate_host_input_id_reused_after_answering_first_request_still_fail
         .unwrap();
 
     let first_request = loop {
-        if let RunEvent::HostInputRequested { call_id, request } =
+        if let RunEvent::ToolHostInputRequested { call_id, request } =
             tokio::time::timeout(TEST_TIMEOUT, run.next_event())
                 .await
                 .expect("first host input request was not emitted")
@@ -517,7 +519,7 @@ async fn duplicate_host_input_id_reused_after_answering_first_request_still_fail
 
     let mut request_count = 1;
     while let Some(event) = run.next_event().await {
-        request_count += matches!(event, RunEvent::HostInputRequested { .. }) as usize;
+        request_count += matches!(event, RunEvent::ToolHostInputRequested { .. }) as usize;
     }
     assert_eq!(request_count, 1);
     assert!(matches!(
@@ -590,7 +592,7 @@ async fn respond_and_steering_are_acknowledged_while_progress_backpressures_even
         .unwrap();
 
     let pending = loop {
-        if let RunEvent::HostInputRequested { request, .. } =
+        if let RunEvent::ToolHostInputRequested { request, .. } =
             tokio::time::timeout(TEST_TIMEOUT, run.next_event())
                 .await
                 .expect("host input request was not delivered")
@@ -824,7 +826,7 @@ async fn cancellation_cleans_up_parallel_host_input_waiters() {
     while seen < 2 {
         seen += matches!(
             run.next_event().await,
-            Some(RunEvent::HostInputRequested { .. })
+            Some(RunEvent::ToolHostInputRequested { .. })
         ) as usize;
     }
     run.cancel();
