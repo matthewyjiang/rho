@@ -11,8 +11,9 @@ use crate::{
 
 use super::{
     tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolAsset,
-    ToolContext, ToolError, ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolProgress,
-    ToolRegistry,
+    ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolMetadata,
+    ToolOutput, ToolPreparationContext, ToolProgress, ToolRegistry, ToolResource,
+    ToolResourceAccess,
 };
 
 fn spec(name: &str) -> ToolSpec {
@@ -37,6 +38,43 @@ fn context(cancellation: CancellationToken) -> (ToolContext, super::ToolProgress
         ),
         receiver,
     )
+}
+
+#[tokio::test]
+async fn default_preparation_preserves_the_exclusive_call_path() {
+    let metadata = ToolMetadata::new().operation(OperationKind::Read);
+    let tool = ScriptedTool::new(
+        spec("legacy"),
+        ScriptedToolOutcome::Success(ToolOutput::text("called")),
+    );
+    let cancellation = CancellationToken::new();
+    let (context, _progress) = context(cancellation);
+    let preparation = ToolPreparationContext::from_execution(&context);
+    let prepared = tool.prepare(invocation(), preparation).await.unwrap();
+
+    assert_eq!(prepared.execution_policy(), &ToolExecutionPolicy::Exclusive);
+    assert!(prepared.capabilities().is_empty());
+    assert_eq!(prepared.start_metadata(), &ToolMetadata::default());
+    assert_eq!(prepared.execute(context).await.unwrap().content(), "called");
+
+    // Metadata remains available through the explicit prepared constructor.
+    let prepared = super::PreparedToolInvocation::resource_aware(
+        [ToolResourceAccess::shared(ToolResource::session_state())],
+        [],
+        metadata.clone(),
+        |_context| Box::pin(async { Ok(ToolOutput::text("prepared")) }),
+    );
+    assert_eq!(prepared.start_metadata(), &metadata);
+}
+
+#[test]
+fn resource_debug_output_omits_secret_values() {
+    let resource = ToolResource::opaque("private-tool", "secret-key");
+    let debug = format!("{resource:?}");
+
+    assert!(debug.contains("Opaque"));
+    assert!(!debug.contains("private-tool"));
+    assert!(!debug.contains("secret-key"));
 }
 
 #[tokio::test]

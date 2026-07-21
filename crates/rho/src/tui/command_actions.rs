@@ -150,7 +150,7 @@ impl App {
         self.clear_accepted_steering();
         self.reset_streams();
         self.running = false;
-        self.active_tool_call = false;
+        self.tool_calls.clear();
         self.reset_usage();
         self.current_context = None;
         self.pending_session_title = None;

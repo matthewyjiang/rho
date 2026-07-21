@@ -300,7 +300,7 @@ async fn drive_headless_run(
         if let Some(reporter) = reporter.as_deref_mut() {
             reporter.on_event(&event);
         }
-        if let rho_sdk::RunEvent::HostInputRequested { request } = event {
+        if let rho_sdk::RunEvent::HostInputRequested { request, .. } = event {
             run.cancel();
             let _ = run.outcome().await;
             anyhow::bail!(

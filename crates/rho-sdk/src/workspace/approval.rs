@@ -28,6 +28,7 @@ pub enum ApprovalDecision {
 pub struct ApprovalRequest {
     capability: CapabilityRequest,
     reason: String,
+    tool_call_id: Option<crate::ToolCallId>,
 }
 
 impl ApprovalRequest {
@@ -36,6 +37,7 @@ impl ApprovalRequest {
         Self {
             capability,
             reason: reason.into(),
+            tool_call_id: None,
         }
     }
 
@@ -46,6 +48,11 @@ impl ApprovalRequest {
     pub fn reason(&self) -> &str {
         &self.reason
     }
+
+    /// Identifies the tool call that requested approval during a run.
+    pub fn tool_call_id(&self) -> Option<&crate::ToolCallId> {
+        self.tool_call_id.as_ref()
+    }
 }
 
 impl fmt::Debug for ApprovalRequest {
@@ -54,6 +61,7 @@ impl fmt::Debug for ApprovalRequest {
             .debug_struct("ApprovalRequest")
             .field("capability_kind", &self.capability.kind())
             .field("source", self.capability.source())
+            .field("correlated_tool_call", &self.tool_call_id.is_some())
             .field("details", &"available through accessors")
             .field("reason", &"[redacted]")
             .finish()
@@ -88,6 +96,15 @@ pub struct ChannelApprovalHandler {
     sender: mpsc::Sender<PendingApproval>,
 }
 
+impl ChannelApprovalHandler {
+    #[cfg(test)]
+    pub(crate) async fn wait_until_full(&self) {
+        while self.sender.capacity() > 0 {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
 impl ApprovalHandler for ChannelApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
@@ -116,7 +133,12 @@ pub struct ApprovalRequestReceiver {
 
 impl ApprovalRequestReceiver {
     pub async fn recv(&mut self) -> Option<PendingApproval> {
-        self.receiver.recv().await
+        while let Some(pending) = self.receiver.recv().await {
+            if pending.is_live() {
+                return Some(pending);
+            }
+        }
+        None
     }
 }
 
@@ -128,6 +150,12 @@ pub struct PendingApproval {
 }
 
 impl PendingApproval {
+    fn is_live(&self) -> bool {
+        self.response
+            .as_ref()
+            .is_some_and(|response| !response.is_closed())
+    }
+
     pub fn request(&self) -> &ApprovalRequest {
         &self.request
     }
@@ -323,12 +351,24 @@ impl SessionApprovals {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn authorize(
     policy: &Arc<dyn WorkspacePolicy>,
     approvals: &Arc<dyn ApprovalHandler>,
     remembered: &Arc<SessionApprovals>,
     audit: &Arc<ApprovalAuditLog>,
     request: CapabilityRequest,
+) -> Result<AuthorizationOutcome, AuthorizationError> {
+    authorize_for_call(policy, approvals, remembered, audit, request, None).await
+}
+
+pub(crate) async fn authorize_for_call(
+    policy: &Arc<dyn WorkspacePolicy>,
+    approvals: &Arc<dyn ApprovalHandler>,
+    remembered: &Arc<SessionApprovals>,
+    audit: &Arc<ApprovalAuditLog>,
+    request: CapabilityRequest,
+    tool_call_id: Option<&crate::ToolCallId>,
 ) -> Result<AuthorizationOutcome, AuthorizationError> {
     let capability = request.kind();
     match policy.evaluate(&request) {
@@ -353,6 +393,7 @@ pub(crate) async fn authorize(
                 .request(ApprovalRequest {
                     capability: request.clone(),
                     reason,
+                    tool_call_id: tool_call_id.cloned(),
                 })
                 .await
             {

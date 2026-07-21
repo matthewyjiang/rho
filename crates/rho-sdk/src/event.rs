@@ -171,6 +171,7 @@ pub enum RunEvent {
         kind: String,
     },
     HostInputRequested {
+        call_id: ToolCallId,
         request: crate::HostInputRequest,
     },
     CompactionStarted {

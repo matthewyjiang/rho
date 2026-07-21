@@ -57,12 +57,12 @@ struct WebSearchArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GetSearchContentArgs {
-    response_id: String,
-    query: Option<String>,
-    query_index: Option<usize>,
-    url: Option<String>,
-    url_index: Option<usize>,
+pub(super) struct GetSearchContentArgs {
+    pub(super) response_id: String,
+    pub(super) query: Option<String>,
+    pub(super) query_index: Option<usize>,
+    pub(super) url: Option<String>,
+    pub(super) url_index: Option<usize>,
 }
 
 #[async_trait::async_trait]
@@ -212,6 +212,17 @@ impl Tool for GetSearchContent {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: GetSearchContentArgs = serde_json::from_value(args)?;
+        self.execute(args, ctx.max_output_bytes, id)
+    }
+}
+
+impl GetSearchContent {
+    pub(super) fn execute(
+        &self,
+        args: GetSearchContentArgs,
+        max_output_bytes: usize,
+        id: String,
+    ) -> Result<ToolResult, ToolError> {
         let stored = storage::load(&args.response_id)?;
         let item = select_stored_item(&stored, &args)?;
         let content = json!({
@@ -226,7 +237,7 @@ impl Tool for GetSearchContent {
         Ok(ToolResult {
             id,
             ok: true,
-            content: truncate(to_pretty_json(&content), ctx.max_output_bytes),
+            content: truncate(to_pretty_json(&content), max_output_bytes),
         })
     }
 }

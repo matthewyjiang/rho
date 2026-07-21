@@ -22,10 +22,15 @@ The significant ordering rules are:
 4. A complete tool call emits `ToolProposed` before execution.
 5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
 6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-7. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
-8. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+7. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
+8. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
+9. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
+10. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
+11. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation.
+
+One coordinator consumes run commands for the whole tool batch. It queues concurrent host-input requests by ID, rejects any ID reused within the batch, and keeps the session in `WaitingForHostInput` while any request remains. Steering accepted during a batch crosses into history only after every result slot closes.
 
 The 1.0.0 implementation does not guarantee a terminal event for every worker exit; see [known limitations](#known-limitations). Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success.
 
@@ -70,7 +75,7 @@ When cancellation reaches the cooperative cancellation completion path:
 
 Cancellation can race with event delivery or other failing work; see [known limitations](#known-limitations). In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event.
 
-Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. Design tools for idempotency and record enough operation identity for reconciliation.
+Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation. Design tools for idempotency and record enough operation identity for reconciliation.
 
 ## Drop contract
 

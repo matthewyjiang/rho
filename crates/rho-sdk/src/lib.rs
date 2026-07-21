@@ -87,8 +87,10 @@
 //!
 //! Hosts can supply custom [`ModelProvider`](crate::provider::ModelProvider)
 //! and [`Tool`](crate::tool::Tool) implementations. Both return explicit `Send`
-//! futures suitable for trait objects. Tools use only capabilities supplied
-//! through [`ToolContext`](crate::tool::ToolContext).
+//! futures suitable for trait objects. Legacy tools use capabilities supplied
+//! through [`ToolContext`](crate::tool::ToolContext). Resource-aware prepared
+//! tools receive [`AuthorizedToolContext`](crate::tool::AuthorizedToolContext),
+//! which cannot request capabilities beyond their prepared declaration.
 //!
 //! # Session snapshots
 //!

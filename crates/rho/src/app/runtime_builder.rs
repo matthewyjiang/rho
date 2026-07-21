@@ -64,6 +64,7 @@ where
         .workspace_policy(workspace_policy)
         .reasoning_level(reasoning)
         .max_steps(super::sdk_config::run_step_limit())
+        .max_parallel_tools(super::sdk_config::parallel_tool_limit())
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)
         .compactor(compactor);

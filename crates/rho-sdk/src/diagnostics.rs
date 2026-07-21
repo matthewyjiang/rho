@@ -88,6 +88,7 @@ pub struct DiagnosticsSnapshot {
     approval_audit: Vec<ApprovalAuditRecord>,
     event_capacity: usize,
     max_steps: usize,
+    max_parallel_tools: usize,
     compaction_trigger_messages: Option<usize>,
     compaction_trigger_tokens: Option<u64>,
     reasoning_level: crate::ReasoningLevel,
@@ -107,6 +108,7 @@ pub(crate) struct SecuritySettings {
 pub(crate) struct ExecutionSettings {
     pub(crate) event_capacity: usize,
     pub(crate) max_steps: usize,
+    pub(crate) max_parallel_tools: usize,
     pub(crate) compaction_trigger_messages: Option<usize>,
     pub(crate) compaction_trigger_tokens: Option<u64>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
@@ -134,6 +136,7 @@ impl DiagnosticsSnapshot {
             approval_audit: security.approval_audit,
             event_capacity: execution.event_capacity,
             max_steps: execution.max_steps,
+            max_parallel_tools: execution.max_parallel_tools,
             compaction_trigger_messages: execution.compaction_trigger_messages,
             compaction_trigger_tokens: execution.compaction_trigger_tokens,
             reasoning_level: execution.reasoning_level,
@@ -176,6 +179,10 @@ impl DiagnosticsSnapshot {
 
     pub fn max_steps(&self) -> usize {
         self.max_steps
+    }
+
+    pub fn max_parallel_tools(&self) -> usize {
+        self.max_parallel_tools
     }
 
     pub fn compaction_trigger_messages(&self) -> Option<usize> {

@@ -30,7 +30,9 @@ use crate::{
     SelectionMode, Session, SessionId, SessionOptions, SessionState, UserInput,
 };
 
-use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
+use super::{
+    apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT, valid_response,
+};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -460,12 +462,12 @@ async fn cancellation_during_progress_preserves_a_completed_tool_and_interrupts_
     loop {
         if matches!(
             next_event(&mut run).await,
-            RunEvent::ToolProposed { ref call } if call.id == "progress"
+            RunEvent::ToolUpdated { ref call_id, .. } if call_id.as_str() == "progress"
         ) {
             break;
         }
     }
-    wait_for_flag(&progress_sent).await;
+    assert!(progress_sent.load(Ordering::Acquire));
     completion_ready.store(true, Ordering::Release);
 
     cancel_and_continue(
@@ -481,7 +483,8 @@ async fn cancellation_during_progress_preserves_a_completed_tool_and_interrupts_
         ],
     )
     .await;
-    assert!(!later_metadata.load(Ordering::Acquire));
+    // Preparation resolves metadata for every registered call before the batch starts.
+    assert!(later_metadata.load(Ordering::Acquire));
     assert!(!later_called.load(Ordering::Acquire));
 }
 
@@ -707,6 +710,16 @@ async fn retryable_provider_failures_exhaust_after_bounded_attempts() {
     assert_eq!(calls.load(Ordering::Acquire), super::PROVIDER_TURN_ATTEMPTS);
     let outcome = run.outcome().await;
     assert!(matches!(outcome, Err(Error::Provider(_))), "{outcome:?}");
+}
+
+#[test]
+fn provider_response_rejects_duplicate_tool_call_ids() {
+    let response = ModelResponse::Assistant(vec![
+        ContentBlock::ToolCall(tool_call("duplicate", "first")),
+        ContentBlock::ToolCall(tool_call("duplicate", "second")),
+    ]);
+
+    assert!(!valid_response(&response));
 }
 
 #[tokio::test(start_paused = true)]

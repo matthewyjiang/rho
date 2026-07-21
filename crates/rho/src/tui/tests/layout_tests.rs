@@ -672,16 +672,27 @@ fn hidden_reasoning_shows_thinking_placeholder() {
 fn started_tool_display_ignores_late_argument_previews() {
     let mut app = test_app();
 
+    let call_id = rho_sdk::ToolCallId::from_string("call-layout").unwrap();
+    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
+        index: 0,
+        call_id: Some(call_id.clone()),
+        display_lines: vec!["edit_file".into()],
+    });
     app.record_agent_event(ViewModelEvent::ToolStarted {
+        call_id,
         display_lines: vec!["edit_file src/main.rs".into()],
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
+        index: 0,
+        call_id: None,
         display_lines: vec!["edit_file".into()],
     });
 
     assert_eq!(
-        app.pending_tool_call
-            .as_ref()
+        app.tool_calls
+            .running
+            .values()
+            .next()
             .map(|tool| tool.display_lines.as_slice()),
         Some(["edit_file src/main.rs".to_string()].as_slice())
     );

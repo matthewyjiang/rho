@@ -33,6 +33,7 @@ pub enum ScenarioId {
     Questionnaire,
     SupervisedApproval,
     ProgressTool,
+    ConcurrentProgress,
     RetractSteeringDuringTool,
     MarkdownHeadings,
     OpenModelPicker,
@@ -59,6 +60,7 @@ impl ScenarioId {
             Self::Questionnaire => "questionnaire",
             Self::SupervisedApproval => "supervised_approval",
             Self::ProgressTool => "progress_tool",
+            Self::ConcurrentProgress => "concurrent_progress",
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
             Self::OpenModelPicker => "open_model_picker",
@@ -85,6 +87,7 @@ impl ScenarioId {
             "questionnaire" => Some(Self::Questionnaire),
             "supervised_approval" => Some(Self::SupervisedApproval),
             "progress_tool" => Some(Self::ProgressTool),
+            "concurrent_progress" => Some(Self::ConcurrentProgress),
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
             "open_model_picker" => Some(Self::OpenModelPicker),
@@ -490,6 +493,33 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture concurrent progress"),
+    Step::WaitText {
+        text: "slow fixture progress one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "fast fixture result",
+        timeout: STREAM,
+    },
+    Step::AssertText("slow fixture progress one"),
+    Step::WaitText {
+        text: "slow fixture result",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "concurrent progress complete in model order",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -801,6 +831,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Run the fixture progress tool to completion",
             size: DEFAULT_SIZE,
             steps: PROGRESS_TOOL_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "concurrent_progress",
+            description: "Keep concurrent progress visible through out-of-order completion",
+            size: DEFAULT_SIZE,
+            steps: CONCURRENT_PROGRESS_STEPS,
             smoke: false,
         },
         Scenario {

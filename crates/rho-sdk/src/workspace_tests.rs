@@ -10,12 +10,12 @@ use proptest::prelude::*;
 use tempfile::TempDir;
 
 use super::{
-    approval_channel, authorize, ApprovalAuditDecision, ApprovalAuditLog, ApprovalDecision,
-    ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind, CapabilityOperation,
-    CapabilityRequest, CapabilitySource, DenyAllPolicy, DenyApprovals, NetworkTarget, PathScope,
-    PolicyDecision, ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
-    ScopedWorkspacePolicy, SessionApprovals, Workspace, WorkspacePathErrorKind, WorkspacePathState,
-    WorkspacePolicy,
+    approval_channel, authorize, authorize_for_call, ApprovalAuditDecision, ApprovalAuditLog,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind,
+    CapabilityOperation, CapabilityRequest, CapabilitySource, DenyAllPolicy, DenyApprovals,
+    NetworkTarget, PathScope, PolicyDecision, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation, ProcessOutputLimits, ScopedWorkspacePolicy, SessionApprovals, Workspace,
+    WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 
 fn source(name: &str) -> CapabilitySource {
@@ -365,10 +365,18 @@ async fn remembered_approval_matches_only_the_exact_session_request() {
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
     let request = process_request("cargo test");
+    let call_id = crate::ToolCallId::from_string("approval-call").unwrap();
 
-    let first = authorize(&policy, &erased, &remembered, &audit, request.clone())
-        .await
-        .unwrap();
+    let first = authorize_for_call(
+        &policy,
+        &erased,
+        &remembered,
+        &audit,
+        request.clone(),
+        Some(&call_id),
+    )
+    .await
+    .unwrap();
     let repeated = authorize(&policy, &erased, &remembered, &audit, request)
         .await
         .unwrap();
@@ -383,6 +391,14 @@ async fn remembered_approval_matches_only_the_exact_session_request() {
     .unwrap();
 
     assert_eq!(first, super::AuthorizationOutcome::AllowedForSession);
+    assert_eq!(
+        approvals
+            .requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())[0]
+            .tool_call_id(),
+        Some(&call_id)
+    );
     assert_eq!(
         repeated,
         super::AuthorizationOutcome::AllowedByRememberedApproval
@@ -407,6 +423,41 @@ async fn remembered_approval_matches_only_the_exact_session_request() {
             ApprovalAuditDecision::AllowedForSession,
         ]
     );
+}
+
+#[tokio::test]
+async fn approval_receiver_skips_requests_cancelled_before_host_delivery() {
+    let (handler, mut receiver) = approval_channel(NonZeroUsize::new(1).unwrap());
+    let stale = tokio::spawn({
+        let handler = handler.clone();
+        async move {
+            handler
+                .request(ApprovalRequest::new(
+                    process_request("stale"),
+                    "approval required",
+                ))
+                .await
+        }
+    });
+    handler.wait_until_full().await;
+    stale.abort();
+    assert!(stale.await.unwrap_err().is_cancelled());
+
+    let live = tokio::spawn({
+        let handler = handler.clone();
+        async move {
+            handler
+                .request(ApprovalRequest::new(
+                    process_request("live"),
+                    "approval required",
+                ))
+                .await
+        }
+    });
+    let mut pending = receiver.recv().await.unwrap();
+    assert_eq!(pending.request().capability(), &process_request("live"));
+    pending.respond(ApprovalDecision::AllowOnce).unwrap();
+    assert_eq!(live.await.unwrap(), ApprovalDecision::AllowOnce);
 }
 
 #[tokio::test]

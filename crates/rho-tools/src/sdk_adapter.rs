@@ -19,10 +19,13 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        OperationKind, Tool, ToolAsset, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
+        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolContext,
+        ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
+        ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, CapabilitySource, WorkspacePathError, WorkspacePathState,
+    CapabilityKind, CapabilityRequest, CapabilitySource, ResolvedWorkspacePath, Workspace,
+    WorkspacePathError, WorkspacePathState,
 };
 
 #[cfg(test)]
@@ -35,7 +38,7 @@ use crate::{
 
 use super::{
     edit_file::{apply_edits, EditFile},
-    edit_file_args::Args as EditArgs,
+    edit_file_args::{Args as EditArgs, Edit},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     sdk_support::{check_cancelled, workspace, workspace_root},
@@ -175,6 +178,49 @@ impl Tool for ListDirTool {
         path_start_metadata(arguments, OperationKind::Read)
     }
 
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let args: PathArgs = parse_args(invocation.into_arguments())?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let resolved = workspace
+                .resolve_for_read(&args.path)
+                .map_err(map_path_error)?;
+            let capability = path_request(&resolved, PathCapability::Read, "list_dir");
+            let accesses = [
+                ToolResourceAccess::shared(ToolResource::directory_tree(resolved.path())),
+                ToolResourceAccess::shared(ToolResource::directory_membership(resolved.path())),
+            ];
+            let metadata =
+                path_start_metadata(&serde_json::json!({"path": args.path}), OperationKind::Read);
+            Ok(PreparedToolInvocation::resource_aware(
+                accesses,
+                [capability],
+                metadata,
+                move |_context| {
+                    Box::pin(async move {
+                        workspace.revalidate(&resolved).map_err(map_path_error)?;
+                        let content = list_directory(resolved.path())
+                            .await
+                            .map_err(map_app_error)?;
+                        let display = compact_display_path(workspace.root(), &args.path);
+                        Ok(
+                            ToolOutput::text(truncate(content, self.max_output_bytes)).metadata(
+                                ToolMetadata::new()
+                                    .operation(OperationKind::Read)
+                                    .affected_path(display),
+                            ),
+                        )
+                    })
+                },
+            ))
+        })
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
@@ -206,6 +252,57 @@ impl Tool for ReadFileTool {
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         path_start_metadata(arguments, OperationKind::Read)
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let args: ReadArgs = parse_args(invocation.into_arguments())?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let resolved = workspace
+                .resolve_for_read(&args.path)
+                .map_err(map_path_error)?;
+            let metadata =
+                path_start_metadata(&serde_json::json!({"path": args.path}), OperationKind::Read);
+            Ok(PreparedToolInvocation::resource_aware(
+                [ToolResourceAccess::shared(ToolResource::workspace_path(
+                    resolved.path(),
+                ))],
+                [path_request(&resolved, PathCapability::Read, "read_file")],
+                metadata,
+                move |_context| {
+                    Box::pin(async move {
+                        workspace.revalidate(&resolved).map_err(map_path_error)?;
+                        let output = read_file_content(resolved.path(), args.offset, args.limit)
+                            .await
+                            .map_err(map_app_error)?;
+                        let display = read_file_display_content(
+                            workspace.root(),
+                            &args.path,
+                            &serde_json::json!({"offset": args.offset, "limit": args.limit}),
+                        );
+                        let mut metadata = ToolMetadata::new()
+                            .operation(OperationKind::Read)
+                            .affected_path(display);
+                        if let Some(image) = output.image {
+                            metadata =
+                                metadata.asset(ToolAsset::new(image.media_type, image.bytes));
+                        }
+                        if let Some(error) = output.preview_error {
+                            metadata = metadata.presentation_notice(error);
+                        }
+                        Ok(
+                            ToolOutput::text(truncate(output.content, self.max_output_bytes))
+                                .metadata(metadata),
+                        )
+                    })
+                },
+            ))
+        })
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
@@ -258,6 +355,45 @@ impl Tool for WriteFileTool {
         path_start_metadata(arguments, OperationKind::Write)
     }
 
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let args: WriteArgs = parse_args(invocation.into_arguments())?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let resolved = workspace
+                .resolve_for_write(&args.path)
+                .map_err(map_path_error)?;
+            let mut capabilities =
+                vec![path_request(&resolved, PathCapability::Write, "write_file")];
+            if resolved.state() == WorkspacePathState::Existing {
+                capabilities.push(path_request(&resolved, PathCapability::Read, "write_file"));
+            }
+            let accesses = write_accesses(&resolved);
+            let metadata = path_start_metadata(
+                &serde_json::json!({"path": args.path}),
+                OperationKind::Write,
+            );
+            Ok(PreparedToolInvocation::resource_aware(
+                accesses,
+                capabilities,
+                metadata,
+                move |context| {
+                    execute_prepared_write(
+                        self.max_output_bytes,
+                        workspace,
+                        resolved,
+                        args,
+                        context,
+                    )
+                },
+            ))
+        })
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
@@ -296,6 +432,59 @@ impl Tool for EditFileTool {
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         path_start_metadata(arguments, OperationKind::Write)
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let metadata = path_start_metadata(invocation.arguments(), OperationKind::Write);
+            let args: EditArgs = parse_args(invocation.into_arguments())?;
+            let edits = args.into_edits().map_err(map_app_error)?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let mut resolved_by_request = std::collections::HashMap::new();
+            let mut resolved_by_canonical = std::collections::BTreeMap::new();
+            for edit in &edits {
+                let resolved = workspace
+                    .resolve_for_read(&edit.path)
+                    .map_err(map_path_error)?;
+                resolved_by_request.insert(edit.path.clone(), resolved.path().to_path_buf());
+                resolved_by_canonical
+                    .entry(resolved.path().to_path_buf())
+                    .or_insert(resolved);
+            }
+            let accesses = resolved_by_canonical
+                .keys()
+                .map(|path| ToolResourceAccess::exclusive(ToolResource::workspace_path(path)))
+                .collect::<Vec<_>>();
+            let capabilities = resolved_by_canonical
+                .values()
+                .flat_map(|resolved| {
+                    [
+                        path_request(resolved, PathCapability::Write, "edit_file"),
+                        path_request(resolved, PathCapability::Read, "edit_file"),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            Ok(PreparedToolInvocation::resource_aware(
+                accesses,
+                capabilities,
+                metadata,
+                move |context| {
+                    execute_prepared_edits(
+                        self.max_output_bytes,
+                        workspace,
+                        resolved_by_canonical,
+                        resolved_by_request,
+                        edits,
+                        context,
+                    )
+                },
+            ))
+        })
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
@@ -357,6 +546,147 @@ impl Tool for EditFileTool {
             Ok(ToolOutput::text(outcome.content).metadata(metadata))
         })
     }
+}
+
+fn execute_prepared_write(
+    max_output_bytes: usize,
+    workspace: Workspace,
+    resolved: ResolvedWorkspacePath,
+    args: WriteArgs,
+    context: AuthorizedToolContext,
+) -> ToolFuture<'static> {
+    Box::pin(async move {
+        let display = compact_display_path(workspace.root(), &args.path);
+        let _ = context
+            .progress()
+            .send(
+                ToolProgress::message(format!("writing {display}"))
+                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+            )
+            .await;
+        workspace.revalidate(&resolved).map_err(map_path_error)?;
+        let outcome =
+            write_file_content(resolved.path(), &display, &args.content, max_output_bytes)
+                .await
+                .map_err(map_app_error)?;
+        Ok(ToolOutput::text(outcome.content).metadata(
+            ToolMetadata::new()
+                .operation(OperationKind::Write)
+                .affected_path(outcome.display_path)
+                .diff(outcome.diff),
+        ))
+    })
+}
+
+fn execute_prepared_edits(
+    max_output_bytes: usize,
+    workspace: Workspace,
+    resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
+    requested_paths: std::collections::HashMap<String, PathBuf>,
+    edits: Vec<Edit>,
+    context: AuthorizedToolContext,
+) -> ToolFuture<'static> {
+    Box::pin(async move {
+        let total = edits.len() as u64;
+        let _ = context
+            .progress()
+            .send(
+                ToolProgress::message(format!("editing {total} change(s)"))
+                    .units(0, total.max(1))
+                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+            )
+            .await;
+        let outcome = apply_edits(
+            edits,
+            |requested| {
+                let path = requested_paths.get(requested).ok_or_else(|| {
+                    AppToolError::Message(format!(
+                        "edit path '{requested}' was not prepared for this invocation"
+                    ))
+                })?;
+                let prepared = resolved.get(path).ok_or_else(|| {
+                    AppToolError::Message(format!(
+                        "edit target '{}' was not prepared for this invocation",
+                        path.display()
+                    ))
+                })?;
+                workspace
+                    .revalidate(prepared)
+                    .map_err(|error| AppToolError::Message(error.to_string()))?;
+                Ok(path.clone())
+            },
+            |path| compact_display_path(workspace.root(), path),
+            max_output_bytes,
+        )
+        .await
+        .map_err(map_app_error)?;
+        let _ = context
+            .progress()
+            .send(
+                ToolProgress::message(format!("edited {} file(s)", outcome.file_count))
+                    .units(total.max(1), total.max(1))
+                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+            )
+            .await;
+        let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
+        for path in &outcome.display_paths {
+            metadata = metadata.affected_path(path);
+        }
+        Ok(ToolOutput::text(outcome.content).metadata(metadata.diff(outcome.diffs)))
+    })
+}
+
+fn check_preparation_cancelled(context: &ToolPreparationContext) -> Result<(), ToolError> {
+    if context.cancellation().is_cancelled() {
+        Err(ToolError::cancelled())
+    } else {
+        Ok(())
+    }
+}
+
+fn preparation_workspace(context: &ToolPreparationContext) -> Result<&Workspace, ToolError> {
+    context.workspace().ok_or_else(|| {
+        ToolError::new(
+            ToolErrorKind::Execution,
+            "workspace is required for built-in tools",
+        )
+    })
+}
+
+fn path_request(
+    path: &ResolvedWorkspacePath,
+    capability: PathCapability,
+    tool_name: &str,
+) -> CapabilityRequest {
+    let source = CapabilitySource::built_in_tool(tool_name);
+    match capability {
+        PathCapability::Read => {
+            CapabilityRequest::read_path(path.path(), path.scope().clone(), source)
+        }
+        PathCapability::Write => {
+            CapabilityRequest::write_path(path.path(), path.scope().clone(), source)
+        }
+    }
+}
+
+fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {
+    let mut accesses = vec![ToolResourceAccess::exclusive(ToolResource::workspace_path(
+        path.path(),
+    ))];
+    if path.state() != WorkspacePathState::MissingWriteTarget {
+        return accesses;
+    }
+    let mut child = path.path();
+    while let Some(parent) = child.parent() {
+        accesses.push(ToolResourceAccess::exclusive(
+            ToolResource::directory_membership(parent),
+        ));
+        if parent.exists() {
+            break;
+        }
+        child = parent;
+    }
+    accesses
 }
 
 fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetadata {

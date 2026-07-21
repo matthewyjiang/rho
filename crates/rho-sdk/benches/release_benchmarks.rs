@@ -12,8 +12,15 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
+        ToolSpec,
+    },
     provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    tool::{
+        PreparedToolInvocation, Tool, ToolContext, ToolFuture, ToolInvocation, ToolMetadata,
+        ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess,
+    },
     CompactionFuture, CompactionOutput, CompactionRequest, Compactor, Error, Rho, SessionOptions,
     UserInput,
 };
@@ -21,6 +28,7 @@ use serde_json::{json, Value};
 
 const EVENT_COUNT: usize = 10_000;
 const HISTORY_COUNT: usize = 1_000;
+const PARALLEL_READ_COUNT: usize = 8;
 
 struct TrackingAllocator;
 
@@ -77,6 +85,110 @@ impl ModelProvider for ImmediateProvider {
             )]))
         })
     }
+}
+
+#[derive(Clone)]
+struct ParallelReadProvider;
+
+impl ModelProvider for ParallelReadProvider {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("benchmark", "parallel-read-fixture", "v1")
+    }
+
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            if request
+                .messages
+                .iter()
+                .any(|message| matches!(message, Message::ToolResult(_)))
+            {
+                return Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )]));
+            }
+            Ok(ModelResponse::Assistant(
+                (0..PARALLEL_READ_COUNT)
+                    .map(|index| {
+                        ContentBlock::ToolCall(ToolCall {
+                            id: format!("read-{index}"),
+                            name: "benchmark_read".into(),
+                            arguments: json!({"index": index}),
+                        })
+                    })
+                    .collect(),
+            ))
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ParallelReadTool;
+
+impl Tool for ParallelReadTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "benchmark_read".into(),
+            description: "representative independent read".into(),
+            input_schema: json!({"type":"object","required":["index"]}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        unreachable!("benchmark read uses prepared execution")
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        let index = invocation.arguments()["index"].as_u64().unwrap() as usize;
+        Box::pin(async move {
+            Ok(PreparedToolInvocation::resource_aware(
+                [ToolResourceAccess::shared(ToolResource::opaque(
+                    "release-benchmark-read",
+                    index.to_string(),
+                ))],
+                [],
+                ToolMetadata::new(),
+                move |_context| {
+                    Box::pin(async move {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        Ok(ToolOutput::text(format!("read-{index}")))
+                    })
+                },
+            ))
+        })
+    }
+}
+
+fn run_parallel_read_batch(tokio: &tokio::runtime::Runtime, limit: usize) {
+    let runtime = Rho::builder()
+        .provider(ParallelReadProvider)
+        .tool(ParallelReadTool)
+        .max_parallel_tools(NonZeroUsize::new(limit).unwrap())
+        .build()
+        .unwrap();
+    let session = tokio
+        .block_on(runtime.session(SessionOptions::default()))
+        .unwrap();
+    black_box(
+        tokio
+            .block_on(session.complete("read representative files"))
+            .unwrap(),
+    );
+    let results = session
+        .history()
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result.content.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expected = (0..PARALLEL_READ_COUNT)
+        .map(|index| format!("read-{index}"))
+        .collect::<Vec<_>>();
+    assert_eq!(results, expected);
 }
 
 #[derive(Clone)]
@@ -320,6 +432,7 @@ fn main() {
         .unwrap_or(20usize)
         .max(5);
     let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .unwrap();
 
@@ -409,6 +522,13 @@ fn main() {
         let session = compaction_sessions.pop_front().unwrap();
         black_box(tokio.block_on(session.compact()).unwrap());
     });
+
+    run_parallel_read_batch(&tokio, 1);
+    run_parallel_read_batch(&tokio, 4);
+    let parallel_reads_limit_one = measure(samples, || run_parallel_read_batch(&tokio, 1));
+    let parallel_reads_limit_four = measure(samples, || run_parallel_read_batch(&tokio, 4));
+    let parallel_read_speedup =
+        parallel_reads_limit_one.median() as f64 / parallel_reads_limit_four.median() as f64;
 
     let mut event_throughputs = Vec::with_capacity(samples);
     let mut event_p99_latencies = Vec::with_capacity(samples);
@@ -541,6 +661,13 @@ fn main() {
                 "baseline": compaction_baseline.json(),
                 "candidate": compaction_candidate.json(),
                 "candidate_over_baseline": compaction_relative,
+            },
+            "parallel_tool_batch": {
+                "representative_independent_reads": PARALLEL_READ_COUNT,
+                "limit_one": parallel_reads_limit_one.json(),
+                "limit_four": parallel_reads_limit_four.json(),
+                "median_speedup": parallel_read_speedup,
+                "ordered_results_checked_per_sample": true,
             },
             "slow_consumer": {
                 "event_capacity": 1,

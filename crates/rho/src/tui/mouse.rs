@@ -214,7 +214,23 @@ impl App {
                 tool_entry_lines(&shell, width, self.info.runtime.max_tool_output_lines).len(),
             );
         }
-        if let Some(pending) = self.pending_tool_call.as_ref() {
+        enum PendingToolKey {
+            Preview(usize),
+            Running(rho_sdk::ToolCallId),
+        }
+        let mut target = None;
+        let entries = self
+            .tool_calls
+            .previews
+            .iter()
+            .map(|(index, entry)| (PendingToolKey::Preview(*index), entry))
+            .chain(
+                self.tool_calls
+                    .running
+                    .iter()
+                    .map(|(call_id, entry)| (PendingToolKey::Running(call_id.clone()), entry)),
+            );
+        for (key, pending) in entries {
             if transcript_ends_with_tool {
                 pending_start = pending_start.saturating_add(1);
             }
@@ -225,19 +241,25 @@ impl App {
                 && tool_display_line_count(&pending.display_lines)
                     > self.info.runtime.max_tool_output_lines
             {
-                let pending = self
-                    .pending_tool_call
-                    .as_mut()
-                    .expect("pending tool exists");
-                pending.expanded = !pending.expanded;
-                self.status = if pending.expanded {
-                    "tool output expanded".into()
-                } else {
-                    "tool output collapsed".into()
-                };
-                self.clamp_history_scroll_for_terminal(terminal)?;
-                return Ok(true);
+                target = Some(key);
+                break;
             }
+            pending_start = pending_end;
+        }
+        if let Some(target) = target {
+            let pending = match target {
+                PendingToolKey::Preview(index) => self.tool_calls.previews.get_mut(&index),
+                PendingToolKey::Running(call_id) => self.tool_calls.running.get_mut(&call_id),
+            }
+            .expect("pending tool exists");
+            pending.expanded = !pending.expanded;
+            self.status = if pending.expanded {
+                "tool output expanded".into()
+            } else {
+                "tool output collapsed".into()
+            };
+            self.clamp_history_scroll_for_terminal(terminal)?;
+            return Ok(true);
         }
 
         Ok(false)

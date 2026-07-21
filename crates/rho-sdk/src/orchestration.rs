@@ -17,7 +17,6 @@ use crate::{
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
-const TOOL_PROGRESS_CAPACITY: usize = 16;
 const INVALID_RESPONSE_ATTEMPTS: usize = 2;
 /// Maximum logical provider requests for one model turn, including malformed
 /// responses and retryable failures.
@@ -26,6 +25,7 @@ const PROVIDER_TURN_ATTEMPTS: usize = 4;
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 mod stream_capture;
+mod tool_batch;
 mod tool_turn;
 
 use stream_capture::{capture_provider_event, StreamCapture};
@@ -520,9 +520,12 @@ async fn record_request_usage(
 
 fn valid_response(response: &ModelResponse) -> bool {
     let ModelResponse::Assistant(content) = response;
+    let mut call_ids = std::collections::BTreeSet::new();
     !content.is_empty()
         && content.iter().all(|block| match block {
-            ContentBlock::ToolCall(call) => call.has_valid_protocol_fields(),
+            ContentBlock::ToolCall(call) => {
+                call.has_valid_protocol_fields() && call_ids.insert(call.id.as_str())
+            }
             ContentBlock::Text(_) | ContentBlock::Image(_) => true,
         })
 }

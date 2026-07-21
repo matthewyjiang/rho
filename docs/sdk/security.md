@@ -102,7 +102,9 @@ Semantic events may carry sensitive model and tool content. Hosts should:
 
 ## Cancellation and shutdown security
 
-Cancellation limits continued work but cannot undo an external side effect. Tool implementations must bind subprocess groups, HTTP requests, approval waits, and child tasks to cancellation and cleanup. A dropped run aborts its SDK worker and may skip partial-history recovery. Explicit shutdown requests cancellation for registered runs but hosts must still close resources they own.
+Cancellation limits continued work but cannot undo an external side effect. One cancellation boundary covers a parallel tool batch: queued calls do not start, authorizing and running calls receive cancellation, and the coordinator cleans up its workers before returning. Provider-required result slots that did not finish receive deterministic interrupted results in model order.
+
+Tool implementations must bind subprocess groups, HTTP requests, approval waits, and child tasks to cancellation and cleanup. Scheduler access ends when a tool invocation returns. It does not cover a background process, subagent, task, callback, or remote action that keeps working afterward. Tools that start such work should remain exclusive unless their manager and full background lifetime have a separate safe model. A dropped run aborts its SDK worker and may skip partial-history recovery. Explicit shutdown requests cancellation for registered runs, but hosts must still close resources they own.
 
 See the exact [cancellation, drop, and shutdown contract](/sdk/events-and-cancellation).
 

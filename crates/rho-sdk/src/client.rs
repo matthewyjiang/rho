@@ -165,6 +165,7 @@ pub struct RhoBuilder {
     system_prompt: SystemPrompt,
     event_capacity: Option<NonZeroUsize>,
     max_steps: Option<NonZeroUsize>,
+    max_parallel_tools: Option<NonZeroUsize>,
     workspace: Option<crate::Workspace>,
     workspace_policy: Option<Arc<dyn crate::WorkspacePolicy>>,
     approval_handler: Option<Arc<dyn crate::ApprovalHandler>>,
@@ -216,6 +217,15 @@ impl RhoBuilder {
 
     pub fn max_steps(mut self, max_steps: NonZeroUsize) -> Self {
         self.max_steps = Some(max_steps);
+        self
+    }
+
+    /// Sets the maximum number of tool calls that may execute at once.
+    ///
+    /// The default is one, which preserves sequential execution unless the
+    /// embedding host opts in to parallel tool calls.
+    pub fn max_parallel_tools(mut self, max_parallel_tools: NonZeroUsize) -> Self {
+        self.max_parallel_tools = Some(max_parallel_tools);
         self
     }
 
@@ -330,6 +340,9 @@ impl RhoBuilder {
             max_steps: self
                 .max_steps
                 .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_MAX_STEPS).unwrap()),
+            max_parallel_tools: self
+                .max_parallel_tools
+                .unwrap_or_else(|| NonZeroUsize::new(1).unwrap()),
             workspace: self.workspace,
             workspace_policy: self
                 .workspace_policy
@@ -357,6 +370,7 @@ pub struct Rho {
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) event_capacity: NonZeroUsize,
     pub(crate) max_steps: NonZeroUsize,
+    pub(crate) max_parallel_tools: NonZeroUsize,
     pub(crate) workspace: Option<crate::Workspace>,
     pub(crate) workspace_policy: Arc<dyn crate::WorkspacePolicy>,
     pub(crate) approval_handler: Arc<dyn crate::ApprovalHandler>,
@@ -409,6 +423,7 @@ impl Rho {
             crate::diagnostics::ExecutionSettings {
                 event_capacity: self.event_capacity.get(),
                 max_steps: self.max_steps.get(),
+                max_parallel_tools: self.max_parallel_tools.get(),
                 compaction_trigger_messages: self.compaction_policy.as_ref().and_then(|policy| {
                     match policy.threshold() {
                         crate::CompactionThreshold::Messages(trigger) => Some(trigger.get()),

@@ -155,8 +155,7 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
+        self.tool_calls.clear();
         match failed_turn.initial_tool_call.clone() {
             Some(call) => {
                 agent
@@ -179,9 +178,12 @@ impl App {
         let mut adapter = SdkEventAdapter::new(self.info.runtime.cwd.clone());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
+            rho_sdk::ToolCallId,
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
         )> = None;
+        let mut queued_questionnaires: VecDeque<(rho_sdk::ToolCallId, rho_sdk::HostInputRequest)> =
+            VecDeque::new();
         let mut pending_input_request = None;
         let mut approval_receiver_open = agent.approval_receiver().is_some();
         let mut terminal_event = false;
@@ -237,7 +239,7 @@ impl App {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
-                    let Some((request_id, reply)) = reply else {
+                    let Some((_call_id, request_id, reply)) = reply else {
                         agent.cancel();
                         continue;
                     };
@@ -259,6 +261,21 @@ impl App {
                         }
                         QuestionnaireReply::Cancelled(QuestionnaireCancelReason::UiUnavailable) => {
                             agent.cancel();
+                        }
+                    }
+                    if !questionnaire_cancelled_by_user && sdk_failure.is_none() {
+                        if let Some((call_id, request)) = queued_questionnaires.pop_front() {
+                            let request_id = request.id().clone();
+                            let (reply_tx, reply_rx) = oneshot::channel();
+                            self.open_questionnaire(
+                                QuestionAnswerRequest {
+                                    request: event_adapter::questionnaire_request(&request),
+                                    response: QuestionnaireResponseChannel::new(reply_tx),
+                                },
+                                terminal,
+                            )?;
+                            pending_questionnaire = Some((call_id, request_id, reply_rx));
+                            self.draw_running_frame(terminal, &mut frame_scheduler)?;
                         }
                     }
                 }
@@ -293,21 +310,25 @@ impl App {
                     match adapter.translate(event) {
                         ViewEvent::Update(event) => {
                             changed |= self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
+                            tool_call_active.store(self.tool_calls.is_running(), Ordering::SeqCst);
                         }
-                        ViewEvent::Questionnaire(request) => {
-                            let request_id = request.id().clone();
-                            let (reply_tx, reply_rx) = oneshot::channel();
-                            self.open_questionnaire(
-                                QuestionAnswerRequest {
-                                    request: event_adapter::questionnaire_request(&request),
-                                    response: QuestionnaireResponseChannel::new(reply_tx),
-                                },
-                                terminal,
-                            )?;
-                            pending_questionnaire = Some((request_id, reply_rx));
+                        ViewEvent::Questionnaire { call_id, request } => {
+                            if pending_questionnaire.is_some() {
+                                queued_questionnaires.push_back((call_id, request));
+                            } else {
+                                let request_id = request.id().clone();
+                                let (reply_tx, reply_rx) = oneshot::channel();
+                                self.open_questionnaire(
+                                    QuestionAnswerRequest {
+                                        request: event_adapter::questionnaire_request(&request),
+                                        response: QuestionnaireResponseChannel::new(reply_tx),
+                                    },
+                                    terminal,
+                                )?;
+                                pending_questionnaire = Some((call_id, request_id, reply_rx));
+                                interaction_ready = true;
+                            }
                             changed = true;
-                            interaction_ready = true;
                         }
                         ViewEvent::Notice(notice) => {
                             self.insert_entry(&Entry::Notice(notice));
@@ -354,8 +375,7 @@ impl App {
         }
 
         self.cancel_approval();
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
+        self.tool_calls.clear();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
         let inline_shell_error = match self.finish_all_inline_shells().await {

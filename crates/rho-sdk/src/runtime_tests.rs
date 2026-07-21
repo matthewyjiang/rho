@@ -604,7 +604,7 @@ async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("configure")).await.unwrap();
     let request = loop {
-        if let RunEvent::HostInputRequested { request } = run.next_event().await.unwrap() {
+        if let RunEvent::HostInputRequested { request, .. } = run.next_event().await.unwrap() {
             break request;
         }
     };
@@ -1101,6 +1101,7 @@ fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() 
         "custom system prompt"
     );
     assert_eq!(diagnostics.workspace_root(), None);
+    assert_eq!(diagnostics.max_parallel_tools(), 1);
     assert!(diagnostics.enabled_features().is_empty());
     assert!(!format!("{diagnostics:?}").contains("secret prompt contents"));
 }

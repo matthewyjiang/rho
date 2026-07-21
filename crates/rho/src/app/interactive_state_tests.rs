@@ -17,6 +17,7 @@ fn questionnaire_event() -> RunEvent {
     )
     .unwrap();
     RunEvent::HostInputRequested {
+        call_id: rho_sdk::ToolCallId::new(),
         request: HostInputRequest::questionnaire("confirm", vec![question]).unwrap(),
     }
 }

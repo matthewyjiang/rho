@@ -17,6 +17,13 @@ use crate::{
     HostInputResponse, ToolCallId, Workspace, WorkspacePolicy,
 };
 
+mod preparation;
+
+pub use preparation::{
+    AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode, ToolExecutionPolicy,
+    ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess, ToolResourceKind,
+};
+
 /// Future returned by [`Tool`] implementations.
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
 
@@ -337,6 +344,7 @@ pub struct ToolContext {
     remembered_approvals: Arc<crate::workspace::SessionApprovals>,
     approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     host_input: Option<crate::host_input::HostInputRequester>,
+    call_id: Option<ToolCallId>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 }
@@ -354,6 +362,7 @@ impl ToolContext {
             remembered_approvals: Arc::default(),
             approval_audit: Arc::default(),
             host_input: None,
+            call_id: None,
             cancellation,
             progress,
         }
@@ -375,9 +384,15 @@ impl ToolContext {
             remembered_approvals,
             approval_audit,
             host_input: None,
+            call_id: None,
             cancellation,
             progress,
         }
+    }
+
+    pub(crate) fn with_call_id(mut self, call_id: ToolCallId) -> Self {
+        self.call_id = Some(call_id);
+        self
     }
 
     pub(crate) fn with_host_input(
@@ -415,12 +430,13 @@ impl ToolContext {
     ) -> Result<AuthorizationOutcome, AuthorizationError> {
         let capability = request.kind();
         tokio::select! {
-            result = crate::workspace::authorize(
+            result = crate::workspace::authorize_for_call(
                 &self.policy,
                 &self.approvals,
                 &self.remembered_approvals,
                 &self.approval_audit,
                 request,
+                self.call_id.as_ref(),
             ) => result,
             () = self.cancellation.cancelled() => {
                 self.approval_audit.record(
@@ -551,6 +567,26 @@ pub trait Tool: Send + Sync {
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a>;
+
+    /// Validates and resolves an invocation before authorization and execution.
+    ///
+    /// The default retains the current [`Self::call`] path as an exclusive
+    /// invocation. Existing tool implementations therefore remain compatible
+    /// and cannot overlap another call unless they opt in with a complete
+    /// resource-aware plan.
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        let metadata = self.start_metadata(invocation.arguments());
+        Box::pin(async move {
+            Ok(PreparedToolInvocation::exclusive(
+                metadata,
+                move |execution| self.call(invocation, execution),
+            ))
+        })
+    }
 }
 
 /// Error returned when two tools use the same stable name.

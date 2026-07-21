@@ -20,6 +20,8 @@ const TOOL_CALL_ID: &str = "tui-fixture-tool";
 const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
+const CONCURRENT_SLOW_CALL_ID: &str = "tui-fixture-concurrent-slow";
+const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
@@ -220,6 +222,23 @@ async fn fixture_stream(
                 }),
             )
         }
+        "fixture concurrent progress"
+            if tool_result(&request, CONCURRENT_SLOW_CALL_ID).is_none()
+                && tool_result(&request, CONCURRENT_FAST_CALL_ID).is_none() =>
+        {
+            Ok(ModelResponse::Assistant(vec![
+                ContentBlock::ToolCall(ToolCall {
+                    id: CONCURRENT_SLOW_CALL_ID.into(),
+                    name: "tui_fixture_progress".into(),
+                    arguments: serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
+                }),
+                ContentBlock::ToolCall(ToolCall {
+                    id: CONCURRENT_FAST_CALL_ID.into(),
+                    name: "tui_fixture_progress".into(),
+                    arguments: serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
+                }),
+            ]))
+        }
         "fixture progress tool" if tool_result(&request, PROGRESS_CALL_ID).is_none() => {
             events
                 .send(ModelEvent::ToolCallDelta {
@@ -402,6 +421,15 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return completed(format!(
             "tool lifecycle complete with one result: {}",
             result.content.lines().next().unwrap_or_default()
+        ));
+    }
+    if let (Some(slow), Some(fast)) = (
+        tool_result(request, CONCURRENT_SLOW_CALL_ID),
+        tool_result(request, CONCURRENT_FAST_CALL_ID),
+    ) {
+        return completed(format!(
+            "concurrent progress complete in model order: {}; {}",
+            slow.content, fast.content
         ));
     }
     if let Some(result) = tool_result(request, PROGRESS_CALL_ID) {

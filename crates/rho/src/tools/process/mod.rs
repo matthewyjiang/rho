@@ -7,12 +7,14 @@ use super::sdk_registry::ToolBundle;
 mod display;
 mod manager;
 mod platform;
+pub(super) mod sdk_process;
 mod supervisor;
 mod tools;
 mod types;
 
 pub use manager::ProcessManager;
 pub use tools::Process;
+pub(super) use tools::ProcessArgs;
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
 
 pub(super) struct SdkProcessBundle {
@@ -35,11 +37,10 @@ pub(super) fn sdk_bundle(max_output_bytes: usize) -> SdkProcessBundle {
         max_bytes: max_output_bytes,
         ..ProcessLimits::default()
     });
-    let tools = vec![rho_tools::legacy_sdk_adapter::process(
+    let tools = vec![sdk_process::tool(
         Process::new(manager.clone()),
         max_output_bytes,
-    )
-    .expect("process is a supported legacy tool")];
+    )];
     SdkProcessBundle { tools, manager }
 }
 

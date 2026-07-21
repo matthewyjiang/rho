@@ -17,6 +17,7 @@ use questionnaire::QuestionnaireCancelReason;
 #[cfg(test)]
 use std::sync::Mutex;
 use tokio::sync::oneshot;
+use tool_call_batch::ToolCallBatch;
 
 use crossterm::{
     event::{
@@ -100,6 +101,7 @@ mod subagent_panel;
 mod terminal_events;
 mod text_selection;
 mod theme;
+mod tool_call_batch;
 mod tool_diff;
 mod turn_prompt;
 mod view;
@@ -311,8 +313,7 @@ struct App {
     running: bool,
     activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
-    active_tool_call: bool,
-    pending_tool_call: Option<ToolEntry>,
+    tool_calls: ToolCallBatch,
     image_picker: Option<ratatui_image::picker::Picker>,
     steering_prompts: VecDeque<QueuedPrompt>,
     accepted_steering: VecDeque<AcceptedSteering>,
@@ -546,13 +547,22 @@ enum PasteBurstKey {
 }
 
 async fn questionnaire_reply(
-    pending: &mut Option<(rho_sdk::HostInputId, oneshot::Receiver<QuestionnaireReply>)>,
-) -> Option<(rho_sdk::HostInputId, QuestionnaireReply)> {
-    let (request_id, receiver) = pending.as_mut()?;
+    pending: &mut Option<(
+        rho_sdk::ToolCallId,
+        rho_sdk::HostInputId,
+        oneshot::Receiver<QuestionnaireReply>,
+    )>,
+) -> Option<(
+    rho_sdk::ToolCallId,
+    rho_sdk::HostInputId,
+    QuestionnaireReply,
+)> {
+    let (call_id, request_id, receiver) = pending.as_mut()?;
+    let call_id = call_id.clone();
     let request_id = request_id.clone();
     let reply = receiver.await.ok();
     pending.take();
-    reply.map(|reply| (request_id, reply))
+    reply.map(|reply| (call_id, request_id, reply))
 }
 
 fn is_tool_entry(entry: &Entry) -> bool {
@@ -647,8 +657,7 @@ impl App {
             running: false,
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
-            active_tool_call: false,
-            pending_tool_call: None,
+            tool_calls: ToolCallBatch::default(),
             image_picker: picker_from_environment(),
             steering_prompts: VecDeque::new(),
             accepted_steering: VecDeque::new(),
@@ -2612,6 +2621,7 @@ impl App {
 
     fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
+        self.tool_calls.clear();
         if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
             self.markdown_images.clear();
             self.mark_markdown_images_dirty_from(start);
@@ -3042,7 +3052,7 @@ impl App {
     }
 
     fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        if let Some(pending) = self.pending_tool_call.as_mut() {
+        if let Some(pending) = self.tool_calls.latest_mut() {
             if tool_display_line_count(&pending.display_lines)
                 <= self.info.runtime.max_tool_output_lines
             {
@@ -3117,8 +3127,7 @@ impl App {
                 self.provider_attempt.begin(self.transcript.len());
                 self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
                 self.running = true;
-                self.active_tool_call = false;
-                self.pending_tool_call = None;
+                self.tool_calls.clear();
                 self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
                 None
@@ -3127,39 +3136,28 @@ impl App {
                 self.mark_steering_applied(&ids);
                 None
             }
-            ViewModelEvent::ToolStarted { display_lines, .. } => {
-                self.active_tool_call = true;
-                self.pending_tool_call = Some(ToolEntry {
-                    state: ToolEntryState::Running,
-                    display_lines,
-                    expanded: false,
-                    image: None,
-                });
+            ViewModelEvent::ToolStarted {
+                call_id,
+                display_lines,
+            } => {
+                self.tool_calls.started(call_id, display_lines);
                 None
             }
-            ViewModelEvent::ToolUpdated { display_lines } => {
-                let expanded = self
-                    .pending_tool_call
-                    .as_ref()
-                    .is_some_and(|pending| pending.expanded);
-                self.pending_tool_call = Some(ToolEntry {
-                    state: ToolEntryState::Running,
-                    display_lines,
-                    expanded,
-                    image: None,
-                });
+            ViewModelEvent::ToolUpdated {
+                call_id,
+                display_lines,
+            } => {
+                self.tool_calls.updated(call_id, display_lines);
                 None
             }
-            ViewModelEvent::ToolCallUpdated { display_lines } if !self.active_tool_call => {
-                self.pending_tool_call = (!display_lines.is_empty()).then_some(ToolEntry {
-                    state: ToolEntryState::Running,
-                    display_lines,
-                    expanded: false,
-                    image: None,
-                });
+            ViewModelEvent::ToolCallUpdated {
+                index,
+                call_id,
+                display_lines,
+            } => {
+                self.tool_calls.preview(index, call_id, display_lines);
                 None
             }
-            ViewModelEvent::ToolCallUpdated { .. } => None,
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
                 self.usage_before_current_attempt = self
                     .current_run_usage
@@ -3214,18 +3212,19 @@ impl App {
                 None
             }
             ViewModelEvent::ToolFinished {
+                call_id,
                 ok,
                 display_style,
                 mut display_lines,
                 image_asset,
             } => {
                 self.statusline.refresh_git_branch();
-                self.active_tool_call = false;
-                let expanded = self
-                    .pending_tool_call
-                    .as_ref()
-                    .is_some_and(|pending| pending.expanded);
-                self.pending_tool_call = None;
+                let expanded = self.tool_calls.finished(&call_id);
+                self.activity_phase = if self.tool_calls.is_running() {
+                    ActivityPhase::RunningTool
+                } else {
+                    ActivityPhase::Starting
+                };
                 let image =
                     image_asset
                         .as_ref()
@@ -4493,12 +4492,15 @@ mod tests {
     fn spinner_is_anchored_immediately_above_composer_divider() {
         let mut app = test_app();
         app.running = true;
-        app.pending_tool_call = Some(ToolEntry {
-            state: ToolEntryState::Running,
-            display_lines: vec!["bash".into(), "cargo test".into()],
-            expanded: false,
-            image: None,
-        });
+        app.tool_calls.previews.insert(
+            0,
+            ToolEntry {
+                state: ToolEntryState::Running,
+                display_lines: vec!["bash".into(), "cargo test".into()],
+                expanded: false,
+                image: None,
+            },
+        );
         let width = 40;
         let height = 24;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -5310,12 +5312,15 @@ mod tests {
     fn history_lines_include_header_transcript_pending_preview_but_not_activity_row() {
         let mut app = test_app();
         app.push_transcript_entry(Entry::User("hello".into()));
-        app.pending_tool_call = Some(ToolEntry {
-            state: ToolEntryState::Running,
-            display_lines: vec!["bash".into(), "cargo test".into()],
-            expanded: false,
-            image: None,
-        });
+        app.tool_calls.previews.insert(
+            0,
+            ToolEntry {
+                state: ToolEntryState::Running,
+                display_lines: vec!["bash".into(), "cargo test".into()],
+                expanded: false,
+                image: None,
+            },
+        );
         app.live_stream_preview = Some(LiveStreamPreview {
             kind: StreamKind::Assistant,
             text: "partial answer".into(),
