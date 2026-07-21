@@ -38,6 +38,10 @@ where
     build_runtime_with_max_steps(options, None)
 }
 
+/// Builds a runtime with an optional per-run model-step override.
+///
+/// `None` keeps the configured SDK step limit. Automation uses `Some` for the
+/// CLI's `--max-steps` option without changing interactive runtimes.
 pub(crate) fn build_runtime_with_max_steps<P>(
     options: RuntimeBuildOptions<'_, P>,
     max_steps: Option<std::num::NonZeroUsize>,

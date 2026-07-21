@@ -6,10 +6,13 @@ use rho_providers::reasoning::ReasoningLevel;
 
 use crate::app::automation_protocol::parse_duration;
 
+/// Output contract used by a non-interactive `rho run` invocation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
+    /// Print only the authoritative final assistant answer.
     #[default]
     Text,
+    /// Stream independently versioned JSON Lines events.
     Jsonl,
 }
 

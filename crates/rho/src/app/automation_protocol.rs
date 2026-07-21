@@ -1,13 +1,21 @@
+//! Versioned JSON Lines wire types for `rho run --output jsonl`.
+//!
+//! These types stay private so the CLI protocol can evolve independently from
+//! the non-exhaustive SDK event API. The adapter owns sequence numbers,
+//! assistant-attempt tracking, and the single-terminal-event invariant.
+
 use std::{io, time::Duration};
 
 use serde::Serialize;
 
 const SCHEMA_VERSION: u8 = 1;
 
+/// Parses a human-readable CLI duration such as `30s` or `20m`.
 pub(crate) fn parse_duration(value: &str) -> Result<Duration, String> {
     humantime::parse_duration(value).map_err(|error| format!("invalid duration '{value}': {error}"))
 }
 
+/// Stable machine-readable reason included in terminal JSONL events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TerminalReason {
@@ -23,6 +31,7 @@ pub(crate) enum TerminalReason {
     OtherError,
 }
 
+/// One physical JSONL record with protocol metadata and event-specific fields.
 #[derive(Debug, Serialize)]
 pub(crate) struct WireEvent {
     schema_version: u8,
@@ -76,6 +85,7 @@ pub(crate) enum WireEventKind {
     },
 }
 
+/// Stable status for a finished tool call without tool output or error details.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToolStatus {
@@ -84,6 +94,10 @@ pub(crate) enum ToolStatus {
     Unavailable,
 }
 
+/// Translates SDK events into the independently versioned CLI protocol.
+///
+/// The adapter omits tool arguments and raw output, assigns run-local sequence
+/// numbers, and ignores further SDK events once it creates a terminal event.
 pub(crate) struct JsonlAdapter {
     seq: u64,
     attempt: u64,
@@ -105,6 +119,7 @@ impl JsonlAdapter {
         }
     }
 
+    /// Adds identity fields that become available after session startup.
     pub(crate) fn set_run_context(
         &mut self,
         session_id: impl ToString,
@@ -114,6 +129,8 @@ impl JsonlAdapter {
         self.workspace = Some(workspace.to_string_lossy().into_owned());
     }
 
+    /// Converts a supported SDK event, or returns `None` for events outside
+    /// the wire contract.
     pub(crate) fn event(&mut self, event: &rho_sdk::RunEvent) -> Option<WireEvent> {
         use rho_sdk::{RunEvent, ToolCompletion};
 
@@ -172,10 +189,12 @@ impl JsonlAdapter {
         Some(self.next(kind))
     }
 
+    /// Returns text from the current provider attempt for a terminal event.
     pub(crate) fn partial_text(&self) -> Option<String> {
         (!self.assistant_text.is_empty()).then(|| self.assistant_text.clone())
     }
 
+    /// Creates the successful terminal event and closes the adapter.
     pub(crate) fn completed(&mut self, text: String) -> WireEvent {
         self.terminal(WireEventKind::RunCompleted {
             reason: TerminalReason::Completed,
@@ -183,10 +202,12 @@ impl JsonlAdapter {
         })
     }
 
+    /// Creates a stopped terminal event and closes the adapter.
     pub(crate) fn stopped(&mut self, reason: TerminalReason, text: Option<String>) -> WireEvent {
         self.terminal(WireEventKind::RunStopped { reason, text })
     }
 
+    /// Creates a failed terminal event and closes the adapter.
     pub(crate) fn failed(
         &mut self,
         reason: TerminalReason,
@@ -216,6 +237,7 @@ impl JsonlAdapter {
     }
 }
 
+/// Writes and flushes one event as one physical JSONL line.
 pub(crate) fn write_event(writer: &mut impl io::Write, event: &WireEvent) -> io::Result<()> {
     serde_json::to_writer(&mut *writer, event).map_err(io::Error::other)?;
     writer.write_all(b"\n")?;
