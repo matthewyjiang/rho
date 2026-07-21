@@ -67,6 +67,21 @@ fn smoke_terminal_restoration() {
 #[test]
 fn model_command_resolves_configured_alias() {
     let home = IsolatedHome::new().unwrap();
+    std::fs::write(
+        &home.config_path,
+        r#"check_for_updates = false
+web_search_provider = "disabled"
+
+[model]
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+
+[model.aliases]
+deep = "openai-codex/gpt-5.5"
+"#,
+    )
+    .unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     let plan = RhoLaunchPlan::matrix(
         binary,
