@@ -36,7 +36,7 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
         .spawn()
         .map_err(|error| io::Error::new(error.kind(), format!("spawn {program}: {error}")))?;
 
-    let write_result = (|| {
+    let write_result: io::Result<()> = (|| {
         let mut stdin = child.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, format!("{program} stdin closed"))
         })?;
@@ -45,17 +45,16 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
         Ok(())
     })();
 
-    if let Err(error) = write_result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
-
+    // The exit status is authoritative: a broken pipe means the child closed
+    // stdin, so its status is the real outcome rather than the write error.
     let status = child.wait()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("{program} exited with {status}")))
+    if !status.success() {
+        return Err(io::Error::other(format!("{program} exited with {status}")));
+    }
+    match write_result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
