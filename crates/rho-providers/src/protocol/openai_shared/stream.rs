@@ -1,6 +1,9 @@
 use futures_util::StreamExt;
 
-use crate::model::{ContentBlock, ModelError, ModelEvent, ModelResponse, ModelUsage};
+use crate::{
+    model::{ContentBlock, ModelError, ModelEvent, ModelResponse, ModelUsage},
+    protocol::cost::parse_usd_micros,
+};
 use rho_tools::tool::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
@@ -551,12 +554,25 @@ fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
         .get("context_window")
         .or_else(|| usage.get("context_window_tokens"))
         .and_then(|v| v.as_u64());
-    let cost_usd_micros = usage
-        .get("cost_usd")
-        .or_else(|| usage.get("estimated_cost_usd"))
-        .or_else(|| usage.get("cost"))
-        .or_else(|| usage.get("estimated_cost"))
+    let reported_cost = [
+        usage.get("cost_usd"),
+        usage.get("estimated_cost_usd"),
+        usage.get("cost"),
+        usage.get("estimated_cost"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(parse_usd_micros);
+    let upstream_cost = usage
+        .get("cost_details")
+        .and_then(|details| details.get("upstream_inference_cost"))
         .and_then(parse_usd_micros);
+    let cost_usd_micros = match (reported_cost, upstream_cost) {
+        (Some(reported), Some(upstream)) => Some(reported.saturating_add(upstream)),
+        (Some(reported), None) => Some(reported),
+        (None, Some(upstream)) => Some(upstream),
+        (None, None) => None,
+    };
 
     let input_tokens = match (raw_input_tokens, cache_read_tokens) {
         (Some(input), Some(cached)) => Some(input.saturating_sub(cached)),
@@ -573,20 +589,6 @@ fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
         context_window,
         cost_usd_micros,
     })
-}
-
-fn parse_usd_micros(value: &serde_json::Value) -> Option<u64> {
-    let dollars = value.as_f64().or_else(|| {
-        value
-            .as_str()?
-            .trim_start_matches('$')
-            .replace(',', "")
-            .parse()
-            .ok()
-    })?;
-    dollars
-        .is_finite()
-        .then(|| (dollars.max(0.0) * 1_000_000.0).round() as u64)
 }
 
 #[cfg(test)]
@@ -626,3 +628,7 @@ pub(crate) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
         Ok(text)
     }
 }
+
+#[cfg(test)]
+#[path = "stream_cost_tests.rs"]
+mod stream_cost_tests;

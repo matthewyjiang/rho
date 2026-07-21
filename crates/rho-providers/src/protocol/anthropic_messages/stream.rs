@@ -1,7 +1,8 @@
 use futures_util::StreamExt;
 
 use crate::{
-    model::ProviderReportedErrorKind,
+    model::{ModelUsage, ProviderReportedErrorKind},
+    protocol::cost::parse_usd_micros,
     provider_backend::{ModelError, ModelEvent, ModelResponse},
 };
 
@@ -15,6 +16,7 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 pub(crate) struct AnthropicSseState {
     blocks: Vec<StreamedBlock>,
     last_output_tokens: u64,
+    last_reported_cost_usd_micros: u64,
 }
 
 #[derive(Default)]
@@ -234,12 +236,33 @@ pub(crate) fn handle_anthropic_stream_line(
             }
         }
         Some("message_delta") => {
-            if let Some(mut usage) = value.get("usage").and_then(parse_usage) {
-                let cumulative = usage.output_tokens.unwrap_or(0);
-                let delta = cumulative.saturating_sub(state.last_output_tokens);
-                state.last_output_tokens = cumulative;
-                usage.output_tokens = Some(delta);
-                on_event(ModelEvent::Usage(usage_to_model_usage(usage)))?;
+            let output_tokens = value
+                .get("usage")
+                .and_then(parse_usage)
+                .and_then(|usage| usage.output_tokens)
+                .map(|cumulative| {
+                    let delta = cumulative.saturating_sub(state.last_output_tokens);
+                    state.last_output_tokens = state.last_output_tokens.max(cumulative);
+                    delta
+                });
+            let reported_cost = value
+                .get("provider_metadata")
+                .and_then(|metadata| metadata.get("gateway"))
+                .and_then(|gateway| gateway.get("cost"))
+                .and_then(parse_usd_micros);
+            if output_tokens.is_some() || reported_cost.is_some() {
+                let cost_usd_micros = reported_cost.map(|cumulative| {
+                    let delta = cumulative.saturating_sub(state.last_reported_cost_usd_micros);
+                    state.last_reported_cost_usd_micros =
+                        state.last_reported_cost_usd_micros.max(cumulative);
+                    delta
+                });
+                on_event(ModelEvent::Usage(ModelUsage {
+                    output_tokens,
+                    total_tokens: output_tokens,
+                    cost_usd_micros,
+                    ..ModelUsage::default()
+                }))?;
             }
         }
         Some("error") => {
@@ -571,6 +594,10 @@ mod tests {
         assert!(err.to_string().contains("bad request"));
     }
 }
+
+#[cfg(test)]
+#[path = "stream_cost_tests.rs"]
+mod stream_cost_tests;
 
 #[cfg(test)]
 #[path = "stream_index_tests.rs"]
