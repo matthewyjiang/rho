@@ -1,5 +1,11 @@
 use super::*;
 
+pub(super) enum SkillCommandAction {
+    NotSkill,
+    Prompt(TurnPrompt),
+    Rejected,
+}
+
 impl App {
     pub(super) fn execute_skills_command(&mut self) -> anyhow::Result<()> {
         let picker = skill_picker::skill_picker(crate::skills::discover(&self.info.runtime.cwd));
@@ -14,32 +20,38 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn skill_command_prompt(
-        &self,
+    pub(super) fn skill_command_action(
+        &mut self,
         name: &str,
-        additional_instructions: &str,
+        model_prompt: String,
         display: String,
-    ) -> anyhow::Result<Option<TurnPrompt>> {
+        skill_tool_available: bool,
+    ) -> anyhow::Result<SkillCommandAction> {
         let Some(name) = name.strip_prefix("skill:") else {
-            return Ok(None);
+            return Ok(SkillCommandAction::NotSkill);
         };
+        if !skill_tool_available {
+            self.insert_entry(&Entry::Error(
+                "skill commands are unavailable because the active agent has no skill tool".into(),
+            ));
+            self.status = "skill unavailable".into();
+            return Ok(SkillCommandAction::Rejected);
+        }
         let Some(skill) = crate::skills::discover(&self.info.runtime.cwd)
             .into_iter()
             .find(|skill| skill.name == name)
         else {
-            return Ok(None);
+            return Ok(SkillCommandAction::NotSkill);
         };
-        let max_output_bytes = self
-            .info
-            .services
-            .config_repository
-            .load()?
-            .max_output_bytes;
-
-        Ok(Some(TurnPrompt::command(
-            crate::skills::format_invocation(&skill, additional_instructions, max_output_bytes),
-            display,
-        )))
+        Ok(SkillCommandAction::Prompt(
+            TurnPrompt::command(model_prompt, display).with_initial_tool_call(
+                rho_sdk::model::ToolCall {
+                    id: rho_sdk::ToolCallId::new().into_string(),
+                    name: "skill".into(),
+                    arguments: serde_json::json!({"name": skill.name}),
+                },
+            ),
+        ))
     }
 }
 

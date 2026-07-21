@@ -19,7 +19,7 @@ use crate::{
         ToolCall, ToolResult, ToolSpec,
     },
     provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
-    session::SessionCore,
+    session::{RunStart, SessionCore},
     steering::SteeringQueue,
     tool::{
         Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata,
@@ -813,7 +813,7 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
         Arc::clone(&core),
         runtime,
         RunId::new(),
-        UserInput::text("start"),
+        RunStart::user(UserInput::text("start")),
         cancellation,
         events,
         command_receiver,

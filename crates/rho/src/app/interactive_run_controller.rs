@@ -179,8 +179,12 @@ impl InteractiveRunController {
         self.pending_context_usage.take()
     }
 
+    pub(crate) fn note_context_usage(&mut self, usage: ContextUsage) {
+        self.pending_context_usage = Some(usage);
+    }
+
     pub(crate) fn note_manual_compaction(&mut self, context_window: Option<u64>) {
-        self.pending_context_usage = Some(ContextUsage::unknown_after_compaction(context_window));
+        self.note_context_usage(ContextUsage::unknown_after_compaction(context_window));
     }
 
     pub(crate) fn observe_event(&mut self, event: &RunEvent, context_window: Option<u64>) {
@@ -201,13 +205,14 @@ impl InteractiveRunController {
                         (Some(reported), Some(configured)) => Some(reported.min(configured)),
                         (reported, configured) => reported.or(configured),
                     };
-                    self.pending_context_usage =
-                        Some(ContextUsage::provider_reported(tokens, context_window));
+                    self.note_context_usage(ContextUsage::provider_reported(
+                        tokens,
+                        context_window,
+                    ));
                 }
             }
             RunEvent::CompactionCompleted { .. } => {
-                self.pending_context_usage =
-                    Some(ContextUsage::unknown_after_compaction(context_window));
+                self.note_context_usage(ContextUsage::unknown_after_compaction(context_window));
             }
             _ => {}
         }

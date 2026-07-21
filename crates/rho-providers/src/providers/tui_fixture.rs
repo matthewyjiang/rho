@@ -310,6 +310,17 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         };
         return completed(evaluation);
     }
+    if let Some(result) = tool_result_for_name(request, "skill") {
+        let instruction = result
+            .content
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default();
+        return completed(format!(
+            "skill command loaded before model response: {instruction}"
+        ));
+    }
     if let Some(result) = tool_result(request, TOOL_CALL_ID) {
         return completed(format!(
             "tool lifecycle complete with one result: {}",
@@ -407,6 +418,31 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }
+}
+
+fn tool_result_for_name<'a>(
+    request: &'a ModelRequest<'_>,
+    name: &str,
+) -> Option<&'a rho_sdk::model::ToolResult> {
+    let current_turn = request
+        .messages
+        .iter()
+        .rev()
+        .take_while(|message| !matches!(message, Message::User(_)))
+        .collect::<Vec<_>>();
+    let call_id = current_turn.iter().find_map(|message| {
+        message
+            .completed_assistant_content()?
+            .iter()
+            .find_map(|block| match block {
+                ContentBlock::ToolCall(call) if call.name == name => Some(call.id.as_str()),
+                ContentBlock::Text(_) | ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+            })
+    })?;
+    current_turn.iter().find_map(|message| match message {
+        Message::ToolResult(result) if result.id == call_id => Some(result),
+        _ => None,
+    })
 }
 
 fn current_turn_tool_results<'a>(

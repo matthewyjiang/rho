@@ -371,10 +371,137 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
     }
     run.outcome().await.unwrap();
 
-    assert_eq!(
-        output.as_deref(),
-        Some("---\nname: ancestor-skill\ndescription: ancestor skill\n---\nancestor body\n")
+    let output = output.unwrap();
+    assert!(output.contains("Loaded skill: ancestor-skill"));
+    assert!(output.lines().any(|line| {
+        line.starts_with("Source: ")
+            && line.ends_with("/project/.agents/skills/ancestor-skill/SKILL.md")
+    }));
+    assert!(output.lines().any(|line| {
+        line.starts_with("References are relative to ")
+            && line.ends_with("/project/.agents/skills/ancestor-skill.")
+    }));
+    assert!(output.ends_with("ancestor body\n"));
+}
+
+#[tokio::test]
+async fn sdk_skill_tool_rejects_model_invocation_of_user_only_skill() {
+    let root = tempfile::tempdir().unwrap();
+    let skill_dir = root.path().join(".agents/skills/manual-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: manual-skill\ndescription: manual skill\ndisable-model-invocation: true\n---\nmanual body\n",
+    )
+    .unwrap();
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "skill-1".into(),
+                    name: "skill".into(),
+                    arguments: json!({"name": "manual-skill"}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
     );
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let skill = tool_set
+        .tools()
+        .iter()
+        .find(|tool| tool.spec().name == "skill")
+        .unwrap()
+        .clone();
+    let runtime = Rho::builder()
+        .provider(provider)
+        .workspace(Workspace::new(root.path()).unwrap())
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_skills())
+        .tool_shared(skill)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("load it")).await.unwrap();
+    let mut failure = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolFinished {
+            result: ToolCompletion::Failure(tool_failure),
+            ..
+        } = event
+        {
+            failure = Some(tool_failure);
+        }
+    }
+    run.outcome().await.unwrap();
+
+    let failure = failure.expect("model-requested skill should fail");
+    assert_eq!(failure.kind(), ToolErrorKind::PolicyDenied);
+    assert_eq!(
+        failure.message(),
+        "skill 'manual-skill' requires direct user invocation"
+    );
+}
+
+#[tokio::test]
+async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("done".into()),
+        ]))],
+    );
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let skill = tool_set
+        .tools()
+        .iter()
+        .find(|tool| tool.spec().name == "skill")
+        .unwrap()
+        .clone();
+    let mut builder = Rho::builder()
+        .provider(provider)
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_skills());
+    builder = builder.tool_shared(skill);
+    let runtime = builder.build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start_with_tool_call(
+            UserInput::text("/skill:rho-agent-creator"),
+            ToolCall {
+                id: "skill-creator-1".into(),
+                name: "skill".into(),
+                arguments: json!({"name": "rho-agent-creator"}),
+            },
+        )
+        .await
+        .unwrap();
+    let mut output = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolFinished {
+            result: ToolCompletion::Success(completion),
+            ..
+        } = event
+        {
+            output = Some(completion.content().to_string());
+        }
+    }
+    run.outcome().await.unwrap();
+
+    assert!(output
+        .as_deref()
+        .is_some_and(|content| content.contains("questionnaire")));
 }
 
 #[test]

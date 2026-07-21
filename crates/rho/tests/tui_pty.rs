@@ -76,7 +76,7 @@ fn bare_skill_command_starts_a_model_turn() {
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nname: test-skill\ndescription: Test skill invocation\n---\nFollow the unique bare skill instruction.\n",
+        "---\nname: test-skill\ndescription: Test skill invocation\ndisable-model-invocation: true\n---\nFollow the unique bare skill instruction.\n",
     )
     .unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
@@ -96,14 +96,44 @@ fn bare_skill_command_starts_a_model_turn() {
     harness.submit_text("/skill:test-skill").unwrap();
     harness
         .wait_for_text(
-            "fixture response: <skill name=\"test-skill\"",
+            "skill command loaded before model response: Follow the unique bare skill instruction.",
             WaitTimeout::secs(20, "skill response"),
         )
         .unwrap();
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+#[test]
+fn skill_command_reports_when_skill_tool_is_disabled() {
+    let home = IsolatedHome::new().unwrap();
+    let skill_dir = home.workspace.join(".agents/skills/test-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: test-skill\ndescription: Test skill invocation\n---\nFollow the skill.\n",
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_arg("--no-tools");
+    let mut harness = PtyHarness::spawn_named(&plan, "disabled_skill_command").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("/skill:test-skill").unwrap();
     harness
         .wait_for_text(
-            "Follow the unique bare skill instruction.",
-            WaitTimeout::secs(5, "expanded skill body"),
+            "skill commands are unavailable because the active agent has no skill tool",
+            WaitTimeout::secs(5, "skill unavailable"),
         )
         .unwrap();
 

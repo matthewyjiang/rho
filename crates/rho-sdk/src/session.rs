@@ -9,7 +9,7 @@ use std::{
 use crate::{
     client::Rho,
     event::RunOutcome,
-    model::{ContentBlock, ImageContent, Message},
+    model::{ContentBlock, ImageContent, Message, ToolCall},
     orchestration::execute_run,
     provider::ModelProvider,
     run::Run,
@@ -20,6 +20,27 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserInput {
     content: Vec<ContentBlock>,
+}
+
+pub(crate) struct RunStart {
+    pub(crate) input: UserInput,
+    pub(crate) initial_tool_call: Option<ToolCall>,
+}
+
+impl RunStart {
+    pub(crate) fn user(input: UserInput) -> Self {
+        Self {
+            input,
+            initial_tool_call: None,
+        }
+    }
+
+    fn with_tool_call(input: UserInput, tool_call: ToolCall) -> Self {
+        Self {
+            input,
+            initial_tool_call: Some(tool_call),
+        }
+    }
 }
 
 impl UserInput {
@@ -422,6 +443,27 @@ impl Session {
     }
 
     pub async fn start(&self, input: UserInput) -> Result<Run, Error> {
+        self.start_run(RunStart::user(input)).await
+    }
+
+    /// Starts a run by executing a host-requested tool call after the user input
+    /// and before the first model request.
+    pub async fn start_with_tool_call(
+        &self,
+        input: UserInput,
+        tool_call: ToolCall,
+    ) -> Result<Run, Error> {
+        if !tool_call.has_valid_protocol_fields() {
+            return Err(Error::InvalidConfiguration {
+                message: "host tool call requires a nonempty ID and name plus object arguments"
+                    .into(),
+            });
+        }
+        self.start_run(RunStart::with_tool_call(input, tool_call))
+            .await
+    }
+
+    async fn start_run(&self, start: RunStart) -> Result<Run, Error> {
         let run_id = RunId::new();
         self.core.begin_run(&run_id)?;
 
@@ -446,7 +488,7 @@ impl Session {
                 core,
                 runtime,
                 worker_run_id,
-                input,
+                start,
                 worker_cancellation,
                 events,
                 command_receiver,

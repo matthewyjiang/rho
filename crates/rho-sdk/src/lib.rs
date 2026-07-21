@@ -188,3 +188,6 @@ pub use workspace::{
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod runtime_tests;
+#[cfg(test)]
+#[path = "session_host_tool_call_tests.rs"]
+mod session_host_tool_call_tests;

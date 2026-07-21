@@ -43,6 +43,18 @@ impl App {
         }
     }
 
+    pub(super) fn report_unknown_command(&mut self, name: &str) {
+        self.insert_entry(&Entry::Error(format!(
+            "unknown command '/{name}'. Type / to choose one of: {}",
+            super::commands::COMMANDS
+                .iter()
+                .map(|command| command.usage)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+        self.status = "unknown command".into();
+    }
+
     async fn execute_compact_command(
         &mut self,
         terminal: &mut DefaultTerminal,

@@ -11,7 +11,7 @@ use crate::{
     },
     provider::{provider_event_channel, ModelProvider, ProviderCancellationMode},
     run::RunCommand,
-    session::{HistoryMetrics, SessionCore, SessionState, UserInput},
+    session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
     CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
 };
@@ -29,19 +29,19 @@ mod stream_capture;
 mod tool_turn;
 
 use stream_capture::{capture_provider_event, StreamCapture};
-use tool_turn::{execute_tool, StagedToolTurn};
+use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
 
 pub(crate) async fn execute_run(
     core: Arc<SessionCore>,
     runtime: Rho,
     run_id: RunId,
-    input: UserInput,
+    start: RunStart,
     cancellation: CancellationToken,
     events: mpsc::Sender<RunEvent>,
     mut commands: mpsc::Receiver<RunCommand>,
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
-    history.push(Message::User(input.into_blocks()));
+    history.push(Message::User(start.input.into_blocks()));
     match emit(
         &events,
         &cancellation,
@@ -61,6 +61,24 @@ pub(crate) async fn execute_run(
 
     let mut accumulated_usage = ModelUsage::default();
     let mut steering = SteeringQueue::new();
+    if let Some(call) = start.initial_tool_call {
+        history.push(Message::Assistant(vec![ContentBlock::ToolCall(
+            call.clone(),
+        )]));
+        let mut tool_turn = StagedToolTurn::host_requested(call);
+        let mut control = RunControl {
+            cancellation: &cancellation,
+            events: &events,
+            commands: &mut commands,
+            steering: &mut steering,
+        };
+        if run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control)
+            .await?
+            .is_cancelled()
+        {
+            return commit_cancelled_history(core, history, &events).await;
+        }
+    }
     // The tool set is immutable for the duration of a run, so build the specs
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
@@ -172,53 +190,12 @@ pub(crate) async fn execute_run(
             return Ok(outcome);
         }
 
-        let mut tool_turn = StagedToolTurn::new(tool_calls);
-        while let Some(pending) = tool_turn.current() {
-            match emit(
-                &events,
-                &cancellation,
-                RunEvent::ToolProposed {
-                    call: pending.call.clone(),
-                },
-            )
-            .await
-            {
-                Ok(()) => {}
-                Err(Error::Cancelled) => {
-                    tool_turn.interrupt_remaining(&mut history);
-                    return commit_cancelled_history(core, history, &events).await;
-                }
-                Err(error) => return Err(error),
-            }
-            match execute_tool(&core, &runtime, pending, &mut control).await {
-                Ok(result) => tool_turn.resolve_current(result, &mut history),
-                Err(failure) if matches!(&failure.error, Error::Cancelled) => {
-                    if let Some(result) = failure.completed_result {
-                        tool_turn.resolve_current(result, &mut history);
-                    }
-                    tool_turn.interrupt_remaining(&mut history);
-                    return commit_cancelled_history(core, history, &events).await;
-                }
-                Err(failure) => {
-                    core.set_state(SessionState::Failed);
-                    emit_failure(&events, &failure.error).await;
-                    return Err(failure.error);
-                }
-            }
-        }
-        match apply_staged_steering(
-            control.steering,
-            &mut history,
-            control.events,
-            control.cancellation,
-        )
-        .await
+        let mut tool_turn = StagedToolTurn::model_requested(tool_calls);
+        if run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control)
+            .await?
+            .is_cancelled()
         {
-            Ok(()) => {}
-            Err(Error::Cancelled) => {
-                return commit_cancelled_history(core, history, &events).await;
-            }
-            Err(error) => return Err(error),
+            return commit_cancelled_history(core, history, &events).await;
         }
     }
 
@@ -239,6 +216,31 @@ pub(crate) async fn execute_run(
     )
     .await;
     Ok(outcome)
+}
+
+async fn run_staged_tool_turn(
+    core: &Arc<SessionCore>,
+    runtime: &Rho,
+    tool_turn: &mut StagedToolTurn,
+    history: &mut Vec<Message>,
+    control: &mut RunControl<'_>,
+) -> Result<ToolTurnStatus, Error> {
+    let status = execute_staged_tool_turn(core, runtime, tool_turn, history, control).await?;
+    if status.is_cancelled() {
+        return Ok(status);
+    }
+    match apply_staged_steering(
+        control.steering,
+        history,
+        control.events,
+        control.cancellation,
+    )
+    .await
+    {
+        Ok(()) => Ok(ToolTurnStatus::Completed),
+        Err(Error::Cancelled) => Ok(ToolTurnStatus::Cancelled),
+        Err(error) => Err(error),
+    }
 }
 
 /// Content of the newest completed assistant message, cloned once for the
@@ -520,9 +522,7 @@ fn valid_response(response: &ModelResponse) -> bool {
     let ModelResponse::Assistant(content) = response;
     !content.is_empty()
         && content.iter().all(|block| match block {
-            ContentBlock::ToolCall(call) => {
-                !call.id.is_empty() && !call.name.is_empty() && call.arguments.is_object()
-            }
+            ContentBlock::ToolCall(call) => call.has_valid_protocol_fields(),
             ContentBlock::Text(_) | ContentBlock::Image(_) => true,
         })
 }

@@ -1819,21 +1819,20 @@ impl App {
                 if let Some(template) = template {
                     let prompt = crate::prompt_templates::expand(template, &trailing_prompt);
                     turn = TurnPrompt::standard(prompt.clone(), prompt);
-                } else if let Some(skill_prompt) =
-                    self.skill_command_prompt(&name, &trailing_prompt, turn.display)?
-                {
-                    turn = skill_prompt;
                 } else {
-                    self.insert_entry(&Entry::Error(format!(
-                        "unknown command '/{name}'. Type / to choose one of: {}",
-                        commands::COMMANDS
-                            .iter()
-                            .map(|command| command.usage)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                    self.status = "unknown command".into();
-                    return Ok(());
+                    match self.skill_command_action(
+                        &name,
+                        turn.model,
+                        turn.display,
+                        agent.has_tool("skill"),
+                    )? {
+                        skill_actions::SkillCommandAction::Prompt(prompt) => turn = prompt,
+                        skill_actions::SkillCommandAction::Rejected => return Ok(()),
+                        skill_actions::SkillCommandAction::NotSkill => {
+                            self.report_unknown_command(&name);
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }

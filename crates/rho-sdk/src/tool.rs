@@ -275,20 +275,48 @@ pub fn tool_progress_channel(capacity: NonZeroUsize) -> (ToolProgressSender, Too
     )
 }
 
+/// Actor that requested a tool invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolInvocationSource {
+    /// The model returned the tool call in an assistant response.
+    Model,
+    /// The embedding host supplied the tool call before a model request.
+    Host,
+}
+
 /// Owned input for one tool call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolInvocation {
     id: ToolCallId,
     arguments: Value,
+    source: ToolInvocationSource,
 }
 
 impl ToolInvocation {
+    /// Creates a model-requested invocation.
     pub fn new(id: ToolCallId, arguments: Value) -> Self {
-        Self { id, arguments }
+        Self {
+            id,
+            arguments,
+            source: ToolInvocationSource::Model,
+        }
+    }
+
+    pub(crate) fn from_host(id: ToolCallId, arguments: Value) -> Self {
+        Self {
+            id,
+            arguments,
+            source: ToolInvocationSource::Host,
+        }
     }
 
     pub fn id(&self) -> &ToolCallId {
         &self.id
+    }
+
+    pub fn source(&self) -> ToolInvocationSource {
+        self.source
     }
 
     pub fn arguments(&self) -> &Value {

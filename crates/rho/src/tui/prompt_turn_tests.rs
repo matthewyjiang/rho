@@ -6,6 +6,7 @@ fn failed_turn() -> FailedTurn {
         input: rho_sdk::UserInput::text("continue the existing goal turn"),
         display_user: Some(Message::user_text("continuing active goal")),
         notification_context: None,
+        initial_tool_call: None,
     }
 }
 
