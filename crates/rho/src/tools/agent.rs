@@ -156,17 +156,26 @@ impl SubagentManager {
         snapshots
     }
 
+    pub fn has_running_for_session(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .values()
+            .any(|entry| {
+                entry.session_id.as_deref() == Some(session_id) && !entry.handle.is_complete()
+            })
+    }
+
     pub fn has_active_or_pending_notification(&self, session_id: &str) -> bool {
         self.inner
             .lock()
             .expect("delegated registry lock")
-            .iter()
-            .any(|(id, entry)| {
-                let snapshot = entry.snapshot(id);
-                !snapshot.done
-                    || (entry.background
-                        && !entry.observed
-                        && entry.session_id.as_deref() == Some(session_id))
+            .values()
+            .any(|entry| {
+                !entry.handle.is_complete()
+                    || (entry.session_id.as_deref() == Some(session_id)
+                        && entry.background
+                        && !entry.observed)
             })
     }
 

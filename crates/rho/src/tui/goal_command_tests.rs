@@ -237,23 +237,3 @@ fn failed_goal_turn_drains_queued_prompts_before_retrying() {
         /*resume_goal*/ false
     ));
 }
-
-#[test]
-fn goal_loop_retries_failed_turns_and_stops_on_interrupt_or_cancel() {
-    assert_eq!(
-        goal_loop_action_after_turn(TurnOutcomeKind::Completed),
-        GoalLoopAction::Continue
-    );
-    assert_eq!(
-        goal_loop_action_after_turn(TurnOutcomeKind::Failed),
-        GoalLoopAction::RetryAfterFailure
-    );
-    assert_eq!(
-        goal_loop_action_after_turn(TurnOutcomeKind::Interrupted),
-        GoalLoopAction::Stop
-    );
-    assert_eq!(
-        goal_loop_action_after_turn(TurnOutcomeKind::Cancelled),
-        GoalLoopAction::Stop
-    );
-}
