@@ -1764,6 +1764,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let mut prompt = self.expanded_input().trim().to_string();
         let mut display_prompt = self.input.trim().to_string();
+        let mut submitted_skill_command = false;
         if prompt.is_empty() && self.pending_images.is_empty() {
             self.clear_submitted_input();
             return Ok(());
@@ -1796,7 +1797,6 @@ impl App {
             Err(commands::CommandParseError::Unknown(name)) => {
                 let expanded_input = self.expanded_input();
                 let trailing_prompt = slash_command_args(&expanded_input).trim().to_string();
-                let trailing_display_prompt = slash_command_args(&self.input).trim().to_string();
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1814,12 +1814,11 @@ impl App {
                 if let Some(template) = template {
                     prompt = crate::prompt_templates::expand(template, &trailing_prompt);
                     display_prompt = prompt.clone();
-                } else if self.execute_skill_command(&name, agent)? {
-                    if trailing_prompt.is_empty() {
-                        return Ok(());
-                    }
-                    prompt = trailing_prompt;
-                    display_prompt = trailing_display_prompt;
+                } else if let Some(expanded_skill) =
+                    self.expand_skill_command(&name, &trailing_prompt)?
+                {
+                    prompt = expanded_skill;
+                    submitted_skill_command = true;
                 } else {
                     self.insert_entry(&Entry::Error(format!(
                         "unknown command '/{name}'. Type / to choose one of: {}",
@@ -1840,7 +1839,11 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        let turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
+        let mut turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
+        if submitted_skill_command {
+            turn.history.clone_from(&turn.display);
+            turn.persisted_display = Some(turn.display.clone());
+        }
         let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();

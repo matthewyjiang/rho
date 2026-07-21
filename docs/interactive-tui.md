@@ -66,7 +66,7 @@ Use a multiline prompt when you need to paste or write a longer request.
 
 ## Commands
 
-Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Slash commands run locally. Rho does not send them to the AI.
+Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.
 
 | Command | Action |
 | --- | --- |
@@ -78,7 +78,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/info` | Show the running Rho version, provider, model, reasoning level, and permission mode. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/goal [condition]` | Set a completion condition and start working immediately. Rho explicitly tells the agent that this is a goal-setting action, then evaluates the transcript after each turn and continues until the condition is met. Connection errors and other incomplete runs are retried automatically while the goal remains active. If only steps requiring user authority remain, the goal pauses as blocked and reports those steps. Run `/goal` for status, `/goal resume` after completing blocked steps, or `/goal clear` to cancel. |
-| `/skills` | Show loaded workspace skills and insert a `/skill:<name>` command for one. |
+| `/skills` | Show available workspace skills and insert a `/skill:<name>` command for one. Running the inserted command sends the skill instructions to the agent and starts a turn. Add text after the command to include extra instructions in the same turn. |
 | `/agents` | Reload agent definitions and browse their descriptions, sources, model policies, reasoning levels, tools, prompt policies, and prompt previews. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |

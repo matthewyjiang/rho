@@ -70,6 +70,47 @@ fn renders_markdown_headings() {
 }
 
 #[test]
+fn bare_skill_command_starts_a_model_turn() {
+    let home = IsolatedHome::new().unwrap();
+    let skill_dir = home.workspace.join(".agents/skills/test-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: test-skill\ndescription: Test skill invocation\n---\nFollow the unique bare skill instruction.\n",
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "bare_skill_command").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("/skill:test-skill").unwrap();
+    harness
+        .wait_for_text(
+            "fixture response: <skill name=\"test-skill\"",
+            WaitTimeout::secs(20, "skill response"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "Follow the unique bare skill instruction.",
+            WaitTimeout::secs(5, "expanded skill body"),
+        )
+        .unwrap();
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+#[test]
 fn background_agent_completion_is_delivered_after_turn_end() {
     assert_pass("background_agent_auto_delivery");
 }

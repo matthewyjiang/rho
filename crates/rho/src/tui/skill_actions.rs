@@ -14,35 +14,31 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn execute_skill_command(
-        &mut self,
+    pub(super) fn expand_skill_command(
+        &self,
         name: &str,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
+        additional_instructions: &str,
+    ) -> anyhow::Result<Option<String>> {
         let Some(name) = name.strip_prefix("skill:") else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(skill) = crate::skills::discover(&self.info.runtime.cwd)
             .into_iter()
             .find(|skill| skill.name == name)
         else {
-            return Ok(false);
+            return Ok(None);
         };
+        let max_output_bytes = self
+            .info
+            .services
+            .config_repository
+            .load()?
+            .max_output_bytes;
 
-        self.ensure_session(agent)?;
-        agent.load_skill(
+        Ok(Some(crate::skills::format_invocation(
             &skill,
-            self.info
-                .services
-                .config_repository
-                .load()?
-                .max_output_bytes,
-        )?;
-        self.insert_entry(&Entry::Notice(format!(
-            "loaded skill {} from {}",
-            skill.name, skill.source
-        )));
-        self.status = format!("loaded skill {}", skill.name);
-        Ok(true)
+            additional_instructions,
+            max_output_bytes,
+        )))
     }
 }

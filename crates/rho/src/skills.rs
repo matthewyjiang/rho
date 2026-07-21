@@ -36,6 +36,36 @@ pub fn discover(cwd: &Path) -> Vec<Skill> {
     discover_with_home(cwd, home.as_deref())
 }
 
+pub fn format_invocation(
+    skill: &Skill,
+    additional_instructions: &str,
+    max_output_bytes: usize,
+) -> String {
+    let body = skill_body(&skill.contents);
+    let body = rho_tools::tool::truncate(body.to_string(), max_output_bytes);
+    let mut invocation = match &skill.source {
+        SkillSource::BuiltIn => format!(
+            "<skill name=\"{}\" location=\"{}\">\n\n{}\n</skill>",
+            skill.name, skill.source, body
+        ),
+        SkillSource::File(path) => {
+            let base_dir = path.parent().unwrap_or(path);
+            format!(
+                "<skill name=\"{}\" location=\"{}\">\nReferences are relative to {}.\n\n{}\n</skill>",
+                skill.name,
+                crate::paths::display(path),
+                crate::paths::display(base_dir),
+                body
+            )
+        }
+    };
+    if !additional_instructions.is_empty() {
+        invocation.push_str("\n\n");
+        invocation.push_str(additional_instructions);
+    }
+    invocation
+}
+
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
@@ -131,6 +161,17 @@ fn parse_skill(
         source,
         contents: contents.into(),
     })
+}
+
+fn skill_body(contents: &str) -> &str {
+    let mut offset = 0;
+    for (index, line) in contents.split_inclusive('\n').enumerate() {
+        offset += line.len();
+        if index > 0 && line.trim_end_matches(['\r', '\n']) == "---" {
+            return contents[offset..].trim();
+        }
+    }
+    contents.trim()
 }
 
 fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
@@ -235,6 +276,38 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn formats_bare_skill_invocation_as_a_model_prompt() {
+        let skill = Skill {
+            name: "inspect".into(),
+            description: "Inspect things".into(),
+            source: SkillSource::File(PathBuf::from("/project/.agents/skills/inspect/SKILL.md")),
+            contents:
+                "---\nname: inspect\ndescription: Inspect things\n---\nUse inspection tools.\n"
+                    .into(),
+        };
+
+        assert_eq!(
+            format_invocation(&skill, "", 12_000),
+            "<skill name=\"inspect\" location=\"/project/.agents/skills/inspect/SKILL.md\">\nReferences are relative to /project/.agents/skills/inspect.\n\nUse inspection tools.\n</skill>"
+        );
+    }
+
+    #[test]
+    fn appends_instructions_to_the_same_skill_invocation() {
+        let skill = Skill {
+            name: "inspect".into(),
+            description: "Inspect things".into(),
+            source: SkillSource::BuiltIn,
+            contents: "---\r\nname: inspect\r\ndescription: Inspect things\r\n---\r\nUse inspection tools.\r\n".into(),
+        };
+
+        assert_eq!(
+            format_invocation(&skill, "Check errors.", 12_000),
+            "<skill name=\"inspect\" location=\"built in to rho\">\n\nUse inspection tools.\n</skill>\n\nCheck errors."
+        );
+    }
 
     #[test]
     fn discovers_embedded_rho_diagnostics_skill() {
