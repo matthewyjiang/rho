@@ -401,7 +401,7 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "◇ Supervised",
+        text: "permissions: Supervised",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),

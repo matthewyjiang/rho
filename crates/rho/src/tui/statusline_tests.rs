@@ -290,6 +290,28 @@ fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
 }
 
 #[test]
+fn narrow_statusline_preserves_supervised_permission_mode() {
+    let mut info = test_info(PathBuf::from("/tmp/project"));
+    info.permission_mode = crate::permission::PermissionMode::Supervised;
+    let mut statusline = StatusLine::new(&info);
+
+    let lines = statusline.lines(18, None);
+
+    assert!(line_text(&lines[1]).contains("Supervised"));
+}
+
+#[test]
+fn compact_permission_status_preserves_reasoning_level() {
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+
+    let lines = statusline.lines(40, None);
+    let bottom = line_text(&lines[1]);
+
+    assert!(bottom.contains("permissions: Auto"), "{bottom}");
+    assert!(bottom.contains("low"), "{bottom}");
+}
+
+#[test]
 fn unchanged_statusline_reuses_rendered_lines() {
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     statusline.lines(80, None);

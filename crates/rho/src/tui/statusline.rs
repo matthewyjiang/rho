@@ -248,8 +248,14 @@ fn statusline_lines(
         .unwrap_or_default();
     let bottom_left = format_usage(state);
     let permission = state.permission_mode.label();
+    let permission_summary = if state.reasoning_configurable {
+        format!("permissions: {permission} • {}", state.reasoning)
+    } else {
+        format!("permissions: {permission}")
+    };
     let permission_candidates = [
         state.right_bottom(),
+        permission_summary,
         format!("permissions: {permission}"),
         permission.into(),
     ];
@@ -266,13 +272,17 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
         return full.clone();
     }
 
-    let budget = width.saturating_div(2).max(1);
+    let separator_width = usize::from(!left.is_empty());
+    let available = width
+        .saturating_sub(display_width(left) + separator_width)
+        .max(width.saturating_div(2))
+        .max(1);
     candidates
         .iter()
-        .find(|candidate| display_width(candidate) <= budget)
+        .find(|candidate| display_width(candidate) <= available)
         .cloned()
         .unwrap_or_else(|| {
-            truncate_one_line(candidates.last().expect("status has a value"), budget)
+            truncate_one_line(candidates.last().expect("status has a value"), available)
         })
 }
 
@@ -433,7 +443,7 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
 
     let left_width = display_width(&left);
     let right_width = display_width(&right);
-    if left_width + right_width < width {
+    if left_width + right_width + usize::from(!left.is_empty()) <= width {
         let gap = " ".repeat(width - left_width - right_width);
         return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
     }
