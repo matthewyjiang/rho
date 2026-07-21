@@ -486,7 +486,9 @@ impl App {
         self.refresh_available_auths();
         let picker = model_picker::model_picker_during_run(
             &self.info.runtime,
-            self.pending_model_selection.as_ref(),
+            self.pending_model_selection
+                .as_ref()
+                .map(|pending| &pending.selection),
             &self.available_auths,
         );
         if picker.items.is_empty() {

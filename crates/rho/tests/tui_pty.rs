@@ -65,6 +65,54 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn model_command_resolves_configured_alias() {
+    let home = IsolatedHome::new().unwrap();
+    std::fs::write(
+        &home.config_path,
+        r#"check_for_updates = false
+web_search_provider = "disabled"
+
+[model]
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+
+[model.aliases]
+deep = "openai-codex/gpt-5.5"
+"#,
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "resolve_model_alias").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("/model @deep").unwrap();
+    harness
+        .wait_for_text(
+            "model switched to openai-codex/gpt-5.5",
+            WaitTimeout::secs(10, "model switch"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    assert!(
+        config.contains("model = \"@deep\""),
+        "saved config:\n{config}"
+    );
+}
+
+#[test]
 fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }
