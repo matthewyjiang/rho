@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn valid_slash_commands_are_added_to_input_history() {
+    let mut app = test_app();
+    app.input = "/info  ".into();
+    app.input_cursor = app.input_char_len();
+
+    let invocation = app.parse_input_command().unwrap().unwrap();
+
+    assert_eq!(invocation.id, CommandId::Info);
+    assert_eq!(app.input_history, ["/info"]);
+    app.input.clear();
+    app.input_cursor = 0;
+    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    assert_eq!(app.input, "/info");
+}
+
+#[test]
 fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
     let mut app = test_app();
     app.insert_input_text("a");
