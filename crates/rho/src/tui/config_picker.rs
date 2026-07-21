@@ -16,7 +16,6 @@ pub(super) const TOOLS_CATEGORY_VALUE: &str = "config_category:tools";
 pub(super) const PROVIDERS_CATEGORY_VALUE: &str = "config_category:providers";
 pub(super) const UPDATES_CATEGORY_VALUE: &str = "config_category:updates";
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
-pub(super) const TITLE_MODEL_VALUE: &str = "title_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
 pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
 pub(super) const PROVIDER_LOGOUT_VALUE: &str = "provider_logout";
@@ -84,7 +83,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         vec![
             item(
                 "Models & reasoning",
-                "Conversation model, session title model, reasoning level, and reasoning output.",
+                "Conversation model, reasoning level, and reasoning output.",
                 Some(info.model.clone()),
                 MODELS_CATEGORY_VALUE,
             ),
@@ -155,16 +154,6 @@ pub(super) fn category_picker(
                     "Model used for conversation turns. Changes apply to the next turn.",
                     Some(conversation_model_badge(info, config)),
                     CONVERSATION_MODEL_VALUE,
-                ),
-                item(
-                    "Session title model",
-                    "Model used to generate session titles.",
-                    Some(format!(
-                        "{}/{}",
-                        info.title_provider.as_deref().unwrap_or(&info.provider),
-                        info.title_model.as_deref().unwrap_or(&info.model)
-                    )),
-                    TITLE_MODEL_VALUE,
                 ),
                 item(
                     "Reasoning",
@@ -316,10 +305,9 @@ pub(super) fn is_category(value: &str) -> bool {
 
 pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
     match value {
-        CONVERSATION_MODEL_VALUE
-        | TITLE_MODEL_VALUE
-        | REASONING_VALUE
-        | SHOW_REASONING_OUTPUT_VALUE => Some(MODELS_CATEGORY_VALUE),
+        CONVERSATION_MODEL_VALUE | REASONING_VALUE | SHOW_REASONING_OUTPUT_VALUE => {
+            Some(MODELS_CATEGORY_VALUE)
+        }
         PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE => Some(AGENT_CATEGORY_VALUE),
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
@@ -509,26 +497,6 @@ impl App {
         } else {
             self.open_child_picker(picker);
             self.status = "select model for next turn".into();
-        }
-    }
-
-    pub(super) fn open_config_title_model_picker(&mut self) {
-        self.refresh_available_auths();
-        let (provider, model, _auth) = self.title_model_selection();
-        let picker = model_picker::title_model_picker(
-            &provider,
-            &model,
-            &self.info.runtime.favorite_models,
-            &self.available_auths,
-        );
-        if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached API models. use Config > Refresh model lists after signing in.".into(),
-            ));
-            self.status = if self.running { "running" } else { "config" }.into();
-        } else {
-            self.open_child_picker(picker);
-            self.status = "select title model".into();
         }
     }
 

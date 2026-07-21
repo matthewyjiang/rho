@@ -53,6 +53,7 @@ mod file_palette;
 mod file_picker;
 mod frame_scheduler;
 mod goal;
+pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod goal_command;
 mod history_cache;
 mod inline_shell;
@@ -87,6 +88,7 @@ mod scrollbar;
 mod session_actions;
 mod session_picker;
 mod session_title;
+pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod skill_actions;
 mod skill_picker;
 #[cfg(debug_assertions)]
@@ -191,9 +193,8 @@ pub struct RuntimeModelView {
     pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
     pub auth: String,
-    pub title_provider: Option<String>,
-    pub title_model: Option<String>,
-    pub title_auth: Option<String>,
+    pub internal_agents:
+        std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
@@ -362,6 +363,7 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<ModelSelection>,
+    internal_agent_model_target: Option<String>,
     pending_session_title: Option<PendingSessionTitle>,
     markdown_images: markdown_image::MarkdownImageCache,
     markdown_images_dirty_from: Option<usize>,
@@ -695,6 +697,7 @@ impl App {
             pending_model_metadata_reasoning: None,
             pending_update_notice,
             pending_model_selection: None,
+            internal_agent_model_target: None,
             pending_session_title: None,
             markdown_images: markdown_image::MarkdownImageCache::default(),
             markdown_images_dirty_from: None,
@@ -1698,24 +1701,25 @@ impl App {
         Ok(())
     }
 
-    fn title_model_selection(&self) -> (String, String, String) {
-        (
-            self.info
-                .runtime
-                .title_provider
-                .clone()
-                .unwrap_or_else(|| self.info.runtime.provider.clone()),
-            self.info
-                .runtime
-                .title_model
-                .clone()
-                .unwrap_or_else(|| self.info.runtime.model.clone()),
-            self.info
-                .runtime
-                .title_auth
-                .clone()
-                .unwrap_or_else(|| self.info.runtime.auth.clone()),
-        )
+    fn internal_agent_model_selection(&self, id: &str) -> (String, String, String) {
+        self.info
+            .runtime
+            .internal_agents
+            .get(id)
+            .map(|selection| {
+                (
+                    selection.provider.clone(),
+                    selection.model.clone(),
+                    selection.auth.clone(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    self.info.runtime.provider.clone(),
+                    self.info.runtime.model.clone(),
+                    self.info.runtime.auth.clone(),
+                )
+            })
     }
 
     fn start_session_title_generation(
@@ -1730,7 +1734,8 @@ impl App {
         let workspace_path = agent.workspace_path().to_path_buf();
         let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
-        let (provider, model, _auth) = self.title_model_selection();
+        let (provider, model, _auth) =
+            self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
         let cancellation = rho_sdk::CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let task_session_id = session_id.clone();
@@ -2421,21 +2426,12 @@ impl App {
             PickerAction::Doctor | PickerAction::ViewAgent => {
                 self.status = "running".into();
             }
-            PickerAction::SelectTitleModel => {
-                self.refresh_available_auths();
-                let (provider, _model, auth) = self.title_model_selection();
-                match catalog::resolve_model_selection_for_auths(
-                    &value,
-                    &provider,
-                    &auth,
-                    &self.available_auths,
-                ) {
-                    Ok(selection) => self.select_title_model(selection)?,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "title model switch failed".into();
-                    }
-                }
+            PickerAction::SelectInternalAgentModel => {
+                self.insert_entry(&Entry::Notice(
+                    "internal agent model changes are unavailable while a model turn is running"
+                        .into(),
+                ));
+                self.status = "internal agent model change unavailable while running".into();
             }
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
@@ -2476,9 +2472,6 @@ impl App {
             }
             config_picker::CONVERSATION_MODEL_VALUE => {
                 self.open_config_conversation_model_picker_during_turn();
-            }
-            config_picker::TITLE_MODEL_VALUE => {
-                self.open_config_title_model_picker();
             }
             config_picker::REFRESH_MODEL_LIST_VALUE
             | config_picker::PROVIDER_LOGIN_VALUE
@@ -3757,9 +3750,7 @@ mod tests {
                 permission_mode: PermissionMode::Auto,
                 show_reasoning_output: true,
                 auth: "api-key".into(),
-                title_provider: None,
-                title_model: None,
-                title_auth: None,
+                internal_agents: Default::default(),
                 favorite_models: Vec::new(),
                 max_tool_output_lines: 10,
                 keybindings: Keybindings::default(),
@@ -3857,7 +3848,7 @@ mod tests {
         let app = test_app();
 
         assert_eq!(
-            app.title_model_selection(),
+            app.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID),
             ("openai".into(), "gpt-5.5".into(), "api-key".into())
         );
     }

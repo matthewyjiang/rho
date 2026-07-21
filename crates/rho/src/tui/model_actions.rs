@@ -129,7 +129,10 @@ impl App {
         };
 
         let return_picker = self.take_picker_parent_after_selection(action);
-        if !matches!(action, PickerAction::Config | PickerAction::LoginGroup) {
+        if !matches!(
+            action,
+            PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
+        ) {
             self.composer = ComposerMode::Input;
         }
         let result = match action {
@@ -149,22 +152,33 @@ impl App {
                     }
                 }
             }
-            PickerAction::SelectTitleModel => {
-                self.refresh_available_auths();
-                let (provider, _model, auth) = self.title_model_selection();
-                match catalog::resolve_model_selection_for_auths(
-                    &value,
-                    &provider,
-                    &auth,
-                    &self.available_auths,
-                ) {
-                    Ok(selection) => self.select_title_model(selection),
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "title model switch failed".into();
-                        Ok(())
+            PickerAction::SelectInternalAgentModel => {
+                let Some(id) = self.internal_agent_model_target.clone() else {
+                    self.status = "internal agent model selection expired".into();
+                    return Ok(());
+                };
+                if value == model_picker::USE_CONVERSATION_MODEL {
+                    self.select_internal_agent_model(&id, None)?;
+                } else {
+                    self.refresh_available_auths();
+                    let (provider, _model, auth) = self.internal_agent_model_selection(&id);
+                    match catalog::resolve_model_selection_for_auths(
+                        &value,
+                        &provider,
+                        &auth,
+                        &self.available_auths,
+                    ) {
+                        Ok(selection) => self.select_internal_agent_model(&id, Some(selection))?,
+                        Err(err) => {
+                            self.insert_entry(&Entry::Error(err.to_string()));
+                            self.status = "internal agent model switch failed".into();
+                        }
                     }
                 }
+                let status = self.status.clone();
+                self.execute_agents_command()?;
+                self.status = status;
+                Ok(())
             }
             PickerAction::LoginGroup => {
                 let Some(mut group) = catalog::login_group(&value) else {
@@ -200,7 +214,14 @@ impl App {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
-            PickerAction::Doctor | PickerAction::ViewAgent => Ok(()),
+            PickerAction::ViewAgent => {
+                if !self.open_selected_internal_agent_model_picker(&value) {
+                    self.composer = ComposerMode::Input;
+                    self.status = "ready".into();
+                }
+                Ok(())
+            }
+            PickerAction::Doctor => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), return_picker) {
             self.open_main_config_picker(selected_value, picker.filter)?;
@@ -222,7 +243,7 @@ impl App {
             ComposerMode::Picker(picker)
                 if matches!(
                     picker.action,
-                    PickerAction::SelectModel | PickerAction::SelectTitleModel
+                    PickerAction::SelectModel | PickerAction::SelectInternalAgentModel
                 )
         )
     }
@@ -233,7 +254,7 @@ impl App {
         };
         if !matches!(
             action,
-            PickerAction::SelectModel | PickerAction::SelectTitleModel
+            PickerAction::SelectModel | PickerAction::SelectInternalAgentModel
         ) {
             return Ok(());
         }
@@ -275,11 +296,16 @@ impl App {
             PickerAction::SelectModel => {
                 model_picker::model_picker(&self.info.runtime, &self.available_auths)
             }
-            PickerAction::SelectTitleModel => {
-                let (provider, model, _auth) = self.title_model_selection();
-                model_picker::title_model_picker(
+            PickerAction::SelectInternalAgentModel => {
+                let Some(id) = self.internal_agent_model_target.as_deref() else {
+                    return Ok(());
+                };
+                let (provider, model, _auth) = self.internal_agent_model_selection(id);
+                model_picker::internal_agent_model_picker(
+                    id,
                     &provider,
                     &model,
+                    !self.info.runtime.internal_agents.contains_key(id),
                     &self.info.runtime.favorite_models,
                     &self.available_auths,
                 )
@@ -343,7 +369,7 @@ impl App {
     ) -> Option<(UiPicker, &'static str)> {
         let selected_value = match action {
             PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
-            PickerAction::SelectTitleModel => config_picker::TITLE_MODEL_VALUE,
+            PickerAction::SelectInternalAgentModel => return None,
             PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
             PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
             PickerAction::LoginGroup
@@ -447,30 +473,53 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn select_title_model(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
-        let provider = selection.provider;
-        let model = selection.model;
-        let auth = selection.auth;
-        let provider_model = format!("{provider}/{model}");
-        self.info.runtime.title_provider = Some(provider.clone());
-        self.info.runtime.title_model = Some(model.clone());
-        self.info.runtime.title_auth = Some(auth.clone());
-        match self.info.services.config_repository.update(|config| {
-            config.title_provider = Some(provider.clone());
-            config.title_model = Some(model.clone());
-            config.title_auth = Some(auth.clone());
-        }) {
+    pub(super) fn select_internal_agent_model(
+        &mut self,
+        id: &str,
+        selection: Option<ModelSelection>,
+    ) -> anyhow::Result<()> {
+        let label = selection
+            .as_ref()
+            .map(|selection| format!("{}/{}", selection.provider, selection.model))
+            .unwrap_or_else(|| "conversation model".into());
+        match &selection {
+            Some(selection) => {
+                self.info.runtime.internal_agents.insert(
+                    id.to_string(),
+                    crate::config::InternalAgentModelConfig::new(
+                        selection.provider.clone(),
+                        selection.model.clone(),
+                        selection.auth.clone(),
+                    ),
+                );
+            }
+            None => {
+                self.info.runtime.internal_agents.remove(id);
+            }
+        }
+        match self
+            .info
+            .services
+            .config_repository
+            .update(|config| match &selection {
+                Some(selection) => config.set_internal_agent_model(
+                    id,
+                    selection.provider.clone(),
+                    selection.model.clone(),
+                    selection.auth.clone(),
+                ),
+                None => config.clear_internal_agent_model(id),
+            }) {
             Ok(()) => {
                 self.insert_entry(&Entry::Notice(format!(
-                    "session title model switched to {provider_model} and saved to config"
+                    "internal agent {id} now uses {label}; saved to config"
                 )));
-                self.status = format!("title model: {provider_model}");
+                self.status = format!("{id}: {label}");
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                        "session title model switched to {provider_model} for this session, but saving config failed: {err}"
-                    )),
-                );
+                    "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
+                )));
                 self.status = "config save failed".into();
             }
         }

@@ -159,7 +159,7 @@ Application values can affect an SDK-backed run when the application explicitly 
 | compaction thresholds/targets | Application compactor and policy construction | Compaction results/state are stored; policy settings are not |
 | system prompt and discovered instructions | Prompt construction | Prompt content can appear as a system history message; discovery settings/sources are not stored |
 | tools, output limits, web search, RTK behavior | Application tool registry and adapters | Tool calls/results may appear in history; authority and limits are not stored |
-| display, keybindings, title model, update checks | Application/UI behavior | No |
+| display, keybindings, internal-agent models, update checks | Application/UI behavior | No |
 | credential-store entries and environment variables | Provider/tool adapter construction | Never |
 
 Changing application configuration does not mutate an existing snapshot. Restoring a snapshot under different runtime options applies the newly supplied runtime for future work while preserving snapshot history. Hosts must validate and disclose that combination, especially provider handoff and newly granted tools.

@@ -1,16 +1,16 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use rho_sdk::{
-    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
-};
+use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 use serde::Deserialize;
 
-use {
-    rho_providers::model::{ContentBlock, Message, ModelRequest, ModelResponse},
-    rho_providers::providers::build_sdk_provider,
-    rho_providers::reasoning::ReasoningLevel,
+use rho_providers::model::Message;
+
+use crate::agent::{
+    internal_definition, run_one_shot_agent, OneShotAgentRequest, GOAL_JUDGE_AGENT_ID,
 };
+
+pub(crate) const GOAL_JUDGE_PROMPT: &str = "You are a conservative goal-completion evaluator. Classify the goal using only evidence in the conversation transcript. Do not assume unreported work succeeded. Return only JSON in this exact shape: {\"state\":\"Met\"|\"Unmet\"|\"Blocked\",\"reason\":\"evidence-based explanation\",\"human_steps\":[{\"action\":\"specific action\",\"reason\":\"why it is outside this session's authority or capabilities\"}]}. Use Met only when the completion condition is fully satisfied. Use Unmet whenever meaningful work remains that the current agent can attempt, including work around missing dependencies, unavailable local tools, or transient network failures. Use Blocked only when no meaningful agent-actionable work remains and every remaining step requires user authority or capabilities unavailable in the current session. For Blocked, use reason to summarize what was completed and verified and why nothing agent-actionable remains, and list every remaining human-only step. Return an empty human_steps array for Met or Unmet.";
 
 pub(super) const MAX_GOAL_CHARS: usize = 4_000;
 pub(super) const EVALUATION_TIMEOUT: Duration = Duration::from_secs(120);
@@ -190,43 +190,24 @@ pub(super) async fn evaluate(
         session_id,
         workspace_path,
     } = request;
-    let provider = build_sdk_provider(provider_name, model, ReasoningLevel::Low)?;
     let transcript = evaluation_transcript(messages);
-    let request_messages = vec![
-        Message::System(
-            "You are a conservative goal-completion evaluator. Classify the goal using only evidence in the conversation transcript. Do not assume unreported work succeeded. Return only JSON in this exact shape: {\"state\":\"Met\"|\"Unmet\"|\"Blocked\",\"reason\":\"evidence-based explanation\",\"human_steps\":[{\"action\":\"specific action\",\"reason\":\"why it is outside this session's authority or capabilities\"}]}. Use Met only when the completion condition is fully satisfied. Use Unmet whenever meaningful work remains that the current agent can attempt, including work around missing dependencies, unavailable local tools, or transient network failures. Use Blocked only when no meaningful agent-actionable work remains and every remaining step requires user authority or capabilities unavailable in the current session. For Blocked, use reason to summarize what was completed and verified and why nothing agent-actionable remains, and list every remaining human-only step. Return an empty human_steps array for Met or Unmet."
-                .into(),
-        ),
-        Message::user_text(format!(
-            "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
-        )),
-    ];
-    let usage_context = ProviderRequestUsageContext::for_purpose(provider.identity(), "goal")
-        .with_session_id(session_id.clone())
-        .with_workspace_path(workspace_path);
-    let (response, _) = crate::usage::send_recorded(
-        provider.as_ref(),
-        ModelRequest {
-            messages: &request_messages,
-            tools: &[],
+    let blocks = run_one_shot_agent(
+        OneShotAgentRequest {
+            definition: internal_definition(GOAL_JUDGE_AGENT_ID),
+            usage_purpose: "goal",
+            provider_name,
+            model,
+            input: format!(
+                "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
+            ),
             cancellation,
-            reasoning_level: ReasoningLevel::Low,
-            prompt_cache_key: None,
+            session_id,
+            workspace_path,
         },
-        usage_context,
         usage_recording,
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!(error))?;
-    let ModelResponse::Assistant(blocks) = response;
-    let text = blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    )?
+    .await?;
+    let text = blocks.join("\n");
     parse_evaluation(&text).context("goal evaluator returned an invalid response")
 }
 
