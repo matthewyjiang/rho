@@ -45,6 +45,10 @@ impl AgentRunHandle {
         self.status.borrow().clone()
     }
 
+    pub(crate) fn is_complete(&self) -> bool {
+        *self.completion.borrow()
+    }
+
     pub(crate) async fn wait(&mut self) -> RunStatus {
         while !*self.completion.borrow() {
             if self.completion.changed().await.is_err() {

@@ -1,8 +1,13 @@
 //! Built-in Rho TUI PTY scenarios.
 
 mod config;
+mod goal;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
+use goal::{
+    GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
+    GOAL_WAITS_FOR_SUBAGENTS_STEPS,
+};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -35,6 +40,8 @@ pub enum ScenarioId {
     OpenAgentsPicker,
     LoginProviderGroups,
     GoalBlockedAndResumed,
+    GoalWaitsForSubagents,
+    GoalWaitsForSubagentsDuringRetry,
     BackgroundAgentAutoDelivery,
 }
 
@@ -59,6 +66,8 @@ impl ScenarioId {
             Self::OpenAgentsPicker => "open_agents_picker",
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
+            Self::GoalWaitsForSubagents => "goal_waits_for_subagents",
+            Self::GoalWaitsForSubagentsDuringRetry => "goal_waits_for_subagents_during_retry",
             Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
         }
     }
@@ -83,6 +92,8 @@ impl ScenarioId {
             "open_agents_picker" => Some(Self::OpenAgentsPicker),
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
+            "goal_waits_for_subagents" => Some(Self::GoalWaitsForSubagents),
+            "goal_waits_for_subagents_during_retry" => Some(Self::GoalWaitsForSubagentsDuringRetry),
             "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
             _ => None,
         }
@@ -641,61 +652,6 @@ const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-const GOAL_BLOCKED_AND_RESUMED_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("discover_goal_actions"),
-    Step::TypeText("/goal"),
-    Step::WaitText {
-        text: "/goal [condition|resume|clear]",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "/goal resume",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "/goal clear",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Tab),
-    Step::Phase("block_goal"),
-    Step::TypeText("fixture goal blocked"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "goal blocked: remaining steps need you",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "publish the fixture release",
-        timeout: STREAM,
-    },
-    Step::Phase("inspect_blocked_goal"),
-    Step::SubmitText("/goal"),
-    Step::WaitText {
-        text: "goal blocked: fixture goal blocked",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "use /goal resume",
-        timeout: STREAM,
-    },
-    Step::Phase("resume_goal"),
-    Step::SubmitText("/goal resume"),
-    Step::WaitText {
-        text: "verified that the fixture release is now published",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "goal achieved",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
 fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("\"agent_id\"")
@@ -894,6 +850,20 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Pause a goal for user action, inspect it, then resume it",
             size: DEFAULT_SIZE,
             steps: GOAL_BLOCKED_AND_RESUMED_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "goal_waits_for_subagents",
+            description: "Wait for delegated runs before prompting an active goal to continue",
+            size: DEFAULT_SIZE,
+            steps: GOAL_WAITS_FOR_SUBAGENTS_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "goal_waits_for_subagents_during_retry",
+            description: "Wait for delegated runs before retrying a failed goal turn",
+            size: DEFAULT_SIZE,
+            steps: GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
             smoke: false,
         },
         Scenario {

@@ -1084,8 +1084,8 @@ impl App {
     }
 
     /// Wakes an idle session with a turn for finished background subagents.
-    /// Real prompt turns drain these notifications themselves, so goal and
-    /// queued work must leave them in the manager until that turn starts.
+    /// Real prompt turns drain these notifications themselves, while active
+    /// goals deliver them before evaluating the goal again.
     async fn poll_subagent_completions(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -1094,12 +1094,23 @@ impl App {
         if !self.should_deliver_idle_subagent_completions() {
             return Ok(false);
         }
+        Ok(self
+            .run_subagent_completion_turn(terminal, agent)
+            .await?
+            .is_some())
+    }
+
+    async fn run_subagent_completion_turn(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<Option<TurnOutcome>> {
         let Some(manager) = agent.subagents().cloned() else {
-            return Ok(false);
+            return Ok(None);
         };
         let notifications = manager.take_notifications(agent.session_id().as_str());
         if notifications.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         // The whole drained batch is one message and one model request, no
         // matter how many runs finished while the parent was busy.
@@ -1111,8 +1122,8 @@ impl App {
             terminal,
             agent,
         )
-        .await?;
-        Ok(true)
+        .await
+        .map(Some)
     }
 
     fn should_deliver_idle_subagent_completions(&self) -> bool {

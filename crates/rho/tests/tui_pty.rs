@@ -141,6 +141,16 @@ fn skill_command_reports_when_skill_tool_is_disabled() {
 }
 
 #[test]
+fn goal_waits_for_subagents_before_evaluation() {
+    assert_pass("goal_waits_for_subagents");
+}
+
+#[test]
+fn goal_waits_for_subagents_before_retrying() {
+    assert_pass("goal_waits_for_subagents_during_retry");
+}
+
+#[test]
 fn background_agent_completion_is_delivered_after_turn_end() {
     assert_pass("background_agent_auto_delivery");
 }

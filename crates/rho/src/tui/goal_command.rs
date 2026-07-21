@@ -4,16 +4,6 @@ use super::*;
 
 const GOAL_RETRY_DELAY: Duration = Duration::from_secs(3);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GoalLoopAction {
-    /// Turn finished normally; re-enter the evaluate/work cycle.
-    Continue,
-    /// Transient failure; wait, then keep working while the goal remains active.
-    RetryAfterFailure,
-    /// User interrupt/cancel or other terminal stop; leave the goal loop.
-    Stop,
-}
-
 pub(super) fn should_resume_goal_after_turn(
     outcome: TurnOutcomeKind,
     goal_state: Option<goal::GoalLoopState>,
@@ -29,14 +19,6 @@ pub(super) fn should_resume_goal_after_turn(
 
 pub(super) fn should_drain_queued_prompts(outcome: TurnOutcomeKind, resume_goal: bool) -> bool {
     matches!(outcome, TurnOutcomeKind::Completed) || resume_goal
-}
-
-fn goal_loop_action_after_turn(outcome: TurnOutcomeKind) -> GoalLoopAction {
-    match outcome {
-        TurnOutcomeKind::Completed => GoalLoopAction::Continue,
-        TurnOutcomeKind::Failed => GoalLoopAction::RetryAfterFailure,
-        TurnOutcomeKind::Interrupted | TurnOutcomeKind::Cancelled => GoalLoopAction::Stop,
-    }
 }
 
 impl App {
@@ -281,15 +263,36 @@ impl App {
         mut pending_retries: VecDeque<FailedTurn>,
     ) -> anyhow::Result<()> {
         while !self.should_quit && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked()) {
-            while let Some(failed_turn) = pending_retries.pop_front() {
-                if !self
+            if !self.wait_for_goal_subagents(terminal, agent).await? {
+                break;
+            }
+            if let Some(outcome) = self.run_subagent_completion_turn(terminal, agent).await? {
+                match outcome {
+                    TurnOutcome::Completed => continue,
+                    TurnOutcome::Failed(failed_turn) => {
+                        pending_retries.push_front(failed_turn);
+                        continue;
+                    }
+                    TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
+                }
+            }
+            if let Some(failed_turn) = pending_retries.pop_front() {
+                let Some(outcome) = self
                     .retry_failed_goal_turn(failed_turn, terminal, agent)
                     .await?
-                {
+                else {
                     self.report_resting_herdr_state().await;
                     terminal.draw(|frame| self.draw(frame))?;
                     return Ok(());
+                };
+                match outcome {
+                    TurnOutcome::Completed => {}
+                    TurnOutcome::Failed(failed_turn) => {
+                        pending_retries.push_front(failed_turn);
+                    }
+                    TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
                 }
+                continue;
             }
             self.status = "evaluating goal".into();
             self.loading_spinner.start();
@@ -425,12 +428,7 @@ impl App {
             match outcome {
                 TurnOutcome::Completed => {}
                 TurnOutcome::Failed(failed_turn) => {
-                    if !self
-                        .retry_failed_goal_turn(failed_turn, terminal, agent)
-                        .await?
-                    {
-                        break;
-                    }
+                    pending_retries.push_front(failed_turn);
                 }
                 TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
             }
@@ -440,35 +438,73 @@ impl App {
         Ok(())
     }
 
-    async fn retry_failed_goal_turn(
+    async fn wait_for_goal_subagents(
         &mut self,
-        mut failed_turn: FailedTurn,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        loop {
-            self.insert_entry(&Entry::Notice(
-                "goal still active; retrying after the run stopped before the goal was met".into(),
-            ));
-            self.status = "goal retrying".into();
-            if !self.wait_for_goal_retry(terminal, agent).await? {
-                return Ok(false);
-            }
-
-            let outcome = self
-                .retry_failed_prompt_turn(failed_turn, terminal, agent)
-                .await?;
-            match goal_loop_action_after_turn(outcome.kind()) {
-                GoalLoopAction::Continue => return Ok(true),
-                GoalLoopAction::RetryAfterFailure => {
-                    let TurnOutcome::Failed(next_failed_turn) = outcome else {
-                        unreachable!("retry action requires a failed turn")
-                    };
-                    failed_turn = next_failed_turn;
-                }
-                GoalLoopAction::Stop => return Ok(false),
-            }
+        let Some(manager) = agent.subagents().cloned() else {
+            return Ok(true);
+        };
+        let session_id = agent.session_id().to_string();
+        if !manager.has_running_for_session(&session_id) {
+            return Ok(true);
         }
+
+        self.status = "waiting for delegated agents".into();
+        self.loading_spinner.start();
+        terminal.draw(|frame| self.draw(frame))?;
+        let interrupt_requested = AtomicBool::new(false);
+        let tool_call_active = AtomicBool::new(false);
+        while manager.has_running_for_session(&session_id)
+            && self.goal.is_some()
+            && !self.should_quit
+        {
+            tokio::select! {
+                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                    let control = self.handle_running_terminal_events(
+                        terminal_event?,
+                        terminal,
+                        &interrupt_requested,
+                        &tool_call_active,
+                        RunningInputMode::Turn,
+                    )?;
+                    if matches!(control, StreamControl::Interrupt) {
+                        self.clear_goal();
+                        break;
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    self.flush_due_paste_burst();
+                    self.update_subagent_panel(agent);
+                }
+            }
+            self.finish_completed_inline_shells().await?;
+            terminal.draw(|frame| self.draw(frame))?;
+        }
+        self.finish_all_inline_shells().await?;
+        self.insert_deferred_inline_shell_context(agent)?;
+        self.loading_spinner.stop();
+        Ok(self.goal.is_some() && !self.should_quit)
+    }
+
+    async fn retry_failed_goal_turn(
+        &mut self,
+        failed_turn: FailedTurn,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<Option<TurnOutcome>> {
+        self.insert_entry(&Entry::Notice(
+            "goal still active; retrying after the run stopped before the goal was met".into(),
+        ));
+        self.status = "goal retrying".into();
+        if !self.wait_for_goal_retry(terminal, agent).await? {
+            return Ok(None);
+        }
+
+        self.retry_failed_prompt_turn(failed_turn, terminal, agent)
+            .await
+            .map(Some)
     }
 
     async fn wait_for_goal_retry(

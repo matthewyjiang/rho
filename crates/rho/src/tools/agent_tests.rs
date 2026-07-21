@@ -35,6 +35,7 @@ fn delegated_manager_starts_empty() {
     let manager = manager(root.path());
     assert!(manager.list().is_empty());
     assert!(manager.status("missing").is_none());
+    assert!(!manager.has_running_for_session("session-1"));
 }
 
 #[tokio::test]
@@ -202,6 +203,18 @@ async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String 
     .await
     .unwrap();
     manager.list().last().unwrap().id.clone()
+}
+
+#[tokio::test]
+async fn running_queries_are_scoped_to_the_parent_session() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.set_session("session-1".into());
+    let id = spawn_background_run(&manager, root.path()).await;
+
+    assert!(!manager.has_running_for_session("session-2"));
+
+    manager.stop(&id).await.unwrap();
 }
 
 #[tokio::test]
