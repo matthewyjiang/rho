@@ -1,6 +1,6 @@
 use std::{
     io::{self, Write},
-    process::{Command, Stdio},
+    process::{Command, ExitStatus, Stdio},
 };
 
 /// Returns true when the OS can resolve and spawn `command`.
@@ -50,6 +50,14 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
     // decides success, so an incomplete write (broken pipe) is still an error
     // and the caller can fall back rather than assume the clipboard was set.
     let status = child.wait()?;
+    resolve_command_write(program, status, write_result)
+}
+
+fn resolve_command_write(
+    program: &str,
+    status: ExitStatus,
+    write_result: io::Result<()>,
+) -> io::Result<()> {
     if !status.success() {
         return Err(io::Error::other(format!("{program} exited with {status}")));
     }

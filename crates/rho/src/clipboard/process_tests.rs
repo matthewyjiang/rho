@@ -35,11 +35,28 @@ fn write_command_stdin_fails_when_the_command_exits_nonzero() {
 
 #[cfg(unix)]
 #[test]
-fn write_command_stdin_fails_when_the_input_is_not_fully_delivered() {
-    // `true` exits 0 without reading stdin; a payload larger than the pipe
-    // buffer guarantees a broken pipe mid-write. A clean exit does not prove
-    // delivery, so the incomplete write is reported as an error.
-    let payload = vec![b'x'; 1 << 20];
-    let error = write_command_stdin("true", &[], &payload).unwrap_err();
+fn resolve_command_write_prefers_nonzero_exit_over_write_error() {
+    let status = std::process::Command::new("false").status().unwrap();
+    let write_result = Err(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "stdin closed",
+    ));
+
+    let error = resolve_command_write("false", status, write_result).unwrap_err();
+
+    assert!(error.to_string().contains("false exited"));
+}
+
+#[cfg(unix)]
+#[test]
+fn resolve_command_write_preserves_write_error_on_clean_exit() {
+    let status = std::process::Command::new("true").status().unwrap();
+    let write_result = Err(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "stdin closed",
+    ));
+
+    let error = resolve_command_write("true", status, write_result).unwrap_err();
+
     assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
 }
