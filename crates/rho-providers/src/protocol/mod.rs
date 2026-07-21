@@ -5,6 +5,7 @@
 //! retry policy, or provider registration.
 
 pub(crate) mod anthropic_messages;
+mod cost;
 pub(crate) mod gemini_generate_content;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
