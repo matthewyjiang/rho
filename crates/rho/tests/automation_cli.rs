@@ -454,22 +454,30 @@ fn final_answer_is_the_only_stdout_content() {
 #[cfg(unix)]
 #[test]
 fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
-    use std::time::Duration;
+    use std::io::{BufRead, Read};
 
     let root = TempDir::new().unwrap();
     let mut command = command(&root, "delay");
     command.args(["run", "--output", "jsonl", "wait"]);
-    let child = command.spawn().unwrap();
-    std::thread::sleep(Duration::from_millis(200));
+    let mut child = command.spawn().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut stream = String::new();
+    stdout.read_line(&mut stream).unwrap();
+    assert!(stream.contains("\"type\":\"run.started\""));
+
     let signal_status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
         .status()
         .unwrap();
     assert!(signal_status.success());
+    stdout.read_to_string(&mut stream).unwrap();
+    let status = child.wait().unwrap();
 
-    let output = child.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(143));
-    let events = jsonl_events(&output);
+    assert_eq!(status.code(), Some(143));
+    let events = stream
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
     assert_eq!(events.last().unwrap()["type"], "run.stopped");
     assert_eq!(events.last().unwrap()["reason"], "interrupted");
 }
