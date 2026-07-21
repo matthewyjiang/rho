@@ -102,6 +102,23 @@ impl AgentExecutor {
             .permission_mode
     }
 
+    /// Starts a delegated agent run and returns a handle for cancellation and status monitoring.
+    ///
+    /// The run is subject to the executor's concurrency limit and writes status updates to
+    /// the request's output file.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(
+    /// #     executor: &AgentExecutor,
+    /// #     request: AgentLaunchRequest,
+    /// # ) -> anyhow::Result<()> {
+    /// let handle = executor.spawn(request)?;
+    /// handle.cancel();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub(crate) fn spawn(&self, request: AgentLaunchRequest) -> anyhow::Result<AgentRunHandle> {
         let config = self.config.read().expect("delegated config lock").clone();
         let mut capabilities = AgentCapabilities::all_host_tools();

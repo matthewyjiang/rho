@@ -31,6 +31,15 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) usage_recording: rho_sdk::ProviderRequestUsageRecording,
 }
 
+/// Builds a runtime using the configured options and the default step limit.
+///
+/// # Examples
+///
+/// ```ignore
+/// let runtime = build_runtime(options)?;
+/// ```
+///
+/// Returns an error if the runtime cannot be constructed.
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
 where
     P: WorkspacePolicy + 'static,
@@ -38,6 +47,31 @@ where
     build_runtime_with_max_steps(options, None)
 }
 
+/// Builds a configured [`Rho`] runtime with an optional maximum step limit.
+///
+/// When `max_steps` is `None`, the SDK's default run-step limit is used.
+///
+/// # Parameters
+///
+/// * `options` - Configuration for the provider, tools, workspace, policies, prompts, compaction, and usage tracking.
+/// * `max_steps` - Optional maximum number of execution steps for the runtime.
+///
+/// # Returns
+///
+/// The configured runtime, or an [`Error`] if construction fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use std::num::NonZeroUsize;
+/// # let options = todo!();
+/// let runtime = build_runtime_with_max_steps(
+///     options,
+///     Some(NonZeroUsize::new(10).unwrap()),
+/// )?;
+/// # let _: Rho = runtime;
+/// # Ok::<(), Error>(())
+/// ```
 pub(crate) fn build_runtime_with_max_steps<P>(
     options: RuntimeBuildOptions<'_, P>,
     max_steps: Option<std::num::NonZeroUsize>,

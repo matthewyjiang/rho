@@ -45,6 +45,20 @@ pub struct AutomationExit {
 }
 
 impl AutomationExit {
+    /// Creates an automation exit with a process code, terminal reason, and message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let exit = AutomationExit::new(1, TerminalReason::OtherError, "run failed");
+    /// assert_eq!(exit.exit_code(), 1);
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `code` - The process exit code.
+    /// * `reason` - The terminal reason associated with the exit.
+    /// * `message` - The message describing the exit.
     pub(super) fn new(code: u8, reason: TerminalReason, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -53,17 +67,40 @@ impl AutomationExit {
         }
     }
 
-    /// Returns the documented process exit code for this automation result.
+    /// Provides the process exit code associated with this automation result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let result = AutomationExit::new(124, TerminalReason::Timeout, "timed out".into());
+    /// assert_eq!(result.exit_code(), 124);
+    /// ```
     pub fn exit_code(&self) -> u8 {
         self.code
     }
 
+    /// Gets the terminal reason associated with the automation exit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let exit = AutomationExit::new(1, TerminalReason::OtherError, "failed");
+    /// assert_eq!(exit.reason(), TerminalReason::OtherError);
+    /// ```
     fn reason(&self) -> TerminalReason {
         self.reason
     }
 }
 
 impl fmt::Display for AutomationExit {
+    /// Formats the error using its message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let error = AutomationExit::new(1, TerminalReason::OtherError, "run failed".to_owned());
+    /// assert_eq!(format!("{error}"), "run failed");
+    /// ```
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
     }
@@ -103,6 +140,14 @@ enum ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    /// Maps the shutdown signal to its process exit code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(ShutdownSignal::Interrupt.exit_code(), 130);
+    /// assert_eq!(ShutdownSignal::Terminate.exit_code(), 143);
+    /// ```
     fn exit_code(self) -> u8 {
         match self {
             Self::Interrupt => 130,
@@ -112,6 +157,14 @@ impl ShutdownSignal {
 }
 
 impl fmt::Display for ShutdownSignal {
+    /// Formats the shutdown signal using its conventional name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(ShutdownSignal::Interrupt.to_string(), "SIGINT");
+    /// assert_eq!(ShutdownSignal::Terminate.to_string(), "SIGTERM");
+    /// ```
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Interrupt => formatter.write_str("SIGINT"),
@@ -149,6 +202,24 @@ pub(super) struct Startup<'a> {
     pub herdr: HerdrReporter,
 }
 
+/// Builds the prompt for a run command, including input read from standard input when requested.
+///
+/// Commands that do not start an automation run produce no prompt.
+///
+/// # Examples
+///
+/// ```
+/// let command = Some(Command::Run {
+///     prompt: vec!["List the files".to_owned()],
+///     stdin: false,
+///     ..
+/// });
+///
+/// assert_eq!(
+///     prompt_for_command(&command).unwrap(),
+///     Some("List the files".to_owned())
+/// );
+/// ```
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
     match command {
         Some(Command::Run { prompt, stdin, .. }) => {
@@ -158,6 +229,13 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
     }
 }
 
+/// Emits a JSONL event indicating that startup failed due to configuration.
+///
+/// # Examples
+///
+/// ```
+/// assert!(emit_startup_failure().is_ok());
+/// ```
 pub(super) fn emit_startup_failure() -> anyhow::Result<()> {
     let mut adapter = JsonlAdapter::new();
     let event = adapter.failed(
@@ -168,6 +246,17 @@ pub(super) fn emit_startup_failure() -> anyhow::Result<()> {
     emit(event)
 }
 
+/// Runs an automation session and emits its result in the configured output format.
+///
+/// Applies the configured timeout and step limit, updates any configured run
+/// report, and maps terminal conditions to stable automation exit errors.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = run(prompt, startup).await;
+/// ```
+pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
     let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlAdapter::new);
     let deadline = startup
@@ -299,6 +388,23 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     }
 }
 
+/// Writes the run's answer to standard output, or signals completion when a reporter is active.
+///
+/// # Parameters
+///
+/// * `answer` — The completed run outcome whose text is written when no reporter is active.
+/// * `has_reporter` — Whether to emit the subagent completion marker instead of the answer text.
+///
+/// # Returns
+///
+/// `Ok(())` after the output is written; an `AutomationExit` with an output-error reason if writing or flushing fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// write_text_answer(&answer, false)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow::Result<()> {
     let result = (|| -> io::Result<()> {
         let mut stdout = io::stdout().lock();
@@ -319,6 +425,16 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
     })
 }
 
+/// Writes a JSONL event to standard output.
+///
+/// # Examples
+///
+/// ```ignore
+/// emit(event)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
+/// Returns an output error if the event cannot be written.
 fn emit(event: WireEvent) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     write_event(&mut stdout, &event).map_err(|error| {
@@ -331,6 +447,15 @@ fn emit(event: WireEvent) -> anyhow::Result<()> {
     })
 }
 
+/// Emits a stopped event containing the adapter's current partial text when JSONL output is enabled.
+///
+/// # Examples
+///
+/// ```
+/// let mut adapter: Option<JsonlAdapter> = None;
+/// emit_stopped(&mut adapter, TerminalReason::Timeout)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 fn emit_stopped(adapter: &mut Option<JsonlAdapter>, reason: TerminalReason) -> anyhow::Result<()> {
     if let Some(adapter) = adapter.as_mut() {
         let text = adapter.partial_text();
@@ -340,6 +465,18 @@ fn emit_stopped(adapter: &mut Option<JsonlAdapter>, reason: TerminalReason) -> a
     Ok(())
 }
 
+/// Emits a failed JSONL event with the current partial text when an adapter is available.
+///
+/// # Examples
+///
+/// ```
+/// let mut adapter = None;
+/// let error = anyhow::anyhow!("run failed");
+///
+/// emit_failure(&mut adapter, TerminalReason::OtherError, &error)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+?
 fn emit_failure(
     adapter: &mut Option<JsonlAdapter>,
     reason: TerminalReason,
@@ -354,6 +491,41 @@ fn emit_failure(
     Ok(())
 }
 
+/// Creates a user-facing message for a terminal run reason.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// let error = anyhow::anyhow!("provider unavailable");
+
+/// assert_eq!(
+
+///     terminal_error_message(TerminalReason::Authentication, &error),
+
+///     "authentication failed"
+
+/// );
+
+/// assert_eq!(
+
+///     terminal_error_message(TerminalReason::ProviderError, &error),
+
+///     "provider unavailable"
+
+/// );
+
+/// ```
+
+///
+
+/// `reason` determines whether a standardized message is available; otherwise,
+
+/// the original error message is returned.
 fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> String {
     match reason {
         TerminalReason::Authentication => "authentication failed".to_string(),
@@ -364,6 +536,18 @@ fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> Stri
     }
 }
 
+/// Classifies an automation error into a terminal reason and process exit code.
+///
+/// # Examples
+///
+/// ```
+/// let error = anyhow::anyhow!("unexpected failure");
+/// assert_eq!(classify_error(&error), (TerminalReason::OtherError, 1));
+/// ```
+///
+/// Authentication and provider errors are mapped to their corresponding terminal
+/// reasons, while configuration errors use exit code `2`.
+fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8)
 fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
     if let Some(interrupted) = error.downcast_ref::<AutomationInterrupted>() {
         return (TerminalReason::Interrupted, interrupted.exit_code());
@@ -412,6 +596,22 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
     (TerminalReason::OtherError, 1)
 }
 
+/// Runs an automation session without JSONL event output.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[tokio::main]
+/// # async fn main() -> anyhow::Result<()> {
+/// let outcome = run_session("List the files in the workspace".into(), &todo!(), None, None).await?;
+/// println!("{}", outcome.text());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Returns
+///
+/// The completed automation outcome.
 pub(crate) async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
@@ -421,6 +621,36 @@ pub(crate) async fn run_session(
     run_session_with_output(prompt_text, startup, reporter, cancellation, None).await
 }
 
+/// Builds the configured runtime and executes an automation session.
+///
+/// Applies startup settings for providers, tools, prompts, workspace access, delegation, and step limits.
+/// Optional reporting, cancellation, and JSONL event streaming are integrated into the session lifecycle.
+///
+/// # Parameters
+///
+/// * `prompt_text` - The user prompt to execute.
+/// * `startup` - Runtime configuration and agent startup resources.
+/// * `reporter` - Optional reporter for recording session progress and results.
+/// * `cancellation` - Optional external cancellation handle.
+/// * `jsonl` - Optional adapter for emitting session events.
+///
+/// # Returns
+///
+/// The completed automation run outcome.
+///
+/// # Examples
+///
+/// ```ignore
+/// let outcome = run_session_with_output(
+///     "List the files in the workspace".into(),
+///     &startup,
+///     None,
+///     None,
+///     None,
+/// ).await?;
+/// println!("{}", outcome.text());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 async fn run_session_with_output(
     prompt_text: String,
     startup: &Startup<'_>,
@@ -530,6 +760,30 @@ async fn run_session_with_output(
     result
 }
 
+/// Runs a session until completion, cancellation, or an operating-system shutdown signal.
+///
+/// The run is cancelled and drained before returning when external cancellation or a shutdown
+/// signal is received.
+///
+/// # Examples
+///
+/// ```ignore
+/// let outcome = complete_run(session, prompt, None, None, None).await?;
+/// println!("{}", outcome.text());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the session cannot start or if execution is interrupted, cancelled, or
+/// otherwise fails.
+async fn complete_run(
+session: &rho_sdk::Session,
+prompt_text: String,
+reporter: Option<&mut RunReporter>,
+external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
+jsonl: Option<&mut JsonlAdapter>,
+) -> anyhow::Result<rho_sdk::RunOutcome> {
 async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
@@ -556,10 +810,21 @@ async fn complete_run(
     }
 }
 
-/// Drains run events with no interactive host attached.
+/// Processes a run without interactive host input, updating reporting outputs as events arrive.
 ///
-/// Host input requests cannot be answered headlessly; cancel instead of
-/// leaving the requesting tool suspended until a signal arrives.
+/// Host input requests cancel the run and return an error because they cannot be answered
+/// in headless mode. Reporter heartbeats are written periodically, and JSONL events are
+/// emitted when configured.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn example(run: &mut rho_sdk::Run) -> anyhow::Result<()> {
+/// let outcome = drive_headless_run(run, None, None).await?;
+/// # let _ = outcome;
+/// # Ok(())
+/// # }
+/// ```
 async fn drive_headless_run(
     run: &mut rho_sdk::Run,
     mut reporter: Option<&mut RunReporter>,
@@ -724,6 +989,19 @@ impl RunReporter {
         }
     }
 
+    /// Finalizes the run report from the completed outcome.
+    ///
+    /// Successful runs are marked as completed with their result and token usage. Interruptions,
+    /// cancellations, timeouts, and step-limit stops are marked as stopped; other failures are
+    /// marked as errors. The updated status is written after processing the result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example(reporter: &mut RunReporter, result: &anyhow::Result<rho_sdk::RunOutcome>) {
+    /// reporter.finish(result);
+    /// # }
+    /// ```
     pub(crate) fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
         match result {
             Ok(outcome) => {

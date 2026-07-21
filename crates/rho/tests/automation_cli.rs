@@ -589,6 +589,26 @@ fn run(root: &TempDir, mode: &str, args: &[&str], input: Option<&str>) -> Output
     child.wait_with_output().unwrap()
 }
 
+/// Builds a configured command for running the `rho` binary in a temporary workspace.
+///
+/// The command uses the workspace as its current directory and home, selects the
+/// specified fixture mode, removes environment variables that could affect test
+/// isolation, pipes standard output and error, and loads the workspace
+/// configuration file.
+///
+/// # Arguments
+///
+/// * `root` - Temporary workspace used as the command's working directory and home.
+/// * `mode` - Fixture mode passed through the automation test environment variable.
+///
+/// # Examples
+///
+/// ```
+/// let root = tempfile::tempdir().unwrap();
+/// let command = command(&root, "fixed");
+///
+/// assert!(command.get_args().any(|arg| arg == "--config"));
+/// ```
 fn command(root: &TempDir, mode: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
     command
@@ -608,6 +628,18 @@ fn command(root: &TempDir, mode: &str) -> Command {
     command
 }
 
+/// Parses each line of command output as a JSON value.
+///
+/// # Panics
+///
+/// Panics if any output line is not valid JSON.
+///
+/// # Examples
+///
+/// ```
+/// let events = jsonl_events(&output);
+/// assert_eq!(events[0]["type"], "run.started");
+/// ```
 fn jsonl_events(output: &Output) -> Vec<Value> {
     stdout(output)
         .lines()

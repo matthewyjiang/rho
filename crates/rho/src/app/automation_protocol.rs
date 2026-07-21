@@ -4,6 +4,25 @@ use serde::Serialize;
 
 const SCHEMA_VERSION: u8 = 1;
 
+/// Parses a human-readable duration.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(parse_duration("2h 30m").unwrap(), std::time::Duration::from_secs(9000));
+/// ```
+///
+/// # Errors
+///
+/// Returns a message containing the invalid input and parsing error.
+///
+/// # Arguments
+///
+/// * `value` - The human-readable duration to parse.
+///
+/// # Returns
+///
+/// The parsed duration on success.
 pub(crate) fn parse_duration(value: &str) -> Result<Duration, String> {
     humantime::parse_duration(value).map_err(|error| format!("invalid duration '{value}': {error}"))
 }
@@ -94,6 +113,14 @@ pub(crate) struct JsonlAdapter {
 }
 
 impl JsonlAdapter {
+    /// Creates an adapter with empty run context and no accumulated assistant text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let adapter = JsonlAdapter::new();
+    /// assert_eq!(adapter.partial_text(), None);
+    /// ```
     pub(crate) fn new() -> Self {
         Self {
             seq: 0,
@@ -105,6 +132,17 @@ impl JsonlAdapter {
         }
     }
 
+    /// Stores the session identifier and workspace used when constructing run events.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let mut adapter = JsonlAdapter::new();
+    /// adapter.set_run_context("session-1", Path::new("/workspace"));
+    /// ```
+    #[example]
     pub(crate) fn set_run_context(
         &mut self,
         session_id: impl ToString,
@@ -114,6 +152,23 @@ impl JsonlAdapter {
         self.workspace = Some(workspace.to_string_lossy().into_owned());
     }
 
+    /// Converts a run event into a sequenced wire event when it is supported by the automation protocol.
+    ///
+    /// Assistant text is accumulated for partial-text retrieval, and events received after a terminal
+    /// event or without a corresponding wire representation are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let event = rho_sdk::RunEvent::AssistantTextDelta {
+    ///     text: "Hello".to_owned(),
+    /// };
+    ///
+    /// let wire_event = adapter.event(&event).expect("supported event");
+    /// assert_eq!(adapter.partial_text().as_deref(), Some("Hello"));
+    /// assert_eq!(wire_event.seq, 1);
+    /// ```
     pub(crate) fn event(&mut self, event: &rho_sdk::RunEvent) -> Option<WireEvent> {
         use rho_sdk::{RunEvent, ToolCompletion};
 
@@ -172,10 +227,30 @@ impl JsonlAdapter {
         Some(self.next(kind))
     }
 
+    /// Provides the accumulated assistant text when available.
+    ///
+    /// # Returns
+    ///
+    /// `Some` containing the accumulated text when it is non-empty, or `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let adapter = JsonlAdapter::new();
+    /// assert_eq!(adapter.partial_text(), None);
+    /// ```
     pub(crate) fn partial_text(&self) -> Option<String> {
         (!self.assistant_text.is_empty()).then(|| self.assistant_text.clone())
     }
 
+    /// Creates a terminal event indicating that the run completed successfully.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let _event = adapter.completed("Finished".to_owned());
+    /// ```
     pub(crate) fn completed(&mut self, text: String) -> WireEvent {
         self.terminal(WireEventKind::RunCompleted {
             reason: TerminalReason::Completed,
@@ -183,10 +258,34 @@ impl JsonlAdapter {
         })
     }
 
+    /// Creates a terminal event indicating that the run stopped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let event = adapter.stopped(TerminalReason::Interrupted, None);
+    ///
+    /// assert!(matches!(event.kind, WireEventKind::RunStopped { .. }));
+    /// ```
     pub(crate) fn stopped(&mut self, reason: TerminalReason, text: Option<String>) -> WireEvent {
         self.terminal(WireEventKind::RunStopped { reason, text })
     }
 
+    /// Emits a terminal event describing a failed run.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let event = adapter.failed(
+    ///     TerminalReason::ProviderError,
+    ///     "provider request failed".to_string(),
+    ///     None,
+    /// );
+    ///
+    /// assert_eq!(event.seq, 1);
+    /// ```
     pub(crate) fn failed(
         &mut self,
         reason: TerminalReason,
@@ -200,12 +299,34 @@ impl JsonlAdapter {
         })
     }
 
+    /// Marks the adapter as terminal and assigns the next sequence number to the event.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let event = adapter.terminal(WireEventKind::RunCompleted {
+    ///     reason: TerminalReason::Completed,
+    ///     text: String::from("done"),
+    /// });
+    /// assert_eq!(event.seq, 1);
+    /// ```
     fn terminal(&mut self, kind: WireEventKind) -> WireEvent {
         debug_assert!(!self.terminal, "JSONL terminal event emitted twice");
         self.terminal = true;
         self.next(kind)
     }
 
+    /// Creates a wire event with the next sequence number and the current schema version.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut adapter = JsonlAdapter::new();
+    /// let event = adapter.next(WireEventKind::AssistantTextReset { attempt: 1 });
+    ///
+    /// assert_eq!(event.seq, 1);
+    /// ```
     fn next(&mut self, kind: WireEventKind) -> WireEvent {
         self.seq += 1;
         WireEvent {
@@ -216,6 +337,26 @@ impl JsonlAdapter {
     }
 }
 
+/// Writes a wire event as a JSON line and flushes the writer.
+///
+/// # Examples
+///
+/// ```
+/// let event = WireEvent {
+///     schema_version: SCHEMA_VERSION,
+///     seq: 1,
+///     kind: WireEventKind::RunCompleted {
+///         reason: TerminalReason::Completed,
+///         text: "Done".to_owned(),
+///     },
+/// };
+/// let mut output = Vec::new();
+///
+/// write_event(&mut output, &event).unwrap();
+/// assert!(output.ends_with(b"\n"));
+/// ```
+///
+/// Returns an I/O error if serialization, writing, or flushing fails.
 pub(crate) fn write_event(writer: &mut impl io::Write, event: &WireEvent) -> io::Result<()> {
     serde_json::to_writer(&mut *writer, event).map_err(io::Error::other)?;
     writer.write_all(b"\n")?;
