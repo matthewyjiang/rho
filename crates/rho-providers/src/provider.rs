@@ -16,6 +16,7 @@ pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
+    Ollama,
     OpenAi,
     OpenAiCodex,
     Anthropic,
@@ -55,11 +56,12 @@ pub enum ProviderModelRefreshKind {
     Anthropic,
     Google,
     GithubCopilot,
-    OpenAiCompatible { api_base: &'static str },
+    OpenAiCompatible,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderAuthKind {
+    None,
     ApiKey {
         env_var: &'static str,
         account: &'static str,
@@ -121,23 +123,25 @@ impl ProviderDescriptor {
 }
 
 impl ProviderAuthKind {
-    pub fn env_var(self) -> &'static str {
+    pub fn env_var(self) -> Option<&'static str> {
         match self {
+            Self::None => None,
             Self::ApiKey { env_var, .. }
             | Self::CodexOAuth { env_var, .. }
             | Self::GithubCopilotDevice { env_var, .. }
             | Self::XaiOAuth { env_var, .. }
-            | Self::KimiOAuth { env_var, .. } => env_var,
+            | Self::KimiOAuth { env_var, .. } => Some(env_var),
         }
     }
 
-    pub fn account(self) -> &'static str {
+    pub fn account(self) -> Option<&'static str> {
         match self {
+            Self::None => None,
             Self::ApiKey { account, .. }
             | Self::CodexOAuth { account, .. }
             | Self::GithubCopilotDevice { account, .. }
             | Self::XaiOAuth { account, .. }
-            | Self::KimiOAuth { account, .. } => account,
+            | Self::KimiOAuth { account, .. } => Some(account),
         }
     }
 }
@@ -167,6 +171,18 @@ pub struct ProviderDescriptor {
 }
 
 pub const PROVIDERS: &[ProviderDescriptor] = &[
+    ProviderDescriptor {
+        id: ProviderId::Ollama,
+        name: "ollama",
+        display_name: "Ollama",
+        auth: "none",
+        login_label: "No authentication required",
+        auth_kind: ProviderAuthKind::None,
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        metadata_upstream: "ollama",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+    },
     ProviderDescriptor {
         id: ProviderId::OpenAi,
         name: "openai",
@@ -261,9 +277,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             missing: MissingCredential::Moonshot,
         },
         model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
-            api_base: "https://api.moonshot.ai/v1",
-        }),
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
@@ -280,9 +294,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             missing: MissingCredential::OpenRouter,
         },
         model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
-            api_base: "https://openrouter.ai/api/v1",
-        }),
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         metadata_upstream: "openrouter",
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
@@ -297,9 +309,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: KIMI_TOKENS_ACCOUNT,
         },
         model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible {
-            api_base: "https://api.kimi.com/coding/v1",
-        }),
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },

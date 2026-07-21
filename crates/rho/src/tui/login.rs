@@ -4,7 +4,7 @@ use {
         AuthenticationMethod, CompletedAuthentication, OAuthMode, OAuthUserAction,
         ProviderAuthentication,
     },
-    rho_providers::model::registry,
+    rho_providers::model::{provider_models::ProviderModelEndpoint, registry},
     rho_providers::provider,
     rho_providers::providers::build_sdk_provider,
 };
@@ -124,10 +124,23 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
+        if provider::provider_descriptor(provider)
+            .is_some_and(|descriptor| descriptor.auth_kind == provider::ProviderAuthKind::None)
+        {
+            self.insert_entry(&Entry::Notice(format!(
+                "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
+            )));
+            self.status = "no login required".into();
+            return Ok(());
+        }
         let Some(target) = catalog::login_target_for_provider(provider) else {
+            let providers = catalog::login_targets()
+                .into_iter()
+                .map(|target| format!("/login {}", target.provider))
+                .collect::<Vec<_>>()
+                .join(", ");
             self.insert_entry(&Entry::Error(format!(
-                "unsupported login provider '{provider}'. Use /login {}",
-                catalog::implemented_providers().join(", /login ")
+                "unsupported login provider '{provider}'. Use {providers}"
             )));
             self.status = "login failed".into();
             return Ok(());
@@ -136,6 +149,14 @@ impl App {
         match ProviderAuthentication::method(&target.provider)
             .expect("catalog returned unsupported login provider")
         {
+            AuthenticationMethod::None => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "{} does not require login. Refresh its model list in /config, then choose a model with /model.",
+                    target.provider
+                )));
+                self.status = "no login required".into();
+                Ok(())
+            }
             AuthenticationMethod::ApiKey { entry_label } => {
                 self.composer = ComposerMode::SecretInput(SecretInput::new(target));
                 self.status = format!("enter {entry_label}");
@@ -347,8 +368,18 @@ impl App {
 
         self.status = format!("refreshing {} model list", target.provider);
         terminal.draw(|frame| self.draw(frame))?;
-        match refresh_provider_models_with_store(&target.provider, self.credential_store.as_ref())
-            .await
+        let config = self.info.services.config_repository.load()?;
+        let endpoint = config.resolved_provider_endpoint(&target.provider);
+        let model_endpoint = endpoint.as_ref().map_or(
+            ProviderModelEndpoint::ProviderOwned,
+            ProviderModelEndpoint::OpenAiCompatible,
+        );
+        match refresh_provider_models_with_store(
+            &target.provider,
+            self.credential_store.as_ref(),
+            model_endpoint,
+        )
+        .await
         {
             Ok(refresh) => {
                 self.insert_entry(&Entry::Notice(format!(

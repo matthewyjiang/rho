@@ -353,6 +353,7 @@ fn request_body(
     reasoning_level: crate::reasoning::ReasoningLevel,
 ) -> serde_json::Value {
     let provider_name = match dialect {
+        OpenAiCompatibleDialect::Standard => "standard",
         OpenAiCompatibleDialect::Moonshot => "moonshot",
         OpenAiCompatibleDialect::OpenRouter => "openrouter",
         OpenAiCompatibleDialect::KimiCode => "kimi-code",
@@ -415,4 +416,135 @@ fn identities_keep_custom_provider_names() {
         openrouter.model_identity().model,
         "anthropic/claude-sonnet-4"
     );
+}
+
+#[tokio::test]
+async fn standard_dialect_streams_without_auth_or_usage() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        let bytes = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..bytes]);
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        let body: serde_json::Value =
+            serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["stream_options"]["include_usage"], true);
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("thinking").is_none());
+
+        // Ollama may omit the optional usage chunk.
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "ollama",
+        "qwen3-coder".into(),
+        OpenAiCompatibleDialect::Standard,
+        CompatibleAuth::None,
+        api_base,
+    );
+    let messages = [Message::user_text("hello")];
+    let mut events = Vec::new();
+    let response = provider
+        .stream_turn(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                prompt_cache_key: None,
+            },
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        response,
+        ModelResponse::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello")
+    ));
+    assert!(!events.is_empty());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn standard_dialect_converts_tool_calls_and_http_errors() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        for index in 0..2 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            let bytes = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..bytes]);
+            assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+            let (status, body) = if index == 0 {
+                (
+                    "200 OK",
+                    r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"pwd\"}"}}]}}]}"#,
+                )
+            } else {
+                (
+                    "503 Service Unavailable",
+                    r#"{"error":"model unavailable"}"#,
+                )
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "ollama",
+        "qwen3-coder".into(),
+        OpenAiCompatibleDialect::Standard,
+        CompatibleAuth::None,
+        api_base,
+    );
+    let messages = [Message::user_text("run pwd")];
+    let request = || ModelRequest {
+        messages: &messages,
+        tools: &[],
+        cancellation: Default::default(),
+        reasoning_level: crate::reasoning::ReasoningLevel::Off,
+        prompt_cache_key: None,
+    };
+
+    let response = provider.complete_turn(request()).await.unwrap();
+    assert!(matches!(
+        response,
+        ModelResponse::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::ToolCall(call)]
+                if call.id == "call-1" && call.name == "bash")
+    ));
+    let error = provider.complete_turn(request()).await.unwrap_err();
+    assert!(matches!(
+        error,
+        ModelError::HttpStatus { status, body }
+            if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                && body.contains("model unavailable")
+    ));
+    server.await.unwrap();
 }

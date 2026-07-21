@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use {
-    rho_providers::model::catalog,
-    rho_providers::provider::{self, ProviderModelSource},
+    rho_providers::model::{catalog, provider_models::ProviderModelHealth},
+    rho_providers::provider::{self, ProviderAuthKind, ProviderModelSource},
     rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore},
 };
 
@@ -19,41 +19,97 @@ pub(super) struct DoctorContext<'a> {
     pub(super) session_root: &'a Path,
     pub(super) herdr_enabled: bool,
     pub(super) herdr_socket_reachable: Option<bool>,
+    pub(super) provider_health: &'a [(String, ProviderModelHealth)],
 }
 
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     let mut items = Vec::new();
     for descriptor in provider::providers() {
-        let (healthy, status, detail) = match ProviderAuthentication::has_credentials(
-            context.credential_store,
-            descriptor.name,
-        ) {
-            Ok(true) if ProviderAuthentication::has_environment_override(descriptor.name) => (
+        let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
+            (
                 true,
-                "authenticated",
-                "Credentials are provided by an environment variable.",
-            ),
-            Ok(true) => (
-                true,
-                "authenticated",
-                "Credentials are available in the OS credential store.",
-            ),
-            Ok(false) => (
-                false,
-                "missing",
-                "No credentials found. Run /login to authenticate this provider.",
-            ),
-            Err(_) => (
-                false,
-                "error",
-                "The OS credential store could not be read. No secret values were inspected or displayed.",
-            ),
+                "no authentication required",
+                "This provider does not require authentication.",
+            )
+        } else {
+            match ProviderAuthentication::has_credentials(
+                context.credential_store,
+                descriptor.name,
+            ) {
+                Ok(true) if ProviderAuthentication::has_environment_override(descriptor.name) => (
+                    true,
+                    "authenticated",
+                    "Credentials are provided by an environment variable.",
+                ),
+                Ok(true) => (
+                    true,
+                    "authenticated",
+                    "Credentials are available in the OS credential store.",
+                ),
+                Ok(false) => (
+                    false,
+                    "missing",
+                    "No credentials found. Run /login to authenticate this provider.",
+                ),
+                Err(_) => (
+                    false,
+                    "error",
+                    "The OS credential store could not be read. No secret values were inspected or displayed.",
+                ),
+            }
         };
         items.push(item(
             format!("{} authentication", descriptor.display_name),
             status,
             healthy,
             detail.into(),
+        ));
+    }
+
+    for descriptor in provider::providers().iter().filter(|descriptor| {
+        descriptor.auth_kind == ProviderAuthKind::None
+            && descriptor.model_refresh
+                == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
+    }) {
+        let health = context
+            .provider_health
+            .iter()
+            .find_map(|(name, health)| (name == descriptor.name).then_some(health));
+        let (healthy, status, detail) = match health {
+            Some(ProviderModelHealth::ReachableWithModels { model_count }) => (
+                true,
+                "reachable",
+                format!(
+                    "The model endpoint returned {model_count} installed model{}.",
+                    if *model_count == 1 { "" } else { "s" }
+                ),
+            ),
+            Some(ProviderModelHealth::ReachableWithoutModels) => (
+                false,
+                "no models",
+                "The model endpoint is reachable but has no installed models.".into(),
+            ),
+            Some(ProviderModelHealth::Unreachable { error }) => (
+                false,
+                "unreachable",
+                format!("The model endpoint could not be reached: {error}"),
+            ),
+            Some(ProviderModelHealth::InvalidResponse { error }) => (
+                false,
+                "invalid response",
+                format!("The model endpoint returned an invalid or unsuccessful response: {error}"),
+            ),
+            None => (
+                false,
+                "not checked",
+                "Run /doctor after the current model turn to check this endpoint.".into(),
+            ),
+        };
+        items.push(item(
+            format!("{} connection", descriptor.display_name),
+            status,
+            healthy,
+            detail,
         ));
     }
 
@@ -233,15 +289,5 @@ fn probe_directory(directory: &Path) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn directory_probe_rejects_regular_file() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("sessions");
-        fs::write(&path, "not a directory").unwrap();
-
-        assert!(!probe_writable(&path, PathKind::Directory));
-    }
-}
+#[path = "doctor_tests.rs"]
+mod tests;

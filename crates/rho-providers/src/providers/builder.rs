@@ -10,12 +10,13 @@ use crate::{
         registry::{provider_runtime, AuthMode, ProviderRuntime},
         ModelError,
     },
+    provider::{self, ProviderAuthKind},
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
         google::{GoogleProvider, API_BASE as GOOGLE_API_BASE},
         openai::{auth::Auth, OpenAiProvider},
-        openai_compatible::{CompatibleAuth, OpenAiCompatibleDialect, OpenAiCompatibleProvider},
+        openai_compatible::{CompatibleAuth, OpenAiCompatibleProvider},
         xai::XaiProvider,
     },
     reasoning::ReasoningLevel,
@@ -26,9 +27,6 @@ const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENAI_CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const XAI_API_BASE: &str = "https://api.x.ai/v1";
-const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
-const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
-const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
 
 /// Provider construction values derived explicitly from application config.
 ///
@@ -158,8 +156,12 @@ impl ProviderBuilder {
     }
 
     pub(crate) fn build(self) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
-        let runtime = provider_runtime(&self.options.provider)
+        let descriptor = provider::provider_descriptor(&self.options.provider)
             .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
+        let runtime =
+            provider_runtime(descriptor.name).expect("registered providers must declare a runtime");
+        let provider_name = descriptor.name;
+        let auth_kind = descriptor.auth_kind;
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 
@@ -214,34 +216,20 @@ impl ProviderBuilder {
                     endpoint,
                 )?))
             }
-            (ProviderRuntime::Moonshot, ProviderCredential::OpenAiCompatible(auth)) => {
+            (
+                ProviderRuntime::OpenAiCompatible {
+                    dialect,
+                    default_api_base,
+                },
+                ProviderCredential::OpenAiCompatible(auth),
+            ) if compatible_auth_matches_kind(&auth, auth_kind) => {
                 Ok(Arc::new(OpenAiCompatibleProvider::new(
                     client,
-                    "moonshot",
+                    provider_name,
                     self.options.model,
-                    OpenAiCompatibleDialect::Moonshot,
+                    dialect,
                     auth,
-                    endpoint.unwrap_or_else(|| MOONSHOT_API_BASE.into()),
-                )))
-            }
-            (ProviderRuntime::OpenRouter, ProviderCredential::OpenAiCompatible(auth)) => {
-                Ok(Arc::new(OpenAiCompatibleProvider::new(
-                    client,
-                    "openrouter",
-                    self.options.model,
-                    OpenAiCompatibleDialect::OpenRouter,
-                    auth,
-                    endpoint.unwrap_or_else(|| OPENROUTER_API_BASE.into()),
-                )))
-            }
-            (ProviderRuntime::KimiCode, ProviderCredential::OpenAiCompatible(auth)) => {
-                Ok(Arc::new(OpenAiCompatibleProvider::new(
-                    client,
-                    "kimi-code",
-                    self.options.model,
-                    OpenAiCompatibleDialect::KimiCode,
-                    auth,
-                    endpoint.unwrap_or_else(|| KIMI_CODE_API_BASE.into()),
+                    endpoint.unwrap_or_else(|| default_api_base.into()),
                 )))
             }
             (ProviderRuntime::Xai { .. }, ProviderCredential::Xai(auth)) => {
@@ -264,6 +252,18 @@ impl ProviderBuilder {
             ))),
         }
     }
+}
+
+fn compatible_auth_matches_kind(auth: &CompatibleAuth, kind: ProviderAuthKind) -> bool {
+    matches!(
+        (auth, kind),
+        (CompatibleAuth::None, ProviderAuthKind::None)
+            | (CompatibleAuth::ApiKey(_), ProviderAuthKind::ApiKey { .. })
+            | (
+                CompatibleAuth::KimiOAuth(_),
+                ProviderAuthKind::KimiOAuth { .. }
+            )
+    )
 }
 
 fn auth_matches_mode(auth: &Auth, mode: AuthMode) -> bool {

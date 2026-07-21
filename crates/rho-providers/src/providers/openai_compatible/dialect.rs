@@ -3,7 +3,8 @@ use serde_json::Value;
 use crate::protocol::openai_chat::OpenAiTool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OpenAiCompatibleDialect {
+pub enum OpenAiCompatibleDialect {
+    Standard,
     OpenRouter,
     Moonshot,
     KimiCode,
@@ -12,7 +13,7 @@ pub(crate) enum OpenAiCompatibleDialect {
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         match self {
-            Self::OpenRouter => tool,
+            Self::Standard | Self::OpenRouter => tool,
             Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(&mut tool.function.parameters);
                 tool

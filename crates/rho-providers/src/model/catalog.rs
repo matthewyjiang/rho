@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     model::provider_models,
-    provider::{self, ProviderModelSource},
+    provider::{self, ProviderAuthKind, ProviderModelSource},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +132,7 @@ pub fn login_group(id: &str) -> Option<LoginGroup> {
 pub fn login_targets() -> Vec<LoginTarget> {
     provider::providers()
         .iter()
+        .filter(|provider| provider.auth_kind != ProviderAuthKind::None)
         .map(|provider| LoginTarget {
             provider: provider.name.into(),
             auth: provider.auth.into(),
@@ -590,6 +591,7 @@ mod tests {
         let google = login_group("google").expect("Google login group");
         assert_eq!(google.methods.len(), 1);
         assert_eq!(google.methods[0].target.provider, "google");
+        assert!(login_target_for_provider("ollama").is_none());
         assert!(login_target_for_provider("api-key").is_none());
         assert!(login_target_for_provider("codex").is_none());
         assert!(login_target_for_provider("anthropic-api-key").is_none());

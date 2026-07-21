@@ -49,3 +49,22 @@ fn converts_application_config_without_credentials_or_side_effects() {
         }
     );
 }
+
+#[test]
+fn passes_configured_ollama_base_to_provider_build_options() {
+    let mut config = Config {
+        provider: "ollama".into(),
+        model: "local-model".into(),
+        auth: "none".into(),
+        ..Config::default()
+    };
+    config.providers.ollama.base_url = "http://ollama.internal:22000/v1".parse().unwrap();
+
+    let actual = SdkBootstrapOptions::from_config(&config, Path::new("workspace")).unwrap();
+    let expected = ProviderBuildOptions::new("ollama", "local-model", config.reasoning)
+        .unwrap()
+        .endpoint(config.providers.ollama.base_url.clone())
+        .unwrap();
+
+    assert_eq!(actual.provider, expected);
+}

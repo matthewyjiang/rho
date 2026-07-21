@@ -15,6 +15,7 @@ pub type AuthenticationFuture = Pin<
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthenticationMethod {
+    None,
     ApiKey { entry_label: &'static str },
     OAuth { provider_label: &'static str },
 }
@@ -100,6 +101,7 @@ impl ProviderAuthentication {
         let descriptor = provider::provider_descriptor(provider_name)
             .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_name.into()))?;
         Ok(match descriptor.auth_kind {
+            ProviderAuthKind::None => AuthenticationMethod::None,
             ProviderAuthKind::ApiKey { entry_label, .. } => {
                 AuthenticationMethod::ApiKey { entry_label }
             }
@@ -125,7 +127,7 @@ impl ProviderAuthentication {
         let descriptor = provider::provider_descriptor(provider_name)
             .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_name.into()))?;
         match descriptor.auth_kind {
-            ProviderAuthKind::ApiKey { .. } => {
+            ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
                 Err(AuthenticationError::NotOAuth(provider_name.into()))
             }
             ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await,

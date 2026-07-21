@@ -30,6 +30,7 @@ export default defineConfig({
               { text: 'Anthropic', link: '/providers/anthropic' },
               { text: 'Google Gemini', link: '/providers/google-gemini' },
               { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+              { text: 'Ollama', link: '/providers/ollama' },
               { text: 'OpenRouter', link: '/providers/openrouter' },
               { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
               { text: 'xAI', link: '/providers/xai' }

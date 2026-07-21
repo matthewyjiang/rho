@@ -21,6 +21,7 @@ use crate::{
 };
 
 pub enum CompatibleAuth {
+    None,
     ApiKey(String),
     KimiOAuth(KimiAuthManager),
 }
@@ -186,6 +187,7 @@ impl OpenAiCompatibleProvider {
         >,
     ) -> Result<reqwest::Response, ModelError> {
         let token = match &self.auth {
+            CompatibleAuth::None => return self.send_request(body, None).await,
             CompatibleAuth::ApiKey(key) => key.clone(),
             CompatibleAuth::KimiOAuth(auth) => auth.access_token().await?,
         };
@@ -215,16 +217,26 @@ impl OpenAiCompatibleProvider {
         body: &ChatRequest,
         token: &str,
     ) -> Result<reqwest::Response, ModelError> {
-        Ok(self
+        self.send_request(body, Some(token)).await
+    }
+
+    async fn send_request(
+        &self,
+        body: &ChatRequest,
+        bearer_token: Option<&str>,
+    ) -> Result<reqwest::Response, ModelError> {
+        let request = self
             .client
             .post(format!(
                 "{}/chat/completions",
                 self.api_base.trim_end_matches('/')
             ))
-            .bearer_auth(token)
-            .json(body)
-            .send()
-            .await?)
+            .json(body);
+        let request = match bearer_token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        Ok(request.send().await?)
     }
 }
 

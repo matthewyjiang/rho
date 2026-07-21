@@ -117,7 +117,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Providers",
-                "Log in to providers, log out, and refresh cached model lists.",
+                "Manage provider access and refresh cached model lists.",
                 None,
                 PROVIDERS_CATEGORY_VALUE,
             ),
@@ -473,7 +473,7 @@ impl App {
         let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
-                "no cached API models. use Config > Refresh model lists after signing in.".into(),
+                "no cached provider models. use Config > Refresh model lists.".into(),
             ));
             self.status = "config".into();
         } else {
@@ -493,7 +493,8 @@ impl App {
         );
         if picker.items.is_empty() {
             self.insert_entry(&Entry::Notice(
-                "no cached API models. refresh model lists after the current turn ends.".into(),
+                "no cached provider models. refresh model lists after the current turn ends."
+                    .into(),
             ));
             self.status = "running".into();
         } else {

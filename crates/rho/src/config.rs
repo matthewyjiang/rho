@@ -13,8 +13,17 @@ use {
     },
     rho_providers::model::catalog,
     rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
+    rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
 };
+
+#[path = "provider_config.rs"]
+mod provider_config;
+
+pub(crate) use provider_config::ProviderConfigs;
+#[cfg(test)]
+use provider_config::DEFAULT_OLLAMA_BASE_URL;
+use provider_config::{PartialProviderConfigs, PersistedProviderConfigs};
 
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
 
@@ -55,10 +64,20 @@ pub struct Config {
     pub inline_shell: String,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
+    pub(crate) providers: ProviderConfigs,
 }
 
 pub(crate) fn default_inline_shell() -> String {
     if cfg!(windows) { "powershell" } else { "bash" }.into()
+}
+
+fn inferred_provider_auth(provider: &str, current_provider: &str, current_auth: &str) -> String {
+    if provider == current_provider {
+        return current_auth.into();
+    }
+    provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.auth.into())
+        .unwrap_or_else(|| current_auth.into())
 }
 
 impl Default for Config {
@@ -87,6 +106,7 @@ impl Default for Config {
             inline_shell: default_inline_shell(),
             keybindings: Keybindings::default(),
             prompt_templates: Default::default(),
+            providers: ProviderConfigs::default(),
         }
     }
 }
@@ -299,6 +319,7 @@ struct GroupedConfig<'a> {
     behavior: BehaviorConfig<'a>,
     keybindings: &'a Keybindings,
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
+    providers: PersistedProviderConfigs<'a>,
 }
 
 #[derive(Serialize)]
@@ -412,6 +433,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             },
             keybindings: &config.keybindings,
             prompt_templates: &config.prompt_templates,
+            providers: PersistedProviderConfigs::from(&config.providers),
         }
     }
 }
@@ -553,13 +575,7 @@ impl Config {
                 let auth = group
                     .auth
                     .or_else(|| legacy_title_auth.clone())
-                    .or_else(|| {
-                        (provider != cfg.provider)
-                            .then(|| catalog::login_target_for_provider(&provider))
-                            .flatten()
-                            .map(|login| login.auth)
-                    })
-                    .unwrap_or_else(|| cfg.auth.clone());
+                    .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
                 Some(InternalAgentModelConfig {
                     provider,
                     model: group
@@ -574,17 +590,21 @@ impl Config {
                 (legacy_title_provider.is_some()
                     || legacy_title_model.is_some()
                     || legacy_title_auth.is_some())
-                .then(|| InternalAgentModelConfig {
-                    provider: legacy_title_provider
+                .then(|| {
+                    let provider = legacy_title_provider
                         .clone()
-                        .unwrap_or_else(|| cfg.provider.clone()),
-                    model: legacy_title_model
-                        .clone()
-                        .unwrap_or_else(|| cfg.model.clone()),
-                    auth: legacy_title_auth
-                        .clone()
-                        .unwrap_or_else(|| cfg.auth.clone()),
-                    model_alias: None,
+                        .unwrap_or_else(|| cfg.provider.clone());
+                    let auth = legacy_title_auth.clone().unwrap_or_else(|| {
+                        inferred_provider_auth(&provider, &cfg.provider, &cfg.auth)
+                    });
+                    InternalAgentModelConfig {
+                        provider,
+                        model: legacy_title_model
+                            .clone()
+                            .unwrap_or_else(|| cfg.model.clone()),
+                        auth,
+                        model_alias: None,
+                    }
                 })
             });
         cfg.internal_agents = file
@@ -595,13 +615,7 @@ impl Config {
                 let provider = group.provider.unwrap_or_else(|| cfg.provider.clone());
                 let auth = group
                     .auth
-                    .or_else(|| {
-                        (provider != cfg.provider)
-                            .then(|| catalog::login_target_for_provider(&provider))
-                            .flatten()
-                            .map(|login| login.auth)
-                    })
-                    .unwrap_or_else(|| cfg.auth.clone());
+                    .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
                 (
                     id,
                     InternalAgentModelConfig {
@@ -632,6 +646,9 @@ impl Config {
             if let Some(secret) = group.brave_api_key.and_then(non_empty_secret) {
                 cfg.legacy_web_search_credentials.brave = Some(secret);
             }
+        }
+        if let Some(providers) = file.providers {
+            cfg.providers.apply(providers)?;
         }
         if let Some(group) = file.behavior {
             cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
@@ -698,8 +715,8 @@ impl Config {
             .as_deref()
             .filter(|provider| *provider != self.provider)
         {
-            if let Some(login) = catalog::login_target_for_provider(provider) {
-                self.auth = login.auth;
+            if let Some(descriptor) = provider::provider_descriptor(provider) {
+                self.auth = descriptor.auth.into();
             }
             self.provider = provider.to_string();
         }
@@ -716,8 +733,8 @@ impl Config {
             selection.model_alias = resolved.alias;
             if let Some(provider) = resolved.provider {
                 if selection.provider != provider {
-                    if let Some(login) = catalog::login_target_for_provider(&provider) {
-                        selection.auth = login.auth;
+                    if let Some(descriptor) = provider::provider_descriptor(&provider) {
+                        selection.auth = descriptor.auth.into();
                     }
                     selection.provider = provider;
                 }
@@ -883,6 +900,7 @@ struct PartialConfig {
     behavior: Option<PartialBehaviorConfig>,
     keybindings: Option<Keybindings>,
     prompt_templates: Option<crate::prompt_templates::PromptTemplates>,
+    providers: Option<PartialProviderConfigs>,
 }
 
 #[derive(Deserialize)]

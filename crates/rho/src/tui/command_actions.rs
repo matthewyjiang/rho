@@ -37,7 +37,7 @@ impl App {
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
-            CommandId::Doctor => self.execute_doctor_command(),
+            CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
         }

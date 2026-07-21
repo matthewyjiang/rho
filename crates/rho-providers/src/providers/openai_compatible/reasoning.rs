@@ -122,6 +122,7 @@ impl OpenAiCompatibleDialect {
         reasoning: ReasoningLevel,
     ) -> ReasoningFields {
         match self {
+            Self::Standard => ReasoningFields::default(),
             Self::OpenRouter => ReasoningFields {
                 reasoning: openrouter
                     .and_then(|profile| profile.effort(reasoning))

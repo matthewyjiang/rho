@@ -53,8 +53,11 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     use super::{ProviderAuthKind, ProviderId};
 
     let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
-    assert_eq!(openai.auth_kind.env_var(), "OPENAI_API_KEY");
-    assert_eq!(openai.auth_kind.account(), super::OPENAI_API_KEY_ACCOUNT);
+    assert_eq!(openai.auth_kind.env_var(), Some("OPENAI_API_KEY"));
+    assert_eq!(
+        openai.auth_kind.account(),
+        Some(super::OPENAI_API_KEY_ACCOUNT)
+    );
     assert!(matches!(
         openai.auth_kind,
         ProviderAuthKind::ApiKey {
@@ -64,8 +67,8 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     ));
 
     let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex);
-    assert_eq!(codex.auth_kind.env_var(), "CODEX_ACCESS_TOKEN");
-    assert_eq!(codex.auth_kind.account(), super::CODEX_TOKENS_ACCOUNT);
+    assert_eq!(codex.auth_kind.env_var(), Some("CODEX_ACCESS_TOKEN"));
+    assert_eq!(codex.auth_kind.account(), Some(super::CODEX_TOKENS_ACCOUNT));
     assert!(matches!(
         codex.auth_kind,
         ProviderAuthKind::CodexOAuth {
@@ -76,8 +79,11 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
 
     let google = super::provider_descriptor_by_id(ProviderId::Google);
     assert_eq!(google.auth, "google-api-key");
-    assert_eq!(google.auth_kind.env_var(), "GEMINI_API_KEY");
-    assert_eq!(google.auth_kind.account(), super::GOOGLE_API_KEY_ACCOUNT);
+    assert_eq!(google.auth_kind.env_var(), Some("GEMINI_API_KEY"));
+    assert_eq!(
+        google.auth_kind.account(),
+        Some(super::GOOGLE_API_KEY_ACCOUNT)
+    );
     assert!(matches!(
         google.auth_kind,
         ProviderAuthKind::ApiKey {
@@ -88,24 +94,24 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
 
     let moonshot = super::provider_descriptor_by_id(ProviderId::Moonshot);
     assert_eq!(moonshot.auth, "moonshot-api-key");
-    assert_eq!(moonshot.auth_kind.env_var(), "MOONSHOT_API_KEY");
+    assert_eq!(moonshot.auth_kind.env_var(), Some("MOONSHOT_API_KEY"));
     assert_eq!(
         moonshot.auth_kind.account(),
-        super::MOONSHOT_API_KEY_ACCOUNT
+        Some(super::MOONSHOT_API_KEY_ACCOUNT)
     );
 
     let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
     assert_eq!(openrouter.auth, "openrouter-api-key");
-    assert_eq!(openrouter.auth_kind.env_var(), "OPENROUTER_API_KEY");
+    assert_eq!(openrouter.auth_kind.env_var(), Some("OPENROUTER_API_KEY"));
     assert_eq!(
         openrouter.auth_kind.account(),
-        super::OPENROUTER_API_KEY_ACCOUNT
+        Some(super::OPENROUTER_API_KEY_ACCOUNT)
     );
 
     let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode);
     assert_eq!(kimi.auth, "kimi-oauth");
-    assert_eq!(kimi.auth_kind.env_var(), "KIMI_ACCESS_TOKEN");
-    assert_eq!(kimi.auth_kind.account(), super::KIMI_TOKENS_ACCOUNT);
+    assert_eq!(kimi.auth_kind.env_var(), Some("KIMI_ACCESS_TOKEN"));
+    assert_eq!(kimi.auth_kind.account(), Some(super::KIMI_TOKENS_ACCOUNT));
     assert!(matches!(
         kimi.auth_kind,
         ProviderAuthKind::KimiOAuth {
@@ -116,8 +122,8 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
 
     let xai = super::provider_descriptor_by_id(ProviderId::Xai);
     assert_eq!(xai.auth, "xai-api-key");
-    assert_eq!(xai.auth_kind.env_var(), "XAI_API_KEY");
-    assert_eq!(xai.auth_kind.account(), super::XAI_API_KEY_ACCOUNT);
+    assert_eq!(xai.auth_kind.env_var(), Some("XAI_API_KEY"));
+    assert_eq!(xai.auth_kind.account(), Some(super::XAI_API_KEY_ACCOUNT));
     assert!(matches!(
         xai.auth_kind,
         ProviderAuthKind::ApiKey {
@@ -127,8 +133,11 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     ));
 
     let xai_oauth = super::provider_descriptor_by_id(ProviderId::XaiOAuth);
-    assert_eq!(xai_oauth.auth_kind.env_var(), "XAI_ACCESS_TOKEN");
-    assert_eq!(xai_oauth.auth_kind.account(), super::XAI_TOKENS_ACCOUNT);
+    assert_eq!(xai_oauth.auth_kind.env_var(), Some("XAI_ACCESS_TOKEN"));
+    assert_eq!(
+        xai_oauth.auth_kind.account(),
+        Some(super::XAI_TOKENS_ACCOUNT)
+    );
     assert!(matches!(
         xai_oauth.auth_kind,
         ProviderAuthKind::XaiOAuth {
@@ -136,4 +145,24 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
             ..
         }
     ));
+}
+
+#[test]
+fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
+    use super::{ProviderAuthKind, ProviderId, ProviderModelRefreshKind, ProviderModelSource};
+
+    let ollama = super::provider_descriptor_by_id(ProviderId::Ollama);
+    assert_eq!(ollama.name, "ollama");
+    assert_eq!(ollama.display_name, "Ollama");
+    assert_eq!(ollama.auth_kind, ProviderAuthKind::None);
+    assert_eq!(ollama.auth_kind.env_var(), None);
+    assert_eq!(ollama.auth_kind.account(), None);
+    assert_eq!(
+        ollama.model_source,
+        ProviderModelSource::CachedProviderModels
+    );
+    assert_eq!(
+        ollama.model_refresh,
+        Some(ProviderModelRefreshKind::OpenAiCompatible)
+    );
 }
