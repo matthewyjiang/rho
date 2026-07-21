@@ -57,6 +57,8 @@ pub enum ModelError {
     StreamFailedAfterOutput { message: String },
     #[error("provider returned invalid response: {0}")]
     InvalidResponse(String),
+    #[error("provider returned retryable invalid response {error_type}: {message}")]
+    RetryableInvalidResponse { error_type: String, message: String },
     #[error("provider reported {error_type}: {message}")]
     ProviderReported {
         kind: ProviderReportedErrorKind,

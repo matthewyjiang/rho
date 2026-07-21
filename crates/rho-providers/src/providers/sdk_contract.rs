@@ -67,6 +67,15 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             Retryability::Permanent,
         )
         .with_diagnostic(sanitize_diagnostic(&details)),
+        ModelError::RetryableInvalidResponse {
+            error_type,
+            message,
+        } => ProviderError::new(
+            ProviderErrorKind::InvalidResponse,
+            "provider returned a temporary invalid response",
+            Retryability::Retryable,
+        )
+        .with_diagnostic(sanitize_diagnostic(&format!("{error_type}: {message}"))),
         ModelError::ProviderReported {
             kind,
             error_type,
