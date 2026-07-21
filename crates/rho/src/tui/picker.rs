@@ -38,6 +38,7 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
+    pub(super) confirm_verb: Option<String>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
 }
@@ -119,6 +120,7 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
+            confirm_verb: None,
             parent: None,
             matches: RefCell::default(),
         }
@@ -126,6 +128,11 @@ impl UiPicker {
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
+        self
+    }
+
+    pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
+        self.confirm_verb = Some(verb.into());
         self
     }
 

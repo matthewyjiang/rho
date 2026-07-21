@@ -13,6 +13,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match value {
+            value if config_picker::is_category(value) => self.open_config_category(value),
             config_picker::CONVERSATION_MODEL_VALUE => {
                 self.open_config_conversation_model_picker();
                 Ok(())
@@ -109,17 +110,6 @@ impl App {
                 self.open_child_picker(child);
                 Ok(())
             }
-            config_picker::WEB_SEARCH_BACK_VALUE => {
-                if !self.pop_picker_level() {
-                    let config = self.info.services.config_repository.load()?;
-                    self.composer = ComposerMode::Picker(config_picker::config_picker(
-                        &self.info.runtime,
-                        &config,
-                    ));
-                    self.status = "config".into();
-                }
-                Ok(())
-            }
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)
@@ -190,10 +180,31 @@ impl App {
         filter: String,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let mut picker = config_picker::config_picker(&self.info.runtime, &config);
+        let mut root = config_picker::config_picker(&self.info.runtime, &config);
+        let Some(category) = config_picker::category_for_setting(selected_value) else {
+            Self::restore_picker_position(&mut root, selected_value, filter);
+            self.composer = ComposerMode::Picker(root);
+            self.status = "config".into();
+            return Ok(());
+        };
+
+        Self::restore_picker_position(&mut root, category, String::new());
+        let mut picker = config_picker::category_picker(category, &self.info.runtime, &config)
+            .expect("known config category must have a picker")
+            .with_parent(root);
         Self::restore_picker_position(&mut picker, selected_value, filter);
+        self.status = picker.title.clone();
         self.composer = ComposerMode::Picker(picker);
-        self.status = "config".into();
+        Ok(())
+    }
+
+    pub(super) fn open_config_category(&mut self, category: &str) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let Some(picker) = config_picker::category_picker(category, &self.info.runtime, &config)
+        else {
+            return Ok(());
+        };
+        self.open_child_picker(picker);
         Ok(())
     }
 

@@ -9,6 +9,12 @@ use {
         load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
     },
 };
+pub(super) const MODELS_CATEGORY_VALUE: &str = "config_category:models";
+pub(super) const AGENT_CATEGORY_VALUE: &str = "config_category:agent";
+pub(super) const CONTEXT_CATEGORY_VALUE: &str = "config_category:context";
+pub(super) const TOOLS_CATEGORY_VALUE: &str = "config_category:tools";
+pub(super) const PROVIDERS_CATEGORY_VALUE: &str = "config_category:providers";
+pub(super) const UPDATES_CATEGORY_VALUE: &str = "config_category:updates";
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const TITLE_MODEL_VALUE: &str = "title_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
@@ -28,11 +34,36 @@ pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
 pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
 pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
-pub(super) const WEB_SEARCH_BACK_VALUE: &str = "web_search_back";
 pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
+
+fn badge(text: impl Into<String>) -> PickerBadge {
+    PickerBadge {
+        text: text.into(),
+        tone: PickerBadgeTone::Selected,
+    }
+}
+
+fn item(
+    label: &str,
+    detail: impl Into<String>,
+    badge_text: Option<String>,
+    value: &str,
+) -> PickerItem {
+    PickerItem {
+        label: label.into(),
+        detail: Some(detail.into()),
+        preview: None,
+        badge: badge_text.map(badge),
+        value: value.into(),
+    }
+}
+
+fn on_off(value: bool) -> String {
+    if value { "on" } else { "off" }.into()
+}
 
 /// Badge for the conversation model, shown as `alias → provider/model` when
 /// the selection came from a user-defined alias so the mapping is never hidden.
@@ -47,222 +78,261 @@ fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> 
 }
 
 pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
-    let reasoning_capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
-        &info.provider,
-        &info.model,
-    );
-    let mut items = vec![
-            PickerItem {
-                label: "Conversation model".into(),
-                detail: Some("Model used for conversation turns. Enter to choose a model.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: conversation_model_badge(info, config),
-                    tone: PickerBadgeTone::Selected,
+    UiPicker::new(
+        "Config · saves automatically",
+        "type to search settings, enter open, esc close",
+        vec![
+            item(
+                "Models & reasoning",
+                "Conversation model, session title model, reasoning level, and reasoning output.",
+                Some(info.model.clone()),
+                MODELS_CATEGORY_VALUE,
+            ),
+            item(
+                "Agent behavior",
+                "Permission mode and delegation.",
+                Some(format!(
+                    "permissions: {}",
+                    info.permission_mode.as_str()
+                )),
+                AGENT_CATEGORY_VALUE,
+            ),
+            item(
+                "Context & limits",
+                "Auto compact, compact threshold, compact target, maximum output bytes, and tool output lines.",
+                Some(if config.auto_compact {
+                    format!("compacts at {}%", config.compact_threshold_percent)
+                } else {
+                    "auto compaction off".into()
                 }),
-                value: CONVERSATION_MODEL_VALUE.into(),
-            },
-            PickerItem {
-                label: "Session title model".into(),
-                detail: Some("Model used to generate session titles. Enter to choose a model.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: format!(
+                CONTEXT_CATEGORY_VALUE,
+            ),
+            item(
+                "Tools",
+                "Inline shell, Web search provider, and Web search API keys.",
+                Some(format!(
+                    "{} shell · search {}",
+                    config.inline_shell, config.web_search_provider
+                )),
+                TOOLS_CATEGORY_VALUE,
+            ),
+            item(
+                "Providers",
+                "Log in to providers, log out, and refresh cached model lists.",
+                None,
+                PROVIDERS_CATEGORY_VALUE,
+            ),
+            item(
+                "Updates",
+                "Check for Rho updates at startup.",
+                Some(format!(
+                    "startup checks {}",
+                    on_off(config.check_for_updates)
+                )),
+                UPDATES_CATEGORY_VALUE,
+            ),
+        ],
+        PickerAction::Config,
+    )
+    .with_confirm_verb("open")
+}
+
+pub(super) fn category_picker(
+    category: &str,
+    info: &super::RuntimeModelView,
+    config: &Config,
+) -> Option<UiPicker> {
+    let (title, items) = match category {
+        MODELS_CATEGORY_VALUE => {
+            let capabilities =
+                rho_providers::model::models_dev::current_reasoning_capabilities(
+                    &info.provider,
+                    &info.model,
+                );
+            let mut items = vec![
+                item(
+                    "Conversation model",
+                    "Model used for conversation turns. Changes apply to the next turn.",
+                    Some(conversation_model_badge(info, config)),
+                    CONVERSATION_MODEL_VALUE,
+                ),
+                item(
+                    "Session title model",
+                    "Model used to generate session titles.",
+                    Some(format!(
                         "{}/{}",
                         info.title_provider.as_deref().unwrap_or(&info.provider),
                         info.title_model.as_deref().unwrap_or(&info.model)
-                    ),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: TITLE_MODEL_VALUE.into(),
-            },
-            PickerItem {
-                label: "Refresh model lists".into(),
-                detail: Some("Refresh cached models from configured API providers.".into()),
-                preview: None,
-                badge: None,
-                value: REFRESH_MODEL_LIST_VALUE.into(),
-            },
-            PickerItem {
-                label: "Log in to provider".into(),
-                detail: Some("Add or replace provider credentials.".into()),
-                preview: None,
-                badge: None,
-                value: PROVIDER_LOGIN_VALUE.into(),
-            },
-            PickerItem {
-                label: "Log out of provider".into(),
-                detail: Some("Delete stored provider credentials.".into()),
-                preview: None,
-                badge: None,
-                value: PROVIDER_LOGOUT_VALUE.into(),
-            },
-            PickerItem {
-                label: "Permission mode".into(),
-                detail: Some(permission_mode_description(info.permission_mode).into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: info.permission_mode.label().into(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: PERMISSION_MODE_VALUE.into(),
-            },
-            PickerItem {
-                label: "Reasoning".into(),
-                detail: Some(format!(
-                    "Controls model reasoning. Current: {}; Enter cycles to {}.",
-                    info.reasoning,
-                    reasoning_capabilities.next_level(info.reasoning)
-                )),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: info.reasoning.to_string(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: REASONING_VALUE.into(),
-            },
-            PickerItem {
-                label: "Show reasoning output".into(),
-                detail: Some(
-                    "Controls whether model reasoning text is shown in the TUI. Applies next turn."
-                        .into(),
+                    )),
+                    TITLE_MODEL_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: if info.show_reasoning_output {
+                item(
+                    "Reasoning",
+                    format!(
+                        "Controls model reasoning. Enter cycles to {}.",
+                        capabilities.next_level(info.reasoning)
+                    ),
+                    Some(info.reasoning.to_string()),
+                    REASONING_VALUE,
+                ),
+                item(
+                    "Show reasoning output",
+                    "Show model reasoning text in the TUI. Applies to the next turn. Space toggles.",
+                    Some(if info.show_reasoning_output {
                         "shown".into()
                     } else {
                         "hidden".into()
-                    },
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: SHOW_REASONING_OUTPUT_VALUE.into(),
-            },
-            PickerItem {
-                label: "Check for updates".into(),
-                detail: Some("Checks GitHub releases at startup and shows an update notice in the header when available.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: if config.check_for_updates {
-                        "on".into()
-                    } else {
-                        "off".into()
-                    },
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: CHECK_FOR_UPDATES_VALUE.into(),
-            },
-            PickerItem {
-                label: "Enable delegation".into(),
-                detail: Some(
-                    "Controls whether agent tools are available. Applies next session.".into(),
+                    }),
+                    SHOW_REASONING_OUTPUT_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: if config.enable_subagents {
-                        "on".into()
-                    } else {
-                        "off".into()
-                    },
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: ENABLE_SUBAGENTS_VALUE.into(),
-            },
-            PickerItem {
-                label: "Auto compact".into(),
-                detail: Some(
-                    "Summarizes older model context before the effective context limit. Transcript history is preserved."
-                        .into(),
+            ];
+            if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+                items.retain(|item| item.value != REASONING_VALUE);
+            }
+            ("Config / Models & reasoning", items)
+        }
+        AGENT_CATEGORY_VALUE => (
+            "Config / Agent behavior",
+            vec![
+                item(
+                    "Permission mode",
+                    permission_mode_description(info.permission_mode),
+                    Some(info.permission_mode.label().into()),
+                    PERMISSION_MODE_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: if config.auto_compact {
-                        "on".into()
-                    } else {
-                        "off".into()
-                    },
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: AUTO_COMPACT_VALUE.into(),
-            },
-            PickerItem {
-                label: "Compact threshold".into(),
-                detail: Some(
-                    "Percent of the effective context window that triggers auto compaction."
-                        .into(),
+                item(
+                    "Delegation",
+                    "Make agent tools available. Changes apply to the next session. Space toggles.",
+                    Some(on_off(config.enable_subagents)),
+                    ENABLE_SUBAGENTS_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: format!("{}%", config.compact_threshold_percent),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: COMPACT_THRESHOLD_PERCENT_VALUE.into(),
-            },
-            PickerItem {
-                label: "Compact target".into(),
-                detail: Some(
-                    "Post-compaction target percent. The recent verbatim tail is chosen by token budget."
-                        .into(),
+            ],
+        ),
+        CONTEXT_CATEGORY_VALUE => (
+            "Config / Context & limits",
+            vec![
+                item(
+                    "Auto compact",
+                    "Summarize older context before the effective context limit. Space toggles.",
+                    Some(on_off(config.auto_compact)),
+                    AUTO_COMPACT_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: format!("{}%", config.compact_target_percent),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: COMPACT_TARGET_PERCENT_VALUE.into(),
-            },
-            PickerItem {
-                label: "Max output bytes".into(),
-                detail: Some(
-                    "Maximum tool output retained in context. Saved for next session.".into(),
+                item(
+                    "Compact threshold",
+                    "Percent of the effective context window that triggers auto compaction.",
+                    Some(format!("{}%", config.compact_threshold_percent)),
+                    COMPACT_THRESHOLD_PERCENT_VALUE,
                 ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: config.max_output_bytes.to_string(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: MAX_OUTPUT_BYTES_VALUE.into(),
-            },
-            PickerItem {
-                label: "Max tool output lines".into(),
-                detail: Some("Maximum collapsed tool output lines shown in the TUI.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: config.max_tool_output_lines.to_string(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: MAX_TOOL_OUTPUT_LINES_VALUE.into(),
-            },
-            PickerItem {
-                label: "Inline shell".into(),
-                detail: Some("Shell used by ! and !! commands. Enter to choose from shells available on PATH.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: config.inline_shell.clone(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: INLINE_SHELL_VALUE.into(),
-            },
-            PickerItem {
-                label: "Web search".into(),
-                detail: Some("Configure web_search backend and API keys.".into()),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: config.web_search_provider.to_string(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: WEB_SEARCH_VALUE.into(),
-            },
-        ];
-    if reasoning_capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
-        items.retain(|item| item.value != REASONING_VALUE);
-    }
-    UiPicker::new(
-        "Config",
-        "type regex filter, enter change, esc cancel",
+                item(
+                    "Compact target",
+                    "Post-compaction target percent. The recent verbatim tail uses the remaining token budget.",
+                    Some(format!("{}%", config.compact_target_percent)),
+                    COMPACT_TARGET_PERCENT_VALUE,
+                ),
+                item(
+                    "Max output bytes",
+                    "Maximum tool output retained in context. Changes apply to the next session.",
+                    Some(config.max_output_bytes.to_string()),
+                    MAX_OUTPUT_BYTES_VALUE,
+                ),
+                item(
+                    "Max tool output lines",
+                    "Maximum collapsed tool output lines shown in the TUI.",
+                    Some(config.max_tool_output_lines.to_string()),
+                    MAX_TOOL_OUTPUT_LINES_VALUE,
+                ),
+            ],
+        ),
+        TOOLS_CATEGORY_VALUE => (
+            "Config / Tools",
+            vec![
+                item(
+                    "Inline shell",
+                    "Shell used by ! and !! commands.",
+                    Some(config.inline_shell.clone()),
+                    INLINE_SHELL_VALUE,
+                ),
+                item(
+                    "Web search",
+                    "Configure the web_search backend and API keys.",
+                    Some(config.web_search_provider.to_string()),
+                    WEB_SEARCH_VALUE,
+                ),
+            ],
+        ),
+        PROVIDERS_CATEGORY_VALUE => (
+            "Config / Providers",
+            vec![
+                item(
+                    "Log in to provider",
+                    "Add or replace provider credentials.",
+                    None,
+                    PROVIDER_LOGIN_VALUE,
+                ),
+                item(
+                    "Log out of provider",
+                    "Delete stored provider credentials.",
+                    None,
+                    PROVIDER_LOGOUT_VALUE,
+                ),
+                item(
+                    "Refresh model lists",
+                    "Refresh cached models from configured API providers.",
+                    Some("run now".into()),
+                    REFRESH_MODEL_LIST_VALUE,
+                ),
+            ],
+        ),
+        UPDATES_CATEGORY_VALUE => (
+            "Config / Updates",
+            vec![item(
+                "Check for updates",
+                "Check GitHub releases at startup and show an update notice when available. Space toggles.",
+                Some(on_off(config.check_for_updates)),
+                CHECK_FOR_UPDATES_VALUE,
+            )],
+        ),
+        _ => return None,
+    };
+    Some(UiPicker::new(
+        title,
+        "type to search, enter change, esc back",
         items,
         PickerAction::Config,
+    ))
+}
+
+pub(super) fn is_category(value: &str) -> bool {
+    matches!(
+        value,
+        MODELS_CATEGORY_VALUE
+            | AGENT_CATEGORY_VALUE
+            | CONTEXT_CATEGORY_VALUE
+            | TOOLS_CATEGORY_VALUE
+            | PROVIDERS_CATEGORY_VALUE
+            | UPDATES_CATEGORY_VALUE
     )
+}
+
+pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
+    match value {
+        CONVERSATION_MODEL_VALUE
+        | TITLE_MODEL_VALUE
+        | REASONING_VALUE
+        | SHOW_REASONING_OUTPUT_VALUE => Some(MODELS_CATEGORY_VALUE),
+        PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE => Some(AGENT_CATEGORY_VALUE),
+        AUTO_COMPACT_VALUE
+        | COMPACT_THRESHOLD_PERCENT_VALUE
+        | COMPACT_TARGET_PERCENT_VALUE
+        | MAX_OUTPUT_BYTES_VALUE
+        | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
+        INLINE_SHELL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
+        PROVIDER_LOGIN_VALUE | PROVIDER_LOGOUT_VALUE | REFRESH_MODEL_LIST_VALUE => {
+            Some(PROVIDERS_CATEGORY_VALUE)
+        }
+        CHECK_FOR_UPDATES_VALUE => Some(UPDATES_CATEGORY_VALUE),
+        _ => None,
+    }
 }
 
 pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
@@ -327,13 +397,6 @@ pub(super) fn web_search_config_picker(
         "Web search config",
         "type regex filter, enter change, esc back",
         vec![
-            PickerItem {
-                label: "Back to config".into(),
-                detail: Some("Return to the main config menu.".into()),
-                preview: None,
-                badge: None,
-                value: WEB_SEARCH_BACK_VALUE.into(),
-            },
             PickerItem {
                 label: "Provider".into(),
                 detail: Some(format!(
