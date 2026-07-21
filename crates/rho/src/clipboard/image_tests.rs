@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    available_image_helpers_with, read_clipboard_image_for_session,
+    available_image_helpers_with, platform_image_helpers, read_clipboard_image_for_session,
     select_preferred_image_mime_type, ClipboardImageError,
 };
 use crate::clipboard::SessionKind;
@@ -30,9 +30,9 @@ fn wsl_sessions_include_powershell_when_present() {
 }
 
 #[test]
-fn local_sessions_do_not_claim_wsl_powershell() {
+fn local_sessions_report_platform_helpers() {
     let helpers = available_image_helpers_with(SessionKind::Local, |_| true);
-    assert!(!helpers.contains(&"powershell.exe"));
+    assert_eq!(helpers, platform_image_helpers());
 }
 
 #[test]

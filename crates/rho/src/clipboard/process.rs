@@ -3,18 +3,14 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-/// Returns true when the OS can resolve and spawn `command`.
+/// Returns true when `command` resolves to an executable on `PATH`.
 ///
-/// Exit status is ignored: many helpers reject `--help` or return non-zero while
-/// still being installed and usable.
+/// The command is never spawned: some clipboard helpers copy their stdin to the
+/// clipboard regardless of arguments (`clip.exe` ignores `--help` and copies
+/// stdin; `xclip` reads stdin into the primary selection), so executing them to
+/// probe availability would mutate the clipboard.
 pub(super) fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("--help")
-        .output()
-        .is_ok()
+    crate::executable::find_on_path(command).is_some()
 }
 
 pub(super) fn command_output(command: &str, args: &[&str]) -> Option<Vec<u8>> {

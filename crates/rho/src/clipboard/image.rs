@@ -87,7 +87,7 @@ fn platform_image_helpers() -> &'static [&'static str] {
     } else if cfg!(target_os = "macos") {
         &["pngpaste"]
     } else if cfg!(target_os = "windows") {
-        &["powershell"]
+        &["powershell.exe"]
     } else {
         &[]
     }
@@ -151,7 +151,7 @@ fn read_wsl_clipboard_image() -> Option<(Vec<u8>, String)> {
 
 fn read_windows_clipboard_image() -> Option<(Vec<u8>, String)> {
     let tmp_path = env::temp_dir().join(format!("rho-clip-{}.png", uuid::Uuid::new_v4()));
-    let ok = save_windows_clipboard_image_to(tmp_path.clone(), "powershell")?;
+    let ok = save_windows_clipboard_image_to(tmp_path.clone(), "powershell.exe")?;
     if !ok {
         return None;
     }
