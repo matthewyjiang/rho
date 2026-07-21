@@ -364,7 +364,7 @@ impl Theme {
         base.fg(Palette::current().error)
     }
 
-    pub(super) fn limits_block() -> Style {
+    pub(super) fn command_block() -> Style {
         Self::dim_block(Palette::current().neutral_tool_background)
     }
 

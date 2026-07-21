@@ -8,6 +8,7 @@ use super::{
     feed_image::{
         reserve_entry_image_rows, reserve_markdown_image_rows, reserve_optional_image_rows,
     },
+    info_command::runtime_info_lines,
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
@@ -701,6 +702,7 @@ fn render_non_assistant_entry(
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
+        Entry::RuntimeInfo(info) => lines.extend(runtime_info_lines(info, width)),
         Entry::UsageLimits(limits) => lines.extend(usage_limit_lines(limits, width)),
         Entry::Error(text) => {
             push_wrapped_text(lines, text, width, Theme::error(), LineFill::Natural)

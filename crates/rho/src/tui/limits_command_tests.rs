@@ -128,7 +128,7 @@ fn narrow_layout_wraps_reset_instead_of_hiding_it() {
         6,
         43,
         10_000 - 2 * 60 * 60 - 14 * 60,
-        Theme::limits_block(),
+        Theme::command_block(),
     );
     let text = lines
         .iter()

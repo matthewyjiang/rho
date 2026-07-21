@@ -110,7 +110,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Info,
         name: "info",
         usage: "/info",
-        description: "show rho runtime identity",
+        description: "show runtime, usage, and workspace details",
         argument_choices: &[],
     },
     CommandSpec {

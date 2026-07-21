@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::usage_cost::CostSource;
 
 fn input_cost_metadata() -> ModelMetadata {
     ModelMetadata {
@@ -8,6 +9,39 @@ fn input_cost_metadata() -> ModelMetadata {
         }),
         ..Default::default()
     }
+}
+
+#[test]
+fn cumulative_cost_source_follows_live_provider_snapshots() {
+    let mut app = test_app();
+    app.model_metadata = Some(input_cost_metadata());
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
+        input_tokens: Some(100),
+        ..Default::default()
+    }));
+    assert_eq!(
+        app.usage_cost_tracker.cumulative_source(),
+        CostSource::Estimated
+    );
+
+    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
+        input_tokens: Some(200),
+        cost_usd_micros: Some(80),
+        ..Default::default()
+    }));
+    assert_eq!(
+        app.usage_cost_tracker.cumulative_source(),
+        CostSource::ProviderReported
+    );
+    assert_eq!(
+        app.cumulative_usage
+            .as_ref()
+            .and_then(|usage| usage.cost_usd_micros),
+        Some(80)
+    );
 }
 
 #[test]
@@ -23,6 +57,7 @@ fn provider_retry_preserves_usage_from_failed_attempt() {
     app.record_agent_event(ViewModelEvent::ProviderStreamReset);
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(40),
+        cost_usd_micros: Some(40),
         ..Default::default()
     }));
 
@@ -34,6 +69,21 @@ fn provider_retry_preserves_usage_from_failed_attempt() {
             cost_usd_micros: Some(140),
             ..Default::default()
         })
+    );
+    assert_eq!(
+        app.usage_cost_tracker.cumulative_source(),
+        CostSource::Estimated
+    );
+
+    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
+        input_tokens: Some(50),
+        cost_usd_micros: Some(50),
+        ..Default::default()
+    }));
+    assert_eq!(
+        app.usage_cost_tracker.cumulative_source(),
+        CostSource::Estimated
     );
 }
 

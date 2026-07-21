@@ -40,6 +40,7 @@ mod approval;
 mod attachment;
 mod clipboard;
 mod command_actions;
+mod command_block;
 mod command_palette;
 mod composer;
 mod config_actions;
@@ -56,6 +57,7 @@ mod goal;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod goal_command;
 mod history_cache;
+mod info_command;
 mod inline_shell;
 mod keybindings;
 mod limits_command;
@@ -102,7 +104,9 @@ mod text_selection;
 mod theme;
 mod tool_diff;
 mod turn_prompt;
+mod usage_cost;
 mod view;
+mod workspace;
 
 use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
@@ -145,6 +149,7 @@ use terminal_events::TerminalEvents;
 use text_selection::{highlight_selection, render_copy_notice, CopyNotice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
+use usage_cost::{estimated_cost_usd_micros, CostSource, UsageCostTracker};
 
 use {
     crate::app::config_repository::ConfigRepository,
@@ -350,6 +355,7 @@ struct App {
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     usage_limits_client: reqwest::Client,
     cumulative_usage: Option<ModelUsage>,
+    usage_cost_tracker: UsageCostTracker,
     // SDK usage updates are cumulative within a run. These snapshots let the TUI
     // replace active usage while preserving totals from prior runs and steps.
     usage_before_current_run: Option<ModelUsage>,
@@ -529,6 +535,7 @@ enum Entry {
     Reasoning(String),
     Tool(ToolEntry),
     Notice(String),
+    RuntimeInfo(Box<info_command::RuntimeInfo>),
     UsageLimits(crate::usage_limits::ProviderLimits),
     Error(String),
 }
@@ -686,6 +693,7 @@ impl App {
             pending_usage_limits: None,
             usage_limits_client: reqwest::Client::new(),
             cumulative_usage: None,
+            usage_cost_tracker: UsageCostTracker::default(),
             usage_before_current_run: None,
             usage_before_current_step: None,
             usage_before_current_attempt: None,
@@ -3027,20 +3035,6 @@ impl App {
         Ok(())
     }
 
-    fn execute_info_command(&mut self) -> anyhow::Result<()> {
-        let identity = self.info.services.diagnostics.identity();
-        self.insert_entry(&Entry::Notice(format!(
-            "rho {}\nprovider: {}\nmodel: {}\nreasoning: {}\npermission mode: {}",
-            identity.rho_version,
-            identity.provider,
-            identity.model,
-            identity.reasoning,
-            self.info.runtime.permission_mode.as_str()
-        )));
-        self.status = "runtime info".into();
-        Ok(())
-    }
-
     fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         if let Some(pending) = self.pending_tool_call.as_mut() {
             if tool_display_line_count(&pending.display_lines)
@@ -3094,6 +3088,7 @@ impl App {
 
     fn reset_usage(&mut self) {
         self.cumulative_usage = None;
+        self.usage_cost_tracker.reset();
         self.usage_before_current_run = None;
         self.usage_before_current_step = None;
         self.usage_before_current_attempt = None;
@@ -3104,6 +3099,7 @@ impl App {
     fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
             ViewModelEvent::RunStarted => {
+                self.usage_cost_tracker.run_started();
                 self.usage_before_current_run = self.cumulative_usage.clone();
                 self.usage_before_current_step = None;
                 self.usage_before_current_attempt = None;
@@ -3111,6 +3107,7 @@ impl App {
                 None
             }
             ViewModelEvent::StepStarted(step) => {
+                self.usage_cost_tracker.step_started();
                 self.usage_before_current_step = self.current_run_usage.clone();
                 self.usage_before_current_attempt = None;
                 self.reset_streams();
@@ -3161,6 +3158,7 @@ impl App {
             }
             ViewModelEvent::ToolCallUpdated { .. } => None,
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
+                self.usage_cost_tracker.attempt_restarted();
                 self.usage_before_current_attempt = self
                     .current_run_usage
                     .as_ref()
@@ -3184,6 +3182,7 @@ impl App {
                 None
             }
             ViewModelEvent::Usage(usage) => {
+                let current_cost_source = self.usage_cost_tracker.record_usage(&usage);
                 let mut current_run_usage = usage;
                 if let Some(attempt_baseline) = &self.usage_before_current_attempt {
                     current_run_usage =
@@ -3200,12 +3199,14 @@ impl App {
                 let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
                 latest_usage =
                     usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
-                current_run_usage.cost_usd_micros = add_optional(
-                    step_baseline
-                        .as_ref()
-                        .and_then(|usage| usage.cost_usd_micros),
-                    latest_usage.cost_usd_micros,
-                );
+                if current_cost_source == CostSource::Estimated {
+                    current_run_usage.cost_usd_micros = add_optional(
+                        step_baseline
+                            .as_ref()
+                            .and_then(|usage| usage.cost_usd_micros),
+                        latest_usage.cost_usd_micros,
+                    );
+                }
                 self.current_run_usage = Some(current_run_usage.clone());
                 self.latest_usage = Some(latest_usage);
                 self.cumulative_usage
@@ -3273,6 +3274,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,
@@ -3417,33 +3419,9 @@ fn usage_with_estimated_cost(
     metadata: Option<&ModelMetadata>,
 ) -> ModelUsage {
     if usage.cost_usd_micros.is_none() {
-        usage.cost_usd_micros = estimated_usage_cost(&usage, metadata);
+        usage.cost_usd_micros = estimated_cost_usd_micros(&usage, metadata);
     }
     usage
-}
-
-fn estimated_usage_cost(usage: &ModelUsage, metadata: Option<&ModelMetadata>) -> Option<u64> {
-    let metadata = metadata?;
-    let input = usage.input_tokens.unwrap_or_default();
-    let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let total_input = usage.total_input_tokens().unwrap_or_default();
-    let cost = metadata.cost_for_input_tokens(total_input)?;
-    let mut micros = 0u128;
-    micros += cost_component(input, cost.input_micros_per_m);
-    micros += cost_component(
-        usage.output_tokens.unwrap_or_default(),
-        cost.output_micros_per_m,
-    );
-    micros += cost_component(cache_read, cost.cache_read_micros_per_m);
-    micros += cost_component(
-        usage.cache_write_tokens.unwrap_or_default(),
-        cost.cache_write_micros_per_m,
-    );
-    (micros > 0).then_some(micros.min(u64::MAX as u128) as u64)
-}
-
-fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
-    tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }
 
 fn usage_difference(usage: &ModelUsage, baseline: Option<&ModelUsage>) -> ModelUsage {
@@ -3817,15 +3795,7 @@ mod tests {
 
         app.execute_info_command().unwrap();
 
-        assert!(matches!(
-            app.transcript.last(),
-            Some(Entry::Notice(message))
-                if message.contains("rho ")
-                    && message.contains("provider: openai")
-                    && message.contains("model: gpt-test")
-                    && message.contains("reasoning: medium")
-                    && message.contains("permission mode: auto")
-        ));
+        assert!(matches!(app.transcript.last(), Some(Entry::RuntimeInfo(_))));
         assert_eq!(app.status, "runtime info");
     }
 
@@ -3859,28 +3829,6 @@ mod tests {
             app.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID),
             ("openai".into(), "gpt-5.5".into(), "api-key".into())
         );
-    }
-
-    #[test]
-    fn estimated_usage_cost_uses_normalized_input_and_cache_read() {
-        let metadata = ModelMetadata {
-            cost_default: Some(rho_providers::model::models_dev::ModelCost {
-                input_micros_per_m: Some(1_000_000),
-                output_micros_per_m: Some(2_000_000),
-                cache_read_micros_per_m: Some(100_000),
-                cache_write_micros_per_m: Some(500_000),
-            }),
-            ..ModelMetadata::default()
-        };
-        let usage = ModelUsage {
-            input_tokens: Some(300_000),
-            cache_read_tokens: Some(700_000),
-            output_tokens: Some(100_000),
-            cache_write_tokens: Some(10_000),
-            ..ModelUsage::default()
-        };
-
-        assert_eq!(estimated_usage_cost(&usage, Some(&metadata)), Some(575_000));
     }
 
     #[test]
