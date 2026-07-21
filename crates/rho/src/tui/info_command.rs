@@ -5,7 +5,7 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 
 use super::{
     command_block::CommandBlock,
-    usage_cost::{estimated_cost_usd_micros, format_usd},
+    usage_cost::{estimated_cost_usd_micros, format_usd, CostSource},
     workspace::git_branch,
     App, Entry,
 };
@@ -41,6 +41,7 @@ pub(super) struct RuntimeInfo {
     reasoning: String,
     permission_mode: String,
     billing: BillingInfo,
+    cost_source: CostSource,
     cwd: PathBuf,
     branch: Option<String>,
     usage: Option<ModelUsage>,
@@ -62,6 +63,7 @@ impl App {
                 &self.info.runtime.provider,
                 &self.info.runtime.auth,
             ),
+            cost_source: self.usage_cost_tracker.cumulative_source(),
             cwd: self.info.runtime.cwd.clone(),
             branch: git_branch(&self.info.runtime.cwd),
             usage: self.cumulative_usage.clone(),
@@ -118,11 +120,11 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
 
-    let reported_cost = usage.cost_usd_micros;
-    let cost =
-        reported_cost.or_else(|| estimated_cost_usd_micros(usage, info.model_metadata.as_ref()));
+    let cost = usage
+        .cost_usd_micros
+        .or_else(|| estimated_cost_usd_micros(usage, info.model_metadata.as_ref()));
     if let Some(cost) = cost {
-        let qualifier = if reported_cost.is_none() {
+        let qualifier = if info.cost_source == CostSource::Estimated {
             " estimated"
         } else {
             ""

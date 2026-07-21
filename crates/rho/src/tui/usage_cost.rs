@@ -1,5 +1,67 @@
 use rho_providers::model::{ModelMetadata, ModelUsage};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum CostSource {
+    #[default]
+    ProviderReported,
+    Estimated,
+}
+
+impl CostSource {
+    fn combine(self, other: Self) -> Self {
+        if self == Self::Estimated || other == Self::Estimated {
+            Self::Estimated
+        } else {
+            Self::ProviderReported
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct UsageCostTracker {
+    cumulative: CostSource,
+    before_run: CostSource,
+    failed_attempts: CostSource,
+    current_snapshot: CostSource,
+}
+
+impl UsageCostTracker {
+    pub(super) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn run_started(&mut self) {
+        self.before_run = self.cumulative;
+        self.failed_attempts = CostSource::ProviderReported;
+        self.current_snapshot = CostSource::ProviderReported;
+    }
+
+    pub(super) fn step_started(&mut self) {
+        self.current_snapshot = CostSource::ProviderReported;
+    }
+
+    pub(super) fn attempt_restarted(&mut self) {
+        self.failed_attempts = self.failed_attempts.combine(self.current_snapshot);
+        self.current_snapshot = CostSource::ProviderReported;
+    }
+
+    pub(super) fn record_usage(&mut self, usage: &ModelUsage) -> CostSource {
+        let latest = if usage.cost_usd_micros.is_some() {
+            CostSource::ProviderReported
+        } else {
+            CostSource::Estimated
+        };
+        self.current_snapshot = latest;
+        let current_run = self.failed_attempts.combine(self.current_snapshot);
+        self.cumulative = self.before_run.combine(current_run);
+        current_run
+    }
+
+    pub(super) fn cumulative_source(self) -> CostSource {
+        self.cumulative
+    }
+}
+
 pub(super) fn estimated_cost_usd_micros(
     usage: &ModelUsage,
     metadata: Option<&ModelMetadata>,

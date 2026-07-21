@@ -28,6 +28,53 @@ fn estimated_cost_uses_normalized_input_and_cache_read() {
 }
 
 #[test]
+fn cost_tracker_replaces_live_snapshots_but_keeps_retry_estimates() {
+    let reported = ModelUsage {
+        cost_usd_micros: Some(10),
+        ..ModelUsage::default()
+    };
+    let estimated = ModelUsage::default();
+    let mut tracker = super::UsageCostTracker::default();
+
+    tracker.run_started();
+    tracker.step_started();
+    tracker.record_usage(&estimated);
+    assert_eq!(tracker.cumulative_source(), super::CostSource::Estimated);
+
+    tracker.record_usage(&reported);
+    assert_eq!(
+        tracker.cumulative_source(),
+        super::CostSource::ProviderReported
+    );
+
+    tracker.record_usage(&estimated);
+    tracker.attempt_restarted();
+    tracker.record_usage(&reported);
+    assert_eq!(tracker.cumulative_source(), super::CostSource::Estimated);
+
+    tracker.step_started();
+    tracker.record_usage(&reported);
+    assert_eq!(tracker.cumulative_source(), super::CostSource::Estimated);
+}
+
+#[test]
+fn cost_tracker_preserves_estimates_from_completed_runs() {
+    let mut tracker = super::UsageCostTracker::default();
+    tracker.run_started();
+    tracker.step_started();
+    tracker.record_usage(&ModelUsage::default());
+
+    tracker.run_started();
+    tracker.step_started();
+    tracker.record_usage(&ModelUsage {
+        cost_usd_micros: Some(10),
+        ..ModelUsage::default()
+    });
+
+    assert_eq!(tracker.cumulative_source(), super::CostSource::Estimated);
+}
+
+#[test]
 fn formats_usd_for_compact_display() {
     assert_eq!(super::format_usd(570_000), "$0.570");
     assert_eq!(super::format_usd(12_340_000), "$12.34");

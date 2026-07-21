@@ -8,6 +8,7 @@ fn test_info() -> RuntimeInfo {
         reasoning: "medium".into(),
         permission_mode: "auto".into(),
         billing: BillingInfo::Metered,
+        cost_source: CostSource::ProviderReported,
         cwd: PathBuf::from("/tmp/project"),
         branch: Some("main".into()),
         usage: Some(ModelUsage {
@@ -121,6 +122,16 @@ fn cache_hit_percentage_uses_latest_request_prompt_tokens() {
     };
 
     assert_eq!(cache_hit_percent(Some(&latest)), Some(90.0));
+}
+
+#[test]
+fn precomputed_estimated_cost_keeps_its_qualifier() {
+    let mut info = test_info();
+    info.cost_source = CostSource::Estimated;
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("$1.250 estimated"), "{text}");
 }
 
 #[test]
