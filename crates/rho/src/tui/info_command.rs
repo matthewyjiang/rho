@@ -1,16 +1,37 @@
 use std::path::PathBuf;
 
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
 
 use super::{
-    render::{truncate_one_line, wrap_line_at_whitespace},
-    statusline::{cache_hit_percent, estimated_cost_usd_micros, git_branch, BillingInfo},
-    theme::Theme,
+    command_block::CommandBlock,
+    usage_cost::{estimated_cost_usd_micros, format_usd},
+    workspace::git_branch,
     App, Entry,
 };
 
-const LABEL_WIDTH: usize = 14;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BillingInfo {
+    Metered,
+    Subscription,
+}
+
+impl BillingInfo {
+    fn from_provider_auth(provider: &str, auth: &str) -> Self {
+        if provider == "openai-codex" || auth == "codex" || auth == "xai-oauth" {
+            Self::Subscription
+        } else {
+            Self::Metered
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Metered => "metered API",
+            Self::Subscription => "subscription",
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct RuntimeInfo {
@@ -55,66 +76,46 @@ impl App {
 }
 
 pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(vec![
-        Span::styled("rho", Theme::brand()),
-        Span::raw("  "),
-        Span::styled(format!("v{}", info.version), Theme::dim()),
-    ])];
+    let mut block = CommandBlock::new(width);
+    block.push_header("rho", &format!("v{}", info.version));
 
-    push_section(&mut lines, "Model");
-    push_field(&mut lines, "Provider", &info.provider, width);
-    push_field(&mut lines, "Model", &info.model, width);
-    push_field(&mut lines, "Reasoning", &info.reasoning, width);
-    push_field(&mut lines, "Permissions", &info.permission_mode, width);
-    push_field(&mut lines, "Billing", info.billing.description(), width);
+    block.push_section("Model");
+    block.push_field("Provider", &info.provider);
+    block.push_field("Model", &info.model);
+    block.push_field("Reasoning", &info.reasoning);
+    block.push_field("Permissions", &info.permission_mode);
+    block.push_field("Billing", info.billing.description());
 
-    push_section(&mut lines, "Session usage");
-    push_usage_fields(&mut lines, info, width);
+    block.push_section("Session usage");
+    push_usage_fields(&mut block, info);
 
-    push_section(&mut lines, "Workspace");
-    push_field(
-        &mut lines,
-        "Directory",
-        &info.cwd.display().to_string(),
-        width,
-    );
-    push_field(
-        &mut lines,
+    block.push_section("Workspace");
+    block.push_field("Directory", &info.cwd.display().to_string());
+    block.push_field(
         "Git branch",
         info.branch.as_deref().unwrap_or("not in a Git worktree"),
-        width,
     );
-    lines
+    block.finish()
 }
 
-fn push_section(lines: &mut Vec<Line<'static>>, title: &str) {
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(title.to_string(), Theme::text_strong()));
-}
-
-fn push_usage_fields(lines: &mut Vec<Line<'static>>, info: &RuntimeInfo, width: usize) {
+fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     if let Some(context) = format_context(info) {
-        push_field(lines, "Context", &context, width);
+        block.push_field("Context", &context);
     } else {
-        push_field(lines, "Context", "not reported", width);
+        block.push_field("Context", "not reported");
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        push_note(lines, "No token usage recorded yet.", width);
+        block.push_note("No token usage recorded yet.");
         return;
     };
 
-    push_optional_number(lines, "Input tokens", usage.input_tokens, width);
-    push_optional_number(lines, "Output tokens", usage.output_tokens, width);
-    push_optional_number(lines, "Cache read", usage.cache_read_tokens, width);
-    push_optional_number(lines, "Cache write", usage.cache_write_tokens, width);
+    push_optional_number(block, "Input tokens", usage.input_tokens);
+    push_optional_number(block, "Output tokens", usage.output_tokens);
+    push_optional_number(block, "Cache read", usage.cache_read_tokens);
+    push_optional_number(block, "Cache write", usage.cache_write_tokens);
     if let Some(percent) = cache_hit_percent(info.latest_usage.as_ref()) {
-        push_field(
-            lines,
-            "Cache hit",
-            &format!("{percent:.1}% on the latest request"),
-            width,
-        );
+        block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
 
     let reported_cost = usage.cost_usd_micros;
@@ -131,77 +132,27 @@ fn push_usage_fields(lines: &mut Vec<Line<'static>>, info: &RuntimeInfo, width: 
         } else {
             ""
         };
-        push_field(
-            lines,
+        block.push_field(
             "Cost",
             &format!("{}{qualifier}{equivalent}", format_usd(cost)),
-            width,
         );
     }
 }
 
-fn push_optional_number(
-    lines: &mut Vec<Line<'static>>,
-    label: &str,
-    value: Option<u64>,
-    width: usize,
-) {
+fn push_optional_number(block: &mut CommandBlock, label: &str, value: Option<u64>) {
     if let Some(value) = value {
-        push_field(lines, label, &format_number(value), width);
+        block.push_field(label, &format_number(value));
     }
 }
 
-fn push_field(lines: &mut Vec<Line<'static>>, label: &str, value: &str, width: usize) {
-    let label_width = LABEL_WIDTH.min(width.saturating_sub(1));
-    let value_start = label_width.saturating_add(2);
-    if width >= 32 && value_start < width {
-        let mut values = wrap_line_at_whitespace(value, width - value_start).into_iter();
-        let first = values.next().unwrap_or_default();
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {label:label_width$}"), Theme::dim()),
-            Span::styled(first, Theme::text()),
-        ]));
-        lines.extend(values.map(|value| {
-            Line::from(vec![
-                Span::raw(" ".repeat(value_start)),
-                Span::styled(value.trim_start().to_string(), Theme::text()),
-            ])
-        }));
-    } else {
-        lines.push(Line::from(Span::styled(
-            truncate_one_line(&format!("  {label}"), width),
-            Theme::dim(),
-        )));
-        let indent_width = 4.min(width.saturating_sub(1));
-        let value_width = width.saturating_sub(indent_width).max(1);
-        let indent = " ".repeat(indent_width);
-        lines.extend(
-            wrap_line_at_whitespace(value, value_width)
-                .into_iter()
-                .map(|value| {
-                    Line::from(Span::styled(
-                        format!("{indent}{}", value.trim_start()),
-                        Theme::text(),
-                    ))
-                }),
-        );
-    }
-}
-
-fn push_note(lines: &mut Vec<Line<'static>>, note: &str, width: usize) {
-    let indent_width = 2.min(width.saturating_sub(1));
-    let note_width = width.saturating_sub(indent_width).max(1);
-    let indent = " ".repeat(indent_width);
-    lines.extend(
-        wrap_line_at_whitespace(note, note_width)
-            .into_iter()
-            .map(|part| {
-                Line::from(Span::styled(
-                    format!("{indent}{}", part.trim_start()),
-                    Theme::dim_italic(),
-                ))
-            }),
-    );
+fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
+    let usage = usage?;
+    let cache_read = usage.cache_read_tokens?;
+    let prompt_tokens = usage
+        .input_tokens
+        .unwrap_or_default()
+        .saturating_add(cache_read);
+    (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
 }
 
 fn format_context(info: &RuntimeInfo) -> Option<String> {
@@ -245,17 +196,6 @@ fn format_number(value: u64) -> String {
         formatted.push(ch);
     }
     formatted
-}
-
-fn format_usd(micros: u64) -> String {
-    let dollars = micros as f64 / 1_000_000.0;
-    if dollars >= 100.0 {
-        format!("${dollars:.0}")
-    } else if dollars >= 10.0 {
-        format!("${dollars:.2}")
-    } else {
-        format!("${dollars:.3}")
-    }
 }
 
 #[cfg(test)]

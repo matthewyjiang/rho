@@ -3,7 +3,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{theme::Theme, App, Entry};
+use super::{command_block::fill_lines, theme::Theme, App, Entry};
 use crate::usage_limits::{
     fetch_connected_usage_limits, now_unix, ProviderLimits, ProviderUsageLimits, UsageLimitWindow,
     UsageLimitsError,
@@ -126,7 +126,7 @@ impl App {
 
 pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Line<'static>> {
     let now = now_unix();
-    let block_style = Theme::limits_block();
+    let block_style = Theme::command_block();
     let mut lines = vec![
         Line::from(Span::styled(
             "OAuth usage limits",
@@ -145,17 +145,7 @@ pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Li
             block_style,
         ));
     }
-    lines
-        .into_iter()
-        .map(|mut line| {
-            let padding = width.saturating_sub(line.width());
-            if padding > 0 {
-                line.spans
-                    .push(Span::styled(" ".repeat(padding), block_style));
-            }
-            line
-        })
-        .collect()
+    fill_lines(lines, width, block_style)
 }
 
 fn provider_usage_limit_lines(

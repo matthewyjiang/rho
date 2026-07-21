@@ -2,12 +2,14 @@
 
 mod config;
 mod goal;
+mod runtime_info;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -720,38 +722,6 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Custom(assert_agent_tool_hides_raw_json),
-    Step::ExitCommand,
-];
-
-const RUNTIME_INFO_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "rho",
-        timeout: STARTUP,
-    },
-    Step::Phase("open_info"),
-    Step::SubmitText("/info"),
-    Step::WaitText {
-        text: "Model",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Session usage",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Workspace",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Permissions",
-        timeout: SETTLE,
-    },
-    Step::Resize { rows: 32, cols: 40 },
-    Step::WaitText {
-        text: "Session usage",
-        timeout: SETTLE,
-    },
     Step::ExitCommand,
 ];
 

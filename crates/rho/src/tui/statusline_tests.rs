@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 use rho_providers::model::models_dev::ModelCost;
 
@@ -77,19 +79,20 @@ fn narrow_statusline_drops_whole_optional_fields() {
     assert!(bottom.contains("Auto"), "{bottom}");
     assert!(!bottom.contains('$'), "{bottom}");
     assert!(!bottom.contains("low"), "{bottom}");
-    assert!(!bottom.contains("$0…"), "{bottom}");
+    assert!(!bottom.contains("gpt-test"), "{bottom}");
+    assert!(!bottom.contains('…'), "{bottom}");
     assert!(display_width(&bottom) <= 24);
 }
 
 #[test]
-fn very_narrow_statusline_preserves_permission_mode() {
-    let mut info = test_info(PathBuf::from("/tmp/project"));
-    info.permission_mode = crate::permission::PermissionMode::Supervised;
-    let mut statusline = StatusLine::new(&info);
+fn very_narrow_statusline_drops_context_to_preserve_permission_mode() {
+    let mut state = test_state(ModelUsage::default());
+    state.permission_mode = crate::permission::PermissionMode::Supervised;
 
-    let lines = statusline.lines(12, None);
+    let bottom = line_text(&statusline_lines(&state, 12, None)[1]);
 
-    assert!(line_text(&lines[1]).contains("Supervised"));
+    assert!(bottom.contains("Supervised"), "{bottom}");
+    assert!(!bottom.contains("ctx"), "{bottom}");
 }
 
 #[test]
@@ -128,32 +131,6 @@ fn statusline_shows_blocked_goal_indicator() {
     let text = line_text(&statusline_lines(&test_state(ModelUsage::default()), 80, Some(&goal))[0]);
 
     assert!(text.contains("goal: blocked • 1 turn • 9s"), "{text}");
-}
-
-#[test]
-fn estimated_statusline_cost_uses_normalized_input_and_cache_read() {
-    let usage = ModelUsage {
-        input_tokens: Some(300_000),
-        cache_read_tokens: Some(700_000),
-        output_tokens: Some(100_000),
-        ..ModelUsage::default()
-    };
-
-    assert_eq!(
-        estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
-        Some(570_000)
-    );
-}
-
-#[test]
-fn cache_hit_percentage_uses_latest_request_prompt_tokens() {
-    let latest = ModelUsage {
-        input_tokens: Some(100_000),
-        cache_read_tokens: Some(900_000),
-        ..ModelUsage::default()
-    };
-
-    assert_eq!(cache_hit_percent(Some(&latest)), Some(90.0));
 }
 
 #[test]

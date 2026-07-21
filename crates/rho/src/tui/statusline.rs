@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -9,6 +8,8 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
+    usage_cost::{estimated_cost_usd_micros, format_usd},
+    workspace::git_branch,
     RuntimeModelView,
 };
 use {
@@ -210,57 +211,53 @@ fn statusline_lines(
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
-    let bottom_left = format_context_summary(state);
-    let bottom_right = compact_runtime_status(state, &bottom_left, width);
-    let bottom_left = add_cost_if_it_fits(state, bottom_left, &bottom_right, width);
+    let (bottom_left, bottom_right) = bottom_status(state, width);
     vec![
         render_row(top_left, top_right, width),
         render_row(bottom_left, bottom_right, width),
     ]
 }
 
-fn compact_runtime_status(state: &StatusLineState, left: &str, width: usize) -> String {
-    let mut status = state.permission_mode.label().to_string();
-    let separator = " · ";
-    let available = width.saturating_sub(display_width(left) + usize::from(!left.is_empty()));
-    if available <= display_width(&status) {
-        return status;
+fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
+    let mut left = String::new();
+    let mut right = state.permission_mode.label().to_string();
+
+    let context = format_context_summary(state);
+    if !context.is_empty() && row_fits(&context, &right, width) {
+        left = context;
     }
 
-    let model_budget = available.saturating_sub(display_width(&status) + display_width(separator));
-    if model_budget >= 6 {
-        status.push_str(separator);
-        status.push_str(&truncate_one_line(&state.model, model_budget));
+    let with_model = format!("{right} · {}", state.model);
+    if !row_fits(&left, &with_model, width) {
+        return (left, right);
     }
+    right = with_model;
 
     if state.reasoning_configurable {
-        let with_reasoning = format!("{status}{separator}{}", state.reasoning);
-        if display_width(&with_reasoning) <= available {
-            status = with_reasoning;
+        let with_reasoning = format!("{right} · {}", state.reasoning);
+        if !row_fits(&left, &with_reasoning, width) {
+            return (left, right);
         }
+        right = with_reasoning;
     }
-    status
-}
 
-fn add_cost_if_it_fits(
-    state: &StatusLineState,
-    mut left: String,
-    right: &str,
-    width: usize,
-) -> String {
     let Some(cost) = status_cost(state) else {
-        return left;
+        return (left, right);
     };
-    let candidate = if left.is_empty() {
+    let with_cost = if left.is_empty() {
         cost
     } else {
         format!("{left} · {cost}")
     };
-    let gap = usize::from(!candidate.is_empty() && !right.is_empty());
-    if display_width(&candidate) + display_width(right) + gap <= width {
-        left = candidate;
+    if row_fits(&with_cost, &right, width) {
+        left = with_cost;
     }
-    left
+    (left, right)
+}
+
+fn row_fits(left: &str, right: &str, width: usize) -> bool {
+    let gap = usize::from(!left.is_empty() && !right.is_empty());
+    display_width(left) + display_width(right) + gap <= width
 }
 
 fn format_context_summary(state: &StatusLineState) -> String {
@@ -296,7 +293,7 @@ fn status_cost(state: &StatusLineState) -> Option<String> {
     usage
         .cost_usd_micros
         .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
-        .map(|cost| format!("${}", format_usd(cost)))
+        .map(format_usd)
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
@@ -319,77 +316,6 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
         })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BillingInfo {
-    Metered,
-    Subscription,
-}
-
-impl BillingInfo {
-    pub(super) fn from_provider_auth(provider: &str, auth: &str) -> Self {
-        if provider == "openai-codex" || auth == "codex" || auth == "xai-oauth" {
-            Self::Subscription
-        } else {
-            Self::Metered
-        }
-    }
-
-    pub(super) fn description(self) -> &'static str {
-        match self {
-            Self::Metered => "metered API",
-            Self::Subscription => "subscription",
-        }
-    }
-}
-
-pub(super) fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
-    let usage = usage?;
-    let cache_read = usage.cache_read_tokens?;
-    let prompt_tokens = usage
-        .input_tokens
-        .unwrap_or_default()
-        .saturating_add(cache_read);
-    (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
-}
-
-pub(super) fn estimated_cost_usd_micros(
-    usage: &ModelUsage,
-    metadata: Option<&ModelMetadata>,
-) -> Option<u64> {
-    let metadata = metadata?;
-    let input = usage.input_tokens.unwrap_or_default();
-    let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let total_input = usage.total_input_tokens().unwrap_or_default();
-    let cost = metadata.cost_for_input_tokens(total_input)?;
-    let mut micros = 0u128;
-    micros += cost_component(input, cost.input_micros_per_m);
-    micros += cost_component(
-        usage.output_tokens.unwrap_or_default(),
-        cost.output_micros_per_m,
-    );
-    micros += cost_component(cache_read, cost.cache_read_micros_per_m);
-    micros += cost_component(
-        usage.cache_write_tokens.unwrap_or_default(),
-        cost.cache_write_micros_per_m,
-    );
-    (micros > 0).then_some(micros.min(u64::MAX as u128) as u64)
-}
-
-fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
-    tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
-}
-
-fn format_usd(micros: u64) -> String {
-    let dollars = micros as f64 / 1_000_000.0;
-    if dollars >= 100.0 {
-        format!("{dollars:.0}")
-    } else if dollars >= 10.0 {
-        format!("{dollars:.2}")
-    } else {
-        format!("{dollars:.3}")
-    }
-}
-
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
     let style = Theme::dim();
     if right.is_empty() {
@@ -410,35 +336,6 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
     let left_width = display_width(&left);
     let gap = " ".repeat(width.saturating_sub(left_width + right_width));
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
-}
-
-pub(super) fn git_branch(cwd: &Path) -> Option<String> {
-    let git_dir = find_git_dir(cwd)?;
-    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let head = head.trim();
-    head.strip_prefix("ref: refs/heads/")
-        .map(ToString::to_string)
-        .or_else(|| head.get(..7).map(ToString::to_string))
-}
-
-fn find_git_dir(cwd: &Path) -> Option<PathBuf> {
-    for dir in cwd.ancestors() {
-        let dot_git = dir.join(".git");
-        if dot_git.is_dir() {
-            return Some(dot_git);
-        }
-        if dot_git.is_file() {
-            let contents = fs::read_to_string(&dot_git).ok()?;
-            let path = contents.trim().strip_prefix("gitdir: ")?;
-            let path = Path::new(path);
-            return Some(if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                dir.join(path)
-            });
-        }
-    }
-    None
 }
 
 fn compact_cwd(path: &Path) -> String {

@@ -32,7 +32,9 @@ fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
         .map(|span| span.content.as_ref())
-        .collect()
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 fn rendered_text(info: &RuntimeInfo, width: usize) -> String {
@@ -67,6 +69,19 @@ fn runtime_info_groups_model_usage_and_workspace_details() {
 }
 
 #[test]
+fn runtime_info_uses_full_width_contrasting_background() {
+    let lines = runtime_info_lines(&test_info(), 80);
+
+    assert!(lines.iter().all(|line| line.width() == 80));
+    assert!(lines
+        .iter()
+        .all(|line| line.spans.iter().all(|span| span.style.bg.is_some())));
+    assert!(lines
+        .iter()
+        .all(|line| line.spans.iter().all(|span| span.style.fg.is_some())));
+}
+
+#[test]
 fn narrow_runtime_info_stacks_labels_and_values() {
     let lines = runtime_info_lines(&test_info(), 24);
     let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -77,6 +92,17 @@ fn narrow_runtime_info_stacks_labels_and_values() {
 }
 
 #[test]
+fn runtime_info_respects_very_narrow_widths() {
+    for width in 0..13 {
+        let lines = runtime_info_lines(&test_info(), width);
+        assert!(
+            lines.iter().all(|line| line.width() <= width),
+            "line exceeded width {width}"
+        );
+    }
+}
+
+#[test]
 fn runtime_info_wraps_long_values_without_losing_details() {
     let lines = runtime_info_lines(&test_info(), 40);
     let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
@@ -84,6 +110,27 @@ fn runtime_info_wraps_long_values_without_losing_details() {
     assert!(lines.iter().all(|line| line.width() <= 40));
     assert!(text.contains("25.0%, estimated"), "{text}");
     assert!(!text.contains('…'), "{text}");
+}
+
+#[test]
+fn cache_hit_percentage_uses_latest_request_prompt_tokens() {
+    let latest = ModelUsage {
+        input_tokens: Some(100_000),
+        cache_read_tokens: Some(900_000),
+        ..ModelUsage::default()
+    };
+
+    assert_eq!(cache_hit_percent(Some(&latest)), Some(90.0));
+}
+
+#[test]
+fn subscription_cost_is_labeled_as_api_equivalent() {
+    let mut info = test_info();
+    info.billing = BillingInfo::Subscription;
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("$1.250 API equivalent"), "{text}");
 }
 
 #[test]

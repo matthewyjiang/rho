@@ -65,6 +65,11 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn runtime_info_reflows_after_narrow_resize() {
+    assert_pass("runtime_info");
+}
+
+#[test]
 fn renders_markdown_headings() {
     assert_pass("markdown_headings");
 }

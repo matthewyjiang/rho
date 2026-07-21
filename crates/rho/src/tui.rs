@@ -40,6 +40,7 @@ mod approval;
 mod attachment;
 mod clipboard;
 mod command_actions;
+mod command_block;
 mod command_palette;
 mod composer;
 mod config_actions;
@@ -103,7 +104,9 @@ mod text_selection;
 mod theme;
 mod tool_diff;
 mod turn_prompt;
+mod usage_cost;
 mod view;
+mod workspace;
 
 use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
