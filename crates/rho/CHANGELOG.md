@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.9.0...rho-coding-agent-v1.10.0) (2026-07-21)
+
+
+### Features
+
+* **agent:** add configurable built-in roles ([#447](https://github.com/matthewyjiang/rho/issues/447)) ([c139079](https://github.com/matthewyjiang/rho/commit/c1390794b8aa0e2a91ae1830cd284fdc6e2931e5))
+* **sdk:** execute independent tool calls concurrently ([#459](https://github.com/matthewyjiang/rho/issues/459)) ([0bb5a83](https://github.com/matthewyjiang/rho/commit/0bb5a830adc191d09ab40726577483c72cecf74f))
+* **tui:** redesign config as category browser ([#441](https://github.com/matthewyjiang/rho/issues/441)) ([be6efe7](https://github.com/matthewyjiang/rho/commit/be6efe70f88adf492959ac1e51952f863c196dc2))
+
+
+### Bug Fixes
+
+* **clipboard:** prioritize nonzero child exit status ([#446](https://github.com/matthewyjiang/rho/issues/446)) ([3e98c52](https://github.com/matthewyjiang/rho/commit/3e98c528d74096ad27bdc7d9b267bcc9872c8511))
+* **clipboard:** resolve helpers on PATH instead of executing them to probe ([#440](https://github.com/matthewyjiang/rho/issues/440)) ([50b84c7](https://github.com/matthewyjiang/rho/commit/50b84c76bcb35171f8d8d027a2c60cc950968697))
+* **skills:** enforce manual skill invocation ([#453](https://github.com/matthewyjiang/rho/issues/453)) ([4f6f043](https://github.com/matthewyjiang/rho/commit/4f6f043026622fc46a8d93e4ee8b743ccb2a36ea))
+* **skills:** execute slash skill invocations ([#452](https://github.com/matthewyjiang/rho/issues/452)) ([49480a8](https://github.com/matthewyjiang/rho/commit/49480a8397ab21fa46af7746cae67f036e3d9e1b))
+* **tui:** add slash commands to input history ([#443](https://github.com/matthewyjiang/rho/issues/443)) ([1050a5b](https://github.com/matthewyjiang/rho/commit/1050a5bb65e10265a0d44ef37e7fbf3f4275d553))
+* **tui:** clarify permission and goal status ([#444](https://github.com/matthewyjiang/rho/issues/444)) ([2a43c59](https://github.com/matthewyjiang/rho/commit/2a43c5907283b316f5af4ab5ca3ad933c6b13b1e))
+* **tui:** simplify responsive status details ([#458](https://github.com/matthewyjiang/rho/issues/458)) ([c4a1af2](https://github.com/matthewyjiang/rho/commit/c4a1af2185e5dc7e14746e39359160063600e982))
+* **tui:** wait for delegated goal work ([#457](https://github.com/matthewyjiang/rho/issues/457)) ([fc6087d](https://github.com/matthewyjiang/rho/commit/fc6087d4dfcbba2f3b82c5c9c0387dc31a59ab0b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.5.0 to 1.6.0
+    * rho-providers bumped from 0.4.0 to 0.5.0
+
 ## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.8.2...rho-coding-agent-v1.9.0) (2026-07-20)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.5.0...rho-sdk-v1.6.0) (2026-07-21)
+
+
+### Features
+
+* **sdk:** execute independent tool calls concurrently ([#459](https://github.com/matthewyjiang/rho/issues/459)) ([0bb5a83](https://github.com/matthewyjiang/rho/commit/0bb5a830adc191d09ab40726577483c72cecf74f))
+
+
+### Bug Fixes
+
+* **skills:** enforce manual skill invocation ([#453](https://github.com/matthewyjiang/rho/issues/453)) ([4f6f043](https://github.com/matthewyjiang/rho/commit/4f6f043026622fc46a8d93e4ee8b743ccb2a36ea))
+
 ## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.4.0...rho-sdk-v1.5.0) (2026-07-20)
 
 

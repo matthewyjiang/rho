@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.4.0...rho-providers-v0.5.0) (2026-07-21)
+
+
+### Features
+
+* **providers:** use provider-reported costs ([#455](https://github.com/matthewyjiang/rho/issues/455)) ([27a8c27](https://github.com/matthewyjiang/rho/commit/27a8c277b56a36a5c3da4e77041978db601f7a44))
+* **sdk:** execute independent tool calls concurrently ([#459](https://github.com/matthewyjiang/rho/issues/459)) ([0bb5a83](https://github.com/matthewyjiang/rho/commit/0bb5a830adc191d09ab40726577483c72cecf74f))
+
+
+### Bug Fixes
+
+* **providers:** retry transient Gemini finish reasons instead of failing permanently ([#449](https://github.com/matthewyjiang/rho/issues/449)) ([041ea9d](https://github.com/matthewyjiang/rho/commit/041ea9deb6a98f4b1181d63f246d8ecc6b117609))
+* **skills:** enforce manual skill invocation ([#453](https://github.com/matthewyjiang/rho/issues/453)) ([4f6f043](https://github.com/matthewyjiang/rho/commit/4f6f043026622fc46a8d93e4ee8b743ccb2a36ea))
+* **tui:** wait for delegated goal work ([#457](https://github.com/matthewyjiang/rho/issues/457)) ([fc6087d](https://github.com/matthewyjiang/rho/commit/fc6087d4dfcbba2f3b82c5c9c0387dc31a59ab0b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.5.0 to 1.6.0
+
 ## [0.4.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.3.2...rho-providers-v0.4.0) (2026-07-20)
 
 
