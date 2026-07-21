@@ -106,7 +106,7 @@ impl StatusLineState {
 
     fn right_bottom(&self) -> String {
         let prefix = format!(
-            "◇ {} • ({}) {}",
+            "permissions: {} • ({}) {}",
             self.permission_mode.label(),
             self.provider,
             self.model
@@ -229,18 +229,51 @@ fn statusline_lines(
     goal: Option<&GoalStatus>,
 ) -> Vec<Line<'static>> {
     let goal = goal.map(|goal| {
-        format!(
-            "◎ /goal {} • {} turn{} • {}",
-            if goal.blocked { "blocked" } else { "active" },
-            goal.turns,
-            if goal.turns == 1 { "" } else { "s" },
-            super::goal::format_elapsed(goal.elapsed)
-        )
+        let state = if goal.blocked { "blocked" } else { "active" };
+        [
+            format!(
+                "goal: {state} • {} turn{} • {}",
+                goal.turns,
+                if goal.turns == 1 { "" } else { "s" },
+                super::goal::format_elapsed(goal.elapsed)
+            ),
+            format!("goal: {state}"),
+            state.into(),
+        ]
     });
+    let top_left = state.left_top();
+    let top_right = goal
+        .as_ref()
+        .map(|candidates| fit_right_status(&top_left, candidates, width))
+        .unwrap_or_default();
+    let bottom_left = format_usage(state);
+    let permission = state.permission_mode.label();
+    let permission_candidates = [
+        state.right_bottom(),
+        format!("permissions: {permission}"),
+        permission.into(),
+    ];
+    let bottom_right = fit_right_status(&bottom_left, &permission_candidates, width);
     vec![
-        render_row(state.left_top(), goal.unwrap_or_default(), width),
-        render_row(format_usage(state), state.right_bottom(), width),
+        render_row(top_left, top_right, width),
+        render_row(bottom_left, bottom_right, width),
     ]
+}
+
+fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
+    let full = &candidates[0];
+    if display_width(left) + display_width(full) < width {
+        return full.clone();
+    }
+
+    let budget = width.saturating_div(2).max(1);
+    candidates
+        .iter()
+        .find(|candidate| display_width(candidate) <= budget)
+        .cloned()
+        .unwrap_or_else(|| {
+            truncate_one_line(candidates.last().expect("status has a value"), budget)
+        })
 }
 
 fn format_usage(state: &StatusLineState) -> String {
