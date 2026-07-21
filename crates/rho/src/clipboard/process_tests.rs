@@ -93,3 +93,20 @@ fn non_executable_files_are_not_available() {
         std::iter::once(dir.path().to_path_buf())
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn availability_finds_the_command_in_a_later_path_entry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let empty = tempfile::tempdir().unwrap();
+    let has_it = tempfile::tempdir().unwrap();
+    let helper = has_it.path().join("pngpaste");
+    std::fs::write(&helper, b"#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(command_available_in(
+        "pngpaste",
+        [empty.path().to_path_buf(), has_it.path().to_path_buf()].into_iter()
+    ));
+}
