@@ -173,11 +173,6 @@ pub enum RunEvent {
     HostInputRequested {
         request: crate::HostInputRequest,
     },
-    /// Host input requested by a correlated tool call.
-    ToolHostInputRequested {
-        call_id: ToolCallId,
-        request: crate::HostInputRequest,
-    },
     CompactionStarted {
         trigger: crate::CompactionTrigger,
         message_count: usize,
@@ -210,5 +205,10 @@ pub enum RunEvent {
     ProviderStreamReset {
         reason: ProviderStreamResetReason,
         detail: String,
+    },
+    /// Host input requested by a correlated tool call.
+    ToolHostInputRequested {
+        call_id: ToolCallId,
+        request: crate::HostInputRequest,
     },
 }
