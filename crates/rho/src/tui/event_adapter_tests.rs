@@ -120,15 +120,19 @@ fn retains_structured_tool_metadata_until_completion() {
     );
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        ok, display_lines, ..
+        call_id: translated_call_id,
+        ok,
+        display_lines,
+        ..
     }) = adapter.translate(RunEvent::ToolFinished {
-        call_id,
+        call_id: call_id.clone(),
         result: ToolCompletion::Success(output),
     })
     else {
         panic!("expected translated tool completion");
     };
 
+    assert_eq!(translated_call_id, call_id);
     assert!(ok);
     assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
 }
@@ -150,17 +154,19 @@ fn forwards_image_asset_on_tool_completion() {
     );
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        call_id: translated_call_id,
         image_asset,
         display_lines,
         ..
     }) = adapter.translate(RunEvent::ToolFinished {
-        call_id,
+        call_id: call_id.clone(),
         result: ToolCompletion::Success(output),
     })
     else {
         panic!("expected translated tool completion");
     };
 
+    assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
     assert_eq!(
         display_lines,

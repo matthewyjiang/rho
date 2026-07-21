@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -7,9 +7,12 @@ use tempfile::TempDir;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
     provider::{ScriptedProvider, ScriptedTurn},
-    tool::{OperationKind, ToolErrorKind, ToolInvocation},
-    Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId, ToolCompletion, UserInput,
-    Workspace,
+    tool::{
+        OperationKind, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolPreparationContext,
+        ToolResource, ToolResourceAccess,
+    },
+    CancellationToken, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId,
+    ToolCompletion, UserInput, Workspace,
 };
 
 use super::*;
@@ -24,6 +27,19 @@ fn invocation(args: serde_json::Value) -> ToolInvocation {
 
 fn workspace(dir: &TempDir) -> Workspace {
     Workspace::new(dir.path()).unwrap()
+}
+
+async fn prepared_policy(
+    tool: &Arc<dyn rho_sdk::tool::Tool>,
+    workspace: Workspace,
+    arguments: serde_json::Value,
+) -> Result<ToolExecutionPolicy, rho_sdk::tool::ToolError> {
+    tool.prepare(
+        invocation(arguments),
+        ToolPreparationContext::new(Some(workspace), CancellationToken::new()),
+    )
+    .await
+    .map(|prepared| prepared.execution_policy().clone())
 }
 
 #[test]
@@ -50,6 +66,88 @@ fn coding_tools_register_without_granting_capabilities() {
         8_000
     );
     assert_eq!(CodingToolOptions::default().output_budget(), 12_000);
+}
+
+#[tokio::test]
+async fn preparation_canonicalizes_relative_absolute_symlink_and_granted_root_reads() {
+    let primary = tempfile::tempdir().unwrap();
+    let primary_path = primary.path().join("note.txt");
+    std::fs::write(&primary_path, "hello").unwrap();
+    let tool = coding_tool(CodingToolKind::ReadFile, CodingToolOptions::default());
+    let primary_workspace = workspace(&primary);
+
+    let relative = prepared_policy(
+        &tool,
+        primary_workspace.clone(),
+        json!({"path": "note.txt"}),
+    )
+    .await
+    .unwrap();
+    let absolute = prepared_policy(
+        &tool,
+        primary_workspace.clone(),
+        json!({"path": primary_path.to_string_lossy()}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(relative, absolute);
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&primary_path, primary.path().join("alias.txt")).unwrap();
+        let symlink = prepared_policy(&tool, primary_workspace, json!({"path": "alias.txt"}))
+            .await
+            .unwrap();
+        assert_eq!(relative, symlink);
+    }
+
+    let granted = tempfile::tempdir().unwrap();
+    let granted_path = granted.path().join("shared.txt");
+    std::fs::write(&granted_path, "shared").unwrap();
+    let granted_workspace = workspace(&primary)
+        .with_granted_root(granted.path())
+        .unwrap();
+    let granted_policy = prepared_policy(
+        &tool,
+        granted_workspace,
+        json!({"path": granted_path.to_string_lossy()}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        granted_policy,
+        ToolExecutionPolicy::ResourceAware { .. }
+    ));
+}
+
+#[tokio::test]
+async fn preparation_reserves_missing_write_membership_and_rejects_parent_traversal() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = workspace(&dir);
+    let write = coding_tool(CodingToolKind::WriteFile, CodingToolOptions::default());
+
+    let policy = prepared_policy(
+        &write,
+        workspace.clone(),
+        json!({"path": "out.txt", "content": "hello"}),
+    )
+    .await
+    .unwrap();
+    let ToolExecutionPolicy::ResourceAware { accesses } = policy else {
+        panic!("write_file must opt in to resource-aware execution");
+    };
+    assert!(accesses.contains(&ToolResourceAccess::exclusive(
+        ToolResource::workspace_path(workspace.root().join("out.txt"))
+    )));
+    assert!(accesses.contains(&ToolResourceAccess::exclusive(
+        ToolResource::directory_membership(workspace.root())
+    )));
+
+    let read = coding_tool(CodingToolKind::ReadFile, CodingToolOptions::default());
+    let error = prepared_policy(&read, workspace, json!({"path": "../shared.txt"}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ToolErrorKind::PolicyDenied);
 }
 
 #[tokio::test]

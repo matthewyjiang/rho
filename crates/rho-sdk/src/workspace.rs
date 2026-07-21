@@ -4,13 +4,15 @@ mod approval;
 mod capability;
 mod path;
 
+#[cfg(test)]
+pub(crate) use approval::authorize;
 pub use approval::{
     approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
     ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, AuthorizationDenialKind,
     AuthorizationError, AuthorizationOutcome, ChannelApprovalHandler, DenyApprovals,
     PendingApproval,
 };
-pub(crate) use approval::{authorize, ApprovalAuditLog, SessionApprovals};
+pub(crate) use approval::{authorize_for_call, ApprovalAuditLog, SessionApprovals};
 pub use capability::{
     CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
     NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,

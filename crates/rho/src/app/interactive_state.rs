@@ -69,7 +69,7 @@ pub(crate) fn state_after_event(current: InteractiveState, event: &RunEvent) -> 
         }
         RunEvent::ToolStarted { .. } => running_unless_cancelling(current, RunPhase::Tool),
         RunEvent::ToolFinished { .. } => running_unless_cancelling(current, RunPhase::Model),
-        RunEvent::HostInputRequested { .. } => {
+        RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
             if is_cancelling(current) {
                 current
             } else {

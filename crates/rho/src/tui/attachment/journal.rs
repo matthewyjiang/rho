@@ -64,7 +64,7 @@ impl AttachmentWriter {
         let attachment = match self.adapter.translate(event.clone()) {
             ViewEvent::Update(update) => attachment_update(update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
-            ViewEvent::Questionnaire(request) => Some(AttachmentEvent::Notice(format!(
+            ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
                 "input requested but unavailable in a delegated agent: {}",
                 request.title()
             ))),
@@ -92,11 +92,11 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
     match update {
         ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
-        ViewModelEvent::ToolStarted { display_lines }
-        | ViewModelEvent::ToolCallUpdated { display_lines } => {
+        ViewModelEvent::ToolStarted { display_lines, .. }
+        | ViewModelEvent::ToolCallUpdated { display_lines, .. } => {
             Some(AttachmentEvent::ToolStarted { display_lines })
         }
-        ViewModelEvent::ToolUpdated { display_lines } => {
+        ViewModelEvent::ToolUpdated { display_lines, .. } => {
             Some(AttachmentEvent::ToolUpdated { display_lines })
         }
         ViewModelEvent::ToolFinished {

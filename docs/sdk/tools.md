@@ -15,6 +15,36 @@ A tool receives a `ToolInvocation` and a `ToolContext` containing cancellation, 
 
 The SDK does not validate JSON against a tool schema before invocation. Implementations must deserialize hostile model output, reject unknown or ambiguous inputs, and cap resource use.
 
+## Preparation and parallel execution
+
+`Tool::prepare` validates and resolves an invocation once, before scheduling. Preparations within one model batch run concurrently and their outputs return to the scheduler in model order. The default implementation wraps `Tool::call` with `ToolExecutionPolicy::Exclusive`, so existing and custom tools stay source-compatible and run alone. Tools must opt in before the runtime overlaps them.
+
+A resource-aware implementation should keep `prepare` as its canonical path and delegate its compatibility `call` method to `tool::call_prepared`. This avoids maintaining separate parsing, authorization, and execution flows. The helper prepares the invocation, authorizes its declared capabilities, and runs its one-use executor.
+
+A resource-aware tool returns `PreparedToolInvocation::resource_aware` with:
+
+- every structured `CapabilityRequest` needed by the invocation;
+- a `ToolResourceAccess` list;
+- start metadata; and
+- a one-use executor that owns the parsed arguments and resolved state.
+
+The coordinator authorizes the declared requests before consuming an execution slot. The executor receives `AuthorizedToolContext`, which has cancellation, progress, host input, and workspace access, but no authorization method. A tool that cannot declare all authority before execution must remain exclusive and use `ToolContext`.
+
+Each access is `Shared` or `Exclusive`. Shared access can overlap shared access to the same resource. Any exclusive access conflicts with shared or exclusive access to an overlapping resource. Resource kinds cover canonical workspace paths, directory trees and membership, managed process IDs, session or manager state, response-store IDs, and namespaced opaque keys. Opaque keys must use a stable owner namespace. Resource values are omitted from `Debug` output.
+
+Filesystem tools must build resources from the same `ResolvedWorkspacePath` retained for execution. Resolve with `resolve_for_read` or `resolve_for_write`, declare access to its canonical path and any directory scope, then call `Workspace::revalidate` on that object just before I/O. Do not turn it back into an unchecked argument string or resolve it a second time.
+
+`RhoBuilder::max_parallel_tools` sets a required nonzero limit and defaults to one. The limit bounds active execution, not approval waits. Independent eligible calls can run up to the limit. Conflicting calls run in model order, and an exclusive call forms a model-order barrier. Results still enter provider and persisted history in model order.
+
+Implementors that opt in must:
+
+1. parse hostile arguments during preparation;
+2. retain all resolved security facts and tool-owned state in the prepared executor;
+3. declare every capability and scheduler resource the executor will use;
+4. revalidate retained filesystem facts immediately before I/O;
+5. cooperate with cancellation and bounded progress or host-input queues; and
+6. avoid work that outlives the invocation unless the tool remains exclusive and documents that lifetime.
+
 ## Presentation and progress
 
 `ToolMetadata` carries operation kind, paths, command summary, URLs, and unified diffs. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
@@ -86,13 +116,13 @@ Authorization follows this sequence:
 1. the tool submits a structured request
 2. policy allows, denies, or requires approval
 3. remembered approval is considered only after the current policy still requires approval
-4. the async host receives `ApprovalRequest`
+4. the async host receives `ApprovalRequest`, including the correlated `ToolCallId` for run-owned requests
 5. cancellation drops the pending future and returns a typed cancelled authorization error
 6. `AllowOnce`, `AllowForSession`, or denial completes exactly once
 
 `AllowForSession` stores only an exact structured-request rule in that session. Changing a path, scope, command, executable, argument, cwd, environment mode, limit, URL, skill, source, or capability requires another approval. Rules are not persisted, copied to another session, or allowed to override a later policy denial.
 
-`approval_channel` provides a bounded host queue. `PendingApproval::respond` accepts one response; repeating it returns the unused decision. Dropping the receiver or responder produces a host denial instead of hanging. Cancelling a run drops the approval wait.
+`approval_channel` provides a bounded host queue. `PendingApproval::respond` accepts one response; repeating it returns the unused decision. The receiver skips requests whose authorization future was cancelled before host delivery. Dropping the receiver or responder produces a host denial instead of hanging. Cancelling a run drops the approval wait.
 
 `ToolContext::authorize` returns `AuthorizationOutcome` or `AuthorizationError`, including typed policy, host, and cancellation denial sources. Built-ins convert denials to `ToolErrorKind::PolicyDenied` with a useful capability-specific message. The model receives that failed tool result and can continue, while the host receives typed `ToolCompletion::Failure`.
 

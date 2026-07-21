@@ -44,6 +44,27 @@ fn streamed_events_update_the_rendered_activity_phase() {
 }
 
 #[test]
+fn provider_stream_reset_clears_attempt_owned_tool_previews() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.handle_agent_event(
+        ViewModelEvent::ToolCallUpdated {
+            index: 0,
+            call_id: Some(rho_sdk::ToolCallId::from_string("stale-call").unwrap()),
+            display_lines: vec!["stale preview".into()],
+        },
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(app.tool_calls.live_entries().count(), 1);
+
+    app.handle_agent_event(ViewModelEvent::ProviderStreamReset, &mut terminal)
+        .unwrap();
+
+    assert_eq!(app.tool_calls.live_entries().count(), 0);
+}
+
+#[test]
 fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();

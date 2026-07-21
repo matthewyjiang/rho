@@ -5,6 +5,7 @@ use rho_sdk::tool::Tool as SdkTool;
 mod adapters;
 mod fetch;
 mod sdk_fetch_content;
+pub(super) mod sdk_get_search_content;
 mod search;
 mod storage;
 mod util;
@@ -36,13 +37,9 @@ pub(super) fn sdk_bundle(
         tools.push(Arc::new(SdkFetchContent::new(config.max_output_bytes)));
     }
     if capabilities.contains(&ToolCapability::GetSearchContent) {
-        tools.push(
-            rho_tools::legacy_sdk_adapter::get_search_content(
-                GetSearchContent,
-                config.max_output_bytes,
-            )
-            .expect("get_search_content is a supported legacy tool"),
-        );
+        tools.push(Arc::new(sdk_get_search_content::SdkGetSearchContent::new(
+            config.max_output_bytes,
+        )));
     }
     super::sdk_registry::StaticToolBundle::new(tools)
 }

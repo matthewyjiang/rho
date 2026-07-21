@@ -462,7 +462,7 @@ impl App {
                 self.info.runtime.max_tool_output_lines,
             ));
         }
-        if let Some(pending) = &self.pending_tool_call {
+        for pending in self.tool_calls.live_entries() {
             if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
                 lines.push(Line::raw(""));
             }

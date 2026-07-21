@@ -27,7 +27,7 @@ impl Process {
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
-enum ProcessArgs {
+pub(crate) enum ProcessArgs {
     Start {
         command: String,
         timeout_seconds: Option<u64>,
@@ -41,6 +41,24 @@ enum ProcessArgs {
     Stop {
         process_id: String,
     },
+}
+
+impl ProcessArgs {
+    pub(super) fn parse(args: serde_json::Value) -> Result<Self, ToolError> {
+        let args: Self = serde_json::from_value(args)?;
+        if matches!(
+            args,
+            Self::Poll {
+                wait_seconds: 31..,
+                ..
+            }
+        ) {
+            return Err(ToolError::Message(
+                "wait_seconds must be between 0 and 30".into(),
+            ));
+        }
+        Ok(args)
+    }
 }
 
 #[async_trait::async_trait]
@@ -80,7 +98,20 @@ impl Tool for Process {
         id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        match serde_json::from_value(args)? {
+        self.execute(ProcessArgs::parse(args)?, context, id, on_update)
+            .await
+    }
+}
+
+impl Process {
+    pub(super) async fn execute(
+        &self,
+        args: ProcessArgs,
+        context: ToolContext,
+        id: String,
+        on_update: &mut (dyn FnMut(Vec<String>) + Send),
+    ) -> Result<ToolResult, ToolError> {
+        match args {
             ProcessArgs::Start {
                 command,
                 timeout_seconds,
@@ -102,11 +133,6 @@ impl Tool for Process {
                 cursor,
                 wait_seconds,
             } => {
-                if wait_seconds > 30 {
-                    return Err(ToolError::Message(
-                        "wait_seconds must be between 0 and 30".into(),
-                    ));
-                }
                 let snapshot = self
                     .0
                     .poll_bounded(

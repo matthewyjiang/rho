@@ -155,8 +155,7 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
+        self.tool_calls.clear();
         match failed_turn.initial_tool_call.clone() {
             Some(call) => {
                 agent
@@ -179,9 +178,12 @@ impl App {
         let mut adapter = SdkEventAdapter::new(self.info.runtime.cwd.clone());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
+            rho_sdk::ToolCallId,
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
         )> = None;
+        let mut queued_questionnaires: VecDeque<(rho_sdk::ToolCallId, rho_sdk::HostInputRequest)> =
+            VecDeque::new();
         let mut pending_input_request = None;
         let mut approval_receiver_open = agent.approval_receiver().is_some();
         let mut terminal_event = false;
@@ -196,8 +198,11 @@ impl App {
             }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
-            let approval_ready =
-                approval_receiver_open && !matches!(self.composer, ComposerMode::Approval(_));
+            let interaction_available = interaction_slot_available(
+                /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                /*questionnaire_active*/ pending_questionnaire.is_some(),
+            );
+            let approval_ready = approval_receiver_open && interaction_available;
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
@@ -237,7 +242,7 @@ impl App {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 reply = questionnaire_reply(&mut pending_questionnaire), if pending_questionnaire.is_some() => {
-                    let Some((request_id, reply)) = reply else {
+                    let Some((_call_id, request_id, reply)) = reply else {
                         agent.cancel();
                         continue;
                     };
@@ -293,21 +298,32 @@ impl App {
                     match adapter.translate(event) {
                         ViewEvent::Update(event) => {
                             changed |= self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.active_tool_call, Ordering::SeqCst);
+                            tool_call_active.store(self.tool_calls.is_running(), Ordering::SeqCst);
                         }
-                        ViewEvent::Questionnaire(request) => {
-                            let request_id = request.id().clone();
-                            let (reply_tx, reply_rx) = oneshot::channel();
-                            self.open_questionnaire(
-                                QuestionAnswerRequest {
-                                    request: event_adapter::questionnaire_request(&request),
-                                    response: QuestionnaireResponseChannel::new(reply_tx),
-                                },
-                                terminal,
-                            )?;
-                            pending_questionnaire = Some((request_id, reply_rx));
+                        ViewEvent::Questionnaire { call_id, request } => {
+                            let interaction_available = interaction_slot_available(
+                                /*approval_active*/ matches!(
+                                    self.composer,
+                                    ComposerMode::Approval(_)
+                                ),
+                                /*questionnaire_active*/ pending_questionnaire.is_some(),
+                            );
+                            if interaction_available {
+                                let request_id = request.id().clone();
+                                let (reply_tx, reply_rx) = oneshot::channel();
+                                self.open_questionnaire(
+                                    QuestionAnswerRequest {
+                                        request: event_adapter::questionnaire_request(&request),
+                                        response: QuestionnaireResponseChannel::new(reply_tx),
+                                    },
+                                    terminal,
+                                )?;
+                                pending_questionnaire = Some((call_id, request_id, reply_rx));
+                                interaction_ready = true;
+                            } else {
+                                queued_questionnaires.push_back((call_id, request));
+                            }
                             changed = true;
-                            interaction_ready = true;
                         }
                         ViewEvent::Notice(notice) => {
                             self.insert_entry(&Entry::Notice(notice));
@@ -326,6 +342,27 @@ impl App {
                     if render_now {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
                     }
+                }
+            }
+            if !questionnaire_cancelled_by_user
+                && sdk_failure.is_none()
+                && interaction_slot_available(
+                    /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                    /*questionnaire_active*/ pending_questionnaire.is_some(),
+                )
+            {
+                if let Some((call_id, request)) = queued_questionnaires.pop_front() {
+                    let request_id = request.id().clone();
+                    let (reply_tx, reply_rx) = oneshot::channel();
+                    self.open_questionnaire(
+                        QuestionAnswerRequest {
+                            request: event_adapter::questionnaire_request(&request),
+                            response: QuestionnaireResponseChannel::new(reply_tx),
+                        },
+                        terminal,
+                    )?;
+                    pending_questionnaire = Some((call_id, request_id, reply_rx));
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
             }
             if pending_input_request.is_none()
@@ -354,8 +391,7 @@ impl App {
         }
 
         self.cancel_approval();
-        self.active_tool_call = false;
-        self.pending_tool_call = None;
+        self.tool_calls.clear();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
         let inline_shell_error = match self.finish_all_inline_shells().await {
@@ -459,6 +495,10 @@ impl App {
         self.status = "error".into();
         TurnOutcome::Failed(failed_turn)
     }
+}
+
+fn interaction_slot_available(approval_active: bool, questionnaire_active: bool) -> bool {
+    !approval_active && !questionnaire_active
 }
 
 enum RuntimeEvent {

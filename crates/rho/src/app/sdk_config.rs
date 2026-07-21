@@ -19,6 +19,11 @@ pub(crate) fn run_step_limit() -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(10_000).expect("step limit is nonzero")
 }
 
+/// Maximum tool calls the application may execute at once.
+pub(crate) fn parallel_tool_limit() -> std::num::NonZeroUsize {
+    std::num::NonZeroUsize::new(4).expect("parallel tool limit is nonzero")
+}
+
 /// Application-owned conversion from persisted Rho config to SDK bootstrap data.
 ///
 /// These values deliberately live in `rho-coding-agent`, not `rho-sdk`. They

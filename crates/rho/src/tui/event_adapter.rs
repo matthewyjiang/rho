@@ -29,6 +29,7 @@ pub(super) enum ViewModelEvent {
     StepStarted(usize),
     SteeringApplied(Vec<rho_sdk::SteeringId>),
     ToolStarted {
+        call_id: rho_sdk::ToolCallId,
         display_lines: Vec<String>,
     },
     ProviderStreamReset,
@@ -43,12 +44,16 @@ pub(super) enum ViewModelEvent {
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ToolUpdated {
+        call_id: rho_sdk::ToolCallId,
         display_lines: Vec<String>,
     },
     ToolCallUpdated {
+        index: usize,
+        call_id: Option<rho_sdk::ToolCallId>,
         display_lines: Vec<String>,
     },
     ToolFinished {
+        call_id: rho_sdk::ToolCallId,
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
@@ -59,9 +64,8 @@ pub(super) enum ViewModelEvent {
 impl ViewModelEvent {
     pub(super) fn activity_phase(&self) -> Option<ActivityPhase> {
         match self {
-            Self::RunStarted | Self::ToolFinished { .. } | Self::CompactionCompleted { .. } => {
-                Some(ActivityPhase::Starting)
-            }
+            Self::RunStarted | Self::CompactionCompleted { .. } => Some(ActivityPhase::Starting),
+            Self::ToolFinished { .. } => None,
             Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
             Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
             Self::ToolCallUpdated { .. } => Some(ActivityPhase::PreparingTool),
@@ -79,7 +83,10 @@ impl ViewModelEvent {
 #[derive(Clone, Debug)]
 pub(super) enum ViewEvent {
     Update(ViewModelEvent),
-    Questionnaire(HostInputRequest),
+    Questionnaire {
+        call_id: rho_sdk::ToolCallId,
+        request: HostInputRequest,
+    },
     Notice(String),
     Completed,
     Cancelled,
@@ -90,12 +97,14 @@ pub(super) enum ViewEvent {
 #[derive(Default)]
 pub(super) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
+    proposed_index: usize,
 }
 
 impl SdkEventAdapter {
     pub(super) fn new(cwd: std::path::PathBuf) -> Self {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
+            proposed_index: 0,
         }
     }
 
@@ -109,6 +118,7 @@ impl SdkEventAdapter {
             RunEvent::Started { .. } => ViewEvent::Update(ViewModelEvent::RunStarted),
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
+                self.proposed_index = 0;
                 ViewEvent::Update(ViewModelEvent::StepStarted(step))
             }
             RunEvent::SteeringApplied { ids } => {
@@ -122,18 +132,31 @@ impl SdkEventAdapter {
             }
             RunEvent::ToolCallUpdated {
                 index,
+                id,
                 name,
                 arguments_delta,
-                ..
-            } => self
-                .presenter()
-                .preview(index, name, &arguments_delta)
-                .map_or(ViewEvent::Ignored, |display_lines| {
-                    ViewEvent::Update(ViewModelEvent::ToolCallUpdated { display_lines })
-                }),
+            } => {
+                let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
+                self.presenter()
+                    .preview(index, name, &arguments_delta)
+                    .map_or(ViewEvent::Ignored, |display_lines| {
+                        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                            index,
+                            call_id,
+                            display_lines,
+                        })
+                    })
+            }
             RunEvent::ToolProposed { call } => {
+                let call_id = rho_sdk::ToolCallId::from_string(call.id.clone()).ok();
                 let display_lines = self.presenter().proposed(call);
-                ViewEvent::Update(ViewModelEvent::ToolCallUpdated { display_lines })
+                let index = self.proposed_index;
+                self.proposed_index += 1;
+                ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                    index,
+                    call_id,
+                    display_lines,
+                })
             }
             RunEvent::ToolStarted {
                 call_id,
@@ -142,17 +165,24 @@ impl SdkEventAdapter {
             } => {
                 let display_lines = self
                     .presenter()
-                    .started(call_id, name, metadata)
+                    .started(call_id.clone(), name, metadata)
                     .display_lines;
-                ViewEvent::Update(ViewModelEvent::ToolStarted { display_lines })
+                ViewEvent::Update(ViewModelEvent::ToolStarted {
+                    call_id,
+                    display_lines,
+                })
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let display_lines = self.presenter().updated(&call_id, &progress);
-                ViewEvent::Update(ViewModelEvent::ToolUpdated { display_lines })
+                ViewEvent::Update(ViewModelEvent::ToolUpdated {
+                    call_id,
+                    display_lines,
+                })
             }
             RunEvent::ToolFinished { call_id, result } => {
                 let (ok, presented) = self.presenter().finished(&call_id, result);
                 ViewEvent::Update(ViewModelEvent::ToolFinished {
+                    call_id,
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
@@ -163,6 +193,7 @@ impl SdkEventAdapter {
             RunEvent::ProviderActivity { kind, detail } => {
                 if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
                     ViewEvent::Update(ViewModelEvent::ToolFinished {
+                        call_id: rho_sdk::ToolCallId::new(),
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
@@ -185,7 +216,13 @@ impl SdkEventAdapter {
             RunEvent::ProviderDiagnostic { detail } => {
                 ViewEvent::Notice(format!("provider diagnostic:\n{}", detail.as_str()))
             }
-            RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire(request),
+            RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire {
+                call_id: rho_sdk::ToolCallId::new(),
+                request,
+            },
+            RunEvent::ToolHostInputRequested { call_id, request } => {
+                ViewEvent::Questionnaire { call_id, request }
+            }
             RunEvent::CompactionStarted { .. } => {
                 ViewEvent::Update(ViewModelEvent::CompactionStarted)
             }

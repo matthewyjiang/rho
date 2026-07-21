@@ -14,11 +14,19 @@ SDK-backed and retained baseline fixture where applicable.
 | Event delivery | 10,000 bounded provider deltas consumed by one run | At least 250,000 events/second median; p99 enqueue-to-consume latency below 5 ms |
 | History snapshot | Clone and serialize 1,000 representative messages | Median below 10 ms and peak retained allocation below 3 times serialized size |
 | Compaction orchestration | Partition, scripted summary, and atomic commit for a 1,000-message history | Median no more than 15% above the pre-SDK compaction fixture |
+| Parallel tool batch | The same representative independent multi-read batch at limits of one and four | Report both distributions and the observed speedup; the parallel run must preserve ordered results |
 | Slow consumer | Producer against a full bounded event channel | Memory remains bounded and cancellation completes within 250 ms after the consumer is dropped |
 
 Provider network latency, upstream rate limiting, authentication, OS keychain
 prompts, terminal drawing, and SQLite disk latency are reported separately and
 must not be attributed to SDK orchestration overhead.
+
+The parallel tool batch fixture emits eight independent resource-aware reads.
+Each read includes the same one-millisecond scripted operation at both limits,
+and each sample checks that history retains model order. The evidence JSON
+records the raw samples for limits one and four plus the ratio of their median
+run times. This scenario reports speedup rather than setting a machine-wide
+minimum because timer resolution and available CPU vary across release runners.
 
 ## Regression policy
 

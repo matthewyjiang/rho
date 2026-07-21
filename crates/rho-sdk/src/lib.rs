@@ -87,8 +87,10 @@
 //!
 //! Hosts can supply custom [`ModelProvider`](crate::provider::ModelProvider)
 //! and [`Tool`](crate::tool::Tool) implementations. Both return explicit `Send`
-//! futures suitable for trait objects. Tools use only capabilities supplied
-//! through [`ToolContext`](crate::tool::ToolContext).
+//! futures suitable for trait objects. Legacy tools use capabilities supplied
+//! through [`ToolContext`](crate::tool::ToolContext). Resource-aware prepared
+//! tools receive [`AuthorizedToolContext`](crate::tool::AuthorizedToolContext),
+//! which cannot request capabilities beyond their prepared declaration.
 //!
 //! # Session snapshots
 //!
@@ -105,7 +107,7 @@
 //! - Retract staged steering with [`Run::retract_steering`] before it is
 //!   appended to conversation history.
 //! - Answer questionnaires with [`Run::respond`](crate::Run::respond) after
-//!   [`RunEvent::HostInputRequested`].
+//!   [`RunEvent::ToolHostInputRequested`].
 //! - Gate sensitive work with [`WorkspacePolicy`] and [`ApprovalHandler`].
 //!
 //! The compiling examples under `examples/` cover simple completion, streaming,

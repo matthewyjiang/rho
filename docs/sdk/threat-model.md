@@ -52,6 +52,7 @@ The SDK builder defaults to deny, but the shipped Rho application is an explicit
 6. **SDK to host UI:** events, questions, paths, commands, diffs, URLs, and errors become displayed or logged text.
 7. **Memory to persistence/export:** snapshots cross into storage, backups, telemetry, or recipients.
 8. **Instruction discovery to prompt:** repository files, skills, and fetched content can influence model decisions but cannot grant authority.
+9. **Tool batch scheduler:** model calls share one run coordinator. Prepared capability and resource declarations gate overlap, but they do not synchronize other runs or work that survives an invocation.
 
 ## Threats, controls, and residual risk
 

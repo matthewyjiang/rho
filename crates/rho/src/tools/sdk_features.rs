@@ -4,16 +4,16 @@ use std::sync::Arc;
 
 use rho_sdk::{
     tool::{
-        OperationKind, Tool as SdkTool, ToolContext as SdkToolContext, ToolError as SdkToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolInvocationSource, ToolMetadata, ToolOutput,
-        ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool as SdkTool, ToolContext as SdkToolContext,
+        ToolError as SdkToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolInvocationSource,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
+        ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest,
     HostQuestion, SelectionMode,
 };
 use rho_tools::{
-    sdk_security::authorize_request,
-    sdk_support::{required_string, workspace},
+    sdk_support::required_string,
     tool::{truncate, Tool as _},
 };
 
@@ -45,19 +45,26 @@ impl SdkTool for SdkSkillTool {
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
+        rho_sdk::tool::call_prepared(self, invocation, context)
+    }
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
             let invocation_source = invocation.source();
-            let name = required_string(invocation.arguments(), "name")?;
-            if !valid_skill_name(name) {
+            let name = required_string(invocation.arguments(), "name")?.to_string();
+            if !valid_skill_name(&name) {
                 return Err(SdkToolError::new(
                     ToolErrorKind::InvalidArguments,
                     "skill name must contain only ASCII letters, digits, '-' or '_'",
                 ));
             }
-            let skill = match crate::skills::find_builtin(name) {
+            let skill = match crate::skills::find_builtin(&name) {
                 Some(skill) => skill,
                 None => {
-                    let workspace = workspace(&context)?;
+                    let workspace = preparation_workspace(&context)?;
                     crate::skills::discover(workspace.root())
                         .into_iter()
                         .find(|skill| skill.name == name)
@@ -77,65 +84,107 @@ impl SdkTool for SdkSkillTool {
                     format!("skill '{name}' requires direct user invocation"),
                 ));
             }
-            let requested = match &skill.source {
+            let metadata = ToolMetadata::new().operation(OperationKind::Read);
+            match skill.source {
                 crate::skills::SkillSource::BuiltIn => {
-                    authorize_request(
-                        &context,
-                        CapabilityRequest::skill(
-                            name,
-                            None,
-                            CapabilitySource::built_in_tool("skill"),
-                        ),
-                    )
-                    .await?;
-                    let content = format!(
-                        "Loaded skill: {name}\nSource: built in to rho\n\n{}",
-                        skill.contents
+                    let capability = CapabilityRequest::skill(
+                        &name,
+                        None,
+                        CapabilitySource::built_in_tool("skill"),
                     );
-                    return Ok(ToolOutput::text(truncate(content, self.max_output_bytes)));
+                    let access = ToolResourceAccess::shared(ToolResource::opaque(
+                        "rho.skill.builtin",
+                        &name,
+                    ));
+                    let content = truncate(
+                        format!(
+                            "Loaded skill: {name}\nSource: built in to rho\n\n{}",
+                            skill.contents
+                        ),
+                        self.max_output_bytes,
+                    );
+                    Ok(PreparedToolInvocation::resource_aware(
+                        [access],
+                        [capability],
+                        metadata,
+                        move |_context| Box::pin(async move { Ok(ToolOutput::text(content)) }),
+                    ))
                 }
-                crate::skills::SkillSource::File(requested) => requested,
-            };
-            let workspace = workspace(&context)?;
-            let skill_directory = requested.parent().ok_or_else(|| {
-                SdkToolError::new(
-                    ToolErrorKind::Execution,
-                    format!(
-                        "skill path '{}' has no parent directory",
-                        requested.display()
-                    ),
-                )
-            })?;
-            let skill_workspace = workspace
-                .clone()
-                .with_granted_root(skill_directory)
-                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-            let resolved = skill_workspace
-                .resolve_for_read(requested)
-                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-            authorize_request(
-                &context,
-                CapabilityRequest::skill(
-                    name,
-                    Some(resolved.path().to_path_buf()),
-                    CapabilitySource::built_in_tool("skill"),
-                ),
-            )
-            .await?;
-            skill_workspace.revalidate(&resolved).map_err(|error| {
-                SdkToolError::new(ToolErrorKind::PolicyDenied, error.to_string())
-            })?;
-            let contents = tokio::fs::read_to_string(resolved.path())
-                .await
-                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-            let content = format!(
-                "Loaded skill: {name}\nSource: {}\nReferences are relative to {}.\n\n{contents}",
-                crate::paths::display(requested),
-                crate::paths::display(skill_directory),
-            );
-            Ok(ToolOutput::text(truncate(content, self.max_output_bytes)))
+                crate::skills::SkillSource::File(requested) => {
+                    let workspace = preparation_workspace(&context)?;
+                    let skill_directory = requested.parent().ok_or_else(|| {
+                        SdkToolError::new(
+                            ToolErrorKind::Execution,
+                            format!(
+                                "skill path '{}' has no parent directory",
+                                requested.display()
+                            ),
+                        )
+                    })?;
+                    let skill_workspace = workspace
+                        .clone()
+                        .with_granted_root(skill_directory)
+                        .map_err(|error| {
+                            SdkToolError::new(ToolErrorKind::Execution, error.to_string())
+                        })?;
+                    let resolved =
+                        skill_workspace
+                            .resolve_for_read(&requested)
+                            .map_err(|error| {
+                                SdkToolError::new(ToolErrorKind::Execution, error.to_string())
+                            })?;
+                    let capability = CapabilityRequest::skill(
+                        &name,
+                        Some(resolved.path().to_path_buf()),
+                        CapabilitySource::built_in_tool("skill"),
+                    );
+                    let access =
+                        ToolResourceAccess::shared(ToolResource::workspace_path(resolved.path()));
+                    let requested_display = crate::paths::display(&requested);
+                    let directory_display = crate::paths::display(skill_directory);
+                    let max_output_bytes = self.max_output_bytes;
+                    Ok(PreparedToolInvocation::resource_aware(
+                        [access],
+                        [capability],
+                        metadata,
+                        move |_context| {
+                            Box::pin(async move {
+                                skill_workspace.revalidate(&resolved).map_err(|error| {
+                                    SdkToolError::new(
+                                        ToolErrorKind::PolicyDenied,
+                                        error.to_string(),
+                                    )
+                                })?;
+                                let contents = tokio::fs::read_to_string(resolved.path())
+                                    .await
+                                    .map_err(|error| {
+                                        SdkToolError::new(
+                                            ToolErrorKind::Execution,
+                                            error.to_string(),
+                                        )
+                                    })?;
+                                let content = format!(
+                                    "Loaded skill: {name}\nSource: {requested_display}\nReferences are relative to {directory_display}.\n\n{contents}"
+                                );
+                                Ok(ToolOutput::text(truncate(content, max_output_bytes)))
+                            })
+                        },
+                    ))
+                }
+            }
         })
     }
+}
+
+fn preparation_workspace(
+    context: &ToolPreparationContext,
+) -> Result<&rho_sdk::Workspace, SdkToolError> {
+    context.workspace().ok_or_else(|| {
+        SdkToolError::new(
+            ToolErrorKind::Execution,
+            "skill requires a configured workspace",
+        )
+    })
 }
 
 fn valid_skill_name(name: &str) -> bool {

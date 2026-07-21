@@ -501,7 +501,12 @@ impl Session {
     pub async fn complete(&self, input: impl Into<String>) -> Result<RunOutcome, Error> {
         let mut run = self.start(UserInput::text(input)).await?;
         while let Some(event) = run.next_event().await {
-            if let crate::RunEvent::HostInputRequested { request } = event {
+            let request = match event {
+                crate::RunEvent::HostInputRequested { request }
+                | crate::RunEvent::ToolHostInputRequested { request, .. } => Some(request),
+                _ => None,
+            };
+            if let Some(request) = request {
                 run.cancel();
                 let _ = run.outcome().await;
                 return Err(Error::InvalidHostResponse {

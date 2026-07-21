@@ -99,7 +99,7 @@ async fn run_pending_tool(request_host_input: bool) {
         loop {
             if matches!(
                 run.next_event().await,
-                Some(rho_sdk::RunEvent::HostInputRequested { .. })
+                Some(rho_sdk::RunEvent::ToolHostInputRequested { .. })
             ) {
                 break;
             }

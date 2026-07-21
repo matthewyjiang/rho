@@ -11,6 +11,14 @@ fn failed_turn() -> FailedTurn {
 }
 
 #[test]
+fn approval_and_questionnaire_share_one_interaction_slot() {
+    assert!(interaction_slot_available(false, false));
+    assert!(!interaction_slot_available(true, false));
+    assert!(!interaction_slot_available(false, true));
+    assert!(!interaction_slot_available(true, true));
+}
+
+#[test]
 fn retry_request_reuses_the_failed_turn_input_and_display() {
     let failed_turn = failed_turn();
     let PromptTurnRequest::Retry(retry) = PromptTurnRequest::Retry(failed_turn.clone()) else {

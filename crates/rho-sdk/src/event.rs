@@ -206,4 +206,9 @@ pub enum RunEvent {
         reason: ProviderStreamResetReason,
         detail: String,
     },
+    /// Host input requested by a correlated tool call.
+    ToolHostInputRequested {
+        call_id: ToolCallId,
+        request: crate::HostInputRequest,
+    },
 }

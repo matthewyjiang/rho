@@ -289,7 +289,7 @@ assert!(matches!(run.outcome().await, Err(Error::Cancelled)));
 ## Questionnaires and approvals
 
 Tools can request typed host questionnaires through `ToolContext::request_host_input`.
-Hosts observe `RunEvent::HostInputRequested` and answer with `Run::respond`.
+Hosts observe `RunEvent::ToolHostInputRequested` and answer with `Run::respond`.
 
 Security-sensitive capabilities use `ToolContext::authorize` with a
 `WorkspacePolicy` and optional `ApprovalHandler`. Approvals are deny-by-default.

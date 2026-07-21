@@ -143,7 +143,8 @@ async fn main() -> Result<(), rho_sdk::Error> {
 
     while let Some(event) = run.next_event().await {
         match event {
-            RunEvent::HostInputRequested { request } => {
+            RunEvent::HostInputRequested { request }
+            | RunEvent::ToolHostInputRequested { request, .. } => {
                 println!("questionnaire: {}", request.title());
                 run.respond(
                     request.id().clone(),
