@@ -1,15 +1,14 @@
 # Skills
 
-Skills are reusable instruction sets that Rho loads on demand. Each skill is a
-`SKILL.md` file describing how to perform a task. Rho exposes available skills to
-the model by name and description through the [`skill` tool](/tools-workspace),
-and loads a skill's full content only when it is used, so many skills can be
-available without filling the context.
+Skills give Rho reusable instructions for a task. Each skill lives in a
+`SKILL.md` file. Rho shows the model each skill's name and description through
+the [`skill` tool](/tools-workspace). The model loads the full instructions only
+when it uses that skill, which leaves more context for your work.
 
-## SKILL.md format
+## `SKILL.md` format
 
-A skill is a directory containing a `SKILL.md` file. The file begins with a
-frontmatter block delimited by `---`, followed by the Markdown instructions:
+Create a directory for the skill and add a `SKILL.md` file. Start the file with
+YAML front matter between `---` lines, then write the instructions in Markdown:
 
 ```text
 ---
@@ -21,18 +20,19 @@ Read the relevant log files with the file tools, group errors by message,
 and report the most frequent failures first with file and line references.
 ```
 
-- `name` (required) must be 1–64 characters, lowercase alphanumeric with single
-  hyphen separators, and must match the skill's directory name
-  (`inspect-logs/SKILL.md` uses `name: inspect-logs`).
-- `description` (required) is what Rho shows the model to decide when the skill
-  applies, so make it specific about when to use it.
-- Everything after the frontmatter is the skill body, loaded verbatim when the
-  skill is used.
+The file has three parts:
 
-## Discovery and precedence
+- `name` (required): Use 1–64 lowercase letters, numbers, or single hyphens. The
+  name must match the directory name. For example, `inspect-logs/SKILL.md` uses
+  `name: inspect-logs`.
+- `description` (required): Tell the model what the skill does and when to use
+  it. A specific description helps the model choose the right skill.
+- Body: Write the instructions after the front matter. Rho loads this text as
+  written when the model uses the skill.
 
-Rho discovers skills from these locations, and the first skill found for a given
-name wins:
+## Where Rho looks for skills
+
+Rho checks these locations in order:
 
 ```text
 built-in skills (shipped with Rho)
@@ -41,33 +41,39 @@ built-in skills (shipped with Rho)
 <project>/.agents/skills/<name>/SKILL.md   (nearest directory first, up to the repository root)
 ```
 
-Because built-in skills are resolved first, a user skill cannot override a
-built-in of the same name. Home skills take precedence over project skills, and
-within a project the directory nearest the working directory wins.
+If Rho finds the same skill name more than once, it uses the first copy. You
+can't replace a built-in skill with a user skill. Skills in your home directory
+take priority over project skills. Within a project, Rho starts at the working
+directory and searches up to the repository root.
 
-## Adding a custom or third-party skill
+## Add a skill
 
-There is no install command — a skill is a plain file. Create the directory and
-`SKILL.md`:
+You don't need an install command. Choose where the skill should live:
 
-```text
+- `~/.rho/skills` makes it available only to Rho.
+- `~/.agents/skills` shares it with Rho and other agents that use this layout.
+- `<project>/.agents/skills` shares it with everyone who works in that
+  repository.
+
+Create a directory whose name matches the skill name, then add `SKILL.md`:
+
+```sh
 mkdir -p ~/.agents/skills/inspect-logs
-# then write ~/.agents/skills/inspect-logs/SKILL.md
+touch ~/.agents/skills/inspect-logs/SKILL.md
 ```
 
-`.agents/skills` is a shared convention across agents, so a `SKILL.md` placed
-there is available to Rho and to other agents that follow the same layout. Use
-`~/.rho/skills` for skills scoped to Rho only, or a project's `.agents/skills` to
-share a skill with everyone who works in that repository.
+Open the new file and follow the format above. To add a third-party skill, copy
+its directory into one of these locations.
+Read its instructions before you use it.
 
 ## Built-in skills
 
-Rho ships these skills:
+Rho includes two built-in skills:
 
-```text
-rho-diagnostics    inspect harness diagnostics
-rho-agent-creator  define a new agent through a guided questionnaire
-```
+| Skill | Use |
+| --- | --- |
+| `rho-diagnostics` | Inspect harness diagnostics |
+| `rho-agent-creator` | Define an agent through a guided questionnaire |
 
-See [Tools and workspace](/tools-workspace) for the `skill` tool and
-[Agents and delegation](/subagents) for agent definitions.
+See [Tools and workspace](/tools-workspace) for details about the `skill` tool.
+See [Agents and delegation](/subagents) to learn how to define agents.
