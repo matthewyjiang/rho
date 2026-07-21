@@ -6,11 +6,36 @@ use rho_providers::{
 
 use super::{
     catalog, config_picker, favorites, model_picker, provider, provider_picker, reasoning_metadata,
-    App, CommandInvocation, ComposerMode, Entry, InteractiveRuntime, ModelSelection, PickerAction,
-    UiPicker,
+    App, CommandInvocation, ComposerMode, Entry, InteractiveModelSelection, InteractiveRuntime,
+    ModelSelection, PickerAction, UiPicker,
 };
 
 impl App {
+    pub(super) fn resolve_model_selection(
+        &self,
+        reference: &str,
+        current_provider: &str,
+        current_auth: &str,
+    ) -> anyhow::Result<InteractiveModelSelection> {
+        let resolved = self.info.runtime.model_aliases.resolve(reference)?;
+        let alias = resolved.alias;
+        let selection = match resolved.provider {
+            Some(provider) => {
+                catalog::resolve_model_selection_for_provider(&provider, &resolved.model)?
+            }
+            None if alias.is_some() => {
+                catalog::resolve_model_selection_for_provider(current_provider, &resolved.model)?
+            }
+            None => catalog::resolve_model_selection_for_auths(
+                &resolved.model,
+                current_provider,
+                current_auth,
+                &self.available_auths,
+            )?,
+        };
+        Ok(InteractiveModelSelection { selection, alias })
+    }
+
     async fn refresh_model_lists(
         &mut self,
         selected_provider: &str,
@@ -79,11 +104,10 @@ impl App {
         }
 
         self.refresh_available_auths();
-        match catalog::resolve_model_selection_for_auths(
+        match self.resolve_model_selection(
             model,
             &self.info.runtime.provider,
             &self.info.runtime.auth,
-            &self.available_auths,
         ) {
             Ok(selection) => self.select_model(selection, agent),
             Err(err) => {
@@ -138,11 +162,10 @@ impl App {
         let result = match action {
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
-                match catalog::resolve_model_selection_for_auths(
+                match self.resolve_model_selection(
                     &value,
                     &self.info.runtime.provider,
                     &self.info.runtime.auth,
-                    &self.available_auths,
                 ) {
                     Ok(selection) => self.select_model(selection, agent),
                     Err(err) => {
@@ -162,13 +185,10 @@ impl App {
                 } else {
                     self.refresh_available_auths();
                     let (provider, _model, auth) = self.internal_agent_model_selection(&id);
-                    match catalog::resolve_model_selection_for_auths(
-                        &value,
-                        &provider,
-                        &auth,
-                        &self.available_auths,
-                    ) {
-                        Ok(selection) => self.select_internal_agent_model(&id, Some(selection))?,
+                    match self.resolve_model_selection(&value, &provider, &auth) {
+                        Ok(selection) => {
+                            self.select_internal_agent_model(&id, Some(selection.selection))?
+                        }
                         Err(err) => {
                             self.insert_entry(&Entry::Error(err.to_string()));
                             self.status = "internal agent model switch failed".into();
@@ -290,7 +310,9 @@ impl App {
         let mut picker = match action {
             PickerAction::SelectModel if self.running => model_picker::model_picker_during_run(
                 &self.info.runtime,
-                self.pending_model_selection.as_ref(),
+                self.pending_model_selection
+                    .as_ref()
+                    .map(|pending| &pending.selection),
                 &self.available_auths,
             ),
             PickerAction::SelectModel => {
@@ -399,9 +421,10 @@ impl App {
 
     pub(super) fn select_model(
         &mut self,
-        selection: ModelSelection,
+        resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let InteractiveModelSelection { selection, alias } = resolved;
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -452,6 +475,7 @@ impl App {
         match self.info.services.config_repository.update(|config| {
             config.provider = provider.clone();
             config.model = model.clone();
+            config.model_alias = alias.clone();
             config.reasoning = reasoning.effective;
             config.auth = auth.clone();
         }) {
@@ -530,3 +554,7 @@ impl App {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
 }
+
+#[cfg(test)]
+#[path = "model_actions_tests.rs"]
+mod tests;

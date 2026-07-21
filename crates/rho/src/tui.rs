@@ -195,6 +195,7 @@ pub struct RuntimeModelView {
     pub cwd: PathBuf,
     pub provider: String,
     pub model: String,
+    pub(crate) model_aliases: crate::model_aliases::ModelAliases,
     pub reasoning: ReasoningLevel,
     pub reasoning_source: ReasoningRequestSource,
     pub permission_mode: PermissionMode,
@@ -294,6 +295,12 @@ struct SessionHeaderCache {
     lines: Vec<Line<'static>>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct InteractiveModelSelection {
+    selection: ModelSelection,
+    alias: Option<String>,
+}
+
 struct App {
     info: TuiBootstrap,
     terminal_events: Option<TerminalEvents>,
@@ -369,7 +376,7 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
-    pending_model_selection: Option<ModelSelection>,
+    pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<String>,
     pending_session_title: Option<PendingSessionTitle>,
     markdown_images: markdown_image::MarkdownImageCache,
@@ -2232,7 +2239,9 @@ impl App {
             self.refresh_available_auths();
             let picker = model_picker::model_picker_during_run(
                 &self.info.runtime,
-                self.pending_model_selection.as_ref(),
+                self.pending_model_selection
+                    .as_ref()
+                    .map(|pending| &pending.selection),
                 &self.available_auths,
             );
             if picker.items.is_empty() {
@@ -2249,11 +2258,10 @@ impl App {
         }
 
         self.refresh_available_auths();
-        match catalog::resolve_model_selection_for_auths(
+        match self.resolve_model_selection(
             model,
             &self.info.runtime.provider,
             &self.info.runtime.auth,
-            &self.available_auths,
         ) {
             Ok(selection) => self.queue_model_selection(selection),
             Err(err) => {
@@ -2264,8 +2272,14 @@ impl App {
         }
     }
 
-    fn queue_model_selection(&mut self, selection: ModelSelection) -> anyhow::Result<()> {
-        let provider_model = format!("{}/{}", selection.provider, selection.model);
+    fn queue_model_selection(
+        &mut self,
+        selection: InteractiveModelSelection,
+    ) -> anyhow::Result<()> {
+        let provider_model = format!(
+            "{}/{}",
+            selection.selection.provider, selection.selection.model
+        );
         self.pending_model_selection = Some(selection);
         self.insert_entry(&Entry::Notice(format!(
                 "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
@@ -2279,10 +2293,10 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some(selection) = self.pending_model_selection.take() else {
+        let Some(pending) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        self.select_model(selection, agent)
+        self.select_model(pending, agent)
     }
 
     fn execute_command_during_turn(
@@ -2460,11 +2474,10 @@ impl App {
             }
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
-                match catalog::resolve_model_selection_for_auths(
+                match self.resolve_model_selection(
                     &value,
                     &self.info.runtime.provider,
                     &self.info.runtime.auth,
-                    &self.available_auths,
                 ) {
                     Ok(selection) => self.queue_model_selection(selection)?,
                     Err(err) => {
@@ -3730,6 +3743,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/project"),
                 provider: "openai".into(),
                 model: "gpt-5.5".into(),
+                model_aliases: Default::default(),
                 reasoning: ReasoningLevel::Low,
                 reasoning_source: ReasoningRequestSource::PersistedOrDefault,
                 permission_mode: PermissionMode::Auto,

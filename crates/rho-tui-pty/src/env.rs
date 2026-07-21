@@ -72,11 +72,16 @@ impl IsolatedHome {
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
-            r#"provider = "openai"
+            r#"check_for_updates = false
+web_search_provider = "disabled"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search_provider = "disabled"
+
+[model.aliases]
+deep = "openai-codex/gpt-5.5"
 "#,
         )
         .context("failed to write isolated config.toml")?;

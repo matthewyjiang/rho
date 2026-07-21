@@ -94,6 +94,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 cwd,
                 provider: config.provider,
                 model: config.model,
+                model_aliases: config.model_aliases,
                 reasoning: config.reasoning,
                 reasoning_source,
                 permission_mode: config.permission_mode,
