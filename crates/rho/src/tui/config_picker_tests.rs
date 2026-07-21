@@ -40,7 +40,10 @@ fn config_picker_lists_scannable_categories_with_summaries() {
     );
     assert_eq!(
         picker.items[3].badge.as_ref().unwrap().text,
-        "bash shell · search auto"
+        format!(
+            "{} shell · search {}",
+            config.inline_shell, config.web_search_provider
+        )
     );
     assert!(picker.items[4].badge.is_none());
     assert_eq!(
