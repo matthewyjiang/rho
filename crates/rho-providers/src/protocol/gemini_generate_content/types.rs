@@ -170,6 +170,15 @@ impl FinishReason {
     pub fn is_success(self) -> bool {
         matches!(self, Self::Stop | Self::MaxTokens)
     }
+
+    /// A non-success finish that is a transient generation artifact rather than
+    /// a content-policy block, so re-rolling the request may succeed.
+    pub fn is_transient(self) -> bool {
+        matches!(
+            self,
+            Self::MalformedFunctionCall | Self::UnexpectedToolCall | Self::TooManyToolCalls
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
