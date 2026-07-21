@@ -106,7 +106,7 @@ impl StatusLineState {
 
     fn right_bottom(&self) -> String {
         let prefix = format!(
-            "◇ {} • ({}) {}",
+            "permissions: {} • ({}) {}",
             self.permission_mode.label(),
             self.provider,
             self.model
@@ -229,18 +229,61 @@ fn statusline_lines(
     goal: Option<&GoalStatus>,
 ) -> Vec<Line<'static>> {
     let goal = goal.map(|goal| {
-        format!(
-            "◎ /goal {} • {} turn{} • {}",
-            if goal.blocked { "blocked" } else { "active" },
-            goal.turns,
-            if goal.turns == 1 { "" } else { "s" },
-            super::goal::format_elapsed(goal.elapsed)
-        )
+        let state = if goal.blocked { "blocked" } else { "active" };
+        [
+            format!(
+                "goal: {state} • {} turn{} • {}",
+                goal.turns,
+                if goal.turns == 1 { "" } else { "s" },
+                super::goal::format_elapsed(goal.elapsed)
+            ),
+            format!("goal: {state}"),
+            state.into(),
+        ]
     });
+    let top_left = state.left_top();
+    let top_right = goal
+        .as_ref()
+        .map(|candidates| fit_right_status(&top_left, candidates, width))
+        .unwrap_or_default();
+    let bottom_left = format_usage(state);
+    let permission = state.permission_mode.label();
+    let permission_summary = if state.reasoning_configurable {
+        format!("permissions: {permission} • {}", state.reasoning)
+    } else {
+        format!("permissions: {permission}")
+    };
+    let permission_candidates = [
+        state.right_bottom(),
+        permission_summary,
+        format!("permissions: {permission}"),
+        permission.into(),
+    ];
+    let bottom_right = fit_right_status(&bottom_left, &permission_candidates, width);
     vec![
-        render_row(state.left_top(), goal.unwrap_or_default(), width),
-        render_row(format_usage(state), state.right_bottom(), width),
+        render_row(top_left, top_right, width),
+        render_row(bottom_left, bottom_right, width),
     ]
+}
+
+fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
+    let full = &candidates[0];
+    if display_width(left) + display_width(full) < width {
+        return full.clone();
+    }
+
+    let separator_width = usize::from(!left.is_empty());
+    let available = width
+        .saturating_sub(display_width(left) + separator_width)
+        .max(width.saturating_div(2))
+        .max(1);
+    candidates
+        .iter()
+        .find(|candidate| display_width(candidate) <= available)
+        .cloned()
+        .unwrap_or_else(|| {
+            truncate_one_line(candidates.last().expect("status has a value"), available)
+        })
 }
 
 fn format_usage(state: &StatusLineState) -> String {
@@ -400,7 +443,7 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
 
     let left_width = display_width(&left);
     let right_width = display_width(&right);
-    if left_width + right_width < width {
+    if left_width + right_width + usize::from(!left.is_empty()) <= width {
         let gap = " ".repeat(width - left_width - right_width);
         return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
     }

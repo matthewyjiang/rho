@@ -52,7 +52,10 @@ fn statusline_omits_reasoning_for_non_configurable_provider_paths() {
     state.provider = "github-copilot".into();
     state.reasoning_configurable = reasoning_is_configurable(&state.provider, &state.model);
 
-    assert_eq!(state.right_bottom(), "◇ Auto • (github-copilot) gpt-test");
+    assert_eq!(
+        state.right_bottom(),
+        "permissions: Auto • (github-copilot) gpt-test"
+    );
 }
 
 #[test]
@@ -67,7 +70,7 @@ fn statusline_shows_active_goal_indicator() {
     let lines = statusline_lines(&state, 80, Some(&goal));
     let text = line_text(&lines[0]);
 
-    assert!(text.contains("◎ /goal active • 2 turns • 1m 5s"), "{text}");
+    assert!(text.contains("goal: active • 2 turns • 1m 5s"), "{text}");
 }
 
 #[test]
@@ -82,7 +85,7 @@ fn statusline_shows_blocked_goal_indicator() {
     let lines = statusline_lines(&state, 80, Some(&goal));
     let text = line_text(&lines[0]);
 
-    assert!(text.contains("◎ /goal blocked • 1 turn • 9s"), "{text}");
+    assert!(text.contains("goal: blocked • 1 turn • 9s"), "{text}");
 }
 
 #[test]
@@ -254,18 +257,18 @@ fn permission_mode_indicator_is_always_visible_and_prioritized() {
     let auto = test_info(PathBuf::from("/tmp/project"));
     assert!(StatusLineState::from_tui(&auto)
         .right_bottom()
-        .starts_with("◇ Auto • "));
+        .starts_with("permissions: Auto • "));
 
     let mut plan = auto;
     plan.permission_mode = crate::permission::PermissionMode::Plan;
     assert!(StatusLineState::from_tui(&plan)
         .right_bottom()
-        .starts_with("◇ Plan • "));
+        .starts_with("permissions: Plan • "));
 
     plan.permission_mode = crate::permission::PermissionMode::Supervised;
     assert!(StatusLineState::from_tui(&plan)
         .right_bottom()
-        .starts_with("◇ Supervised • "));
+        .starts_with("permissions: Supervised • "));
 }
 
 #[test]
@@ -283,7 +286,29 @@ fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
     assert!(lines
         .iter()
         .all(|line| display_width(&line_text(line)) <= 18));
-    assert!(line_text(&lines[1]).contains("◇ Plan"));
+    assert!(line_text(&lines[1]).contains("Plan"));
+}
+
+#[test]
+fn narrow_statusline_preserves_supervised_permission_mode() {
+    let mut info = test_info(PathBuf::from("/tmp/project"));
+    info.permission_mode = crate::permission::PermissionMode::Supervised;
+    let mut statusline = StatusLine::new(&info);
+
+    let lines = statusline.lines(18, None);
+
+    assert!(line_text(&lines[1]).contains("Supervised"));
+}
+
+#[test]
+fn compact_permission_status_preserves_reasoning_level() {
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+
+    let lines = statusline.lines(40, None);
+    let bottom = line_text(&lines[1]);
+
+    assert!(bottom.contains("permissions: Auto"), "{bottom}");
+    assert!(bottom.contains("low"), "{bottom}");
 }
 
 #[test]
