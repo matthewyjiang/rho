@@ -137,10 +137,10 @@ async fn preparation_reserves_missing_write_membership_and_rejects_parent_traver
         panic!("write_file must opt in to resource-aware execution");
     };
     assert!(accesses.contains(&ToolResourceAccess::exclusive(
-        ToolResource::workspace_path(dir.path().join("out.txt"))
+        ToolResource::workspace_path(workspace.root().join("out.txt"))
     )));
     assert!(accesses.contains(&ToolResourceAccess::exclusive(
-        ToolResource::directory_membership(dir.path())
+        ToolResource::directory_membership(workspace.root())
     )));
 
     let read = coding_tool(CodingToolKind::ReadFile, CodingToolOptions::default());
