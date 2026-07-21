@@ -373,14 +373,14 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
 
     let output = output.unwrap();
     assert!(output.contains("Loaded skill: ancestor-skill"));
-    assert!(output.contains(&format!(
-        "Source: {}",
-        crate::paths::display(&skill_dir.join("SKILL.md"))
-    )));
-    assert!(output.contains(&format!(
-        "References are relative to {}.",
-        crate::paths::display(&skill_dir)
-    )));
+    assert!(output.lines().any(|line| {
+        line.starts_with("Source: ")
+            && line.ends_with("/project/.agents/skills/ancestor-skill/SKILL.md")
+    }));
+    assert!(output.lines().any(|line| {
+        line.starts_with("References are relative to ")
+            && line.ends_with("/project/.agents/skills/ancestor-skill.")
+    }));
     assert!(output.ends_with("ancestor body\n"));
 }
 
