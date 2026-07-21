@@ -1,10 +1,6 @@
 pub(super) use crate::config::default_inline_shell as default_shell;
 
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Stdio,
-};
+use std::{path::Path, process::Stdio};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -109,7 +105,7 @@ pub(super) fn available_shells(selected: &str) -> Vec<String> {
     };
     let mut shells = candidates
         .iter()
-        .filter(|shell| executable_exists(shell))
+        .filter(|shell| crate::executable::find_on_path(shell).is_some())
         .map(|shell| (*shell).to_string())
         .collect::<Vec<_>>();
     if !selected.is_empty() && !shells.iter().any(|shell| shell == selected) {
@@ -239,27 +235,6 @@ pub(super) fn display_lines(output: &ShellOutput, _included_in_context: bool) ->
         lines.push(output.stdout.trim_end().to_string());
     }
     lines
-}
-
-fn executable_exists(executable: &str) -> bool {
-    let path = Path::new(executable);
-    if path.components().count() > 1 {
-        return path.is_file();
-    }
-    env::var_os("PATH").is_some_and(|paths| {
-        env::split_paths(&paths)
-            .any(|directory| executable_paths(&directory, executable).any(|path| path.is_file()))
-    })
-}
-
-fn executable_paths(directory: &Path, executable: &str) -> impl Iterator<Item = PathBuf> {
-    let mut paths = vec![directory.join(executable)];
-    if cfg!(windows) && Path::new(executable).extension().is_none() {
-        paths.push(directory.join(format!("{executable}.exe")));
-        paths.push(directory.join(format!("{executable}.cmd")));
-        paths.push(directory.join(format!("{executable}.bat")));
-    }
-    paths.into_iter()
 }
 
 fn executable_name(shell: &str) -> &str {

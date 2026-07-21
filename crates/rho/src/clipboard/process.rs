@@ -1,6 +1,5 @@
 use std::{
     io::{self, Write},
-    path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
 };
 
@@ -11,42 +10,7 @@ use std::{
 /// stdin; `xclip` reads stdin into the primary selection), so executing them to
 /// probe availability would mutate the clipboard.
 pub(super) fn command_available(command: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    command_available_in(command, std::env::split_paths(&path))
-}
-
-fn command_available_in(command: &str, dirs: impl Iterator<Item = PathBuf>) -> bool {
-    dirs.flat_map(|dir| executable_candidates(&dir, command))
-        .any(|candidate| is_executable_file(&candidate))
-}
-
-/// The paths to test for `command` in `dir`. On Windows a bare name resolves
-/// through the common executable extensions, matching PATHEXT resolution.
-fn executable_candidates(dir: &Path, command: &str) -> Vec<PathBuf> {
-    let mut candidates = vec![dir.join(command)];
-    if cfg!(windows) && Path::new(command).extension().is_none() {
-        for extension in ["exe", "cmd", "bat"] {
-            candidates.push(dir.join(format!("{command}.{extension}")));
-        }
-    }
-    candidates
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    // WSL presents Windows .exe helpers under /mnt/c with the DrvFs default 0777,
-    // so the exec bit holds unless the mount clears it with a custom fmask.
-    std::fs::metadata(path)
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    crate::executable::find_on_path(command).is_some()
 }
 
 pub(super) fn command_output(command: &str, args: &[&str]) -> Option<Vec<u8>> {

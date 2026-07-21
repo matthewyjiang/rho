@@ -7,6 +7,7 @@ mod compaction;
 mod config;
 mod config_writer;
 mod diagnostics;
+mod executable;
 mod export;
 mod herdr;
 mod keybindings;
