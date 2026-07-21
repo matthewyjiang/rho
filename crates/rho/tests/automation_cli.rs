@@ -179,14 +179,11 @@ fn jsonl_success_emits_versioned_events_and_authoritative_text() {
     );
     assert!(events.iter().all(|event| event["schema_version"] == 1));
     assert_eq!(events.first().unwrap()["type"], "run.started");
-    assert_eq!(
-        events.first().unwrap()["workspace"],
-        root.path()
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
-            .as_ref()
-    );
+    assert!(same_file::is_same_file(
+        events.first().unwrap()["workspace"].as_str().unwrap(),
+        root.path(),
+    )
+    .unwrap());
     assert!(events.iter().any(|event| {
         event["type"] == "assistant.text_delta"
             && event["attempt"] == 1
