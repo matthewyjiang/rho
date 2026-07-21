@@ -17,7 +17,9 @@ The SDK does not validate JSON against a tool schema before invocation. Implemen
 
 ## Preparation and parallel execution
 
-`Tool::prepare` validates and resolves an invocation once, before scheduling. The default implementation wraps `Tool::call` with `ToolExecutionPolicy::Exclusive`, so existing and custom tools stay source-compatible and run alone. Tools must opt in before the runtime overlaps them.
+`Tool::prepare` validates and resolves an invocation once, before scheduling. Preparations within one model batch run concurrently and their outputs return to the scheduler in model order. The default implementation wraps `Tool::call` with `ToolExecutionPolicy::Exclusive`, so existing and custom tools stay source-compatible and run alone. Tools must opt in before the runtime overlaps them.
+
+A resource-aware implementation should keep `prepare` as its canonical path and delegate its compatibility `call` method to `tool::call_prepared`. This avoids maintaining separate parsing, authorization, and execution flows. The helper prepares the invocation, authorizes its declared capabilities, and runs its one-use executor.
 
 A resource-aware tool returns `PreparedToolInvocation::resource_aware` with:
 

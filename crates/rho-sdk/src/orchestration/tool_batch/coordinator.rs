@@ -12,15 +12,17 @@ use crate::{
     run::RunCommand,
     session::{SessionCore, SessionState},
     tool::{
-        tool_progress_channel, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
-        ToolExecutionPolicy, ToolFuture, ToolInvocation, ToolInvocationSource, ToolOutput,
-        ToolPreparationContext, ToolProgress,
+        PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy,
+        ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
     },
     CancellationToken, Error, HostInputId, RunEvent, ToolCallId,
 };
 
+mod preparation;
+
 use super::planner::{plan, Dependency};
 use crate::orchestration::{emit, Rho, RunControl};
+use preparation::prepare_batch;
 
 pub(in crate::orchestration) const INTERRUPTED_TOOL_RESULT_CONTENT: &str =
     "tool call interrupted before completion";
@@ -53,7 +55,6 @@ struct BatchCall<'a> {
     call: ToolCall,
     id: ToolCallId,
     state: CallState<'a>,
-    proposed: bool,
     progress: Option<crate::tool::ToolProgressReceiver>,
     host_input: Option<mpsc::Receiver<HostInputEnvelope>>,
     dependencies: Vec<Dependency>,
@@ -102,6 +103,15 @@ pub(in crate::orchestration) async fn execute(
     );
     batch_span.in_scope(|| tracing::trace!("batch coordinator started"));
     let batch_cancellation = control.cancellation.clone();
+    if let Err(error) = propose_calls(control, &calls).await {
+        batch_cancellation.cancel();
+        append_interrupted_calls(&calls, history);
+        return if matches!(error, Error::Cancelled) {
+            Ok(true)
+        } else {
+            Err(error)
+        };
+    }
     let tools = calls
         .iter()
         .map(|(call, _, _)| runtime.tools.get(&call.name))
@@ -136,17 +146,6 @@ pub(in crate::orchestration) async fn execute(
         }
         batch[planned.index.0].dependencies = planned.dependencies;
     }
-    if let Err(error) = propose_all(control, &mut batch).await {
-        return cancel_batch(
-            error,
-            &batch_cancellation,
-            &mut batch,
-            &mut worker_rx,
-            history,
-        )
-        .await;
-    }
-
     let mut pending_input: BTreeMap<HostInputId, (ToolCallId, HostInputEnvelope)> = BTreeMap::new();
     let mut observed_input: BTreeMap<HostInputId, ToolCallId> = BTreeMap::new();
     let mut commands_open = true;
@@ -267,136 +266,32 @@ pub(in crate::orchestration) async fn execute(
     }
 }
 
-async fn prepare_batch<'a>(
-    core: &Arc<SessionCore>,
-    runtime: &Rho,
-    tools: &'a [Option<Arc<dyn Tool>>],
-    calls: Vec<(ToolCall, ToolCallId, ToolInvocationSource)>,
-    cancellation: &CancellationToken,
-    limit: NonZeroUsize,
-) -> (Vec<BatchCall<'a>>, bool) {
-    let mut batch = Vec::with_capacity(calls.len());
-    let mut calls = calls.into_iter().enumerate();
-    while let Some((index, (call, id, source))) = calls.next() {
-        let Some(tool) = &tools[index] else {
-            batch.push(BatchCall {
-                call,
-                id,
-                state: CallState::Unavailable,
-                proposed: false,
-                progress: None,
-                host_input: None,
-                dependencies: Vec::new(),
-                queued_at: Instant::now(),
-                execution_started: None,
-                result: None,
-            });
-            continue;
-        };
-        let (context, progress, host_input) =
-            execution_context(core, runtime, &id, cancellation, limit);
-        let invocation = match source {
-            ToolInvocationSource::Model => ToolInvocation::new(id.clone(), call.arguments.clone()),
-            ToolInvocationSource::Host => {
-                ToolInvocation::from_host(id.clone(), call.arguments.clone())
-            }
-        };
-        let preparation = tool.prepare(
-            invocation,
-            ToolPreparationContext::new(runtime.workspace.clone(), cancellation.clone()),
-        );
-        tokio::pin!(preparation);
-        let prepared = tokio::select! {
-            biased;
-            result = &mut preparation => result,
-            () = cancellation.cancelled() => {
-                batch.push(interrupted_entry(call, id));
-                batch.extend(calls.map(|(_, (call, id, _))| interrupted_entry(call, id)));
-                return (batch, true);
-            },
-        };
-        let state = match prepared {
-            Ok(invocation) => CallState::Prepared {
-                invocation: Some(invocation),
-                context,
-            },
-            Err(error) => CallState::PreparationFailed(error),
-        };
-        batch.push(BatchCall {
-            call,
-            id,
-            state,
-            proposed: false,
-            progress: Some(progress),
-            host_input: Some(host_input),
-            dependencies: Vec::new(),
-            queued_at: Instant::now(),
-            execution_started: None,
-            result: None,
-        });
-    }
-    (batch, false)
-}
-
-fn interrupted_entry<'a>(call: ToolCall, id: ToolCallId) -> BatchCall<'a> {
-    BatchCall {
-        call,
-        id,
-        state: CallState::PreparationFailed(ToolError::cancelled()),
-        proposed: false,
-        progress: None,
-        host_input: None,
-        dependencies: Vec::new(),
-        queued_at: Instant::now(),
-        execution_started: None,
-        result: None,
-    }
-}
-
-fn execution_context(
-    core: &Arc<SessionCore>,
-    runtime: &Rho,
-    call_id: &ToolCallId,
-    cancellation: &CancellationToken,
-    limit: NonZeroUsize,
-) -> (
-    ToolContext,
-    crate::tool::ToolProgressReceiver,
-    mpsc::Receiver<HostInputEnvelope>,
-) {
-    let (progress, progress_receiver) = tool_progress_channel(limit);
-    let (host_input, host_input_receiver) =
-        crate::host_input::channel(limit.get(), cancellation.clone());
-    let context = ToolContext::with_security(
-        runtime.workspace.clone(),
-        Arc::clone(&runtime.workspace_policy),
-        Arc::clone(&runtime.approval_handler),
-        core.approvals(),
-        Arc::clone(&runtime.approval_audit),
-        cancellation.clone(),
-        progress,
-    )
-    .with_call_id(call_id.clone())
-    .with_host_input(host_input);
-    (context, progress_receiver, host_input_receiver)
-}
-
-async fn propose_all(
+async fn propose_calls(
     control: &mut RunControl<'_>,
-    batch: &mut [BatchCall<'_>],
+    calls: &[(ToolCall, ToolCallId, ToolInvocationSource)],
 ) -> Result<(), Error> {
-    for entry in batch {
+    for (call, _, _) in calls {
         emit(
             control.events,
             control.cancellation,
-            RunEvent::ToolProposed {
-                call: entry.call.clone(),
-            },
+            RunEvent::ToolProposed { call: call.clone() },
         )
         .await?;
-        entry.proposed = true;
     }
     Ok(())
+}
+
+fn append_interrupted_calls(
+    calls: &[(ToolCall, ToolCallId, ToolInvocationSource)],
+    history: &mut Vec<Message>,
+) {
+    history.extend(calls.iter().map(|(call, _, _)| {
+        Message::ToolResult(ToolResult {
+            id: call.id.clone(),
+            ok: false,
+            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+        })
+    }));
 }
 
 async fn resolve_without_work(
@@ -404,9 +299,6 @@ async fn resolve_without_work(
     batch: &mut [BatchCall<'_>],
 ) -> Result<(), Error> {
     for entry in batch {
-        if !entry.proposed {
-            continue;
-        }
         let completion = match &entry.state {
             CallState::Unavailable => Some((
                 ToolCompletion::Unavailable,
@@ -460,8 +352,7 @@ async fn start_eligible(
     batch: &mut [BatchCall<'_>],
 ) -> Result<(), Error> {
     for index in 0..batch.len() {
-        let eligible = batch[index].proposed
-            && matches!(batch[index].state, CallState::Prepared { .. })
+        let eligible = matches!(batch[index].state, CallState::Prepared { .. })
             && batch[index].dependencies.iter().all(|dependency| {
                 matches!(batch[dependency.predecessor.0].state, CallState::Resolved)
             });

@@ -36,11 +36,8 @@ impl Tool for SdkGetSearchContent {
         ToolSecurity::built_in([])
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        Box::pin(async move {
-            let args = parse_args(invocation.into_arguments())?;
-            self.execute(args)
-        })
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

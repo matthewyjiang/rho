@@ -198,8 +198,11 @@ impl App {
             }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
-            let approval_ready =
-                approval_receiver_open && !matches!(self.composer, ComposerMode::Approval(_));
+            let interaction_available = interaction_slot_available(
+                /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                /*questionnaire_active*/ pending_questionnaire.is_some(),
+            );
+            let approval_ready = approval_receiver_open && interaction_available;
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
@@ -263,21 +266,6 @@ impl App {
                             agent.cancel();
                         }
                     }
-                    if !questionnaire_cancelled_by_user && sdk_failure.is_none() {
-                        if let Some((call_id, request)) = queued_questionnaires.pop_front() {
-                            let request_id = request.id().clone();
-                            let (reply_tx, reply_rx) = oneshot::channel();
-                            self.open_questionnaire(
-                                QuestionAnswerRequest {
-                                    request: event_adapter::questionnaire_request(&request),
-                                    response: QuestionnaireResponseChannel::new(reply_tx),
-                                },
-                                terminal,
-                            )?;
-                            pending_questionnaire = Some((call_id, request_id, reply_rx));
-                            self.draw_running_frame(terminal, &mut frame_scheduler)?;
-                        }
-                    }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_preview(terminal)?;
@@ -313,9 +301,14 @@ impl App {
                             tool_call_active.store(self.tool_calls.is_running(), Ordering::SeqCst);
                         }
                         ViewEvent::Questionnaire { call_id, request } => {
-                            if pending_questionnaire.is_some() {
-                                queued_questionnaires.push_back((call_id, request));
-                            } else {
+                            let interaction_available = interaction_slot_available(
+                                /*approval_active*/ matches!(
+                                    self.composer,
+                                    ComposerMode::Approval(_)
+                                ),
+                                /*questionnaire_active*/ pending_questionnaire.is_some(),
+                            );
+                            if interaction_available {
                                 let request_id = request.id().clone();
                                 let (reply_tx, reply_rx) = oneshot::channel();
                                 self.open_questionnaire(
@@ -327,6 +320,8 @@ impl App {
                                 )?;
                                 pending_questionnaire = Some((call_id, request_id, reply_rx));
                                 interaction_ready = true;
+                            } else {
+                                queued_questionnaires.push_back((call_id, request));
                             }
                             changed = true;
                         }
@@ -347,6 +342,27 @@ impl App {
                     if render_now {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
                     }
+                }
+            }
+            if !questionnaire_cancelled_by_user
+                && sdk_failure.is_none()
+                && interaction_slot_available(
+                    /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                    /*questionnaire_active*/ pending_questionnaire.is_some(),
+                )
+            {
+                if let Some((call_id, request)) = queued_questionnaires.pop_front() {
+                    let request_id = request.id().clone();
+                    let (reply_tx, reply_rx) = oneshot::channel();
+                    self.open_questionnaire(
+                        QuestionAnswerRequest {
+                            request: event_adapter::questionnaire_request(&request),
+                            response: QuestionnaireResponseChannel::new(reply_tx),
+                        },
+                        terminal,
+                    )?;
+                    pending_questionnaire = Some((call_id, request_id, reply_rx));
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
             }
             if pending_input_request.is_none()
@@ -479,6 +495,10 @@ impl App {
         self.status = "error".into();
         TurnOutcome::Failed(failed_turn)
     }
+}
+
+fn interaction_slot_available(approval_active: bool, questionnaire_active: bool) -> bool {
+    !approval_active && !questionnaire_active
 }
 
 enum RuntimeEvent {

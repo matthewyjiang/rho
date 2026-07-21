@@ -687,7 +687,7 @@ async fn steering_during_parallel_batch_applies_after_all_results_close() {
 }
 
 #[tokio::test]
-async fn cancellation_while_prepare_is_pending_commits_every_interrupted_result_slot() {
+async fn concurrent_pending_preparations_cancel_into_every_result_slot() {
     let (started, mut preparation_started) = mpsc::unbounded_channel();
     let runtime = Rho::builder()
         .provider(provider(vec![
@@ -704,10 +704,22 @@ async fn cancellation_while_prepare_is_pending_commits_every_interrupted_result_
         .start(UserInput::text("cancel preparation"))
         .await
         .unwrap();
-    tokio::time::timeout(TEST_TIMEOUT, preparation_started.recv())
-        .await
-        .expect("tool preparation did not start")
-        .expect("preparation probe closed");
+    for _ in 0..3 {
+        tokio::time::timeout(TEST_TIMEOUT, preparation_started.recv())
+            .await
+            .expect("all tool preparations did not start concurrently")
+            .expect("preparation probe closed");
+    }
+    let mut proposed = 0;
+    while proposed < 3 {
+        let event = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+            .await
+            .expect("tool proposals were blocked by pending preparation")
+            .expect("run ended before proposing every tool call");
+        if matches!(event, RunEvent::ToolProposed { .. }) {
+            proposed += 1;
+        }
+    }
 
     run.cancel();
     while run.next_event().await.is_some() {}

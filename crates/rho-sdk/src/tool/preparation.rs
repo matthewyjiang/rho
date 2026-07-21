@@ -1,8 +1,13 @@
 use std::{fmt, path::PathBuf};
 
-use crate::{CancellationToken, CapabilityRequest, HostInputRequest, HostInputResponse, Workspace};
+use crate::{
+    AuthorizationDenialKind, CancellationToken, CapabilityRequest, HostInputRequest,
+    HostInputResponse, Workspace,
+};
 
-use super::{ToolContext, ToolError, ToolFuture, ToolMetadata, ToolProgressSender};
+use super::{
+    Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolMetadata, ToolProgressSender,
+};
 
 /// Future returned while a [`Tool`](super::Tool) prepares one invocation.
 pub type ToolPrepareFuture<'a> = std::pin::Pin<
@@ -27,7 +32,6 @@ impl ToolPreparationContext {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn from_execution(execution: &ToolContext) -> Self {
         Self::new(
             execution.workspace().cloned(),
@@ -176,6 +180,37 @@ impl ToolResource {
             Self::Opaque { .. } => ToolResourceKind::Opaque,
         }
     }
+}
+
+/// Runs the canonical prepared path from a tool's compatibility [`Tool::call`]
+/// implementation.
+///
+/// Resource-aware tools can delegate `call` to this function instead of keeping
+/// a second parsing, authorization, and execution path. The tool must override
+/// [`Tool::prepare`], since its default implementation delegates back to
+/// [`Tool::call`].
+pub fn call_prepared<'a>(
+    tool: &'a dyn Tool,
+    invocation: ToolInvocation,
+    execution: ToolContext,
+) -> ToolFuture<'a> {
+    Box::pin(async move {
+        let preparation = ToolPreparationContext::from_execution(&execution);
+        let prepared = tool.prepare(invocation, preparation).await?;
+        for capability in prepared.capabilities() {
+            execution
+                .authorize(capability.clone())
+                .await
+                .map_err(|error| {
+                    if matches!(error.kind(), AuthorizationDenialKind::Cancelled) {
+                        ToolError::cancelled()
+                    } else {
+                        ToolError::policy_denied(&error)
+                    }
+                })?;
+        }
+        prepared.execute(execution).await
+    })
 }
 
 impl fmt::Debug for ToolResource {

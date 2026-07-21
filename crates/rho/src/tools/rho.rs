@@ -60,8 +60,8 @@ impl SdkTool for SdkRho {
         ToolSecurity::built_in([])
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, _context: SdkToolContext) -> ToolFuture<'a> {
-        Box::pin(async move { self.execute(parse_args(invocation.into_arguments())?) })
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
+        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

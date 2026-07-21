@@ -4492,15 +4492,8 @@ mod tests {
     fn spinner_is_anchored_immediately_above_composer_divider() {
         let mut app = test_app();
         app.running = true;
-        app.tool_calls.previews.insert(
-            0,
-            ToolEntry {
-                state: ToolEntryState::Running,
-                display_lines: vec!["bash".into(), "cargo test".into()],
-                expanded: false,
-                image: None,
-            },
-        );
+        app.tool_calls
+            .preview(0, None, vec!["bash".into(), "cargo test".into()]);
         let width = 40;
         let height = 24;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -5312,15 +5305,8 @@ mod tests {
     fn history_lines_include_header_transcript_pending_preview_but_not_activity_row() {
         let mut app = test_app();
         app.push_transcript_entry(Entry::User("hello".into()));
-        app.tool_calls.previews.insert(
-            0,
-            ToolEntry {
-                state: ToolEntryState::Running,
-                display_lines: vec!["bash".into(), "cargo test".into()],
-                expanded: false,
-                image: None,
-            },
-        );
+        app.tool_calls
+            .preview(0, None, vec!["bash".into(), "cargo test".into()]);
         app.live_stream_preview = Some(LiveStreamPreview {
             kind: StreamKind::Assistant,
             text: "partial answer".into(),

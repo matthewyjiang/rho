@@ -20,8 +20,9 @@ use crate::{
 mod preparation;
 
 pub use preparation::{
-    AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode, ToolExecutionPolicy,
-    ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess, ToolResourceKind,
+    call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
+    ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture, ToolResource,
+    ToolResourceAccess, ToolResourceKind,
 };
 
 /// Future returned by [`Tool`] implementations.

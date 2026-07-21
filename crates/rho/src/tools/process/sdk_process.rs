@@ -66,10 +66,7 @@ impl Tool for SdkProcess {
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        Box::pin(async move {
-            let args = parse_args(invocation.into_arguments())?;
-            self.execute(args, &context).await
-        })
+        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

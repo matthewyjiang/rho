@@ -36,16 +36,7 @@ impl Tool for TuiFixtureProgressTool {
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        let fixture = FixtureRun::from_invocation(&invocation);
-        Box::pin(async move {
-            send_progress(&context, &fixture.first_progress, 1).await?;
-            fixture_sleep(&context, fixture.delay).await?;
-            send_progress(&context, &fixture.second_progress, 2).await?;
-            fixture_sleep(&context, Duration::from_millis(300)).await?;
-            Ok(ToolOutput::text(fixture.result).metadata(
-                ToolMetadata::new().operation(OperationKind::Other("tui_fixture".into())),
-            ))
-        })
+        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(
@@ -134,32 +125,6 @@ async fn authorized_fixture_sleep(
     context: &rho_sdk::tool::AuthorizedToolContext,
     duration: Duration,
 ) -> Result<(), ToolError> {
-    tokio::select! {
-        () = tokio::time::sleep(duration) => Ok(()),
-        () = context.cancellation().cancelled() => Err(ToolError::cancelled()),
-    }
-}
-
-async fn send_progress(
-    context: &ToolContext,
-    message: &str,
-    completed: u64,
-) -> Result<(), ToolError> {
-    if !context
-        .progress()
-        .send(
-            ToolProgress::message(message).units(completed, 2).metadata(
-                ToolMetadata::new().operation(OperationKind::Other("tui_fixture".into())),
-            ),
-        )
-        .await
-    {
-        return Err(ToolError::cancelled());
-    }
-    Ok(())
-}
-
-async fn fixture_sleep(context: &ToolContext, duration: Duration) -> Result<(), ToolError> {
     tokio::select! {
         () = tokio::time::sleep(duration) => Ok(()),
         () = context.cancellation().cancelled() => Err(ToolError::cancelled()),

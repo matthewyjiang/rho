@@ -1,3 +1,5 @@
+use crate::tool::tool_progress_channel;
+
 use super::*;
 
 #[tokio::test]
@@ -42,7 +44,6 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
         },
         id: ToolCallId::from_string("completed").unwrap(),
         state: CallState::Running(forwarded),
-        proposed: true,
         progress: None,
         host_input: None,
         dependencies: Vec::new(),
