@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::model::{
     handoff::prepare_assistant, ContentBlock, Message, ModelError, ModelEvent, ModelIdentity,
-    ModelResponse, ModelUsage, ProviderReportedErrorKind, ToolCall, ToolSpec,
+    ModelResponse, ModelUsage, ToolCall, ToolSpec,
 };
 
 use super::types::*;
@@ -366,8 +366,7 @@ impl ResponseCollector {
                         candidate.finish_message.unwrap_or_default()
                     );
                     return Err(if reason.is_transient() {
-                        ModelError::ProviderReported {
-                            kind: ProviderReportedErrorKind::Unavailable,
+                        ModelError::RetryableInvalidResponse {
                             error_type: format!("{reason:?}"),
                             message,
                         }

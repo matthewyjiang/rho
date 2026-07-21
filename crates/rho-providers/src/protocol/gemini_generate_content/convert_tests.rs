@@ -628,23 +628,27 @@ fn response_maps_reasoning_tools_signatures_and_usage() {
 }
 
 #[test]
-fn transient_finish_reason_is_reported_as_retryable() {
-    let response: GenerateContentResponse = serde_json::from_value(json!({
-        "candidates": [{"finishReason": "MALFORMED_FUNCTION_CALL"}],
-        "usageMetadata": {"promptTokenCount": 4, "totalTokenCount": 4}
-    }))
-    .unwrap();
-    let error = ResponseCollector::default()
-        .apply(response, None)
-        .unwrap_err();
+fn transient_finish_reasons_are_retryable_invalid_responses() {
+    for finish_reason in [
+        "MALFORMED_FUNCTION_CALL",
+        "UNEXPECTED_TOOL_CALL",
+        "TOO_MANY_TOOL_CALLS",
+        "MALFORMED_RESPONSE",
+    ] {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "candidates": [{"finishReason": finish_reason}],
+            "usageMetadata": {"promptTokenCount": 4, "totalTokenCount": 4}
+        }))
+        .unwrap();
+        let error = ResponseCollector::default()
+            .apply(response, None)
+            .unwrap_err();
 
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: crate::model::ProviderReportedErrorKind::Unavailable,
-            ..
-        }
-    ));
+        assert!(
+            matches!(error, ModelError::RetryableInvalidResponse { .. }),
+            "{finish_reason} produced {error:?}"
+        );
+    }
 }
 
 #[test]

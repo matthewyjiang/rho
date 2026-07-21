@@ -162,6 +162,7 @@ pub enum FinishReason {
     ImageSafety,
     UnexpectedToolCall,
     TooManyToolCalls,
+    MalformedResponse,
     #[serde(other)]
     Other,
 }
@@ -176,7 +177,10 @@ impl FinishReason {
     pub fn is_transient(self) -> bool {
         matches!(
             self,
-            Self::MalformedFunctionCall | Self::UnexpectedToolCall | Self::TooManyToolCalls
+            Self::MalformedFunctionCall
+                | Self::UnexpectedToolCall
+                | Self::TooManyToolCalls
+                | Self::MalformedResponse
         )
     }
 }
