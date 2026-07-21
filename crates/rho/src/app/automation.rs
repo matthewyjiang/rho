@@ -40,13 +40,15 @@ use super::{
 #[derive(Debug)]
 pub struct AutomationExit {
     code: u8,
+    reason: TerminalReason,
     message: String,
 }
 
 impl AutomationExit {
-    pub(super) fn new(code: u8, message: impl Into<String>) -> Self {
+    pub(super) fn new(code: u8, reason: TerminalReason, message: impl Into<String>) -> Self {
         Self {
             code,
+            reason,
             message: message.into(),
         }
     }
@@ -54,6 +56,10 @@ impl AutomationExit {
     /// Returns the documented process exit code for this automation result.
     pub fn exit_code(&self) -> u8 {
         self.code
+    }
+
+    fn reason(&self) -> TerminalReason {
+        self.reason
     }
 }
 
@@ -192,7 +198,9 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         Ok(reporter) => reporter,
         Err(error) => {
             emit_failure(&mut jsonl, TerminalReason::OutputError, &error)?;
-            return Err(AutomationExit::new(1, error.to_string()).into());
+            return Err(
+                AutomationExit::new(1, TerminalReason::OutputError, error.to_string()).into(),
+            );
         }
     };
 
@@ -232,8 +240,12 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 && (jsonl.is_some() || startup.max_steps.is_some())
         });
         if reached_step_limit {
-            let stopped =
-                Err(AutomationExit::new(124, "rho run reached its model-step limit").into());
+            let stopped = Err(AutomationExit::new(
+                124,
+                TerminalReason::MaxSteps,
+                "rho run reached its model-step limit",
+            )
+            .into());
             reporter.finish(&stopped);
         } else {
             reporter.finish(&result);
@@ -242,7 +254,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
 
     if timed_out {
         emit_stopped(&mut jsonl, TerminalReason::Timeout)?;
-        return Err(AutomationExit::new(124, "rho run timed out").into());
+        return Err(AutomationExit::new(124, TerminalReason::Timeout, "rho run timed out").into());
     }
 
     match result {
@@ -256,9 +268,12 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 } else {
                     write_text_answer(&answer, reporter.is_some())?;
                 }
-                return Err(
-                    AutomationExit::new(124, "rho run reached its model-step limit").into(),
-                );
+                return Err(AutomationExit::new(
+                    124,
+                    TerminalReason::MaxSteps,
+                    "rho run reached its model-step limit",
+                )
+                .into());
             }
             if let Some(adapter) = jsonl.as_mut() {
                 let event = adapter.completed(answer.text().into());
@@ -280,9 +295,9 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 return Err(error);
             }
             if let Some(exit) = error.downcast_ref::<AutomationExit>() {
-                Err(AutomationExit::new(exit.exit_code(), message).into())
+                Err(AutomationExit::new(exit.exit_code(), exit.reason(), message).into())
             } else {
-                Err(AutomationExit::new(code, message).into())
+                Err(AutomationExit::new(code, reason, message).into())
             }
         }
     }
@@ -298,14 +313,25 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
         }
         stdout.flush()
     })();
-    result
-        .map_err(|error| AutomationExit::new(1, format!("could not write output: {error}")).into())
+    result.map_err(|error| {
+        AutomationExit::new(
+            1,
+            TerminalReason::OutputError,
+            format!("could not write output: {error}"),
+        )
+        .into()
+    })
 }
 
 fn emit(event: WireEvent) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     write_event(&mut stdout, &event).map_err(|error| {
-        AutomationExit::new(1, format!("could not write JSONL output: {error}")).into()
+        AutomationExit::new(
+            1,
+            TerminalReason::OutputError,
+            format!("could not write JSONL output: {error}"),
+        )
+        .into()
     })
 }
 
@@ -347,14 +373,7 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
         return (TerminalReason::Interrupted, interrupted.exit_code());
     }
     if let Some(exit) = error.downcast_ref::<AutomationExit>() {
-        return match exit.exit_code() {
-            130 | 143 => (TerminalReason::Interrupted, exit.exit_code()),
-            124 => (TerminalReason::Timeout, 124),
-            _ if exit.to_string().starts_with("could not write JSONL output") => {
-                (TerminalReason::OutputError, 1)
-            }
-            _ => (TerminalReason::OtherError, exit.exit_code()),
-        };
+        return (exit.reason(), exit.exit_code());
     }
     for cause in error.chain() {
         if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
@@ -720,9 +739,12 @@ impl RunReporter {
             }
             Err(error)
                 if error.is::<AutomationInterrupted>()
-                    || error
-                        .downcast_ref::<AutomationExit>()
-                        .is_some_and(|exit| exit.exit_code() == 124)
+                    || error.downcast_ref::<AutomationExit>().is_some_and(|exit| {
+                        matches!(
+                            exit.reason(),
+                            TerminalReason::MaxSteps | TerminalReason::Timeout
+                        )
+                    })
                     || error.is::<SubagentCancelled>() =>
             {
                 self.status.state = RunState::Stopped;

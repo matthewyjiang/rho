@@ -181,7 +181,11 @@ fn jsonl_success_emits_versioned_events_and_authoritative_text() {
     assert_eq!(events.first().unwrap()["type"], "run.started");
     assert_eq!(
         events.first().unwrap()["workspace"],
-        root.path().to_string_lossy().as_ref()
+        root.path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
     assert!(events.iter().any(|event| {
         event["type"] == "assistant.text_delta"

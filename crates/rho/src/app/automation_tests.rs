@@ -9,7 +9,10 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{classify_error, complete_run, prompt_from_reader, RunArtifactIdentity, RunReporter};
+use super::{
+    classify_error, complete_run, prompt_from_reader, AutomationExit, RunArtifactIdentity,
+    RunReporter,
+};
 use crate::{
     app::{
         automation_protocol::TerminalReason,
@@ -19,6 +22,17 @@ use crate::{
     compaction::CompactionConfig,
     permission::PermissionMode,
 };
+
+#[test]
+fn classifies_automation_exit_without_parsing_its_message() {
+    let error = anyhow::Error::new(AutomationExit::new(
+        1,
+        TerminalReason::OutputError,
+        "wording can change",
+    ));
+
+    assert_eq!(classify_error(&error), (TerminalReason::OutputError, 1));
+}
 
 #[test]
 fn classifies_fatal_tool_host_errors() {

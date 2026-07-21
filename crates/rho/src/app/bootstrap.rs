@@ -14,7 +14,7 @@ use {
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation, cli_config,
+    automation, automation_protocol, cli_config,
     config_repository::ConfigRepository,
     interactive, login,
     sdk_config::SdkBootstrapOptions,
@@ -38,10 +38,20 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     }
     if run_output == Some(OutputFormat::Jsonl) {
         automation::emit_startup_failure()?;
-        return Err(automation::AutomationExit::new(2, "configuration failed").into());
+        return Err(automation::AutomationExit::new(
+            2,
+            automation_protocol::TerminalReason::ConfigurationError,
+            "configuration failed",
+        )
+        .into());
     }
     if run_output.is_some() {
-        return Err(automation::AutomationExit::new(2, error.to_string()).into());
+        return Err(automation::AutomationExit::new(
+            2,
+            automation_protocol::TerminalReason::ConfigurationError,
+            error.to_string(),
+        )
+        .into());
     }
     Err(error)
 }
