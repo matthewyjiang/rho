@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use super::{
     definition::{AgentDefinition, AgentFingerprint, AgentId},
+    internal::{internal_definitions, is_internal_agent_id},
     parser::parse_definition,
 };
 
@@ -26,6 +27,7 @@ pub enum ProjectTrust {
 /// Source kind, ordered from lowest to highest discovery precedence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AgentOrigin {
+    Internal,
     BuiltIn,
     AgentsHome,
     RhoHome,
@@ -48,6 +50,7 @@ pub struct AgentCatalogEntry {
 #[derive(Clone, Debug, Default)]
 pub struct AgentCatalog {
     entries: BTreeMap<AgentId, AgentCatalogEntry>,
+    internal_entries: BTreeMap<AgentId, AgentCatalogEntry>,
 }
 
 impl AgentCatalog {
@@ -88,6 +91,7 @@ impl AgentCatalog {
                 .collect();
             catalog.load_tier(AgentOrigin::Project, &project_roots)?;
         }
+        catalog.load_internals();
         Ok(catalog)
     }
 
@@ -106,6 +110,10 @@ impl AgentCatalog {
 
     pub fn iter(&self) -> impl Iterator<Item = &AgentCatalogEntry> {
         self.entries.values()
+    }
+
+    pub fn iter_with_internal(&self) -> impl Iterator<Item = &AgentCatalogEntry> {
+        self.internal_entries.values().chain(self.entries.values())
     }
 
     fn load_builtins(&mut self) -> Result<(), AgentCatalogError> {
@@ -141,11 +149,37 @@ impl AgentCatalog {
                             )
                         })?;
                 let definition = parse_definition(&path, fallback_id, &contents)?;
+                if is_internal_agent_id(&definition.id) {
+                    return Err(AgentCatalogError::at_field(
+                        path.clone(),
+                        "id",
+                        format!(
+                            "agent ID '{}' is reserved for an internal agent and cannot be overridden",
+                            definition.id
+                        ),
+                    ));
+                }
                 insert_in_tier(&mut tier, definition, &path)?;
             }
         }
         self.merge_tier(tier, origin);
         Ok(())
+    }
+
+    fn load_internals(&mut self) {
+        for definition in internal_definitions() {
+            self.internal_entries.insert(
+                definition.id.clone(),
+                AgentCatalogEntry {
+                    definition: definition.clone(),
+                    fingerprint: definition.fingerprint(),
+                    metadata: AgentCatalogMetadata {
+                        origin: AgentOrigin::Internal,
+                        path: None,
+                    },
+                },
+            );
+        }
     }
 
     fn merge_tier(

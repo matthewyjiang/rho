@@ -18,10 +18,6 @@ impl App {
                 self.open_config_conversation_model_picker();
                 Ok(())
             }
-            config_picker::TITLE_MODEL_VALUE => {
-                self.open_config_title_model_picker();
-                Ok(())
-            }
             config_picker::REFRESH_MODEL_LIST_VALUE => {
                 self.open_config_refresh_model_picker();
                 Ok(())

@@ -44,14 +44,18 @@ pub(super) fn model_picker_during_run(
     )
 }
 
-pub(super) fn title_model_picker(
+pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
+
+pub(super) fn internal_agent_model_picker(
+    agent_id: &str,
     current_provider: &str,
     current_model: &str,
+    uses_conversation_model: bool,
     favorite_models: &[String],
     available_auths: &[String],
 ) -> UiPicker {
-    model_picker_for_current(
-        "select title model",
+    let mut picker = model_picker_for_current(
+        &format!("select model for {agent_id}"),
         "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
         CurrentModel {
             provider: current_provider,
@@ -60,8 +64,31 @@ pub(super) fn title_model_picker(
         },
         favorite_models,
         available_auths,
-        PickerAction::SelectTitleModel,
-    )
+        PickerAction::SelectInternalAgentModel,
+    );
+    let selected_model = picker
+        .items
+        .iter()
+        .position(|item| item.value == format!("{current_provider}/{current_model}"));
+    picker.items.insert(
+        0,
+        PickerItem {
+            label: "Use conversation model".into(),
+            detail: Some("Follow the active conversation provider, model, and auth.".into()),
+            preview: None,
+            badge: uses_conversation_model.then_some(PickerBadge {
+                text: "selected".into(),
+                tone: PickerBadgeTone::Selected,
+            }),
+            value: USE_CONVERSATION_MODEL.into(),
+        },
+    );
+    picker.selected = if uses_conversation_model {
+        0
+    } else {
+        selected_model.map_or(0, |index| index + 1)
+    };
+    picker
 }
 
 struct CurrentModel<'a> {

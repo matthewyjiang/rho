@@ -63,6 +63,42 @@ fn same_tier_duplicates_are_rejected() {
 }
 
 #[test]
+fn internal_agents_are_visible_but_not_selectable() {
+    let root = tempfile::tempdir().unwrap();
+    let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
+
+    assert!(catalog.find(SESSION_TITLE_AGENT_ID).is_err());
+    assert!(catalog.find(GOAL_JUDGE_AGENT_ID).is_err());
+    assert!(catalog
+        .iter()
+        .all(|entry| entry.metadata.origin != AgentOrigin::Internal));
+    let origins = catalog
+        .iter_with_internal()
+        .map(|entry| entry.metadata.origin)
+        .collect::<Vec<_>>();
+    assert_eq!(origins[..2], [AgentOrigin::Internal, AgentOrigin::Internal]);
+    assert!(origins[2..]
+        .iter()
+        .all(|origin| *origin != AgentOrigin::Internal));
+}
+
+#[test]
+fn rejects_files_with_reserved_internal_agent_ids() {
+    let root = tempfile::tempdir().unwrap();
+    let agents = root.path().join(".rho/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let path = agents.join("session-title.md");
+    std::fs::write(&path, "---\ndescription: shadow\n---\nshadow prompt\n").unwrap();
+
+    let error = AgentCatalog::discover_with_home(root.path(), Some(root.path())).unwrap_err();
+
+    assert_eq!(error.path, path);
+    assert_eq!(error.field.as_deref(), Some("id"));
+    assert!(error.to_string().contains("session-title"));
+    assert!(error.to_string().contains("reserved"));
+}
+
+#[test]
 fn project_definitions_require_explicit_trust() {
     let project = tempfile::tempdir().unwrap();
     let agents = project.path().join(".agents/agents");
