@@ -280,7 +280,7 @@ fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
 
 fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     let max_label_width = match picker.action {
-        super::PickerAction::SelectModel | super::PickerAction::SelectTitleModel => 60,
+        super::PickerAction::SelectModel | super::PickerAction::SelectInternalAgentModel => 60,
         super::PickerAction::ResumeSession => 36,
         super::PickerAction::Config
         | super::PickerAction::Doctor
@@ -357,21 +357,28 @@ fn picker_item_line(
 }
 
 fn picker_footer_text(picker: &UiPicker) -> String {
-    let action = picker
-        .confirm_verb
-        .as_deref()
-        .unwrap_or(match picker.action {
-            super::PickerAction::Config => "change",
-            super::PickerAction::Doctor | super::PickerAction::ViewAgent => "close",
-            super::PickerAction::SelectModel
-            | super::PickerAction::SelectTitleModel
-            | super::PickerAction::LoginGroup
-            | super::PickerAction::LoginProvider
-            | super::PickerAction::LogoutProvider
-            | super::PickerAction::InsertSkillCommand
-            | super::PickerAction::ResumeSession => "select",
-            super::PickerAction::RefreshModelList => "refresh",
-        });
+    let default_action = match picker.action {
+        super::PickerAction::Config => "change",
+        super::PickerAction::Doctor => "close",
+        super::PickerAction::ViewAgent
+            if picker
+                .selected_item()
+                .and_then(|item| item.badge.as_ref())
+                .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
+        {
+            "configure"
+        }
+        super::PickerAction::ViewAgent => "close",
+        super::PickerAction::SelectModel
+        | super::PickerAction::SelectInternalAgentModel
+        | super::PickerAction::LoginGroup
+        | super::PickerAction::LoginProvider
+        | super::PickerAction::LogoutProvider
+        | super::PickerAction::InsertSkillCommand
+        | super::PickerAction::ResumeSession => "select",
+        super::PickerAction::RefreshModelList => "refresh",
+    };
+    let action = picker.confirm_verb.as_deref().unwrap_or(default_action);
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
     } else {
@@ -395,6 +402,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
 
 fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
+        PickerBadgeTone::Internal => Theme::accent(),
         PickerBadgeTone::Selected => Theme::warning(),
         PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
         PickerBadgeTone::Warning => Theme::warning(),

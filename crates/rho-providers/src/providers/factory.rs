@@ -100,6 +100,13 @@ fn clone_model_error(error: &ModelError) -> ModelError {
             ModelError::UnsupportedProvider(provider.clone())
         }
         ModelError::InvalidResponse(message) => ModelError::InvalidResponse(message.clone()),
+        ModelError::RetryableInvalidResponse {
+            error_type,
+            message,
+        } => ModelError::RetryableInvalidResponse {
+            error_type: error_type.clone(),
+            message: message.clone(),
+        },
         ModelError::ProviderReported {
             kind,
             error_type,

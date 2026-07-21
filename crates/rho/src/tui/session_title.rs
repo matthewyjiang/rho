@@ -1,13 +1,15 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
-use rho_sdk::{
-    model::{ContentBlock, Message, ModelRequest, ModelResponse},
-    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, ReasoningLevel,
-    SessionId,
+use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
+
+use crate::agent::{
+    internal_definition, run_one_shot_agent, OneShotAgentRequest, SESSION_TITLE_AGENT_ID,
 };
 
 use super::SessionTitleResult;
-use rho_providers::providers::build_sdk_provider;
+
+pub(crate) const SESSION_TITLE_PROMPT: &str =
+    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words.";
 
 pub(super) struct PendingSessionTitle {
     session_id: String,
@@ -66,29 +68,19 @@ pub(super) async fn generate_session_title(
     usage_recording: ProviderRequestUsageRecording,
     cancellation: CancellationToken,
 ) -> anyhow::Result<String> {
-    let provider = build_sdk_provider(&provider_name, &model, ReasoningLevel::Low)?;
-    let request_messages = vec![
-        Message::System(
-            "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words."
-                .into(),
-        ),
-        Message::user_text(format!("First user message:\n\n{first_user_message}")),
-    ];
-    let usage_context = ProviderRequestUsageContext::for_purpose(provider.identity(), "title")
-        .with_session_id(session_id)
-        .with_workspace_path(workspace_path);
-    let request = crate::usage::send_recorded(
-        provider.as_ref(),
-        ModelRequest {
-            messages: &request_messages,
-            tools: &[],
+    let request = run_one_shot_agent(
+        OneShotAgentRequest {
+            definition: internal_definition(SESSION_TITLE_AGENT_ID),
+            usage_purpose: "title",
+            provider_name: &provider_name,
+            model: &model,
+            input: format!("First user message:\n\n{first_user_message}"),
             cancellation: cancellation.clone(),
-            reasoning_level: ReasoningLevel::Low,
-            prompt_cache_key: None,
+            session_id: &session_id,
+            workspace_path: &workspace_path,
         },
-        usage_context,
         usage_recording,
-    );
+    )?;
     tokio::pin!(request);
     let (result, timed_out) = tokio::select! {
         result = &mut request => (result, false),
@@ -97,19 +89,11 @@ pub(super) async fn generate_session_title(
             (request.await, true)
         }
     };
-    let (response, _) = match result {
+    let blocks = match result {
         Err(_) if timed_out => return Err(anyhow::anyhow!("title generation timed out")),
         result => result?,
     };
-    let ModelResponse::Assistant(blocks) = response;
-    let title = blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let title = blocks.join(" ");
     sanitize_session_title(&title)
         .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
 }

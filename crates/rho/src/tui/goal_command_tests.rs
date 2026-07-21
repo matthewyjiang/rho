@@ -148,7 +148,10 @@ fn user_message_resumes_blocked_goal_with_verification_first() {
     block_goal(&mut goal);
     app.goal = Some(goal);
 
-    let turn = app.prepare_goal_resumption_turn("I pushed it".into(), "I pushed it".into());
+    let turn = app.prepare_goal_resumption_turn(TurnPrompt::standard(
+        "I pushed it".into(),
+        "I pushed it".into(),
+    ));
 
     assert_eq!(
         app.goal.as_ref().map(GoalState::loop_state),
@@ -168,12 +171,43 @@ fn user_message_resumes_blocked_goal_with_verification_first() {
 }
 
 #[test]
+fn command_prompt_resumes_blocked_goal_without_exposing_expanded_context() {
+    let mut app = test_app();
+    let mut goal = GoalState::new("release is public".into());
+    block_goal(&mut goal);
+    let expected_model = blocked_goal_resumption_prompt(
+        "release is public",
+        goal.pending_steps(),
+        Some("expanded skill instructions"),
+    );
+    app.goal = Some(goal);
+
+    let turn = app.prepare_goal_resumption_turn(TurnPrompt::command(
+        "expanded skill instructions".into(),
+        "/skill:release".into(),
+    ));
+
+    assert_eq!(
+        turn,
+        TurnPrompt {
+            model: expected_model,
+            display: "/skill:release".into(),
+            history: "/skill:release".into(),
+            persisted_display: Some("/skill:release".into()),
+        }
+    );
+}
+
+#[test]
 fn completed_resumption_turn_activates_goal_loop() {
     let mut app = test_app();
     let mut goal = GoalState::new("release is public".into());
     block_goal(&mut goal);
     app.goal = Some(goal);
-    app.prepare_goal_resumption_turn("I pushed it".into(), "I pushed it".into());
+    app.prepare_goal_resumption_turn(TurnPrompt::standard(
+        "I pushed it".into(),
+        "I pushed it".into(),
+    ));
 
     app.finish_goal_resumption_turn(TurnOutcomeKind::Completed);
 

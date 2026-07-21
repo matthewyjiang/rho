@@ -281,6 +281,14 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             false,
         ),
         (
+            ModelError::RetryableInvalidResponse {
+                error_type: "malformed_generation".into(),
+                message: "try again".into(),
+            },
+            ProviderErrorKind::InvalidResponse,
+            true,
+        ),
+        (
             ModelError::UnsupportedReasoning {
                 provider: "xai",
                 model: "grok-build-0.1".into(),

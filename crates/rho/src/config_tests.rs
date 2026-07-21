@@ -1,4 +1,4 @@
-use super::{Config, LegacyWebSearchCredentials};
+use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials};
 use crate::permission::PermissionMode;
 
 #[test]
@@ -123,7 +123,6 @@ fn save_organizes_config_into_sections() {
         "[display]",
         "[output]",
         "[compaction]",
-        "[title]",
         "[web_search]",
         "[behavior]",
         "[keybindings]",
@@ -583,7 +582,7 @@ fn undefined_title_model_alias_names_reference_site() {
 
     assert!(
         error.to_string().contains(
-            "title model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+            "internal agent 'session-title' model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
         "{error:#}"
     );
@@ -646,10 +645,14 @@ model = "@titler"
     )
     .unwrap();
 
-    assert_eq!(config.title_provider.as_deref(), Some("anthropic"));
-    assert_eq!(config.title_model.as_deref(), Some("claude-haiku-4-5"));
-    assert_eq!(config.title_auth.as_deref(), Some("anthropic-api-key"));
-    assert_eq!(config.current_title_model_alias(), Some("titler"));
+    let selection = config.internal_agent_model("session-title").unwrap();
+    assert_eq!(selection.provider, "anthropic");
+    assert_eq!(selection.model, "claude-haiku-4-5");
+    assert_eq!(selection.auth, "anthropic-api-key");
+    assert_eq!(
+        config.current_internal_agent_model_alias("session-title"),
+        Some("titler")
+    );
 }
 
 #[test]
@@ -666,12 +669,17 @@ fn title_model_alias_round_trips_through_save() {
     config.save_with_store(path.clone(), &store).unwrap();
 
     let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("[title]"), "{saved}");
+    assert!(!saved.contains("[title]"), "{saved}");
+    assert!(saved.contains("[internal_agents.session-title]"), "{saved}");
     assert!(saved.contains("model = \"@deep\""), "{saved}");
     let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(reloaded.title_provider.as_deref(), Some("anthropic"));
-    assert_eq!(reloaded.title_model.as_deref(), Some("claude-opus-4-8"));
-    assert_eq!(reloaded.current_title_model_alias(), Some("deep"));
+    let selection = reloaded.internal_agent_model("session-title").unwrap();
+    assert_eq!(selection.provider, "anthropic");
+    assert_eq!(selection.model, "claude-opus-4-8");
+    assert_eq!(
+        reloaded.current_internal_agent_model_alias("session-title"),
+        Some("deep")
+    );
 }
 
 #[test]
@@ -685,15 +693,92 @@ fn stale_title_model_alias_saves_the_concrete_model() {
     let store = rho_providers::credentials::MemoryCredentialStore::default();
 
     let mut config = Config::load_with_store(path.clone(), &store).unwrap();
-    config.title_model = Some("claude-sonnet-4-5".into());
-    assert_eq!(config.current_title_model_alias(), None);
+    config
+        .internal_agents
+        .get_mut("session-title")
+        .unwrap()
+        .model = "claude-sonnet-4-5".into();
+    assert_eq!(
+        config.current_internal_agent_model_alias("session-title"),
+        None
+    );
     config.save_with_store(path.clone(), &store).unwrap();
 
     let saved = std::fs::read_to_string(&path).unwrap();
     assert!(saved.contains("model = \"claude-sonnet-4-5\""), "{saved}");
     let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(reloaded.title_model.as_deref(), Some("claude-sonnet-4-5"));
-    assert_eq!(reloaded.current_title_model_alias(), None);
+    assert_eq!(
+        reloaded
+            .internal_agent_model("session-title")
+            .unwrap()
+            .model,
+        "claude-sonnet-4-5"
+    );
+    assert_eq!(
+        reloaded.current_internal_agent_model_alias("session-title"),
+        None
+    );
+}
+
+#[test]
+fn effective_internal_agent_models_are_independent() {
+    let mut config = Config::default();
+    config.set_internal_agent_model(
+        "session-title",
+        "anthropic".into(),
+        "claude-haiku-4-5".into(),
+        "anthropic-api-key".into(),
+    );
+
+    let title = config.effective_internal_agent_model("session-title");
+    let judge = config.effective_internal_agent_model("goal-judge");
+
+    assert_eq!(title.provider, "anthropic");
+    assert_eq!(title.model, "claude-haiku-4-5");
+    assert_eq!(title.source, EffectiveModelSource::Override);
+    assert_eq!(judge.provider, config.provider);
+    assert_eq!(judge.model, config.model);
+    assert_eq!(judge.auth, config.auth);
+    assert_eq!(judge.source, EffectiveModelSource::Conversation);
+}
+
+#[test]
+fn generic_internal_agent_alias_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[model]
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+
+[model.aliases]
+judge = "anthropic/claude-haiku-4-5"
+
+[internal_agents.goal-judge]
+model = "@judge"
+"#,
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    let judge = config.effective_internal_agent_model("goal-judge");
+    assert_eq!(judge.provider, "anthropic");
+    assert_eq!(judge.model, "claude-haiku-4-5");
+    assert_eq!(judge.auth, "anthropic-api-key");
+    config.save_with_store(path.clone(), &store).unwrap();
+
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("[internal_agents.goal-judge]"), "{saved}");
+    assert!(saved.contains("model = \"@judge\""), "{saved}");
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(
+        reloaded.current_internal_agent_model_alias("goal-judge"),
+        Some("judge")
+    );
 }
 
 #[test]
@@ -730,4 +815,95 @@ fn stale_model_alias_saves_the_concrete_model() {
     let reloaded = Config::load_with_store(path, &store).unwrap();
     assert_eq!(reloaded.model, "claude-haiku-4-5");
     assert_eq!(reloaded.current_model_alias(), None);
+}
+
+#[test]
+fn flat_title_settings_migrate_to_internal_agent_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "title_provider = \"anthropic\"\ntitle_model = \"claude-haiku-4-5\"\ntitle_auth = \"anthropic-api-key\"\n",
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    let title = config.internal_agent_model("session-title").unwrap();
+    assert_eq!(
+        (
+            title.provider.as_str(),
+            title.model.as_str(),
+            title.auth.as_str()
+        ),
+        ("anthropic", "claude-haiku-4-5", "anthropic-api-key")
+    );
+
+    config.save_with_store(path.clone(), &store).unwrap();
+    let saved = std::fs::read_to_string(path).unwrap();
+    assert!(saved.contains("[internal_agents.session-title]"), "{saved}");
+    assert!(!saved.contains("title_provider"), "{saved}");
+    assert!(!saved.contains("[title]"), "{saved}");
+}
+
+#[test]
+fn generic_internal_agent_config_wins_over_legacy_title_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[title]
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+
+[internal_agents.session-title]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+auth = "anthropic-api-key"
+"#,
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path, &store).unwrap();
+    let title = config.internal_agent_model("session-title").unwrap();
+    assert_eq!(
+        (
+            title.provider.as_str(),
+            title.model.as_str(),
+            title.auth.as_str()
+        ),
+        ("anthropic", "claude-haiku-4-5", "anthropic-api-key")
+    );
+}
+
+#[test]
+fn empty_legacy_title_section_remains_conversation_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n\n[title]\n",
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    assert!(config.internal_agent_model("session-title").is_none());
+    assert_eq!(
+        config
+            .effective_internal_agent_model("session-title")
+            .source,
+        EffectiveModelSource::Conversation
+    );
+
+    config.save_with_store(path.clone(), &store).unwrap();
+    let saved = std::fs::read_to_string(path).unwrap();
+    assert!(!saved.contains("[title]"), "{saved}");
+    assert!(
+        !saved.contains("[internal_agents.session-title]"),
+        "{saved}"
+    );
 }

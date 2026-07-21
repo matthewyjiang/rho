@@ -626,3 +626,41 @@ fn response_maps_reasoning_tools_signatures_and_usage() {
     assert!(events.iter().any(|event| matches!(event, crate::model::ModelEvent::ProviderContext { data, .. } if data == "sig")));
     assert!(events.iter().any(|event| matches!(event, crate::model::ModelEvent::Usage(usage) if usage.input_tokens == Some(7) && usage.cache_read_tokens == Some(3) && usage.output_tokens == Some(6))));
 }
+
+#[test]
+fn transient_finish_reasons_are_retryable_invalid_responses() {
+    for finish_reason in [
+        "MALFORMED_FUNCTION_CALL",
+        "UNEXPECTED_TOOL_CALL",
+        "TOO_MANY_TOOL_CALLS",
+        "MALFORMED_RESPONSE",
+    ] {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "candidates": [{"finishReason": finish_reason}],
+            "usageMetadata": {"promptTokenCount": 4, "totalTokenCount": 4}
+        }))
+        .unwrap();
+        let error = ResponseCollector::default()
+            .apply(response, None)
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ModelError::RetryableInvalidResponse { .. }),
+            "{finish_reason} produced {error:?}"
+        );
+    }
+}
+
+#[test]
+fn content_policy_finish_reason_stays_a_permanent_invalid_response() {
+    let response: GenerateContentResponse = serde_json::from_value(json!({
+        "candidates": [{"finishReason": "SAFETY"}],
+        "usageMetadata": {"promptTokenCount": 4, "totalTokenCount": 4}
+    }))
+    .unwrap();
+    let error = ResponseCollector::default()
+        .apply(response, None)
+        .unwrap_err();
+
+    assert!(matches!(error, ModelError::InvalidResponse(_)));
+}

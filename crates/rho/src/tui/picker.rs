@@ -60,6 +60,7 @@ pub(super) struct PickerBadge {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerBadgeTone {
+    Internal,
     Selected,
     Favorite,
     Healthy,
@@ -76,7 +77,7 @@ pub(super) enum PickerLayout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerAction {
     SelectModel,
-    SelectTitleModel,
+    SelectInternalAgentModel,
     LoginGroup,
     LoginProvider,
     LogoutProvider,
@@ -93,7 +94,7 @@ impl PickerAction {
         match self {
             PickerAction::Config | PickerAction::Doctor => true,
             PickerAction::SelectModel
-            | PickerAction::SelectTitleModel
+            | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
@@ -196,7 +197,9 @@ impl UiPicker {
     pub(super) fn complete_filter(&mut self) {
         if let Some(item) = self.selected_item() {
             self.filter = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectTitleModel => item.value.clone(),
+                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => {
+                    item.value.clone()
+                }
                 PickerAction::LoginGroup
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
@@ -225,7 +228,7 @@ impl UiPicker {
         if stale {
             let filter = self.filter.trim();
             let regex = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectTitleModel => None,
+                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => None,
                 PickerAction::LoginGroup
                 | PickerAction::LoginProvider
                 | PickerAction::LogoutProvider
@@ -244,7 +247,7 @@ impl UiPicker {
                     .flatten(),
             };
             let indices = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectTitleModel => {
+                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => {
                     fuzzy_picker_matching_indices(&self.items, filter)
                 }
                 PickerAction::LoginGroup

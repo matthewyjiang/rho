@@ -1,37 +1,77 @@
-use crate::agent::{
-    AgentCatalog, AgentCatalogEntry, AgentOrigin, ModelPolicy, ModelSelection, PromptPolicy,
-    ToolPolicy,
+use crate::{
+    agent::{
+        AgentCatalog, AgentCatalogEntry, AgentOrigin, ModelPolicy, ModelSelection, PromptPolicy,
+        ToolPolicy,
+    },
+    config::InternalAgentModelConfig,
 };
 
-use super::{PickerAction, PickerItem, PickerLayout, UiPicker};
+use super::{
+    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView,
+    UiPicker,
+};
 
 const PROMPT_PREVIEW_MAX_CHARS: usize = 500;
 
-pub(super) fn agent_picker(catalog: AgentCatalog) -> UiPicker {
-    let items = catalog.iter().map(agent_item).collect();
+pub(super) struct AgentModelView<'a> {
+    provider: &'a str,
+    model: &'a str,
+    internal_agents: &'a std::collections::BTreeMap<String, InternalAgentModelConfig>,
+}
+
+impl<'a> From<&'a RuntimeModelView> for AgentModelView<'a> {
+    fn from(runtime: &'a RuntimeModelView) -> Self {
+        Self {
+            provider: &runtime.provider,
+            model: &runtime.model,
+            internal_agents: &runtime.internal_agents,
+        }
+    }
+}
+
+#[cfg(test)]
+impl<'a> From<&'a crate::config::Config> for AgentModelView<'a> {
+    fn from(config: &'a crate::config::Config) -> Self {
+        Self {
+            provider: &config.provider,
+            model: &config.model,
+            internal_agents: &config.internal_agents,
+        }
+    }
+}
+
+pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) -> UiPicker {
+    let items = catalog
+        .iter_with_internal()
+        .map(|entry| agent_item(entry, &models))
+        .collect();
     UiPicker::new(
         "loaded agents",
-        "type regex filter, enter or esc closes",
+        "type regex filter, enter configures internal agents or closes, esc closes",
         items,
         PickerAction::ViewAgent,
     )
     .with_layout(PickerLayout::MasterDetail)
 }
 
-fn agent_item(entry: &AgentCatalogEntry) -> PickerItem {
+fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
     let definition = &entry.definition;
     PickerItem {
         label: definition.id.to_string(),
-        detail: Some(agent_detail(entry)),
+        detail: Some(agent_detail(entry, models)),
         preview: None,
-        badge: None,
+        badge: (entry.metadata.origin == AgentOrigin::Internal).then_some(PickerBadge {
+            text: "(internal)".to_string(),
+            tone: PickerBadgeTone::Internal,
+        }),
         value: definition.id.to_string(),
     }
 }
 
-fn agent_detail(entry: &AgentCatalogEntry) -> String {
+fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> String {
     let definition = &entry.definition;
     let source = match entry.metadata.origin {
+        AgentOrigin::Internal => "internal".to_string(),
         AgentOrigin::BuiltIn => "built in".to_string(),
         AgentOrigin::AgentsHome => "~/.agents/agents".to_string(),
         AgentOrigin::RhoHome => "~/.rho/agents".to_string(),
@@ -43,11 +83,23 @@ fn agent_detail(entry: &AgentCatalogEntry) -> String {
         .as_deref()
         .map(crate::paths::display)
         .unwrap_or_else(|| "embedded in rho".to_string());
-    let model = match &definition.model {
-        ModelPolicy::Inherit => "inherit".to_string(),
-        ModelPolicy::Prefer(selection) => format!("prefer {}", model_name(selection)),
-        ModelPolicy::Require(selection) => format!("require {}", model_name(selection)),
-        ModelPolicy::Select(selection) => format!("select {}", model_name(selection)),
+    let model = if entry.metadata.origin == AgentOrigin::Internal {
+        let (provider, model, source) = match models.internal_agents.get(definition.id.as_str()) {
+            Some(selection) => (
+                selection.provider.as_str(),
+                selection.model.as_str(),
+                "override",
+            ),
+            None => (models.provider, models.model, "conversation fallback"),
+        };
+        format!("{provider}/{model}\nModel source: {source}")
+    } else {
+        match &definition.model {
+            ModelPolicy::Inherit => "inherit".to_string(),
+            ModelPolicy::Prefer(selection) => format!("prefer {}", model_name(selection)),
+            ModelPolicy::Require(selection) => format!("require {}", model_name(selection)),
+            ModelPolicy::Select(selection) => format!("select {}", model_name(selection)),
+        }
     };
     let reasoning = definition
         .reasoning
@@ -74,8 +126,14 @@ fn agent_detail(entry: &AgentCatalogEntry) -> String {
         ),
     };
 
+    let restrictions = if entry.metadata.origin == AgentOrigin::Internal {
+        "\n\nRestrictions\nreserved; cannot be overridden or delegated"
+    } else {
+        ""
+    };
+
     format!(
-        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}",
+        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{restrictions}",
         definition.description
     )
 }
@@ -102,6 +160,32 @@ fn model_name(selection: &ModelSelection) -> String {
 }
 
 impl super::App {
+    pub(super) fn open_internal_agent_model_picker(&mut self, id: &str) {
+        self.refresh_available_auths();
+        let uses_conversation_model = !self.info.runtime.internal_agents.contains_key(id);
+        let (provider, model, _auth) = self.internal_agent_model_selection(id);
+        let picker = super::model_picker::internal_agent_model_picker(
+            id,
+            &provider,
+            &model,
+            uses_conversation_model,
+            &self.info.runtime.favorite_models,
+            &self.available_auths,
+        );
+        self.internal_agent_model_target = Some(id.to_string());
+        self.open_child_picker(picker);
+    }
+
+    pub(super) fn open_selected_internal_agent_model_picker(&mut self, id: &str) -> bool {
+        let internal = crate::agent::internal_definitions()
+            .iter()
+            .any(|definition| definition.id.as_str() == id);
+        if internal {
+            self.open_internal_agent_model_picker(id);
+        }
+        internal
+    }
+
     pub(super) fn execute_agents_command(&mut self) -> anyhow::Result<()> {
         let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
             Ok(catalog) => catalog,
@@ -113,7 +197,11 @@ impl super::App {
                 return Ok(());
             }
         };
-        self.composer = super::ComposerMode::Picker(agent_picker(catalog));
+        let mut picker = agent_picker(catalog, AgentModelView::from(&self.info.runtime));
+        if let Some(id) = self.internal_agent_model_target.as_deref() {
+            Self::restore_picker_position(&mut picker, id, String::new());
+        }
+        self.composer = super::ComposerMode::Picker(picker);
         self.status = "loaded agents".into();
         Ok(())
     }

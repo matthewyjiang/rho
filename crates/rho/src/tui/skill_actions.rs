@@ -14,11 +14,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn expand_skill_command(
+    pub(super) fn skill_command_prompt(
         &self,
         name: &str,
         additional_instructions: &str,
-    ) -> anyhow::Result<Option<String>> {
+        display: String,
+    ) -> anyhow::Result<Option<TurnPrompt>> {
         let Some(name) = name.strip_prefix("skill:") else {
             return Ok(None);
         };
@@ -35,10 +36,13 @@ impl App {
             .load()?
             .max_output_bytes;
 
-        Ok(Some(crate::skills::format_invocation(
-            &skill,
-            additional_instructions,
-            max_output_bytes,
+        Ok(Some(TurnPrompt::command(
+            crate::skills::format_invocation(&skill, additional_instructions, max_output_bytes),
+            display,
         )))
     }
 }
+
+#[cfg(test)]
+#[path = "skill_actions_tests.rs"]
+mod tests;

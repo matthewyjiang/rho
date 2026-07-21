@@ -237,16 +237,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn prepare_goal_resumption_turn(
-        &mut self,
-        prompt: String,
-        display_prompt: String,
-    ) -> TurnPrompt {
+    pub(super) fn prepare_goal_resumption_turn(&mut self, mut prompt: TurnPrompt) -> TurnPrompt {
         let Some(goal) = self.goal.as_mut() else {
-            return TurnPrompt::standard(prompt, display_prompt);
+            return prompt;
         };
         if !goal.is_blocked() {
-            return TurnPrompt::standard(prompt, display_prompt);
+            return prompt;
         }
 
         let condition = goal.condition.clone();
@@ -256,12 +252,12 @@ impl App {
             "goal resumed by user message; verifying the previously blocked steps".into(),
         ));
         self.status = "goal active".into();
-        TurnPrompt {
-            model: blocked_goal_resumption_prompt(&condition, &pending_steps, Some(&prompt)),
-            history: prompt,
-            display: display_prompt.clone(),
-            persisted_display: Some(display_prompt),
+        if prompt.persisted_display.is_none() {
+            prompt.persisted_display = Some(prompt.display.clone());
         }
+        prompt.model =
+            blocked_goal_resumption_prompt(&condition, &pending_steps, Some(&prompt.model));
+        prompt
     }
 
     pub(super) fn finish_goal_resumption_turn(&mut self, outcome: TurnOutcomeKind) {
@@ -301,19 +297,9 @@ impl App {
 
             let (condition, provider, model) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
-                (
-                    goal.condition.clone(),
-                    self.info
-                        .runtime
-                        .title_provider
-                        .clone()
-                        .unwrap_or_else(|| self.info.runtime.provider.clone()),
-                    self.info
-                        .runtime
-                        .title_model
-                        .clone()
-                        .unwrap_or_else(|| self.info.runtime.model.clone()),
-                )
+                let (provider, model, _auth) =
+                    self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
+                (goal.condition.clone(), provider, model)
             };
             let history = agent.history();
             let evaluation = {

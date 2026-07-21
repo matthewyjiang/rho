@@ -3,7 +3,7 @@ use super::{
     web_search_api_key_is_set, AGENT_CATEGORY_VALUE, CONTEXT_CATEGORY_VALUE,
     CONVERSATION_MODEL_VALUE, MODELS_CATEGORY_VALUE, PERMISSION_MODE_PREFIX, PERMISSION_MODE_VALUE,
     PROVIDERS_CATEGORY_VALUE, PROVIDER_LOGIN_VALUE, PROVIDER_LOGOUT_VALUE,
-    REFRESH_MODEL_LIST_VALUE, TITLE_MODEL_VALUE, TOOLS_CATEGORY_VALUE, UPDATES_CATEGORY_VALUE,
+    REFRESH_MODEL_LIST_VALUE, TOOLS_CATEGORY_VALUE, UPDATES_CATEGORY_VALUE,
 };
 use {crate::permission::PermissionMode, rho_providers::credentials::CredentialError};
 
@@ -79,7 +79,8 @@ fn models_category_includes_model_settings() {
         .map(|item| item.value.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(&values[..2], [CONVERSATION_MODEL_VALUE, TITLE_MODEL_VALUE]);
+    assert_eq!(values[0], CONVERSATION_MODEL_VALUE);
+    assert!(!values.contains(&"title_model"));
     assert_eq!(
         picker.items[0].badge.as_ref().unwrap().text,
         "openai/gpt-5.5"

@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use rho_providers::model::ContentBlock;
 
 fn blocked_evaluation() -> GoalEvaluation {
     GoalEvaluation::Blocked {

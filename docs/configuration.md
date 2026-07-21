@@ -26,7 +26,12 @@ auto_compact = false
 compact_threshold_percent = 85
 compact_target_percent = 50
 
-[title]
+[internal_agents.session-title]
+# provider = "openai"
+# model = "gpt-5.6-sol"
+# auth = "api-key"
+
+[internal_agents.goal-judge]
 # provider = "openai"
 # model = "gpt-5.6-sol"
 # auth = "api-key"
@@ -58,7 +63,7 @@ Settings are grouped by purpose so the file is easier to scan and edit by hand. 
 
 Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
 
-The full saved file can also include optional title-generation and web-search settings. `provider`, `model`, and `auth` under `[title]` override the model used to generate session titles; when they are omitted, Rho uses the active provider/model/auth selection. Web search API keys are normally stored in the OS credential store rather than config.
+The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the OS credential store rather than config.
 
 ## Prompt templates
 
@@ -119,7 +124,7 @@ Reference an alias with an `@` prefix. The explicit prefix distinguishes aliases
 [model]
 model = "@deep"
 
-[title]
+[internal_agents.session-title]
 model = "@fast"
 ```
 
@@ -127,11 +132,20 @@ The same syntax works with `rho --model @deep` and with `model: @deep` in [agent
 
 Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` category browser shows the active mapping under **Models & reasoning**, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
 
-## Title model
+## Internal agent models
 
-Rho can use a separate model for generating session titles. The optional `title_provider`, `title_model`, and `title_auth` settings persist that selection. Title generation does not need the same flagship model as the conversation, so using a cheaper model such as `gpt-5.6-luna` can reduce title-generation cost while keeping the main session on `gpt-5.6-sol`. Choose **Models & reasoning**, then **Session title model**, in `/config` to select from available catalog and cached models.
+Rho uses reserved internal agents to generate session titles and evaluate `/goal` completion. Each role follows the active conversation provider, model, and auth by default. Run `/agents`, select `session-title` or `goal-judge`, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
 
-If no title model settings are present, Rho falls back to the active provider, model, and auth.
+Overrides are stored by stable internal agent ID:
+
+```toml
+[internal_agents.session-title]
+provider = "openai"
+model = "gpt-5.6-luna"
+auth = "api-key"
+```
+
+Model aliases work in these entries. Rho keeps reading the old `[title]` section and flat title settings for compatibility, but rewrites them as `[internal_agents.session-title]` on the next save.
 
 ## Web search
 
@@ -157,11 +171,11 @@ Permission modes are application policy checks, not an operating-system sandbox.
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation and title models, reasoning level, and reasoning-output toggle. **Agent behavior** contains permission mode and delegation. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, and reasoning-output toggle. **Agent behavior** contains permission mode and delegation. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
 Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output` row applies on the next model call. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The auto compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
-[`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows, while **Session title model** saves optional title-generation model settings. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
+[`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows. Use `/agents` to inspect reserved internal agents and configure their optional model overrides. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
 ## Reasoning options
 

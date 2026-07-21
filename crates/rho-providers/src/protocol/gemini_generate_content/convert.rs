@@ -361,10 +361,18 @@ impl ResponseCollector {
             if let Some(reason) = candidate.finish_reason {
                 if !reason.is_success() {
                     emit_usage(&mut on_event, usage_delta.as_ref())?;
-                    return Err(ModelError::InvalidResponse(format!(
+                    let message = format!(
                         "Gemini stopped with {reason:?}: {}",
                         candidate.finish_message.unwrap_or_default()
-                    )));
+                    );
+                    return Err(if reason.is_transient() {
+                        ModelError::RetryableInvalidResponse {
+                            error_type: format!("{reason:?}"),
+                            message,
+                        }
+                    } else {
+                        ModelError::InvalidResponse(message)
+                    });
                 }
             }
             let Some(content) = candidate.content else {
