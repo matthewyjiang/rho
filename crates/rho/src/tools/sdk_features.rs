@@ -54,16 +54,21 @@ impl SdkTool for SdkSkillTool {
                     "skill name must contain only ASCII letters, digits, '-' or '_'",
                 ));
             }
-            let workspace = workspace(&context)?;
-            let skill = crate::skills::discover(workspace.root())
-                .into_iter()
-                .find(|skill| skill.name == name)
-                .ok_or_else(|| {
-                    SdkToolError::new(
-                        ToolErrorKind::InvalidArguments,
-                        format!("unknown skill: {name}"),
-                    )
-                })?;
+            let skill = match crate::skills::find_builtin(name) {
+                Some(skill) => skill,
+                None => {
+                    let workspace = workspace(&context)?;
+                    crate::skills::discover(workspace.root())
+                        .into_iter()
+                        .find(|skill| skill.name == name)
+                        .ok_or_else(|| {
+                            SdkToolError::new(
+                                ToolErrorKind::InvalidArguments,
+                                format!("unknown skill: {name}"),
+                            )
+                        })?
+                }
+            };
             if skill.disable_model_invocation
                 && !matches!(invocation_source, ToolInvocationSource::Host)
             {
@@ -91,6 +96,7 @@ impl SdkTool for SdkSkillTool {
                 }
                 crate::skills::SkillSource::File(requested) => requested,
             };
+            let workspace = workspace(&context)?;
             let skill_directory = requested.parent().ok_or_else(|| {
                 SdkToolError::new(
                     ToolErrorKind::Execution,

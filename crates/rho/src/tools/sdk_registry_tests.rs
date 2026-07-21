@@ -451,8 +451,7 @@ async fn sdk_skill_tool_rejects_model_invocation_of_user_only_skill() {
 }
 
 #[tokio::test]
-async fn sdk_skill_tool_loads_embedded_agent_creator() {
-    let root = tempfile::tempdir().unwrap();
+async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
         [ScriptedTurn::completed(ModelResponse::Assistant(vec![
@@ -473,7 +472,6 @@ async fn sdk_skill_tool_loads_embedded_agent_creator() {
         .clone();
     let mut builder = Rho::builder()
         .provider(provider)
-        .workspace(Workspace::new(root.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_skills());
     builder = builder.tool_shared(skill);
     let runtime = builder.build().unwrap();

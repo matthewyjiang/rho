@@ -37,6 +37,12 @@ pub fn discover(cwd: &Path) -> Vec<Skill> {
     discover_with_home(cwd, home.as_deref())
 }
 
+pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
+    builtin_skills()
+        .into_iter()
+        .find(|skill| skill.name == name)
+}
+
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
@@ -51,10 +57,7 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     );
 
     let mut seen = HashSet::new();
-    let mut discovered = BUILTIN_SKILLS
-        .iter()
-        .map(|contents| read_builtin_skill(contents).expect("embedded skills must be valid"))
-        .collect::<Vec<_>>();
+    let mut discovered = builtin_skills();
     discovered.extend(
         roots
             .into_iter()
@@ -90,6 +93,13 @@ fn skill_paths(root: &Path) -> Vec<PathBuf> {
 fn read_skill(path: &Path) -> anyhow::Result<Skill> {
     let contents = std::fs::read_to_string(path)?;
     parse_skill(&contents, SkillSource::File(path.to_path_buf()), Some(path))
+}
+
+fn builtin_skills() -> Vec<Skill> {
+    BUILTIN_SKILLS
+        .iter()
+        .map(|contents| read_builtin_skill(contents).expect("embedded skills must be valid"))
+        .collect()
 }
 
 fn read_builtin_skill(contents: &str) -> anyhow::Result<Skill> {
