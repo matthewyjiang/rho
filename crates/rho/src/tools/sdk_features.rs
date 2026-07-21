@@ -122,11 +122,10 @@ impl SdkTool for SdkSkillTool {
             let contents = tokio::fs::read_to_string(resolved.path())
                 .await
                 .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-            let base_directory = resolved.path().parent().unwrap_or(resolved.path());
             let content = format!(
                 "Loaded skill: {name}\nSource: {}\nReferences are relative to {}.\n\n{contents}",
-                resolved.path().display(),
-                base_directory.display(),
+                crate::paths::display(requested),
+                crate::paths::display(skill_directory),
             );
             Ok(ToolOutput::text(truncate(content, self.max_output_bytes)))
         })
