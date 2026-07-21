@@ -35,9 +35,11 @@ fn write_command_stdin_fails_when_the_command_exits_nonzero() {
 
 #[cfg(unix)]
 #[test]
-fn write_command_stdin_succeeds_when_a_successful_command_closes_stdin_early() {
+fn write_command_stdin_fails_when_the_input_is_not_fully_delivered() {
     // `true` exits 0 without reading stdin; a payload larger than the pipe
-    // buffer guarantees a broken pipe mid-write. The successful exit wins.
+    // buffer guarantees a broken pipe mid-write. A clean exit does not prove
+    // delivery, so the incomplete write is reported as an error.
     let payload = vec![b'x'; 1 << 20];
-    write_command_stdin("true", &[], &payload).unwrap();
+    let error = write_command_stdin("true", &[], &payload).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
 }

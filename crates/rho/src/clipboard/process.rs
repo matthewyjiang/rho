@@ -45,17 +45,15 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
         Ok(())
     })();
 
-    // The exit status is authoritative: a broken pipe means the child closed
-    // stdin, so its status is the real outcome rather than the write error.
+    // A non-zero exit is authoritative and deterministic regardless of whether
+    // the write raced the child closing stdin. On a clean exit the write result
+    // decides success, so an incomplete write (broken pipe) is still an error
+    // and the caller can fall back rather than assume the clipboard was set.
     let status = child.wait()?;
     if !status.success() {
         return Err(io::Error::other(format!("{program} exited with {status}")));
     }
-    match write_result {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(error) => Err(error),
-    }
+    write_result
 }
 
 #[cfg(test)]
