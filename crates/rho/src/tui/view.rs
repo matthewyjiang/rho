@@ -717,13 +717,10 @@ impl App {
         self.statusline.update_model(&self.info.runtime);
         self.statusline.update_usage(
             self.cumulative_usage.as_ref(),
-            self.latest_usage.as_ref(),
             self.current_context.as_ref(),
         );
-        self.statusline.update_model_metadata(
-            self.model_metadata.as_ref(),
-            self.pending_model_metadata.is_some(),
-        );
+        self.statusline
+            .update_model_metadata(self.model_metadata.as_ref());
     }
 
     pub(super) fn statusline_lines(&mut self, width: usize) -> &[Line<'static>] {
@@ -908,6 +905,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,

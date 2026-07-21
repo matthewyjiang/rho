@@ -56,6 +56,7 @@ mod goal;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod goal_command;
 mod history_cache;
+mod info_command;
 mod inline_shell;
 mod keybindings;
 mod limits_command;
@@ -529,6 +530,7 @@ enum Entry {
     Reasoning(String),
     Tool(ToolEntry),
     Notice(String),
+    RuntimeInfo(Box<info_command::RuntimeInfo>),
     UsageLimits(crate::usage_limits::ProviderLimits),
     Error(String),
 }
@@ -3027,20 +3029,6 @@ impl App {
         Ok(())
     }
 
-    fn execute_info_command(&mut self) -> anyhow::Result<()> {
-        let identity = self.info.services.diagnostics.identity();
-        self.insert_entry(&Entry::Notice(format!(
-            "rho {}\nprovider: {}\nmodel: {}\nreasoning: {}\npermission mode: {}",
-            identity.rho_version,
-            identity.provider,
-            identity.model,
-            identity.reasoning,
-            self.info.runtime.permission_mode.as_str()
-        )));
-        self.status = "runtime info".into();
-        Ok(())
-    }
-
     fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         if let Some(pending) = self.pending_tool_call.as_mut() {
             if tool_display_line_count(&pending.display_lines)
@@ -3273,6 +3261,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,
@@ -3817,15 +3806,7 @@ mod tests {
 
         app.execute_info_command().unwrap();
 
-        assert!(matches!(
-            app.transcript.last(),
-            Some(Entry::Notice(message))
-                if message.contains("rho ")
-                    && message.contains("provider: openai")
-                    && message.contains("model: gpt-test")
-                    && message.contains("reasoning: medium")
-                    && message.contains("permission mode: auto")
-        ));
+        assert!(matches!(app.transcript.last(), Some(Entry::RuntimeInfo(_))));
         assert_eq!(app.status, "runtime info");
     }
 

@@ -35,6 +35,7 @@ pub enum ScenarioId {
     ProgressTool,
     RetractSteeringDuringTool,
     MarkdownHeadings,
+    RuntimeInfo,
     OpenModelPicker,
     OpenConfigPicker,
     OpenAgentsPicker,
@@ -61,6 +62,7 @@ impl ScenarioId {
             Self::ProgressTool => "progress_tool",
             Self::RetractSteeringDuringTool => "retract_steering_during_tool",
             Self::MarkdownHeadings => "markdown_headings",
+            Self::RuntimeInfo => "runtime_info",
             Self::OpenModelPicker => "open_model_picker",
             Self::OpenConfigPicker => "open_config_picker",
             Self::OpenAgentsPicker => "open_agents_picker",
@@ -87,6 +89,7 @@ impl ScenarioId {
             "progress_tool" => Some(Self::ProgressTool),
             "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
             "markdown_headings" => Some(Self::MarkdownHeadings),
+            "runtime_info" => Some(Self::RuntimeInfo),
             "open_model_picker" => Some(Self::OpenModelPicker),
             "open_config_picker" => Some(Self::OpenConfigPicker),
             "open_agents_picker" => Some(Self::OpenAgentsPicker),
@@ -720,6 +723,38 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const RUNTIME_INFO_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "rho",
+        timeout: STARTUP,
+    },
+    Step::Phase("open_info"),
+    Step::SubmitText("/info"),
+    Step::WaitText {
+        text: "Model",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Session usage",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Workspace",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Permissions",
+        timeout: SETTLE,
+    },
+    Step::Resize { rows: 32, cols: 40 },
+    Step::WaitText {
+        text: "Session usage",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 /// All registered scenarios.
 pub fn all_scenarios() -> &'static [Scenario] {
     &[
@@ -815,6 +850,14 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Render streamed Markdown heading levels without syntax markers",
             size: DEFAULT_SIZE,
             steps: MARKDOWN_HEADINGS_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "runtime_info",
+            description:
+                "Show grouped runtime details and keep them readable after a narrow resize",
+            size: DEFAULT_SIZE,
+            steps: RUNTIME_INFO_STEPS,
             smoke: false,
         },
         Scenario {

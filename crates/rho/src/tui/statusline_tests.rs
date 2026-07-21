@@ -9,6 +9,7 @@ fn priced_metadata() -> ModelMetadata {
             cache_read_micros_per_m: Some(100_000),
             cache_write_micros_per_m: None,
         }),
+        advertised_context_window: Some(100_000),
         ..ModelMetadata::default()
     }
 }
@@ -17,17 +18,14 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
     StatusLineState {
         cwd: PathBuf::from("/tmp/project"),
         branch: None,
-        usage: Some(usage.clone()),
-        latest_usage: Some(usage),
-        context_usage: None,
+        usage: Some(usage),
+        context_usage: Some(ContextUsage::estimated(25_000, Some(100_000))),
         provider: "openai".into(),
         model: "gpt-test".into(),
         reasoning: ReasoningLevel::Low,
         reasoning_configurable: true,
         permission_mode: crate::permission::PermissionMode::Auto,
-        billing: BillingInfo::Metered,
         model_metadata: Some(priced_metadata()),
-        model_metadata_loading: false,
     }
 }
 
@@ -41,49 +39,93 @@ fn line_text(line: &Line<'_>) -> String {
 #[test]
 fn statusline_rows_use_display_width_for_alignment() {
     let line = render_row("项目".into(), "模型".into(), 10);
-    let text = line_text(&line);
-
-    assert_eq!(display_width(&text), 10);
+    assert_eq!(display_width(&line_text(&line)), 10);
 }
 
 #[test]
-fn statusline_omits_reasoning_for_non_configurable_provider_paths() {
+fn wide_statusline_keeps_only_summary_fields() {
+    let usage = ModelUsage {
+        input_tokens: Some(300_000),
+        output_tokens: Some(100_000),
+        cache_read_tokens: Some(700_000),
+        cache_write_tokens: Some(25_000),
+        cost_usd_micros: Some(570_000),
+        ..ModelUsage::default()
+    };
+
+    let lines = statusline_lines(&test_state(usage), 80, None);
+    let bottom = line_text(&lines[1]);
+
+    assert!(bottom.contains("~25.0% ctx"), "{bottom}");
+    assert!(bottom.contains("$0.570"), "{bottom}");
+    assert!(bottom.contains("Auto · gpt-test · low"), "{bottom}");
+    assert!(!bottom.contains("300.0k"), "{bottom}");
+    assert!(!bottom.contains("CH"), "{bottom}");
+    assert!(!bottom.contains("openai"), "{bottom}");
+}
+
+#[test]
+fn narrow_statusline_drops_whole_optional_fields() {
+    let usage = ModelUsage {
+        cost_usd_micros: Some(570_000),
+        ..ModelUsage::default()
+    };
+    let lines = statusline_lines(&test_state(usage), 24, None);
+    let bottom = line_text(&lines[1]);
+
+    assert!(bottom.contains("~25.0% ctx"), "{bottom}");
+    assert!(bottom.contains("Auto"), "{bottom}");
+    assert!(!bottom.contains('$'), "{bottom}");
+    assert!(!bottom.contains("low"), "{bottom}");
+    assert!(!bottom.contains("$0…"), "{bottom}");
+    assert!(display_width(&bottom) <= 24);
+}
+
+#[test]
+fn very_narrow_statusline_preserves_permission_mode() {
+    let mut info = test_info(PathBuf::from("/tmp/project"));
+    info.permission_mode = crate::permission::PermissionMode::Supervised;
+    let mut statusline = StatusLine::new(&info);
+
+    let lines = statusline.lines(12, None);
+
+    assert!(line_text(&lines[1]).contains("Supervised"));
+}
+
+#[test]
+fn statusline_omits_reasoning_when_it_is_not_configurable() {
     let mut state = test_state(ModelUsage::default());
     state.provider = "github-copilot".into();
-    state.reasoning_configurable = reasoning_is_configurable(&state.provider, &state.model);
+    state.reasoning_configurable = false;
 
-    assert_eq!(
-        state.right_bottom(),
-        "permissions: Auto • (github-copilot) gpt-test"
-    );
+    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
+
+    assert!(bottom.contains("Auto · gpt-test"), "{bottom}");
+    assert!(!bottom.contains("low"), "{bottom}");
 }
 
 #[test]
 fn statusline_shows_active_goal_indicator() {
-    let state = test_state(ModelUsage::default());
     let goal = GoalStatus {
         turns: 2,
         elapsed: Duration::from_secs(65),
         blocked: false,
     };
 
-    let lines = statusline_lines(&state, 80, Some(&goal));
-    let text = line_text(&lines[0]);
+    let text = line_text(&statusline_lines(&test_state(ModelUsage::default()), 80, Some(&goal))[0]);
 
     assert!(text.contains("goal: active • 2 turns • 1m 5s"), "{text}");
 }
 
 #[test]
 fn statusline_shows_blocked_goal_indicator() {
-    let state = test_state(ModelUsage::default());
     let goal = GoalStatus {
         turns: 1,
         elapsed: Duration::from_secs(9),
         blocked: true,
     };
 
-    let lines = statusline_lines(&state, 80, Some(&goal));
-    let text = line_text(&lines[0]);
+    let text = line_text(&statusline_lines(&test_state(ModelUsage::default()), 80, Some(&goal))[0]);
 
     assert!(text.contains("goal: blocked • 1 turn • 9s"), "{text}");
 }
@@ -104,146 +146,22 @@ fn estimated_statusline_cost_uses_normalized_input_and_cache_read() {
 }
 
 #[test]
-fn cache_hit_percentage_uses_latest_usage_prompt_tokens() {
-    let usage = ModelUsage {
-        input_tokens: Some(300_000),
-        cache_read_tokens: Some(700_000),
-        output_tokens: Some(100_000),
-        ..ModelUsage::default()
-    };
-
-    let formatted = format_usage(&test_state(usage));
-
-    assert!(formatted.contains("↑300.0k"), "{formatted}");
-    assert!(formatted.contains("R700.0k"), "{formatted}");
-    assert!(formatted.contains("CH70.0%"), "{formatted}");
-    assert!(formatted.contains("$0.570"), "{formatted}");
-}
-
-#[test]
-fn subscription_statusline_shows_equivalent_api_cost() {
-    let usage = ModelUsage {
-        input_tokens: Some(100_000),
-        output_tokens: Some(50_000),
-        ..ModelUsage::default()
-    };
-    let mut state = test_state(usage);
-    state.provider = "xai".into();
-    state.model = "grok-4.5".into();
-    state.billing = BillingInfo::Subscription;
-    state.model_metadata = Some(ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(2_000_000),
-            output_micros_per_m: Some(6_000_000),
-            cache_read_micros_per_m: Some(500_000),
-            cache_write_micros_per_m: None,
-        }),
-        long_context_threshold: Some(200_000),
-        cost_long_context: Some(ModelCost {
-            input_micros_per_m: Some(4_000_000),
-            output_micros_per_m: Some(12_000_000),
-            cache_read_micros_per_m: Some(1_000_000),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    });
-
-    let formatted = format_usage(&state);
-
-    // 100k input * $2/M + 50k output * $6/M = $0.500 equivalent API cost.
-    assert!(formatted.contains("$0.500"), "{formatted}");
-    assert!(formatted.contains("(sub)"), "{formatted}");
-}
-
-#[test]
-fn grok_long_context_uses_higher_equivalent_api_rates() {
-    let usage = ModelUsage {
-        input_tokens: Some(250_000),
-        output_tokens: Some(10_000),
-        ..ModelUsage::default()
-    };
-    let mut state = test_state(usage);
-    state.provider = "xai".into();
-    state.model = "grok-4.5".into();
-    state.billing = BillingInfo::Subscription;
-    state.model_metadata = Some(ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(2_000_000),
-            output_micros_per_m: Some(6_000_000),
-            cache_read_micros_per_m: Some(500_000),
-            cache_write_micros_per_m: None,
-        }),
-        long_context_threshold: Some(200_000),
-        cost_long_context: Some(ModelCost {
-            input_micros_per_m: Some(4_000_000),
-            output_micros_per_m: Some(12_000_000),
-            cache_read_micros_per_m: Some(1_000_000),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    });
-
-    let formatted = format_usage(&state);
-
-    // 250k input * $4/M + 10k output * $12/M = $1.120 equivalent API cost.
-    assert!(formatted.contains("$1.120"), "{formatted}");
-    assert!(formatted.contains("(sub)"), "{formatted}");
-}
-
-#[test]
-fn cache_hit_percentage_uses_latest_usage_not_cumulative_totals() {
-    let mut state = test_state(ModelUsage {
-        input_tokens: Some(1_000_000),
-        cache_read_tokens: Some(1_000_000),
-        output_tokens: Some(100_000),
-        cache_write_tokens: Some(500_000),
-        ..ModelUsage::default()
-    });
-    state.latest_usage = Some(ModelUsage {
+fn cache_hit_percentage_uses_latest_request_prompt_tokens() {
+    let latest = ModelUsage {
         input_tokens: Some(100_000),
         cache_read_tokens: Some(900_000),
-        cache_write_tokens: Some(500_000),
         ..ModelUsage::default()
-    });
+    };
 
-    let formatted = format_usage(&state);
-
-    assert!(formatted.contains("↑1.0M"), "{formatted}");
-    assert!(formatted.contains("R1.0M"), "{formatted}");
-    assert!(formatted.contains("W500.0k"), "{formatted}");
-    assert!(formatted.contains("CH90.0%"), "{formatted}");
-    assert!(!formatted.contains("CH40.0%"), "{formatted}");
-    assert!(!formatted.contains("CH60.0%"), "{formatted}");
+    assert_eq!(cache_hit_percent(Some(&latest)), Some(90.0));
 }
 
 #[test]
-fn context_percentage_uses_current_context_not_cumulative_usage() {
-    let mut state = test_state(ModelUsage {
-        input_tokens: Some(60_000),
-        output_tokens: Some(40_000),
-        ..ModelUsage::default()
-    });
-    state.context_usage = Some(ContextUsage::estimated(10_000, Some(100_000)));
-    state.model_metadata = Some(ModelMetadata {
-        advertised_context_window: Some(100_000),
-        ..priced_metadata()
-    });
-
-    let formatted = format_usage(&state);
-
-    assert!(formatted.contains("~10.0%/100.0k"), "{formatted}");
-    assert!(!formatted.contains("100.0%/100.0k"), "{formatted}");
-}
-
-#[test]
-fn provider_reported_context_omits_estimate_marker() {
-    let mut state = test_state(ModelUsage::default());
-    state.context_usage = Some(ContextUsage::provider_reported(25_000, Some(100_000)));
-
-    let formatted = format_usage(&state);
-
-    assert!(formatted.contains("25.0%/100.0k"), "{formatted}");
-    assert!(!formatted.contains("~25.0%/100.0k"), "{formatted}");
+fn context_summary_marks_estimates() {
+    assert_eq!(
+        format_context_summary(&test_state(ModelUsage::default())),
+        "~25.0% ctx"
+    );
 }
 
 fn test_info(cwd: PathBuf) -> RuntimeModelView {
@@ -253,26 +171,7 @@ fn test_info(cwd: PathBuf) -> RuntimeModelView {
 }
 
 #[test]
-fn permission_mode_indicator_is_always_visible_and_prioritized() {
-    let auto = test_info(PathBuf::from("/tmp/project"));
-    assert!(StatusLineState::from_tui(&auto)
-        .right_bottom()
-        .starts_with("permissions: Auto • "));
-
-    let mut plan = auto;
-    plan.permission_mode = crate::permission::PermissionMode::Plan;
-    assert!(StatusLineState::from_tui(&plan)
-        .right_bottom()
-        .starts_with("permissions: Plan • "));
-
-    plan.permission_mode = crate::permission::PermissionMode::Supervised;
-    assert!(StatusLineState::from_tui(&plan)
-        .right_bottom()
-        .starts_with("permissions: Supervised • "));
-}
-
-#[test]
-fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
+fn permission_mode_update_invalidates_cache() {
     let mut info = test_info(PathBuf::from("/tmp/project"));
     let mut statusline = StatusLine::new(&info);
     statusline.lines(18, None);
@@ -283,32 +182,7 @@ fn permission_mode_update_invalidates_cache_and_respects_narrow_width() {
     let lines = statusline.lines(18, None).to_vec();
 
     assert_eq!(statusline.render_count(), initial_render_count + 1);
-    assert!(lines
-        .iter()
-        .all(|line| display_width(&line_text(line)) <= 18));
     assert!(line_text(&lines[1]).contains("Plan"));
-}
-
-#[test]
-fn narrow_statusline_preserves_supervised_permission_mode() {
-    let mut info = test_info(PathBuf::from("/tmp/project"));
-    info.permission_mode = crate::permission::PermissionMode::Supervised;
-    let mut statusline = StatusLine::new(&info);
-
-    let lines = statusline.lines(18, None);
-
-    assert!(line_text(&lines[1]).contains("Supervised"));
-}
-
-#[test]
-fn compact_permission_status_preserves_reasoning_level() {
-    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-
-    let lines = statusline.lines(40, None);
-    let bottom = line_text(&lines[1]);
-
-    assert!(bottom.contains("permissions: Auto"), "{bottom}");
-    assert!(bottom.contains("low"), "{bottom}");
 }
 
 #[test]

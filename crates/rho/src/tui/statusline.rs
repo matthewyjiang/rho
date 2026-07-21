@@ -24,16 +24,13 @@ pub(super) struct StatusLineState {
     cwd: PathBuf,
     branch: Option<String>,
     usage: Option<ModelUsage>,
-    latest_usage: Option<ModelUsage>,
     context_usage: Option<ContextUsage>,
     provider: String,
     model: String,
     reasoning: ReasoningLevel,
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
-    billing: BillingInfo,
     model_metadata: Option<ModelMetadata>,
-    model_metadata_loading: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -64,16 +61,13 @@ impl Default for StatusLineState {
             cwd: PathBuf::new(),
             branch: None,
             usage: None,
-            latest_usage: None,
             context_usage: None,
             provider: String::new(),
             model: String::new(),
             reasoning: ReasoningLevel::default(),
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
-            billing: BillingInfo::Metered,
             model_metadata: None,
-            model_metadata_loading: false,
         }
     }
 }
@@ -84,16 +78,13 @@ impl StatusLineState {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
             usage: None,
-            latest_usage: None,
             context_usage: None,
             provider: info.provider.clone(),
             model: info.model.clone(),
             reasoning: info.reasoning,
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
-            billing: BillingInfo::from_provider_auth(&info.provider, &info.auth),
             model_metadata: None,
-            model_metadata_loading: false,
         }
     }
 
@@ -101,20 +92,6 @@ impl StatusLineState {
         match &self.branch {
             Some(branch) => format!("{} ({branch})", compact_cwd(&self.cwd)),
             None => compact_cwd(&self.cwd),
-        }
-    }
-
-    fn right_bottom(&self) -> String {
-        let prefix = format!(
-            "permissions: {} • ({}) {}",
-            self.permission_mode.label(),
-            self.provider,
-            self.model
-        );
-        if !self.reasoning_configurable {
-            prefix
-        } else {
-            format!("{prefix} • {}", self.reasoning)
         }
     }
 }
@@ -136,21 +113,18 @@ impl StatusLine {
     }
 
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
-        let billing = BillingInfo::from_provider_auth(&info.provider, &info.auth);
         let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.reasoning != info.reasoning
             || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
-            || self.state.billing != billing
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
             self.state.reasoning = info.reasoning;
             self.state.reasoning_configurable = reasoning_configurable;
             self.state.permission_mode = info.permission_mode;
-            self.state.billing = billing;
             self.invalidate();
         }
     }
@@ -158,33 +132,23 @@ impl StatusLine {
     pub(super) fn update_usage(
         &mut self,
         usage: Option<&ModelUsage>,
-        latest_usage: Option<&ModelUsage>,
         context_usage: Option<&ContextUsage>,
     ) {
-        if self.state.usage.as_ref() != usage
-            || self.state.latest_usage.as_ref() != latest_usage
-            || self.state.context_usage.as_ref() != context_usage
+        if self.state.usage.as_ref() != usage || self.state.context_usage.as_ref() != context_usage
         {
             self.state.usage = usage.cloned();
-            self.state.latest_usage = latest_usage.cloned();
             self.state.context_usage = context_usage.cloned();
             self.invalidate();
         }
     }
 
-    pub(super) fn update_model_metadata(
-        &mut self,
-        model_metadata: Option<&ModelMetadata>,
-        loading: bool,
-    ) {
+    pub(super) fn update_model_metadata(&mut self, model_metadata: Option<&ModelMetadata>) {
         let reasoning_configurable =
             reasoning_is_configurable(&self.state.provider, &self.state.model);
         if self.state.model_metadata.as_ref() != model_metadata
-            || self.state.model_metadata_loading != loading
             || self.state.reasoning_configurable != reasoning_configurable
         {
             self.state.model_metadata = model_metadata.cloned();
-            self.state.model_metadata_loading = loading;
             self.state.reasoning_configurable = reasoning_configurable;
             self.invalidate();
         }
@@ -246,24 +210,93 @@ fn statusline_lines(
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
-    let bottom_left = format_usage(state);
-    let permission = state.permission_mode.label();
-    let permission_summary = if state.reasoning_configurable {
-        format!("permissions: {permission} • {}", state.reasoning)
-    } else {
-        format!("permissions: {permission}")
-    };
-    let permission_candidates = [
-        state.right_bottom(),
-        permission_summary,
-        format!("permissions: {permission}"),
-        permission.into(),
-    ];
-    let bottom_right = fit_right_status(&bottom_left, &permission_candidates, width);
+    let bottom_left = format_context_summary(state);
+    let bottom_right = compact_runtime_status(state, &bottom_left, width);
+    let bottom_left = add_cost_if_it_fits(state, bottom_left, &bottom_right, width);
     vec![
         render_row(top_left, top_right, width),
         render_row(bottom_left, bottom_right, width),
     ]
+}
+
+fn compact_runtime_status(state: &StatusLineState, left: &str, width: usize) -> String {
+    let mut status = state.permission_mode.label().to_string();
+    let separator = " · ";
+    let available = width.saturating_sub(display_width(left) + usize::from(!left.is_empty()));
+    if available <= display_width(&status) {
+        return status;
+    }
+
+    let model_budget = available.saturating_sub(display_width(&status) + display_width(separator));
+    if model_budget >= 6 {
+        status.push_str(separator);
+        status.push_str(&truncate_one_line(&state.model, model_budget));
+    }
+
+    if state.reasoning_configurable {
+        let with_reasoning = format!("{status}{separator}{}", state.reasoning);
+        if display_width(&with_reasoning) <= available {
+            status = with_reasoning;
+        }
+    }
+    status
+}
+
+fn add_cost_if_it_fits(
+    state: &StatusLineState,
+    mut left: String,
+    right: &str,
+    width: usize,
+) -> String {
+    let Some(cost) = status_cost(state) else {
+        return left;
+    };
+    let candidate = if left.is_empty() {
+        cost
+    } else {
+        format!("{left} · {cost}")
+    };
+    let gap = usize::from(!candidate.is_empty() && !right.is_empty());
+    if display_width(&candidate) + display_width(right) + gap <= width {
+        left = candidate;
+    }
+    left
+}
+
+fn format_context_summary(state: &StatusLineState) -> String {
+    let Some(context) = state.context_usage.as_ref() else {
+        return String::new();
+    };
+    let Some(window) = context
+        .context_window
+        .or_else(|| {
+            state
+                .model_metadata
+                .as_ref()
+                .and_then(ModelMetadata::display_context_window)
+        })
+        .filter(|window| *window > 0)
+    else {
+        return String::new();
+    };
+    let marker = match context.source {
+        ContextUsageSource::Estimated => "~",
+        ContextUsageSource::ProviderReported => "",
+        ContextUsageSource::UnknownAfterCompaction => "?",
+    };
+    let Some(tokens) = context.tokens else {
+        return format!("{marker}ctx");
+    };
+    let percent = tokens as f64 * 100.0 / window as f64;
+    format!("{marker}{percent:.1}% ctx")
+}
+
+fn status_cost(state: &StatusLineState) -> Option<String> {
+    let usage = state.usage.as_ref()?;
+    usage
+        .cost_usd_micros
+        .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
+        .map(|cost| format!("${}", format_usd(cost)))
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
@@ -286,61 +319,14 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
         })
 }
 
-fn format_usage(state: &StatusLineState) -> String {
-    if state.model_metadata_loading {
-        return "querying models.dev".into();
-    }
-
-    let usage = state.usage.as_ref();
-    let mut parts = Vec::new();
-    if let Some(usage) = usage {
-        if let Some(tokens) = usage.input_tokens {
-            parts.push(format!("↑{}", compact_number(tokens)));
-        }
-        if let Some(tokens) = usage.output_tokens {
-            parts.push(format!("↓{}", compact_number(tokens)));
-        }
-        if let Some(tokens) = usage.cache_read_tokens {
-            parts.push(format!("R{}", compact_number(tokens)));
-        }
-        if let Some(tokens) = usage.cache_write_tokens {
-            parts.push(format!("W{}", compact_number(tokens)));
-        }
-        if let Some(percent) = cache_hit_percent(state.latest_usage.as_ref()) {
-            parts.push(format!("CH{percent:.1}%"));
-        }
-        if let Some(cost) = usage
-            .cost_usd_micros
-            .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
-        {
-            parts.push(format!("${}", format_usd(cost)));
-        }
-    } else if state.model_metadata.as_ref().is_some_and(has_pricing) {
-        parts.push(format!("${}", format_usd(0)));
-    }
-    if let Some(label) = state.billing.label() {
-        parts.push(format!("({label})"));
-    }
-    if let Some(context) = format_context_usage(
-        state.context_usage.as_ref(),
-        state
-            .model_metadata
-            .as_ref()
-            .and_then(ModelMetadata::display_context_window),
-    ) {
-        parts.push(context);
-    }
-    parts.join(" ")
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BillingInfo {
+pub(super) enum BillingInfo {
     Metered,
     Subscription,
 }
 
 impl BillingInfo {
-    fn from_provider_auth(provider: &str, auth: &str) -> Self {
+    pub(super) fn from_provider_auth(provider: &str, auth: &str) -> Self {
         if provider == "openai-codex" || auth == "codex" || auth == "xai-oauth" {
             Self::Subscription
         } else {
@@ -348,19 +334,15 @@ impl BillingInfo {
         }
     }
 
-    fn label(self) -> Option<&'static str> {
+    pub(super) fn description(self) -> &'static str {
         match self {
-            Self::Metered => None,
-            Self::Subscription => Some("sub"),
+            Self::Metered => "metered API",
+            Self::Subscription => "subscription",
         }
     }
 }
 
-fn has_pricing(metadata: &ModelMetadata) -> bool {
-    metadata.cost_default.is_some() || metadata.cost_long_context.is_some()
-}
-
-fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
+pub(super) fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
     let usage = usage?;
     let cache_read = usage.cache_read_tokens?;
     let prompt_tokens = usage
@@ -370,27 +352,10 @@ fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
     (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
 }
 
-fn format_context_usage(
-    context_usage: Option<&ContextUsage>,
-    metadata_context_window: Option<u64>,
-) -> Option<String> {
-    let window = context_usage
-        .and_then(|usage| usage.context_window)
-        .or(metadata_context_window)
-        .filter(|window| *window > 0)?;
-    let marker = match context_usage.map(|usage| usage.source) {
-        Some(ContextUsageSource::Estimated) => "~",
-        Some(ContextUsageSource::ProviderReported) | None => "",
-        Some(ContextUsageSource::UnknownAfterCompaction) => "?",
-    };
-    let Some(tokens) = context_usage.and_then(|usage| usage.tokens) else {
-        return Some(format!("{marker}/{}", compact_number(window)));
-    };
-    let percent = tokens as f64 * 100.0 / window as f64;
-    Some(format!("{marker}{percent:.1}%/{}", compact_number(window)))
-}
-
-fn estimated_cost_usd_micros(usage: &ModelUsage, metadata: Option<&ModelMetadata>) -> Option<u64> {
+pub(super) fn estimated_cost_usd_micros(
+    usage: &ModelUsage,
+    metadata: Option<&ModelMetadata>,
+) -> Option<u64> {
     let metadata = metadata?;
     let input = usage.input_tokens.unwrap_or_default();
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
@@ -425,16 +390,6 @@ fn format_usd(micros: u64) -> String {
     }
 }
 
-fn compact_number(value: u64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}M", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}k", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
-}
-
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
     let style = Theme::dim();
     if right.is_empty() {
@@ -457,7 +412,7 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
 }
 
-fn git_branch(cwd: &Path) -> Option<String> {
+pub(super) fn git_branch(cwd: &Path) -> Option<String> {
     let git_dir = find_git_dir(cwd)?;
     let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let head = head.trim();
