@@ -1,6 +1,6 @@
 use std::{
     io::{self, Write},
-    process::{Command, Stdio},
+    process::{Command, ExitStatus, Stdio},
 };
 
 /// Returns true when the OS can resolve and spawn `command`.
@@ -36,7 +36,7 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
         .spawn()
         .map_err(|error| io::Error::new(error.kind(), format!("spawn {program}: {error}")))?;
 
-    let write_result = (|| {
+    let write_result: io::Result<()> = (|| {
         let mut stdin = child.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, format!("{program} stdin closed"))
         })?;
@@ -45,18 +45,23 @@ pub(super) fn write_command_stdin(program: &str, args: &[&str], bytes: &[u8]) ->
         Ok(())
     })();
 
-    if let Err(error) = write_result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
-
+    // A non-zero exit is authoritative and deterministic regardless of whether
+    // the write raced the child closing stdin. On a clean exit the write result
+    // decides success, so an incomplete write (broken pipe) is still an error
+    // and the caller can fall back rather than assume the clipboard was set.
     let status = child.wait()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("{program} exited with {status}")))
+    resolve_command_write(program, status, write_result)
+}
+
+fn resolve_command_write(
+    program: &str,
+    status: ExitStatus,
+    write_result: io::Result<()>,
+) -> io::Result<()> {
+    if !status.success() {
+        return Err(io::Error::other(format!("{program} exited with {status}")));
     }
+    write_result
 }
 
 #[cfg(test)]
