@@ -144,6 +144,7 @@ impl App {
     }
 
     pub(super) fn push_input_history(&mut self, prompt: &str) {
+        self.reset_input_history_navigation();
         if prompt.is_empty() || self.input_history.last().is_some_and(|last| last == prompt) {
             return;
         }
@@ -406,7 +407,14 @@ impl App {
         &mut self,
     ) -> Result<Option<CommandInvocation>, commands::CommandParseError> {
         match std::mem::take(&mut self.input_submission_mode) {
-            InputSubmissionMode::ParseCommands => commands::parse_command(&self.input),
+            InputSubmissionMode::ParseCommands => {
+                let result = commands::parse_command(&self.input);
+                if matches!(result, Ok(Some(_))) {
+                    let command = self.input.trim_end().to_string();
+                    self.push_input_history(&command);
+                }
+                result
+            }
             InputSubmissionMode::Prompt => Ok(None),
         }
     }
