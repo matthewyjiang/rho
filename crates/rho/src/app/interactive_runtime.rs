@@ -491,20 +491,6 @@ impl InteractiveRuntime {
         self.sessions.save_snapshot(&[Message::user_text(display)])
     }
 
-    pub(crate) fn load_skill(
-        &mut self,
-        skill: &crate::skills::Skill,
-        max_bytes: usize,
-    ) -> anyhow::Result<()> {
-        let content = rho_tools::tool::truncate(skill.contents.clone(), max_bytes);
-        let message = Message::user_text(format!(
-            "Loaded skill `{}` from {}:\n\n{}",
-            skill.name, skill.source, content
-        ));
-        self.sessions.session().append_message(message.clone())?;
-        self.sessions.save_snapshot(std::slice::from_ref(&message))
-    }
-
     pub(crate) async fn shutdown(&mut self) {
         if self.runs.is_active() {
             debug_assert_eq!(

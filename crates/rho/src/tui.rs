@@ -1767,9 +1767,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let mut prompt = self.expanded_input().trim().to_string();
-        let mut display_prompt = self.input.trim().to_string();
-        if prompt.is_empty() && self.pending_images.is_empty() {
+        let mut turn = TurnPrompt::standard(
+            self.expanded_input().trim().to_string(),
+            self.input.trim().to_string(),
+        );
+        if turn.model.is_empty() && self.pending_images.is_empty() {
             self.clear_submitted_input();
             return Ok(());
         }
@@ -1787,7 +1789,7 @@ impl App {
         match self.parse_input_command() {
             Ok(Some(mut invocation)) => {
                 if invocation.id == CommandId::Goal {
-                    invocation.raw_args = slash_command_args(&prompt).to_string();
+                    invocation.raw_args = slash_command_args(&turn.model).to_string();
                     invocation.args = invocation.raw_args.trim().to_string();
                 }
                 self.input.clear();
@@ -1799,9 +1801,7 @@ impl App {
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
-                let expanded_input = self.expanded_input();
-                let trailing_prompt = slash_command_args(&expanded_input).trim().to_string();
-                let trailing_display_prompt = slash_command_args(&self.input).trim().to_string();
+                let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
                 self.input.clear();
                 self.paste_segments.clear();
                 self.input_cursor = 0;
@@ -1817,14 +1817,12 @@ impl App {
                         )
                     });
                 if let Some(template) = template {
-                    prompt = crate::prompt_templates::expand(template, &trailing_prompt);
-                    display_prompt = prompt.clone();
-                } else if self.execute_skill_command(&name, agent)? {
-                    if trailing_prompt.is_empty() {
-                        return Ok(());
-                    }
-                    prompt = trailing_prompt;
-                    display_prompt = trailing_display_prompt;
+                    let prompt = crate::prompt_templates::expand(template, &trailing_prompt);
+                    turn = TurnPrompt::standard(prompt.clone(), prompt);
+                } else if let Some(skill_prompt) =
+                    self.skill_command_prompt(&name, &trailing_prompt, turn.display)?
+                {
+                    turn = skill_prompt;
                 } else {
                     self.insert_entry(&Entry::Error(format!(
                         "unknown command '/{name}'. Type / to choose one of: {}",
@@ -1845,7 +1843,7 @@ impl App {
         self.paste_segments.clear();
         self.input_cursor = 0;
         self.clamp_command_selection();
-        let turn = self.prepare_goal_resumption_turn(prompt, display_prompt);
+        let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();

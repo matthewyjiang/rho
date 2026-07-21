@@ -237,16 +237,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn prepare_goal_resumption_turn(
-        &mut self,
-        prompt: String,
-        display_prompt: String,
-    ) -> TurnPrompt {
+    pub(super) fn prepare_goal_resumption_turn(&mut self, mut prompt: TurnPrompt) -> TurnPrompt {
         let Some(goal) = self.goal.as_mut() else {
-            return TurnPrompt::standard(prompt, display_prompt);
+            return prompt;
         };
         if !goal.is_blocked() {
-            return TurnPrompt::standard(prompt, display_prompt);
+            return prompt;
         }
 
         let condition = goal.condition.clone();
@@ -256,12 +252,12 @@ impl App {
             "goal resumed by user message; verifying the previously blocked steps".into(),
         ));
         self.status = "goal active".into();
-        TurnPrompt {
-            model: blocked_goal_resumption_prompt(&condition, &pending_steps, Some(&prompt)),
-            history: prompt,
-            display: display_prompt.clone(),
-            persisted_display: Some(display_prompt),
+        if prompt.persisted_display.is_none() {
+            prompt.persisted_display = Some(prompt.display.clone());
         }
+        prompt.model =
+            blocked_goal_resumption_prompt(&condition, &pending_steps, Some(&prompt.model));
+        prompt
     }
 
     pub(super) fn finish_goal_resumption_turn(&mut self, outcome: TurnOutcomeKind) {
