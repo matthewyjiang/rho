@@ -29,7 +29,7 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
     let mut bootstrap = test_bootstrap();
     bootstrap.services.herdr = reporter_for_socket(&socket_path);
     bootstrap.session.session_id = Some("session-questionnaire".into());
-    let mut app = App::new(bootstrap);
+    let mut app = App::new(bootstrap, crate::herdr::HerdrGraphicsCapability::NotHerdr);
     let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
 
     app.open_questionnaire(QuestionAnswerRequest {
@@ -77,7 +77,7 @@ async fn resolving_approval_reports_blocked_then_signals_resume() {
     let mut bootstrap = test_bootstrap();
     bootstrap.services.herdr = reporter_for_socket(&socket_path);
     bootstrap.session.session_id = Some("session-approval".into());
-    let mut app = App::new(bootstrap);
+    let mut app = App::new(bootstrap, crate::herdr::HerdrGraphicsCapability::NotHerdr);
     let (pending, mut decision_rx) = test_pending_approval();
 
     app.open_approval(pending).await;
@@ -130,7 +130,7 @@ async fn resting_herdr_state_stays_blocked_when_auth_is_unavailable() {
     let mut bootstrap = test_bootstrap();
     bootstrap.services.herdr = reporter_for_socket(&socket_path);
     bootstrap.services.auth_unavailable = Some("login required".into());
-    let app = App::new(bootstrap);
+    let app = App::new(bootstrap, crate::herdr::HerdrGraphicsCapability::NotHerdr);
 
     app.report_resting_herdr_state().await;
 

@@ -1,10 +1,12 @@
 use std::{
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use rho_providers::model::ImageContent;
+use rho_tools::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 
 use super::{
     process::{command_available, command_output},
@@ -21,8 +23,18 @@ pub enum ClipboardImageError {
     Io(#[from] std::io::Error),
 }
 
+/// Result of interpreting a paste payload as an image attachment.
+#[derive(Debug)]
+pub enum PasteImageOutcome {
+    /// Paste text is not a single-line path to a supported image.
+    NotImage,
+    /// Loaded image content ready to attach.
+    Image(ImageContent),
+    /// Path looked like an image paste, but loading failed.
+    Failed(ClipboardImageError),
+}
+
 const SUPPORTED_IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
-const MAX_PASTE_IMAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
     read_clipboard_image_for_session(SessionKind::detect())
@@ -33,21 +45,37 @@ pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
 /// Hosts such as Herdr paste clipboard images as filesystem paths. Rho treats a
 /// single-line paste of an image path as an attachment instead of plain text.
 pub fn read_image_file(path: &Path) -> Result<ImageContent, ClipboardImageError> {
-    let metadata = fs::metadata(path)?;
+    read_image_file_with_limit(path, MAX_IMAGE_FILE_BYTES)
+}
+
+fn read_image_file_with_limit(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<ImageContent, ClipboardImageError> {
+    let file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(ClipboardImageError::NoImage);
     }
-    if metadata.len() > MAX_PASTE_IMAGE_FILE_BYTES {
-        return Err(ClipboardImageError::TooLarge(MAX_PASTE_IMAGE_FILE_BYTES));
+    let mut bytes = Vec::new();
+    let mut limited = file.take(max_bytes.saturating_add(1));
+    limited.read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ClipboardImageError::TooLarge(max_bytes));
     }
-    let bytes = fs::read(path)?;
     image_content_from_bytes(bytes)
 }
 
 /// When `text` is only a path to an existing supported image, load it.
-pub fn image_from_paste_text(text: &str, cwd: &Path) -> Option<ImageContent> {
-    let path = paste_text_as_image_path(text, cwd)?;
-    read_image_file(&path).ok()
+pub fn image_from_paste_text(text: &str, cwd: &Path) -> PasteImageOutcome {
+    let Some(path) = paste_text_as_image_path(text, cwd) else {
+        return PasteImageOutcome::NotImage;
+    };
+    match read_image_file(&path) {
+        Ok(image) => PasteImageOutcome::Image(image),
+        Err(ClipboardImageError::NoImage) => PasteImageOutcome::NotImage,
+        Err(error) => PasteImageOutcome::Failed(error),
+    }
 }
 
 pub(super) fn paste_text_as_image_path(text: &str, cwd: &Path) -> Option<PathBuf> {
@@ -91,20 +119,6 @@ fn image_content_from_bytes(bytes: Vec<u8>) -> Result<ImageContent, ClipboardIma
         data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
         mime_type: mime_type.into(),
     })
-}
-
-fn supported_image_mime_type(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("image/jpeg")
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("image/gif")
-    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
-        Some("image/webp")
-    } else {
-        None
-    }
 }
 
 pub(super) fn read_clipboard_image_for_session(

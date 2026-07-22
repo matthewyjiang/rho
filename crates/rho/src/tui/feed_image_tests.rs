@@ -94,8 +94,8 @@ fn terminal_hints_enable_direct_kitty_and_ghostty_but_not_tmux() {
 #[test]
 fn herdr_without_paintable_kitty_uses_halfblocks() {
     let picker = picker_for_environment(
-        /*host_supports_kitty*/ true, /*in_herdr*/ true,
-        /*herdr_can_paint_kitty*/ false,
+        /*host_supports_kitty*/ true,
+        crate::herdr::HerdrGraphicsCapability::Unpaintable,
     )
     .unwrap();
     assert_eq!(picker.protocol_type(), ProtocolType::Halfblocks);
@@ -104,8 +104,8 @@ fn herdr_without_paintable_kitty_uses_halfblocks() {
 #[test]
 fn herdr_with_paintable_kitty_keeps_kitty_protocol() {
     let picker = picker_for_environment(
-        /*host_supports_kitty*/ true, /*in_herdr*/ true,
-        /*herdr_can_paint_kitty*/ true,
+        /*host_supports_kitty*/ true,
+        crate::herdr::HerdrGraphicsCapability::Paintable,
     )
     .unwrap();
     assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
@@ -114,8 +114,8 @@ fn herdr_with_paintable_kitty_keeps_kitty_protocol() {
 #[test]
 fn direct_kitty_host_keeps_kitty_protocol() {
     let picker = picker_for_environment(
-        /*host_supports_kitty*/ true, /*in_herdr*/ false,
-        /*herdr_can_paint_kitty*/ false,
+        /*host_supports_kitty*/ true,
+        crate::herdr::HerdrGraphicsCapability::NotHerdr,
     )
     .unwrap();
     assert_eq!(picker.protocol_type(), ProtocolType::Kitty);

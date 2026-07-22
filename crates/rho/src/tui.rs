@@ -243,6 +243,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
     let modified_keys_enabled = enable_modified_keys().is_ok();
     let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
     let herdr = info.services.herdr.clone();
+    let herdr_graphics = herdr.graphics_capability().await;
     let initial_state = if info.services.auth_unavailable.is_some() {
         HerdrState::Blocked
     } else {
@@ -262,7 +263,11 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
         let injected: anyhow::Result<()> = Ok(());
 
         match injected {
-            Ok(()) => App::new(info).run(&mut terminal, agent).await,
+            Ok(()) => {
+                App::new(info, herdr_graphics)
+                    .run(&mut terminal, agent)
+                    .await
+            }
             Err(error) => Err(error),
         }
     };
@@ -666,20 +671,22 @@ impl StreamKind {
 }
 
 impl App {
-    fn new(info: TuiBootstrap) -> Self {
+    fn new(info: TuiBootstrap, herdr_graphics: crate::herdr::HerdrGraphicsCapability) -> Self {
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
+                herdr_graphics,
             );
         }
-        Self::new_with_credentials(info, Arc::new(AppCredentialStore))
+        Self::new_with_credentials(info, Arc::new(AppCredentialStore), herdr_graphics)
     }
 
     fn new_with_credentials(
         info: TuiBootstrap,
         credential_store: Arc<dyn CredentialStore>,
+        herdr_graphics: crate::herdr::HerdrGraphicsCapability,
     ) -> Self {
         let available_auths = available_auth_modes(credential_store.as_ref());
         let using_unavailable_provider = info.services.auth_unavailable.is_some();
@@ -717,7 +724,7 @@ impl App {
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
             tool_calls: ToolCallBatch::default(),
-            image_picker: picker_from_environment(),
+            image_picker: picker_from_environment(herdr_graphics),
             steering_prompts: VecDeque::new(),
             accepted_steering: VecDeque::new(),
             retracting_steering: None,
@@ -3825,7 +3832,11 @@ mod tests {
     pub(super) fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
         save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-        App::new_with_credentials(test_bootstrap(), store)
+        App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::herdr::HerdrGraphicsCapability::NotHerdr,
+        )
     }
 
     #[test]
@@ -4931,7 +4942,11 @@ mod tests {
         )
         .unwrap();
         save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
-        let mut app = App::new_with_credentials(test_bootstrap(), store);
+        let mut app = App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::herdr::HerdrGraphicsCapability::NotHerdr,
+        );
         app.refresh_available_auths();
 
         let models = catalog::available_models_for_auths(&app.available_auths);

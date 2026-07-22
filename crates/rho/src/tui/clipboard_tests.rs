@@ -48,3 +48,29 @@ fn non_image_path_paste_stays_text() {
     assert!(app.pending_images.is_empty());
     assert!(app.input.contains("notes.txt") || !app.paste_segments.is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn unreadable_image_path_paste_reports_error_without_inserting_text() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secret.png");
+    let png = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    )
+    .unwrap();
+    std::fs::write(&path, png).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let mut app = test_app();
+    app.info.runtime.cwd = dir.path().to_path_buf();
+    app.insert_paste(&path.to_string_lossy());
+
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+
+    assert!(app.pending_images.is_empty());
+    assert!(app.input.is_empty());
+    assert!(app.status.contains("image paste failed"));
+}

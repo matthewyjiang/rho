@@ -1,11 +1,14 @@
 use std::{io::Cursor, path::Path};
 
 use image::{ImageFormat, ImageReader, Limits};
-
-use crate::tool::*;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
+
+use crate::{
+    image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES},
+    tool::*,
+};
 
 pub struct ReadFile;
 #[derive(Deserialize)]
@@ -76,7 +79,6 @@ pub(super) fn read_file_display_content(
     format!("{path}:{start}-{end}")
 }
 
-const MAX_IMAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DECODE_DIMENSION: u32 = 4_096;
 const MAX_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 const THUMBNAIL_WIDTH: u32 = 1_024;
@@ -193,20 +195,6 @@ fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)
         Ok(encoded.into_inner())
     })();
     result.map_err(|error| (error, bytes))
-}
-
-fn supported_image_mime_type(header: &[u8]) -> Option<&'static str> {
-    if header.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if header.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("image/jpeg")
-    } else if header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a") {
-        Some("image/gif")
-    } else if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP") {
-        Some("image/webp")
-    } else {
-        None
-    }
 }
 
 async fn read_line_range(

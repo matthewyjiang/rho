@@ -7,6 +7,7 @@ use std::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 const GRAPHICS_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
+const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
 const SOURCE: &str = "herdr:rho";
 const AGENT: &str = "rho";
 
@@ -26,6 +27,17 @@ pub enum HerdrState {
     Idle,
     Working,
     Blocked,
+}
+
+/// Whether the active Herdr client can paint Kitty graphics placements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HerdrGraphicsCapability {
+    /// Not running under a configured Herdr pane.
+    NotHerdr,
+    /// Herdr can paint Kitty placements for this pane.
+    Paintable,
+    /// Under Herdr, but host cell metrics or the probe path is unavailable.
+    Unpaintable,
 }
 
 impl HerdrState {
@@ -66,6 +78,21 @@ impl HerdrReporter {
         Some(socket_is_reachable(&config.socket_path))
     }
 
+    /// Probes whether the active Herdr client can paint Kitty placements.
+    ///
+    /// Herdr intercepts Kitty graphics from pane PTYs. Painting needs host cell
+    /// metrics; when those are missing, Rho should keep image previews in the
+    /// character grid (halfblocks) instead of reserving blank Kitty rows.
+    pub async fn graphics_capability(&self) -> HerdrGraphicsCapability {
+        let Some(config) = &self.config else {
+            return HerdrGraphicsCapability::NotHerdr;
+        };
+        match probe_kitty_graphics(config).await {
+            true => HerdrGraphicsCapability::Paintable,
+            false => HerdrGraphicsCapability::Unpaintable,
+        }
+    }
+
     pub async fn report_state(
         &self,
         state: HerdrState,
@@ -89,7 +116,11 @@ impl HerdrReporter {
             params["agent_session_id"] = json!(session_id);
         }
 
-        self.send(json_rpc_request("pane.report_agent", params))
+        let _ = self
+            .exchange(
+                json_rpc_request("pane.report_agent", params),
+                REQUEST_TIMEOUT,
+            )
             .await;
     }
 
@@ -98,16 +129,20 @@ impl HerdrReporter {
             return;
         };
 
-        self.send(json_rpc_request(
-            "pane.report_agent_session",
-            json!({
-                "pane_id": config.pane_id,
-                "source": SOURCE,
-                "agent": AGENT,
-                "agent_session_id": session_id,
-            }),
-        ))
-        .await;
+        let _ = self
+            .exchange(
+                json_rpc_request(
+                    "pane.report_agent_session",
+                    json!({
+                        "pane_id": config.pane_id,
+                        "source": SOURCE,
+                        "agent": AGENT,
+                        "agent_session_id": session_id,
+                    }),
+                ),
+                REQUEST_TIMEOUT,
+            )
+            .await;
     }
 
     pub async fn release(&self) {
@@ -115,71 +150,60 @@ impl HerdrReporter {
             return;
         };
 
-        self.send(json_rpc_request(
-            "pane.release_agent",
-            json!({
-                "pane_id": config.pane_id,
-                "source": SOURCE,
-                "agent": AGENT,
-            }),
-        ))
-        .await;
+        let _ = self
+            .exchange(
+                json_rpc_request(
+                    "pane.release_agent",
+                    json!({
+                        "pane_id": config.pane_id,
+                        "source": SOURCE,
+                        "agent": AGENT,
+                    }),
+                ),
+                REQUEST_TIMEOUT,
+            )
+            .await;
     }
 
-    async fn send(&self, request: serde_json::Value) {
+    async fn exchange(
+        &self,
+        request: serde_json::Value,
+        timeout: Duration,
+    ) -> std::io::Result<Vec<u8>> {
         let Some(config) = &self.config else {
-            return;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "herdr is not configured",
+            ));
         };
-        let socket_path = config.socket_path.clone();
         let payload = match serde_json::to_vec(&request) {
             Ok(mut payload) => {
                 payload.push(b'\n');
                 payload
             }
-            Err(_) => return,
+            Err(error) => {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+            }
         };
-
-        let _ = tokio::time::timeout(REQUEST_TIMEOUT, send_payload(socket_path, payload)).await;
+        exchange_payload(config.socket_path.clone(), payload, timeout).await
     }
 }
 
-/// Returns whether the active Herdr client can paint Kitty placements.
-///
-/// Herdr intercepts Kitty graphics from pane PTYs. Painting needs host cell
-/// metrics; when those are missing, Rho should keep image previews in the
-/// character grid (halfblocks) instead of reserving blank Kitty rows.
-pub fn can_paint_kitty_graphics() -> bool {
-    can_paint_kitty_graphics_from_env(|key| env::var(key).ok())
-}
-
-pub(crate) fn can_paint_kitty_graphics_from_env(
-    mut get_var: impl FnMut(&str) -> Option<String>,
-) -> bool {
-    if !platform_supported() || get_var("HERDR_ENV").as_deref() != Some("1") {
-        return false;
-    }
-    let Some(socket_path) = get_var("HERDR_SOCKET_PATH").filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    let Some(pane_id) = get_var("HERDR_PANE_ID").filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    probe_kitty_graphics(Path::new(&socket_path), &pane_id)
-}
-
-fn probe_kitty_graphics(socket_path: &Path, pane_id: &str) -> bool {
-    let request = json_rpc_request("pane.graphics.info", json!({ "pane_id": pane_id }));
+async fn probe_kitty_graphics(config: &HerdrConfig) -> bool {
+    let request = json_rpc_request("pane.graphics.info", json!({ "pane_id": config.pane_id }));
     let Ok(mut payload) = serde_json::to_vec(&request) else {
         return false;
     };
     payload.push(b'\n');
-    let Ok(response) = send_payload_sync(socket_path, &payload, GRAPHICS_PROBE_TIMEOUT) else {
+    let Ok(response) =
+        exchange_payload(config.socket_path.clone(), payload, GRAPHICS_PROBE_TIMEOUT).await
+    else {
         return false;
     };
-    herdr_graphics_info_reports_paintable(&response)
+    graphics_info_reports_paintable(&response)
 }
 
-pub(crate) fn herdr_graphics_info_reports_paintable(response: &[u8]) -> bool {
+pub(crate) fn graphics_info_reports_paintable(response: &[u8]) -> bool {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(response) else {
         return false;
     };
@@ -187,12 +211,12 @@ pub(crate) fn herdr_graphics_info_reports_paintable(response: &[u8]) -> bool {
 }
 
 #[cfg(unix)]
-fn socket_is_reachable(path: &std::path::Path) -> bool {
+fn socket_is_reachable(path: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 #[cfg(not(unix))]
-fn socket_is_reachable(_path: &std::path::Path) -> bool {
+fn socket_is_reachable(_path: &Path) -> bool {
     false
 }
 
@@ -216,51 +240,42 @@ fn platform_supported() -> bool {
 }
 
 #[cfg(unix)]
-async fn send_payload(socket_path: PathBuf, payload: Vec<u8>) -> std::io::Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixStream;
-
-    let mut stream = UnixStream::connect(socket_path).await?;
-    stream.write_all(&payload).await?;
-    let _ = stream.shutdown().await;
-    let mut buffer = [0_u8; 256];
-    let _ = stream.read(&mut buffer).await;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-async fn send_payload(_socket_path: PathBuf, _payload: Vec<u8>) -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn send_payload_sync(
-    socket_path: &Path,
-    payload: &[u8],
+async fn exchange_payload(
+    socket_path: PathBuf,
+    payload: Vec<u8>,
     timeout: Duration,
 ) -> std::io::Result<Vec<u8>> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-    let mut stream = UnixStream::connect(socket_path)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    stream.write_all(payload)?;
-    let _ = stream.shutdown(std::net::Shutdown::Write);
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response)?;
-    Ok(response)
+    tokio::time::timeout(timeout, async move {
+        let stream = tokio::net::UnixStream::connect(socket_path).await?;
+        let (reader, mut writer) = stream.into_split();
+        writer.write_all(&payload).await?;
+        writer.shutdown().await?;
+        let mut reader = BufReader::new(reader).take(MAX_RESPONSE_BYTES);
+        let mut response = Vec::new();
+        reader.read_until(b'\n', &mut response).await?;
+        if response.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "herdr closed without a response",
+            ));
+        }
+        Ok(response)
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "herdr request timed out"))?
 }
 
 #[cfg(not(unix))]
-fn send_payload_sync(
-    _socket_path: &Path,
-    _payload: &[u8],
+async fn exchange_payload(
+    _socket_path: PathBuf,
+    _payload: Vec<u8>,
     _timeout: Duration,
 ) -> std::io::Result<Vec<u8>> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "herdr graphics probe is unix-only",
+        "herdr socket transport is unix-only",
     ))
 }
 
@@ -289,6 +304,13 @@ pub(crate) mod test_support {
 
     impl TestHerdrServer {
         pub(crate) async fn bind(socket_path: &Path) -> Self {
+            Self::bind_with_response(socket_path, b"{}\n").await
+        }
+
+        pub(crate) async fn bind_with_response(
+            socket_path: &Path,
+            response: &'static [u8],
+        ) -> Self {
             let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
             let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
@@ -303,7 +325,10 @@ pub(crate) mod test_support {
                         stream.read_line(&mut line).await.unwrap();
                         let request = serde_json::from_str(&line).unwrap();
                         tx.send(request).unwrap();
-                        stream.get_mut().write_all(b"{}\n").await.unwrap();
+                        // Keep the connection open after the framed response so
+                        // clients must read a newline rather than waiting for EOF.
+                        stream.get_mut().write_all(response).await.unwrap();
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     });
                 }
             });

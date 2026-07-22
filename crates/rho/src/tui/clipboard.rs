@@ -2,7 +2,7 @@ use std::io;
 
 use rho_providers::model::{image_summary, ImageContent};
 
-use crate::clipboard::{image_from_paste_text, read_clipboard_image};
+use crate::clipboard::{image_from_paste_text, read_clipboard_image, PasteImageOutcome};
 pub(super) use crate::clipboard::{CopyOutcome, SystemClipboard};
 
 use super::{App, ComposerMode};
@@ -39,15 +39,22 @@ impl App {
         }
     }
 
+    /// Returns true when the paste was consumed as an image path attach attempt.
     pub(super) fn try_attach_pasted_image_path(&mut self, text: &str) -> bool {
         if self.running || !matches!(self.composer, ComposerMode::Input) {
             return false;
         }
-        let Some(image) = image_from_paste_text(text, &self.info.runtime.cwd) else {
-            return false;
-        };
-        self.attach_pending_image(image);
-        true
+        match image_from_paste_text(text, &self.info.runtime.cwd) {
+            PasteImageOutcome::NotImage => false,
+            PasteImageOutcome::Image(image) => {
+                self.attach_pending_image(image);
+                true
+            }
+            PasteImageOutcome::Failed(err) => {
+                self.notify_status(format!("image paste failed: {err}"));
+                true
+            }
+        }
     }
 
     fn attach_pending_image(&mut self, image: ImageContent) {

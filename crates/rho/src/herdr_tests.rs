@@ -1,6 +1,6 @@
-use super::HerdrReporter;
 #[cfg(unix)]
 use super::HerdrState;
+use super::{graphics_info_reports_paintable, HerdrGraphicsCapability, HerdrReporter};
 use std::collections::HashMap;
 
 #[test]
@@ -124,19 +124,63 @@ async fn release_sends_release_request() {
 
 #[test]
 fn graphics_info_without_error_is_paintable() {
-    assert!(super::herdr_graphics_info_reports_paintable(
+    assert!(graphics_info_reports_paintable(
         br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14}}"#
     ));
 }
 
 #[test]
 fn graphics_info_cell_size_error_is_not_paintable() {
-    assert!(!super::herdr_graphics_info_reports_paintable(
+    assert!(!graphics_info_reports_paintable(
         br#"{"id":"1","error":{"code":"cell_size_unavailable","message":"host cell size is unavailable"}}"#
     ));
 }
 
-#[test]
-fn graphics_probe_is_disabled_outside_herdr() {
-    assert!(!super::can_paint_kitty_graphics_from_env(|_| None));
+#[tokio::test]
+async fn graphics_capability_is_not_herdr_when_disabled() {
+    let reporter = HerdrReporter::default();
+    assert_eq!(
+        reporter.graphics_capability().await,
+        HerdrGraphicsCapability::NotHerdr
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn graphics_capability_paintable_when_result_present_without_eof() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let mut server = super::test_support::TestHerdrServer::bind_with_response(
+        &socket_path,
+        br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14}}
+"#,
+    )
+    .await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
+
+    let capability = reporter.graphics_capability().await;
+    let request = server.next_request().await;
+
+    assert_eq!(capability, HerdrGraphicsCapability::Paintable);
+    assert_eq!(request["method"], "pane.graphics.info");
+    assert_eq!(request["params"]["pane_id"], "w1:p1");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn graphics_capability_unpaintable_on_cell_size_error() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let _server = super::test_support::TestHerdrServer::bind_with_response(
+        &socket_path,
+        br#"{"id":"1","error":{"code":"cell_size_unavailable","message":"host cell size is unavailable"}}
+"#,
+    )
+    .await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
+
+    assert_eq!(
+        reporter.graphics_capability().await,
+        HerdrGraphicsCapability::Unpaintable
+    );
 }

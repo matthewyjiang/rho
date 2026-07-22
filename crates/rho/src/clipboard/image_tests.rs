@@ -3,9 +3,10 @@ use std::{fs, path::PathBuf};
 use pretty_assertions::assert_eq;
 
 use super::{
-    available_image_helpers_with, image_content_from_bytes, paste_text_as_image_path,
-    platform_image_helpers, read_clipboard_image_for_session, read_image_file,
-    select_preferred_image_mime_type, ClipboardImageError,
+    available_image_helpers_with, image_content_from_bytes, image_from_paste_text,
+    paste_text_as_image_path, platform_image_helpers, read_clipboard_image_for_session,
+    read_image_file, read_image_file_with_limit, select_preferred_image_mime_type,
+    ClipboardImageError, PasteImageOutcome,
 };
 use crate::clipboard::SessionKind;
 
@@ -82,8 +83,14 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
         paste_text_as_image_path("notes.txt", cwd),
         Some(text_path.canonicalize().unwrap())
     );
-    assert!(super::image_from_paste_text("notes.txt", cwd).is_none());
-    assert!(super::image_from_paste_text("shot.png", cwd).is_some());
+    assert!(matches!(
+        image_from_paste_text("notes.txt", cwd),
+        PasteImageOutcome::NotImage
+    ));
+    assert!(matches!(
+        image_from_paste_text("shot.png", cwd),
+        PasteImageOutcome::Image(_)
+    ));
 }
 
 #[test]
@@ -98,4 +105,16 @@ fn read_image_file_loads_supported_bytes() {
 fn image_content_rejects_non_image_bytes() {
     let error = image_content_from_bytes(b"hello".to_vec()).unwrap_err();
     assert!(matches!(error, ClipboardImageError::NoImage));
+}
+
+#[test]
+fn read_image_file_rejects_oversized_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huge.png");
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&[0_u8; 16]);
+    fs::write(&path, &bytes).unwrap();
+
+    let error = read_image_file_with_limit(&path, 8).unwrap_err();
+    assert!(matches!(error, ClipboardImageError::TooLarge(8)));
 }
