@@ -10,11 +10,35 @@ use windows_sys::Win32::{
         DACL_SECURITY_INFORMATION, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     },
-    Storage::FileSystem::FILE_ALL_ACCESS,
+    Storage::FileSystem::{
+        MoveFileExW, FILE_ALL_ACCESS, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    },
     System::WindowsProgramming::GetUserNameW,
 };
 
 use super::{CredentialError, CredentialResult};
+
+/// Atomically replace `destination` with `source`, overwriting when needed.
+pub(super) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
 
 pub(super) fn set_private_windows_acl(path: &Path, directory: bool) -> CredentialResult<()> {
     let mut name_len = 0;

@@ -4,9 +4,9 @@
 //! namespace. Callers choose a backend explicitly through
 //! [`CredentialStoreBackend`]:
 //!
-//! - [`CredentialStoreBackend::Auto`] probes and opens the OS keyring only. It
-//!   never falls back to local files.
-//! - [`CredentialStoreBackend::Os`] always uses the OS keyring.
+//! - [`CredentialStoreBackend::Os`] (default) uses the OS keyring. Parsing
+//!   accepts `"auto"` as an alias for `os` only; there is never a silent file
+//!   fallback.
 //! - [`CredentialStoreBackend::File`] stores secrets in private files under the
 //!   Rho home directory (`RHO_HOME` or `~/.rho`). File storage is never selected
 //!   implicitly; callers must request it.
@@ -16,7 +16,9 @@
 
 mod backend;
 mod file;
+mod file_document;
 mod file_lock;
+mod file_permissions;
 #[cfg(windows)]
 mod file_windows;
 mod memory;

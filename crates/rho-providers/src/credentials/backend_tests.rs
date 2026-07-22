@@ -10,7 +10,7 @@ use crate::credentials::{FileCredentialStore, MemoryCredentialStore};
 fn parses_backend_selector_values() {
     assert_eq!(
         CredentialStoreBackend::parse("auto").unwrap(),
-        CredentialStoreBackend::Auto
+        CredentialStoreBackend::Os
     );
     assert_eq!(
         CredentialStoreBackend::parse("OS").unwrap(),
@@ -24,29 +24,20 @@ fn parses_backend_selector_values() {
 }
 
 #[test]
-fn auto_resolves_to_os_and_never_to_file() {
-    assert_eq!(
-        CredentialStoreBackend::Auto.resolved(),
-        CredentialStoreBackend::Os
-    );
-    assert_ne!(
-        CredentialStoreBackend::Auto.resolved(),
-        CredentialStoreBackend::File
-    );
-    assert_eq!(CredentialStoreBackend::Auto.as_str(), "auto");
+fn backend_names_and_default_are_os_or_file() {
+    assert_eq!(CredentialStoreBackend::Os.as_str(), "os");
+    assert_eq!(CredentialStoreBackend::File.as_str(), "file");
     assert_eq!(
         CredentialStoreBackend::default(),
-        CredentialStoreBackend::Auto
+        CredentialStoreBackend::Os
     );
 }
 
 #[test]
-fn open_auto_and_os_use_os_backend_without_file_fallback() {
-    let auto = open_credential_store(CredentialStoreBackend::Auto).unwrap();
+fn open_os_uses_os_backend_without_file_fallback() {
     let os = open_credential_store(CredentialStoreBackend::Os).unwrap();
     // Missing entries return Ok(None) or a store error; either proves construction
     // did not require an explicit file backend path.
-    let _ = auto.get_secret("rho-open-probe-missing");
     let _ = os.get_secret("rho-open-probe-missing");
 }
 
@@ -118,9 +109,8 @@ fn file_backend_probe_uses_explicit_file_store() {
 }
 
 #[test]
-fn probe_auto_reports_os_backend() {
-    let probe = probe_credential_store(CredentialStoreBackend::Auto);
-    assert_eq!(probe.requested, CredentialStoreBackend::Auto);
+fn probe_os_reports_os_backend() {
+    let probe = probe_credential_store(CredentialStoreBackend::Os);
     assert_eq!(probe.backend, CredentialStoreBackend::Os);
     assert!(!probe.detail.contains("rho-probe-secret:"));
 }

@@ -136,6 +136,47 @@ try {
 }
 
 function Set-CredentialStorePreference($RhoPath) {
+    function Set-FileCredentialBackend {
+        Write-Host "File storage uses a private user-only ACL but is not encrypted at rest."
+        & $RhoPath credential-store probe file
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "local file credential storage is unavailable; leaving the OS default"
+            return $false
+        }
+        & $RhoPath credential-store set file
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "failed to set credential store to file; leaving the OS default"
+            return $false
+        }
+        return $true
+    }
+
+    function Set-OsCredentialBackend {
+        & $RhoPath credential-store set os
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "failed to set credential store to os; leaving the OS default"
+            return $false
+        }
+        return $true
+    }
+
+    function Read-YesNo($Prompt) {
+        try {
+            $Answer = Read-Host $Prompt
+        } catch {
+            Write-Warning "could not read credential-store choice; leaving the OS default"
+            return $null
+        }
+        if ([string]::IsNullOrWhiteSpace($Answer) -or $Answer -match "^(y|yes)$") {
+            return $true
+        }
+        if ($Answer -match "^(n|no)$") {
+            return $false
+        }
+        Write-Warning "unrecognized choice; leaving the OS default"
+        return $null
+    }
+
     if ($env:RHO_CREDENTIAL_STORE) {
         if ($env:RHO_CREDENTIAL_STORE -eq "file") {
             & $RhoPath credential-store probe file
@@ -150,14 +191,20 @@ function Set-CredentialStorePreference($RhoPath) {
         return
     }
 
-    & $RhoPath credential-store configured *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "credential-store choice already configured; keeping it"
+    $Status = (& $RhoPath credential-store status 2>$null | Out-String).Trim()
+    if ($Status -eq "os" -or $Status -eq "file") {
+        Write-Host "credential-store choice already configured ($Status); keeping it"
         return
     }
 
-    if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
-        Write-Host "note: run '$RhoPath credential-store probe os' to check OS credential storage"
+    if (
+        $env:CI -or
+        $env:RHO_INSTALL_NONINTERACTIVE -or
+        [Console]::IsInputRedirected -or
+        [Console]::IsOutputRedirected
+    ) {
+        Write-Host "note: credential store left unset (OS default)."
+        Write-Host "      run '$RhoPath credential-store probe os' to check OS credential storage"
         Write-Host "      use '$RhoPath credential-store set file' for private local file storage"
         return
     }
@@ -165,46 +212,21 @@ function Set-CredentialStorePreference($RhoPath) {
     & $RhoPath credential-store probe os *> $null
     $OsAvailable = $LASTEXITCODE -eq 0
     if ($OsAvailable) {
-        Write-Host "OS credential storage is available and recommended."
-        try {
-            $Answer = Read-Host "Use the OS credential store? [Y/n]"
-        } catch {
-            Write-Warning "could not read credential-store choice; leaving the OS-only default"
-            return
+        $UseOs = Read-YesNo "OS credential store is available and recommended. Use it? [Y/n]"
+        if ($UseOs -eq $true) {
+            [void](Set-OsCredentialBackend)
+        } elseif ($UseOs -eq $false) {
+            [void](Set-FileCredentialBackend)
         }
-        $Backend = if ([string]::IsNullOrWhiteSpace($Answer) -or $Answer -match "^(y|yes)$") { "os" } elseif ($Answer -match "^(n|no)$") { "file" } else { $null }
-    } else {
-        Write-Host "No usable OS credential store was found in this session."
-        Write-Host "File storage uses a private user-only ACL but is not encrypted at rest."
-        try {
-            $Answer = Read-Host "Use local file credential storage? [Y/n]"
-        } catch {
-            Write-Warning "could not read credential-store choice; leaving the OS-only default"
-            return
-        }
-        $Backend = if ([string]::IsNullOrWhiteSpace($Answer) -or $Answer -match "^(y|yes)$") { "file" } elseif ($Answer -match "^(n|no)$") { "os" } else { $null }
+        return
     }
 
-    if (-not $Backend) {
-        Write-Warning "unrecognized choice; leaving credential storage set to auto (OS only)"
-        return
-    }
-    if ($Backend -eq "file") {
-        if ($OsAvailable) {
-            Write-Host "File storage relies on filesystem access controls but is not encrypted at rest."
-        }
-        & $RhoPath credential-store probe file
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "local file credential storage is unavailable; leaving the OS-only default"
-            return
-        }
-    } elseif ($Backend -eq "os" -and -not $OsAvailable) {
-        Write-Warning "keeping the OS-only default; configure the OS credential store before login"
-        return
-    }
-    & $RhoPath credential-store set $Backend
-    if ($LASTEXITCODE -ne 0) {
-        throw "failed to set credential store to $Backend"
+    Write-Host "No usable OS credential store was found in this session."
+    $UseFile = Read-YesNo "Use local file credential storage? [Y/n]"
+    if ($UseFile -eq $true) {
+        [void](Set-FileCredentialBackend)
+    } elseif ($UseFile -eq $false) {
+        Write-Warning "leaving the OS default; configure the OS credential store before login"
     }
 }
 

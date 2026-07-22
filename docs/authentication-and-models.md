@@ -36,12 +36,14 @@ Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under 
 Check or change the backend at any time:
 
 ```bash
+rho credential-store status
 rho credential-store probe os
+rho credential-store probe file
 rho credential-store set os
 rho credential-store set file
 ```
 
-`auto`, the default when no choice has been saved, means OS-only and does not silently fall back to a file. `RHO_CREDENTIAL_STORE=auto|os|file` overrides the saved policy for the current process. The policy contains no secrets and is saved separately at `~/.rho/credential-store`.
+Backends are `os` and `file` only. When no choice has been saved, Rho uses the OS store and does not fall back to a file. `rho credential-store status` prints the saved policy only: `unset`, `os`, or `file`. `RHO_CREDENTIAL_STORE=os|file` overrides the saved policy for the current process. The policy contains no secrets and is saved separately at `~/.rho/credential-store`.
 
 On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/keychain-access/if-youre-asked-for-access-to-your-keychain-kyca1243/mac) documentation when the OS asks whether to allow a credential-store operation.
 

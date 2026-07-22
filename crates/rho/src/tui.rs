@@ -158,7 +158,7 @@ use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
-    crate::credential_store::{build_provider as build_sdk_provider, AppCredentialStore},
+    crate::credential_store::{build_provider, AppCredentialStore},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
@@ -1209,7 +1209,7 @@ impl App {
                         self.info.runtime.provider, self.info.runtime.model
                     )));
                 }
-                let provider_updated = match build_sdk_provider(
+                let provider_updated = match build_provider(
                     &self.info.runtime.provider,
                     &self.info.runtime.model,
                     reasoning,

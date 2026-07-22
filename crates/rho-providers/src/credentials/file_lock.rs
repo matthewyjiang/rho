@@ -34,37 +34,13 @@ fn lock_exclusive(file: &File) -> CredentialResult<()> {
     }
     #[cfg(windows)]
     {
-        use std::{os::windows::io::AsRawHandle, ptr};
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn LockFileEx(
-                file: *mut core::ffi::c_void,
-                flags: u32,
-                reserved: u32,
-                bytes_low: u32,
-                bytes_high: u32,
-                overlapped: *mut Overlapped,
-            ) -> i32;
-        }
-
-        #[repr(C)]
-        struct Overlapped {
-            internal: usize,
-            internal_high: usize,
-            offset: u32,
-            offset_high: u32,
-            event: *mut core::ffi::c_void,
-        }
-
-        const LOCKFILE_EXCLUSIVE_LOCK: u32 = 0x2;
-        let mut overlapped = Overlapped {
-            internal: 0,
-            internal_high: 0,
-            offset: 0,
-            offset_high: 0,
-            event: ptr::null_mut(),
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK},
+            System::IO::OVERLAPPED,
         };
+
+        let mut overlapped = OVERLAPPED::default();
         let result = unsafe {
             LockFileEx(
                 file.as_raw_handle(),
@@ -102,35 +78,10 @@ fn unlock_file(file: &File) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::{os::windows::io::AsRawHandle, ptr};
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Storage::FileSystem::UnlockFileEx, System::IO::OVERLAPPED};
 
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn UnlockFileEx(
-                file: *mut core::ffi::c_void,
-                reserved: u32,
-                bytes_low: u32,
-                bytes_high: u32,
-                overlapped: *mut Overlapped,
-            ) -> i32;
-        }
-
-        #[repr(C)]
-        struct Overlapped {
-            internal: usize,
-            internal_high: usize,
-            offset: u32,
-            offset_high: u32,
-            event: *mut core::ffi::c_void,
-        }
-
-        let mut overlapped = Overlapped {
-            internal: 0,
-            internal_high: 0,
-            offset: 0,
-            offset_high: 0,
-            event: ptr::null_mut(),
-        };
+        let mut overlapped = OVERLAPPED::default();
         let result = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
         if result == 0 {
             return Err(io::Error::last_os_error());

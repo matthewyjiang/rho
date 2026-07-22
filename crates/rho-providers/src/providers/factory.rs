@@ -1,8 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    auth::provider_credentials::{ApplicationCredentialSource, ProviderCredentialSource},
-    credentials::OsCredentialStore,
+    auth::provider_credentials::ProviderCredentialSource,
     model::ModelError,
     providers::builder::{ProviderBuildOptions, ProviderBuilder, ProviderCredential},
     reasoning::ReasoningLevel,
@@ -47,20 +46,19 @@ pub fn build_automation_provider(
     build_sdk_provider_with_source(options, credentials)
 }
 
-/// Application bootstrap helper for TUI provider construction.
+/// Builds a provider from provider/model/reasoning and an explicit credential source.
 ///
-/// This function performs opt-in environment/keychain acquisition through
-/// [`ApplicationCredentialSource`] and then delegates to the explicit builder.
-/// Prefer [`build_sdk_provider_with_source`] when a credential source is already
-/// available.
+/// The providers crate does not select a credential store. Callers must pass a
+/// [`ProviderCredentialSource`] (for example an application adapter over
+/// [`crate::OsCredentialStore`] or [`crate::FileCredentialStore`]).
 pub fn build_sdk_provider(
     provider: &str,
     model: &str,
     reasoning: ReasoningLevel,
+    credentials: &dyn ProviderCredentialSource,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     let options = ProviderBuildOptions::new(provider, model, reasoning)?;
-    let credentials = ApplicationCredentialSource::new(Arc::new(OsCredentialStore));
-    build_sdk_provider_with_source(options, &credentials)
+    build_sdk_provider_with_source(options, credentials)
 }
 
 #[derive(Debug)]

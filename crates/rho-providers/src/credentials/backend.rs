@@ -1,7 +1,7 @@
 //! Explicit credential-store backend selection and availability probes.
 //!
 //! Security rules:
-//! - [`CredentialStoreBackend::Auto`] only uses the OS keyring.
+//! - [`CredentialStoreBackend::Os`] is the default and uses the OS keyring only.
 //! - Local file storage is never chosen as a silent fallback.
 //! - Callers must select [`CredentialStoreBackend::File`] explicitly.
 
@@ -17,14 +17,12 @@ use super::{
 
 /// Selects which credential storage backend to construct or probe.
 ///
-/// `Auto` preserves the historical OS-only behavior: if the OS store is
-/// unavailable, Rho fails closed instead of writing secrets to disk.
+/// The default is the OS keyring. If the OS store is unavailable, Rho fails
+/// closed instead of writing secrets to disk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CredentialStoreBackend {
-    /// Probe and open the OS credential store only. Never uses file storage.
+    /// Use the operating system credential store.
     #[default]
-    Auto,
-    /// Always use the operating system credential store.
     Os,
     /// Use private files under the Rho home directory. Must be selected explicitly.
     File,
@@ -33,14 +31,14 @@ pub enum CredentialStoreBackend {
 impl CredentialStoreBackend {
     /// Parses a backend selector from configuration or CLI text.
     ///
-    /// Accepted values are `auto`, `os`, and `file` (case-insensitive).
+    /// Accepted values are `os` and `file` (case-insensitive). `auto` is
+    /// accepted as an alias for `os` for backwards compatibility.
     pub fn parse(value: &str) -> CredentialResult<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "auto" => Ok(Self::Auto),
-            "os" => Ok(Self::Os),
+            "auto" | "os" => Ok(Self::Os),
             "file" => Ok(Self::File),
             other => Err(CredentialError::InvalidData(format!(
-                "unknown credential store backend '{other}'; expected auto, os, or file"
+                "unknown credential store backend '{other}'; expected os or file"
             ))),
         }
     }
@@ -48,19 +46,8 @@ impl CredentialStoreBackend {
     /// Returns the canonical lowercase name for this backend.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Auto => "auto",
             Self::Os => "os",
             Self::File => "file",
-        }
-    }
-
-    /// Backend used for availability probes and store construction.
-    ///
-    /// `Auto` resolves to the OS backend and never to file storage.
-    pub const fn resolved(self) -> Self {
-        match self {
-            Self::Auto => Self::Os,
-            Self::Os | Self::File => self,
         }
     }
 }
@@ -68,9 +55,7 @@ impl CredentialStoreBackend {
 /// Result of a non-destructive credential-store availability probe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CredentialStoreProbe {
-    /// Backend that was requested.
-    pub requested: CredentialStoreBackend,
-    /// Backend that was actually probed (`auto` resolves to `os`).
+    /// Backend that was requested and probed.
     pub backend: CredentialStoreBackend,
     /// Whether create/read/delete of a temporary secret succeeded.
     pub available: bool,
@@ -80,12 +65,11 @@ pub struct CredentialStoreProbe {
 
 /// Opens the selected credential store backend.
 ///
-/// `auto` opens the OS store only. It never falls back to file storage.
+/// File storage is never selected implicitly.
 pub fn open_credential_store(
     backend: CredentialStoreBackend,
 ) -> CredentialResult<Arc<dyn CredentialStore>> {
-    match backend.resolved() {
-        CredentialStoreBackend::Auto => unreachable!("auto resolves to os"),
+    match backend {
         CredentialStoreBackend::Os => Ok(Arc::new(OsCredentialStore)),
         CredentialStoreBackend::File => Ok(Arc::new(FileCredentialStore::open()?)),
     }
@@ -95,32 +79,26 @@ pub fn open_credential_store(
 ///
 /// The probe creates a random account, writes a random secret, reads it back,
 /// deletes it, and confirms deletion. Existing credentials are left untouched.
-///
-/// `auto` probes the OS backend only and never tries file storage.
 pub fn probe_credential_store(backend: CredentialStoreBackend) -> CredentialStoreProbe {
-    let resolved = backend.resolved();
-    match probe_resolved_backend(resolved) {
+    match probe_backend(backend) {
         Ok(()) => CredentialStoreProbe {
-            requested: backend,
-            backend: resolved,
+            backend,
             available: true,
             detail: format!(
                 "{} credential store accepted a temporary secret",
-                resolved.as_str()
+                backend.as_str()
             ),
         },
         Err(err) => CredentialStoreProbe {
-            requested: backend,
-            backend: resolved,
+            backend,
             available: false,
             detail: err.to_string(),
         },
     }
 }
 
-fn probe_resolved_backend(backend: CredentialStoreBackend) -> CredentialResult<()> {
+fn probe_backend(backend: CredentialStoreBackend) -> CredentialResult<()> {
     let store: Arc<dyn CredentialStore> = match backend {
-        CredentialStoreBackend::Auto => unreachable!("auto resolves before probe"),
         CredentialStoreBackend::Os => Arc::new(UncachedOsCredentialStore),
         CredentialStoreBackend::File => Arc::new(FileCredentialStore::open()?),
     };

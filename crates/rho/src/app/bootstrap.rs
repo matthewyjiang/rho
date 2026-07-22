@@ -208,12 +208,9 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
 }
 
 fn run_credential_store_command(command: &CredentialStoreCommand) -> anyhow::Result<()> {
-    use rho_providers::credentials::CredentialStoreBackend;
-
     match command {
         CredentialStoreCommand::Probe { backend } => {
-            let backend = CredentialStoreBackend::parse(backend)?;
-            let result = crate::credential_store::probe(backend);
+            let result = crate::credential_store::probe(*backend);
             if result.available {
                 println!("available: {}", result.detail);
                 Ok(())
@@ -221,16 +218,16 @@ fn run_credential_store_command(command: &CredentialStoreCommand) -> anyhow::Res
                 anyhow::bail!(result.detail)
             }
         }
-        CredentialStoreCommand::Configured => {
-            if crate::credential_store::has_saved_policy() {
-                Ok(())
-            } else {
-                anyhow::bail!("no credential-store policy has been saved")
+        CredentialStoreCommand::Status => {
+            // Installer contract: saved policy only (ignore RHO_CREDENTIAL_STORE).
+            match crate::credential_store::saved_policy_backend()? {
+                None => println!("unset"),
+                Some(backend) => println!("{}", backend.as_str()),
             }
+            Ok(())
         }
         CredentialStoreCommand::Set { backend } => {
-            let backend = CredentialStoreBackend::parse(backend)?;
-            let path = crate::credential_store::set_backend(backend)?;
+            let path = crate::credential_store::set_backend(*backend)?;
             println!(
                 "credential store set to {} in {}",
                 backend.as_str(),

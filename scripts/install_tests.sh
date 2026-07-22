@@ -88,11 +88,44 @@ unset RHO_CREDENTIAL_STORE
 credential_command_log="$(mktemp)"
 record_existing_policy() {
   printf '%s\n' "$*" >> "$credential_command_log"
-  [ "$*" = "credential-store configured" ]
+  if [ "$*" = "credential-store status" ]; then
+    printf '%s\n' "os"
+    return 0
+  fi
+  return 1
 }
 configure_credential_store record_existing_policy
-assert_eq "credential-store configured" "$(cat "$credential_command_log")" \
+assert_eq "credential-store status" "$(cat "$credential_command_log")" \
   "existing credential-store policy is preserved"
+rm -f "$credential_command_log"
+
+credential_command_log="$(mktemp)"
+record_file_policy() {
+  printf '%s\n' "$*" >> "$credential_command_log"
+  if [ "$*" = "credential-store status" ]; then
+    printf '%s\n' "file"
+    return 0
+  fi
+  return 1
+}
+configure_credential_store record_file_policy
+assert_eq "credential-store status" "$(cat "$credential_command_log")" \
+  "existing file credential-store policy is preserved"
+rm -f "$credential_command_log"
+
+credential_command_log="$(mktemp)"
+record_unset_policy() {
+  printf '%s\n' "$*" >> "$credential_command_log"
+  if [ "$*" = "credential-store status" ]; then
+    printf '%s\n' "unset"
+    return 0
+  fi
+  return 1
+}
+# Non-interactive path: CI/RHO_INSTALL_NONINTERACTIVE skips /dev/tty prompts.
+RHO_INSTALL_NONINTERACTIVE=1 configure_credential_store record_unset_policy
+assert_eq "credential-store status" "$(cat "$credential_command_log")" \
+  "unset credential-store status leaves policy unchanged"
 rm -f "$credential_command_log"
 
 printf '%s\n' "install parser tests passed"

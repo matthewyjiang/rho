@@ -3,13 +3,12 @@
 //! This crate owns everything needed to authenticate against a model
 //! provider and stream model responses over the provider's wire protocol:
 //!
-//! - [`providers`] builds [`rho_sdk::provider::ModelProvider`] instances,
-//!   bootstrapping credentials from the environment and a selected credential
-//!   store backend.
+//! - [`providers`] builds [`rho_sdk::provider::ModelProvider`] instances from
+//!   explicit build options and a caller-supplied credential source.
 //! - [`credentials`] and [`auth`] store API keys and OAuth tokens and run
 //!   provider login flows. Credential backends are selected explicitly with
-//!   [`CredentialStoreBackend`] (`auto`, `os`, or `file`). `auto` uses the OS
-//!   keyring only and never falls back to local files.
+//!   [`CredentialStoreBackend`] (`os` or `file`; default `os`). Parsing accepts
+//!   `"auto"` as an alias for `os` only; there is never a silent file fallback.
 //! - [`model`] is the canonical request/response contract plus the model
 //!   catalog and metadata caches.
 //! - [`protocol`] translates between the canonical contract and provider
