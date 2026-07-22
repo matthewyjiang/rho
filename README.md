@@ -9,7 +9,7 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust to stay fast an
 ## Why Rho
 
 - **Rust-native**: Starts fast and stays light. No Node runtime under the harness.
-- **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, OpenRouter, and more - API keys or subscription plans.
+- **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, OpenRouter, and more. Use API keys or subscription plans.
 - **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
 
 ## Install
