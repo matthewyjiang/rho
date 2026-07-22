@@ -283,8 +283,15 @@ fn nav_item_line(item: &NavigablePopupItem, width: usize) -> Line<'static> {
         return Line::from(Span::styled(marker.to_string(), style));
     }
 
-    let mut used = 2usize;
-    let label_budget = width.saturating_sub(used).max(1);
+    let available = width.saturating_sub(2);
+    let badge = item.badge.as_ref().and_then(|(text, tone)| {
+        let budget = display_width(text).min(16).min(available.saturating_sub(2));
+        (budget > 0).then(|| (truncate_one_line(text, budget), *tone))
+    });
+    let badge_width = badge
+        .as_ref()
+        .map_or(0, |(text, _)| display_width(text).saturating_add(1));
+    let label_budget = available.saturating_sub(badge_width);
     let label = truncate_one_line(&item.label, label_budget);
     let mut spans = vec![Span::styled(
         format!(
@@ -293,14 +300,9 @@ fn nav_item_line(item: &NavigablePopupItem, width: usize) -> Line<'static> {
         ),
         style,
     )];
-    used = 2 + label_budget;
-    if let Some((badge_text, tone)) = &item.badge {
-        let remaining = width.saturating_sub(used.saturating_add(1));
-        if remaining > 1 {
-            let badge = truncate_one_line(badge_text, remaining.min(16));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(badge, badge_style(*tone)));
-        }
+    if let Some((text, tone)) = badge {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(text, badge_style(tone)));
     }
     Line::from(spans)
 }

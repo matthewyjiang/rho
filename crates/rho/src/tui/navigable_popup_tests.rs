@@ -13,7 +13,7 @@ fn sample_items() -> Vec<NavigablePopupItem> {
     vec![
         NavigablePopupItem {
             label: "explorer".into(),
-            badge: None,
+            badge: Some(("internal".into(), PickerBadgeTone::Internal)),
             selected: true,
         },
         NavigablePopupItem {
@@ -114,6 +114,7 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
     assert_eq!(second.len(), first.len());
     assert!(first_text.contains('│'));
     assert!(first_text.contains("read-only investigation"));
+    assert!(first_text.contains("internal"));
     assert!(!first_text.contains("implementation work"));
     assert!(second_text.contains("implementation work"));
     assert!(first_text.contains("↑↓"));

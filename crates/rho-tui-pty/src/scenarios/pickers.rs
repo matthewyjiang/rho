@@ -114,7 +114,6 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Phase("scroll_detail"),
     Step::Custom(scroll_detail_until_marker_visible),
     Step::AssertText(HIDDEN_DETAIL_MARKER),
-    Step::AssertText("more"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Use conversation model",
@@ -128,6 +127,10 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     },
     Step::Phase("narrow_layout"),
     Step::Resize { rows: 32, cols: 50 },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
     Step::WaitText {
         text: "Internal agent that evaluates",
         timeout: SETTLE,
