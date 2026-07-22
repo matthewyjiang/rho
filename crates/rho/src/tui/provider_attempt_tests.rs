@@ -1,5 +1,6 @@
 use super::*;
-use crate::tui::{ToolEntry, ToolEntryState};
+use crate::tui::{ReasoningEntry, ToolEntry, ToolEntryState};
+use std::time::Duration;
 
 #[test]
 fn retry_removes_only_replaceable_provider_output() {
@@ -15,7 +16,10 @@ fn retry_removes_only_replaceable_provider_output() {
             expanded: false,
             image: None,
         }),
-        Entry::Reasoning("discard reasoning".into()),
+        Entry::Reasoning(ReasoningEntry {
+            text: "discard reasoning".into(),
+            thought_for: Some(Duration::from_millis(1_200)),
+        }),
     ]);
 
     assert_eq!(attempt.reset_output(&mut transcript), Some(1));

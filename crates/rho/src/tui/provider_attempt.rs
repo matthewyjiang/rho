@@ -27,7 +27,7 @@ impl ProviderAttempt {
         let original_len = transcript.len();
         let mut index = 0;
         transcript.retain(|entry| {
-            let keep = index < start || !matches!(entry, Entry::Assistant(_) | Entry::Reasoning(_));
+            let keep = index < start || !entry.is_provider_replaceable();
             index += 1;
             keep
         });

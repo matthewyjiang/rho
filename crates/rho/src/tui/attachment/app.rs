@@ -21,7 +21,7 @@ use super::{
         render::{entry_lines, truncate_one_line},
         terminal_events::TerminalEvents,
         theme::Theme,
-        Entry, ToolEntry, ToolEntryState,
+        Entry, ReasoningEntry, ToolEntry, ToolEntryState,
     },
     journal::{AttachmentEvent, AttachmentReader},
 };
@@ -404,10 +404,16 @@ fn append_stream(
     can_append: bool,
 ) {
     match (target, transcript.last_mut().filter(|_| can_append)) {
-        (StreamTarget::Assistant, Some(Entry::Assistant(existing)))
-        | (StreamTarget::Reasoning, Some(Entry::Reasoning(existing))) => existing.push_str(&text),
+        (StreamTarget::Assistant, Some(Entry::Assistant(existing))) => existing.push_str(&text),
+        (StreamTarget::Reasoning, Some(Entry::Reasoning(existing)))
+            if existing.thought_for.is_none() =>
+        {
+            existing.text.push_str(&text)
+        }
         (StreamTarget::Assistant, _) => transcript.push(Entry::Assistant(text)),
-        (StreamTarget::Reasoning, _) => transcript.push(Entry::Reasoning(text)),
+        (StreamTarget::Reasoning, _) => {
+            transcript.push(Entry::Reasoning(ReasoningEntry::new(text)))
+        }
     }
 }
 

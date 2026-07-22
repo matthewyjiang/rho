@@ -343,6 +343,7 @@ impl App {
         ) {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.runtime.show_reasoning_output = show_reasoning_output;
+                self.apply_reasoning_output_visibility();
                 self.status = if show_reasoning_output {
                     "reasoning output: shown".into()
                 } else {
