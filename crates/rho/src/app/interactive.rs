@@ -42,7 +42,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         config,
         config_path,
         config_repository,
-        cwd,
+        mut cwd,
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
@@ -59,6 +59,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         Some(Some(id)) => {
             let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
             validate_resume_agent(&session, &selected_agent_id, &selected_agent_fingerprint)?;
+            cwd = session.cwd().to_path_buf();
             let session_id = Some(session.id().to_string());
             recovered_messages = histories.display;
             (session_id, histories.model, Some(session))

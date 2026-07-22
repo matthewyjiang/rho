@@ -113,9 +113,17 @@ impl Session {
         id_prefix: &str,
     ) -> anyhow::Result<(Self, SessionHistories)> {
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        anyhow::ensure!(
+            resolved.cwd.is_dir(),
+            "session '{}' belongs to workspace {}, which is no longer an accessible directory. \
+             Restore or recreate that directory and resume from there; its transcript \
+             is preserved under ~/.rho/sessions.",
+            resolved.id,
+            resolved.cwd.display(),
+        );
         let histories = resolved.histories()?;
         Ok((
-            Self::from_parts(session_root, cwd, resolved.id, resolved.path),
+            Self::from_parts(session_root, &resolved.cwd, resolved.id, resolved.path),
             histories,
         ))
     }
@@ -298,6 +306,13 @@ impl Session {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The workspace directory this session belongs to. For a session resumed by
+    /// id from another directory, this is its original workspace, not the
+    /// process cwd.
+    pub(crate) fn cwd(&self) -> &Path {
+        &self.cwd
     }
 }
 

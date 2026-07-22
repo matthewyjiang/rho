@@ -54,14 +54,55 @@ pub(super) fn matching_session_paths(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    let workspace_key = workspace_key(cwd);
-    let mut statement = connection.prepare(
+    query_existing_paths(
+        &connection,
         "select path
          from sessions
          where workspace_key = ?1 and substr(id, 1, length(?2)) = ?2
          order by id asc",
+        params![workspace_key(cwd), id_prefix],
+    )
+}
+
+/// Resolves a session by id prefix across every workspace, returning each
+/// match's file path and the workspace it belongs to, so a session can be
+/// recovered by id from any directory and resumed under its own workspace.
+/// `distinct` collapses the rows a session accrues when it is indexed under more
+/// than one `(workspace_key, id)`, so an unambiguous id resolves to one match.
+pub(super) fn matching_sessions_any_workspace(
+    session_root: &Path,
+    id_prefix: &str,
+) -> anyhow::Result<Vec<(PathBuf, PathBuf)>> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let mut statement = connection.prepare(
+        "select distinct path, cwd
+         from sessions
+         where substr(id, 1, length(?1)) = ?1
+         order by path asc",
     )?;
-    let rows = statement.query_map(params![workspace_key, id_prefix], |row| {
+    let rows = statement.query_map(params![id_prefix], |row| {
+        let path: String = row.get(0)?;
+        let cwd: String = row.get(1)?;
+        Ok((PathBuf::from(path), PathBuf::from(cwd)))
+    })?;
+    Ok(rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(path, _)| path.exists())
+        .collect())
+}
+
+/// Runs a `select path` query and returns the paths whose files still exist.
+fn query_existing_paths(
+    connection: &Connection,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map(params, |row| {
         let path: String = row.get(0)?;
         Ok(PathBuf::from(path))
     })?;
