@@ -1,4 +1,8 @@
-use std::{num::NonZeroUsize, time::Duration};
+use std::{
+    num::NonZeroUsize,
+    panic::{RefUnwindSafe, UnwindSafe},
+    time::Duration,
+};
 
 use crate::{
     model::{ContentBlock, ModelIdentity, ModelResponse},
@@ -10,6 +14,11 @@ use crate::{
 use super::{Session, SessionState};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
+
+fn _session_stays_unwind_safe() {
+    fn assert_unwind_safe<T: UnwindSafe + RefUnwindSafe>() {}
+    assert_unwind_safe::<Session>();
+}
 
 fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")

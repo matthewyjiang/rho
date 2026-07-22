@@ -3,6 +3,7 @@ use std::{
     fmt,
     future::Future,
     num::NonZeroUsize,
+    panic::AssertUnwindSafe,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -327,7 +328,7 @@ impl ApprovalAuditLog {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SessionApprovals {
     exact_requests: Mutex<Vec<CapabilityRequest>>,
     /// Serializes the miss path of approval evaluation: check remembered, prompt
@@ -339,7 +340,20 @@ pub(crate) struct SessionApprovals {
     /// slow host approval orders unrelated `RequireApproval` misses behind it.
     /// Remembered hits stay outside the gate. Key by request if a host needs
     /// distinct misses to prompt concurrently.
-    approval_gate: tokio::sync::Mutex<()>,
+    ///
+    /// Wrapped in `AssertUnwindSafe` so embedding `tokio::sync::Mutex` does not
+    /// strip `UnwindSafe` / `RefUnwindSafe` from public types that hold session
+    /// state (`Session`). The gate only orders cooperative approval work.
+    approval_gate: AssertUnwindSafe<tokio::sync::Mutex<()>>,
+}
+
+impl Default for SessionApprovals {
+    fn default() -> Self {
+        Self {
+            exact_requests: Mutex::new(Vec::new()),
+            approval_gate: AssertUnwindSafe(tokio::sync::Mutex::new(())),
+        }
+    }
 }
 
 impl SessionApprovals {
