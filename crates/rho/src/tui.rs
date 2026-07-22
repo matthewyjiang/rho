@@ -4880,7 +4880,7 @@ mod tests {
             .map(|item| item.value.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, vec!["openai", "anthropic"]);
+        assert_eq!(values, vec!["anthropic", "openai"]);
     }
 
     #[test]

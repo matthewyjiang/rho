@@ -7,6 +7,7 @@ use rho_providers::{
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
 
 pub(super) fn login_group_picker() -> UiPicker {
+    // login_groups() is already alphabetical by display prompt.
     let items = catalog::login_groups()
         .into_iter()
         .map(|group| PickerItem {
@@ -54,22 +55,28 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         badge: None,
         value: ALL_REFRESHABLE_PROVIDERS.into(),
     }];
-    items.extend(
-        provider::providers()
-            .iter()
-            .filter(|descriptor| descriptor.model_refresh.is_some())
-            .filter(|descriptor| available_auths.iter().any(|auth| auth == descriptor.auth))
-            .map(|descriptor| PickerItem {
-                label: descriptor.display_name.into(),
-                detail: Some(format!(
-                    "Refresh cached {} models with {}.",
-                    descriptor.display_name, descriptor.login_label
-                )),
-                preview: None,
-                badge: None,
-                value: descriptor.name.into(),
-            }),
-    );
+    let mut providers = provider::providers()
+        .iter()
+        .filter(|descriptor| descriptor.model_refresh.is_some())
+        .filter(|descriptor| available_auths.iter().any(|auth| auth == descriptor.auth))
+        .map(|descriptor| PickerItem {
+            label: descriptor.display_name.into(),
+            detail: Some(format!(
+                "Refresh cached {} models with {}.",
+                descriptor.display_name, descriptor.login_label
+            )),
+            preview: None,
+            badge: None,
+            value: descriptor.name.into(),
+        })
+        .collect::<Vec<_>>();
+    providers.sort_by(|left, right| {
+        left.label
+            .to_ascii_lowercase()
+            .cmp(&right.label.to_ascii_lowercase())
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    items.extend(providers);
     UiPicker::new(
         "Refresh model lists",
         "type regex filter, enter refresh, esc back",
@@ -99,7 +106,7 @@ fn provider_picker_for_targets(
     action: PickerAction,
     targets: Vec<catalog::LoginTarget>,
 ) -> UiPicker {
-    let items = targets
+    let mut items = targets
         .into_iter()
         .map(|target| PickerItem {
             label: target.provider.clone(),
@@ -108,7 +115,12 @@ fn provider_picker_for_targets(
             badge: None,
             value: target.provider,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.label
+            .to_ascii_lowercase()
+            .cmp(&right.label.to_ascii_lowercase())
+    });
 
     UiPicker::new(
         format!("select provider to {verb}"),

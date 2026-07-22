@@ -64,12 +64,76 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+// Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
-        id: CommandId::New,
-        name: "new",
-        usage: "/new",
-        description: "start a new session",
+        id: CommandId::Agents,
+        name: "agents",
+        usage: "/agents",
+        description: "reload agents and show their details",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Compact,
+        name: "compact",
+        usage: "/compact",
+        description: "compact older conversation context",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Config,
+        name: "config",
+        usage: "/config",
+        description: "open configuration picker",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Diff,
+        name: "diff",
+        usage: "/diff",
+        description: "show Git status and worktree patches",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Doctor,
+        name: "doctor",
+        usage: "/doctor",
+        description: "run local setup diagnostics",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Exit,
+        name: "exit",
+        usage: "/exit",
+        description: "quit rho",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Export,
+        name: "export",
+        usage: "/export [path]",
+        description: "export the session transcript to an HTML file",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Goal,
+        name: "goal",
+        usage: "/goal [condition|resume|clear]",
+        description: "show status or work until a condition is met",
+        argument_choices: GOAL_ARGUMENT_CHOICES,
+    },
+    CommandSpec {
+        id: CommandId::Info,
+        name: "info",
+        usage: "/info",
+        description: "show runtime, usage, and workspace details",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Limits,
+        name: "limits",
+        usage: "/limits",
+        description: "show connected OAuth usage limits",
         argument_choices: &[],
     },
     CommandSpec {
@@ -94,46 +158,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
+        id: CommandId::New,
+        name: "new",
+        usage: "/new",
+        description: "start a new session",
+        argument_choices: &[],
+    },
+    CommandSpec {
         id: CommandId::Resume,
         name: "resume",
         usage: "/resume [id]",
         description: "resume a saved session",
         argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Tree,
-        name: "tree",
-        usage: "/tree",
-        description: "navigate this session's conversation tree",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Config,
-        name: "config",
-        usage: "/config",
-        description: "open configuration picker",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Info,
-        name: "info",
-        usage: "/info",
-        description: "show runtime, usage, and workspace details",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Compact,
-        name: "compact",
-        usage: "/compact",
-        description: "compact older conversation context",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Goal,
-        name: "goal",
-        usage: "/goal [condition|resume|clear]",
-        description: "show status or work until a condition is met",
-        argument_choices: GOAL_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Skills,
@@ -143,45 +179,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
-        id: CommandId::Agents,
-        name: "agents",
-        usage: "/agents",
-        description: "reload agents and show their details",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Diff,
-        name: "diff",
-        usage: "/diff",
-        description: "show Git status and worktree patches",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Doctor,
-        name: "doctor",
-        usage: "/doctor",
-        description: "run local setup diagnostics",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Limits,
-        name: "limits",
-        usage: "/limits",
-        description: "show connected OAuth usage limits",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Export,
-        name: "export",
-        usage: "/export [path]",
-        description: "export the session transcript to an HTML file",
-        argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Exit,
-        name: "exit",
-        usage: "/exit",
-        description: "quit rho",
+        id: CommandId::Tree,
+        name: "tree",
+        usage: "/tree",
+        description: "navigate this session's conversation tree",
         argument_choices: &[],
     },
 ];
@@ -231,10 +232,13 @@ pub fn matching_commands(prefix: &str) -> Vec<&'static CommandSpec> {
         .strip_prefix('/')
         .unwrap_or(prefix)
         .to_ascii_lowercase();
-    COMMANDS
+    // COMMANDS is defined alphabetically; keep this explicit for callers/tests.
+    let mut matches = COMMANDS
         .iter()
         .filter(|command| command.name.starts_with(&prefix))
-        .collect()
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| left.name.cmp(right.name));
+    matches
 }
 
 pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandParseError> {
@@ -319,6 +323,23 @@ mod tests {
         assert_eq!(matches.len(), COMMANDS.len());
         assert!(matches.iter().any(|command| command.name == "model"));
         assert!(matches.iter().any(|command| command.name == "new"));
+    }
+
+    #[test]
+    fn commands_and_matches_are_alphabetical_by_name() {
+        let names = COMMANDS
+            .iter()
+            .map(|command| command.name)
+            .collect::<Vec<_>>();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted);
+
+        let matches = matching_commands(command_prefix("/").unwrap())
+            .into_iter()
+            .map(|command| command.name)
+            .collect::<Vec<_>>();
+        assert_eq!(matches, sorted);
     }
 
     #[test]

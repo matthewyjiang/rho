@@ -84,7 +84,7 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 }
 
 pub fn login_groups() -> Vec<LoginGroup> {
-    [
+    let mut groups = [
         (
             "openai",
             "OpenAI",
@@ -127,7 +127,13 @@ pub fn login_groups() -> Vec<LoginGroup> {
             })
             .collect(),
     })
-    .collect()
+    .collect::<Vec<_>>();
+    groups.sort_by(|left, right| {
+        left.prompt
+            .to_ascii_lowercase()
+            .cmp(&right.prompt.to_ascii_lowercase())
+    });
+    groups
 }
 
 pub fn login_group(id: &str) -> Option<LoginGroup> {
@@ -600,6 +606,17 @@ mod tests {
         let models = available_models_for_auths(&["api-key".into(), "codex".into()]);
 
         assert!(models.iter().any(|entry| entry.provider == "openai-codex"));
+    }
+
+    #[test]
+    fn login_groups_are_alphabetical_by_prompt() {
+        let prompts = login_groups()
+            .into_iter()
+            .map(|group| group.prompt)
+            .collect::<Vec<_>>();
+        let mut sorted = prompts.clone();
+        sorted.sort_by(|left, right| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()));
+        assert_eq!(prompts, sorted);
     }
 
     #[test]
