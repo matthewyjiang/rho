@@ -10,7 +10,7 @@ readme = "README.md"
 
 [dependencies]
 rho-sdk = { version = "1.7.0", path = "../rho-sdk" }
-rho-tools = { version = "0.4.0", path = "../rho-tools", package = "rho-agent-tools" }
+rho-tools = { version = "0.5.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
