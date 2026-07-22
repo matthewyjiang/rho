@@ -11,6 +11,7 @@ use {
     crate::agent::{PromptPolicy, ToolCapability},
     crate::compaction::CompactionConfig,
     crate::config::Config,
+    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::permission::PermissionMode,
     crate::prompt,
@@ -19,7 +20,6 @@ use {
         agent::BackgroundSubagents,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
-    rho_providers::credentials::OsCredentialStore,
     rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
@@ -107,7 +107,7 @@ impl InteractiveRuntime {
             None => {
                 let credentials =
                     rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-                        Arc::new(OsCredentialStore),
+                        Arc::new(AppCredentialStore),
                     );
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }

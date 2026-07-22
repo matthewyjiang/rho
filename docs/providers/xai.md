@@ -39,7 +39,7 @@ Run `/login`, select **xAI**, then choose **API Key** or **OAuth**. You can also
 rho login xai-oauth --device-auth
 ```
 
-Credentials are stored in the native OS credential store, not in config or transcripts.
+Credentials are stored in the configured credential store, not in config or transcripts.
 
 ## Sign out
 

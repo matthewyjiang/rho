@@ -371,13 +371,14 @@ mod tests {
 
     #[tokio::test]
     async fn command_receives_eof_on_stdin() {
-        // Bound the tool itself so a hung stdin fails with a timeout error instead of
-        // an outer race against CI load. Null stdin should make `read` return immediately.
+        // `read -t` bounds a bad inherited stdin so the test fails fast, while the
+        // tool timeout stays loose enough for slow `bash -lc` startup under CI load.
+        // Null stdin should make `read` return EOF immediately (not the timeout path).
         let result = Bash::new(false)
             .call(
                 json!({
-                    "command": "if read -r value; then printf 'input:%s' \"$value\"; else printf 'eof'; fi",
-                    "timeout_seconds": 5
+                    "command": "if read -r -t 2 value; then printf 'input:%s' \"$value\"; elif [ $? -gt 128 ]; then printf 'timeout'; else printf 'eof'; fi",
+                    "timeout_seconds": 30
                 }),
                 test_context(),
                 "call_1".into(),
@@ -393,6 +394,11 @@ mod tests {
         assert!(
             result.content.contains("eof"),
             "expected eof marker in output: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("timeout"),
+            "read timed out waiting for stdin instead of seeing EOF: {}",
             result.content
         );
     }

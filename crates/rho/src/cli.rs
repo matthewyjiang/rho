@@ -2,9 +2,13 @@ use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use rho_providers::reasoning::ReasoningLevel;
+use rho_providers::{credentials::CredentialStoreBackend, reasoning::ReasoningLevel};
 
 use crate::app::automation_protocol::parse_duration;
+
+fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend, String> {
+    CredentialStoreBackend::parse(value).map_err(|error| error.to_string())
+}
 
 /// Output contract used by a non-interactive `rho run` invocation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -88,8 +92,35 @@ pub enum Command {
         #[arg(long)]
         device_auth: bool,
     },
+    /// Configure or probe provider credential storage.
+    CredentialStore {
+        #[command(subcommand)]
+        command: CredentialStoreCommand,
+    },
     /// Update rho using the detected installation method.
     Update,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CredentialStoreCommand {
+    /// Test a credential backend by writing and deleting a temporary secret.
+    Probe {
+        /// Backend to test: os or file (`auto` is accepted as an alias for os).
+        #[arg(
+            value_name = "BACKEND",
+            default_value = "os",
+            value_parser = parse_credential_store_backend
+        )]
+        backend: CredentialStoreBackend,
+    },
+    /// Show the configured credential backend (unset, os, or file).
+    Status,
+    /// Save the credential backend used by future rho processes.
+    Set {
+        /// Backend to use: os or file (`auto` is accepted as an alias for os).
+        #[arg(value_name = "BACKEND", value_parser = parse_credential_store_backend)]
+        backend: CredentialStoreBackend,
+    },
 }
 
 #[cfg(test)]

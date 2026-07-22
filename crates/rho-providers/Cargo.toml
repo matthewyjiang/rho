@@ -24,11 +24,22 @@ tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rusqlite = { version = "0.32" }
 keyring = "4.1.2"
+libc = "0.2"
 rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 webbrowser = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming",
+] }
 
 [dev-dependencies]
 pretty_assertions = "1"

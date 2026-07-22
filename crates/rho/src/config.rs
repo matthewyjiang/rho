@@ -3,13 +3,13 @@ use std::{borrow::Cow, collections::BTreeMap, fmt, fs, path::PathBuf, str::FromS
 
 use {
     crate::compaction::CompactionConfig,
+    crate::credential_store::AppCredentialStore,
     crate::keybindings::Keybindings,
     crate::model_aliases::ModelAliases,
     crate::paths,
     crate::permission::PermissionMode,
     rho_providers::credentials::{
-        load_web_search_api_key, save_web_search_api_key, CredentialStore, OsCredentialStore,
-        WebSearchCredential,
+        load_web_search_api_key, save_web_search_api_key, CredentialStore, WebSearchCredential,
     },
     rho_providers::model::catalog,
     rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
@@ -452,7 +452,7 @@ impl Config {
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        Self::load_with_store(path, &OsCredentialStore)
+        Self::load_with_store(path, &AppCredentialStore)
     }
 
     fn load_with_store(path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<Self> {
@@ -672,7 +672,7 @@ impl Config {
 
     pub fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        self.save_with_store(path, &OsCredentialStore)
+        self.save_with_store(path, &AppCredentialStore)
     }
 
     fn save_with_store(&self, path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<()> {

@@ -24,7 +24,7 @@ Run `/login` and select **OpenRouter**, then choose **API Key** or **OAuth**. Yo
 /login openrouter-oauth
 ```
 
-API-key login opens a masked key entry box. OAuth opens OpenRouter in your browser. Rho uses S256 PKCE, listens on an unused localhost port for the redirect, exchanges the code for a user-controlled OpenRouter API key, and saves that key in the OS credential store. The callback listener closes when login ends.
+API-key login opens a masked key entry box. OAuth opens OpenRouter in your browser. Rho uses S256 PKCE, listens on an unused localhost port for the redirect, exchanges the code for a user-controlled OpenRouter API key, and saves that key in the configured credential store. The callback listener closes when login ends.
 
 OpenRouter does not offer a device-code flow. Browser login therefore needs a browser that can reach the localhost callback. On a remote or headless host, use API-key login or set `OPENROUTER_API_KEY`.
 

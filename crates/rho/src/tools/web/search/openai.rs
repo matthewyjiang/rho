@@ -4,10 +4,10 @@ use serde_json::{json, Value};
 use url::Url;
 
 use {
+    crate::credential_store::AppCredentialStore,
     rho_providers::auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
     rho_providers::credentials::{
-        load_codex_tokens, load_provider_api_key, CodexTokens, OsCredentialStore,
-        WebSearchCredential,
+        load_codex_tokens, load_provider_api_key, CodexTokens, WebSearchCredential,
     },
     rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
     rho_tools::tool::ToolError,
@@ -84,7 +84,7 @@ fn resolve_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolEr
             source: CodexAuthSource::Env,
         });
     }
-    if let Ok(Some(tokens)) = load_codex_tokens(&OsCredentialStore) {
+    if let Ok(Some(tokens)) = load_codex_tokens(&AppCredentialStore) {
         return Ok(OpenAiSearchAuth::Codex {
             tokens,
             source: CodexAuthSource::Store,
@@ -96,7 +96,7 @@ fn resolve_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolEr
     if let Some(key) = config.credential(WebSearchCredential::OpenAi) {
         return Ok(OpenAiSearchAuth::ApiKey(key));
     }
-    if let Ok(Some(key)) = load_provider_api_key(&OsCredentialStore, "openai") {
+    if let Ok(Some(key)) = load_provider_api_key(&AppCredentialStore, "openai") {
         return Ok(OpenAiSearchAuth::ApiKey(key));
     }
     Err(ToolError::Message(
@@ -123,7 +123,7 @@ pub(super) async fn search(
         } = &auth
         {
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                let store = OsCredentialStore;
+                let store = AppCredentialStore;
                 let refreshed = refresh_codex_token(
                     client,
                     &store,

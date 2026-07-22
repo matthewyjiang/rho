@@ -1,8 +1,8 @@
 use {
+    crate::credential_store::AppCredentialStore,
     rho_providers::auth::login_dispatch::{
         AuthenticationMethod, OAuthMode, OAuthUserAction, ProviderAuthentication,
     },
-    rho_providers::credentials::OsCredentialStore,
     rho_providers::model::catalog,
 };
 
@@ -67,7 +67,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         }
     }
 
-    login.completion.await?.save(&OsCredentialStore)?;
+    login.completion.await?.save(&AppCredentialStore)?;
     eprintln!("Successfully logged in to {}", target.provider);
     Ok(())
 }

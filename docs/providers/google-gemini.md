@@ -17,13 +17,13 @@ Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/ap
 /login google
 ```
 
-Rho stores the key in the native OS credential store. For CI or local development, set `GEMINI_API_KEY` instead. The environment value takes priority over the stored key.
+Rho stores the key in the configured credential store. For CI or local development, set `GEMINI_API_KEY` instead. The environment value takes priority over the stored key.
 
 Google AI Studio offers a free tier for selected models. Google may use free-tier request content to improve its products, so use synthetic prompts and do not send private source code or secrets when testing on that tier.
 
 ## Logout
 
-Run `/logout google` to remove the Google API key from the OS credential store. If `GEMINI_API_KEY` is set, that environment override remains active after logout.
+Run `/logout google` to remove the Google API key from the configured credential store. If `GEMINI_API_KEY` is set, that environment override remains active after logout.
 
 ## Models
 

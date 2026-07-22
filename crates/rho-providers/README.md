@@ -12,11 +12,14 @@ applications built on `rho-sdk`. It includes:
 - `set_rho_version`, which lets an embedder identify its application version in
   provider request headers
 
-`build_sdk_provider` opts in to Rho's application credential lookup. It checks
-provider-specific environment variables and then the operating system keyring,
-so an embedded application can reuse credentials saved by `rho login` without
-copying them into another configuration file. Embedders that need different
-credential behavior can use `build_sdk_provider_with_source`.
+`build_sdk_provider` takes an explicit credential source. It does not pick an OS
+or file store on its own. Embedders typically wrap `OsCredentialStore` (or
+another `CredentialStore`) in an application credential adapter and pass that
+source in. Prefer `build_sdk_provider_with_source` when you already have
+`ProviderBuildOptions`.
+
+Credential backends are `os` (default) and `file`. Parsing accepts `"auto"` as an
+alias for `os` only; there is never a silent fallback to file storage.
 
 ## Providers
 
@@ -33,16 +36,23 @@ The runtime registry includes:
 
 ## Usage
 
-This example builds an OpenAI provider from an environment variable or the OS
-keyring, attaches it to an SDK runtime, and makes one completion:
+This example builds an OpenAI provider from an explicit OS credential store,
+attaches it to an SDK runtime, and makes one completion:
 
 ```rust,no_run
-use rho_providers::build_sdk_provider;
+use std::sync::Arc;
+
+use rho_providers::{
+    auth::provider_credentials::ApplicationCredentialSource, build_sdk_provider,
+    OsCredentialStore,
+};
 use rho_sdk::{ReasoningLevel, Rho, SessionOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let provider = build_sdk_provider("openai", "gpt-5.2", ReasoningLevel::Medium)?;
+    let credentials = ApplicationCredentialSource::new(Arc::new(OsCredentialStore));
+    let provider =
+        build_sdk_provider("openai", "gpt-5.2", ReasoningLevel::Medium, &credentials)?;
     let rho = Rho::builder().provider_shared(provider).build()?;
     let session = rho.session(SessionOptions::default()).await?;
     let outcome = session.complete("Explain this repository in one sentence.").await?;

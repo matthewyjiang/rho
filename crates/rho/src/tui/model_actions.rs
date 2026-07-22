@@ -1,8 +1,9 @@
+use crate::credential_store::build_provider;
 use ratatui::DefaultTerminal;
+
 use rho_providers::{
     credentials::available_auth_modes,
     model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
-    providers::build_sdk_provider,
 };
 
 use super::{
@@ -461,7 +462,7 @@ impl App {
                 return Ok(());
             }
         };
-        let new_provider = match build_sdk_provider(&provider, &model, reasoning.effective) {
+        let new_provider = match build_provider(&provider, &model, reasoning.effective) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

@@ -42,7 +42,7 @@ In the interactive TUI, run:
 /model moonshot/<model-id>
 ```
 
-Rho stores the key in the OS credential store. For CI and development, `MOONSHOT_API_KEY` overrides the stored key. Remove the stored key with `/logout moonshot`.
+Rho stores the key in the configured credential store. For CI and development, `MOONSHOT_API_KEY` overrides the stored key. Remove the stored key with `/logout moonshot`.
 
 For automation, select the matching provider and auth mode:
 
@@ -62,7 +62,7 @@ Kimi Code uses the RFC 8628 device authorization flow implemented by [MoonshotAI
 rho login kimi-code
 ```
 
-Visit the displayed Kimi authorization URL and enter the displayed code if requested. Rho stores the access and refresh tokens in the OS credential store, refreshes expiring tokens, and persists replacements. `KIMI_ACCESS_TOKEN` is a non-persistent CI/development override and cannot be refreshed.
+Visit the displayed Kimi authorization URL and enter the displayed code if requested. Rho stores the access and refresh tokens in the configured credential store, refreshes expiring tokens, and persists replacements. `KIMI_ACCESS_TOKEN` is a non-persistent CI/development override and cannot be refreshed.
 
 Select a model after login:
 

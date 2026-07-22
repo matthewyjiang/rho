@@ -161,11 +161,12 @@ use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
+    crate::credential_store::{build_provider, AppCredentialStore},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
     crate::session::Session,
-    rho_providers::credentials::{available_auth_modes, CredentialStore, OsCredentialStore},
+    rho_providers::credentials::{available_auth_modes, CredentialStore},
     rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
@@ -175,7 +176,6 @@ use {
         ReasoningRequestSource, UnavailableProvider,
     },
     rho_providers::provider,
-    rho_providers::providers::build_sdk_provider,
     rho_providers::reasoning::ReasoningLevel,
     rho_tools::tool::ToolDisplayStyle,
 };
@@ -671,7 +671,7 @@ impl App {
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
             );
         }
-        Self::new_with_credentials(info, Arc::new(OsCredentialStore))
+        Self::new_with_credentials(info, Arc::new(AppCredentialStore))
     }
 
     fn new_with_credentials(
@@ -1251,7 +1251,7 @@ impl App {
                         self.info.runtime.provider, self.info.runtime.model
                     )));
                 }
-                let provider_updated = match build_sdk_provider(
+                let provider_updated = match build_provider(
                     &self.info.runtime.provider,
                     &self.info.runtime.model,
                     reasoning,

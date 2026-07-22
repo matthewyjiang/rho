@@ -29,7 +29,21 @@ Each provider page documents whether authentication is required, how to select m
 
 ## Where credentials live
 
-Rho stores credentials in the native OS credential store through an OS-agnostic abstraction. If no OS credential store is available, login fails closed with setup guidance. Rho does not add a plaintext or encrypted file fallback.
+Rho recommends the native OS credential store. During an interactive script install, Rho probes that store by creating, reading, and deleting a temporary secret, then asks which backend to use. If the probe fails, the installer offers local file storage instead.
+
+Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit installer answer, CLI command, or environment setting.
+
+Check or change the backend at any time:
+
+```bash
+rho credential-store status
+rho credential-store probe os
+rho credential-store probe file
+rho credential-store set os
+rho credential-store set file
+```
+
+Backends are `os` and `file` only. When no choice has been saved, Rho uses the OS store and does not fall back to a file. `rho credential-store status` prints the saved policy only: `unset`, `os`, or `file`. `RHO_CREDENTIAL_STORE=os|file` overrides the saved policy for the current process. The policy contains no secrets and is saved separately at `~/.rho/credential-store`.
 
 On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/keychain-access/if-youre-asked-for-access-to-your-keychain-kyca1243/mac) documentation when the OS asks whether to allow a credential-store operation.
 

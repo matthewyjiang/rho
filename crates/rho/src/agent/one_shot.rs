@@ -7,7 +7,7 @@ use rho_sdk::{
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
 
-use rho_providers::providers::build_sdk_provider;
+use crate::credential_store::build_provider;
 
 use super::{AgentDefinition, ModelPolicy, PromptPolicy, ToolPolicy};
 
@@ -28,7 +28,7 @@ pub(crate) fn run_one_shot_agent(
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<impl Future<Output = anyhow::Result<Vec<String>>> + '_> {
     let reasoning = validate_definition(request.definition)?;
-    let provider = build_sdk_provider(request.provider_name, request.model, reasoning)?;
+    let provider = build_provider(request.provider_name, request.model, reasoning)?;
     Ok(async move { run_one_shot_with_provider(provider.as_ref(), request, usage_recording).await })
 }
 

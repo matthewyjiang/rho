@@ -1,5 +1,5 @@
 use super::{
-    build_sdk_provider, config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
+    build_provider, config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
 };
 use rho_providers::{
     model::{
@@ -100,7 +100,7 @@ impl App {
             return Ok(());
         }
         let reasoning = capabilities.next_level(self.info.runtime.reasoning);
-        let provider = match build_sdk_provider(
+        let provider = match build_provider(
             &self.info.runtime.provider,
             &self.info.runtime.model,
             reasoning,

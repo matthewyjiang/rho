@@ -6,6 +6,7 @@ mod commands;
 mod compaction;
 mod config;
 mod config_writer;
+mod credential_store;
 mod diagnostics;
 mod executable;
 mod export;

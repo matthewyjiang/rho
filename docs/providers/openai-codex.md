@@ -24,7 +24,7 @@ Codex OAuth uses Rho-owned OAuth and signs in with an OpenAI account subscriptio
 rho login openai-codex --device-auth
 ```
 
-Credentials are stored in the native OS credential store, not in config or transcripts.
+Credentials are stored in the configured credential store, not in config or transcripts.
 
 ### Device-code authorization
 

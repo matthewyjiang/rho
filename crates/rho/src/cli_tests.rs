@@ -45,6 +45,57 @@ fn agent_selection_is_global() {
 }
 
 #[test]
+fn parses_credential_store_commands() {
+    use rho_providers::credentials::CredentialStoreBackend;
+
+    let probe = Cli::try_parse_from(["rho", "credential-store", "probe", "os"]).unwrap();
+    assert!(matches!(
+        probe.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Probe { backend }
+        }) if backend == CredentialStoreBackend::Os
+    ));
+
+    let probe_default = Cli::try_parse_from(["rho", "credential-store", "probe"]).unwrap();
+    assert!(matches!(
+        probe_default.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Probe { backend }
+        }) if backend == CredentialStoreBackend::Os
+    ));
+
+    let probe_auto = Cli::try_parse_from(["rho", "credential-store", "probe", "auto"]).unwrap();
+    assert!(matches!(
+        probe_auto.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Probe { backend }
+        }) if backend == CredentialStoreBackend::Os
+    ));
+
+    let set = Cli::try_parse_from(["rho", "credential-store", "set", "file"]).unwrap();
+    assert!(matches!(
+        set.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Set { backend }
+        }) if backend == CredentialStoreBackend::File
+    ));
+
+    let status = Cli::try_parse_from(["rho", "credential-store", "status"]).unwrap();
+    assert!(matches!(
+        status.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Status
+        })
+    ));
+}
+
+#[test]
+fn rejects_unknown_credential_store_backend() {
+    assert!(Cli::try_parse_from(["rho", "credential-store", "probe", "sqlite"]).is_err());
+    assert!(Cli::try_parse_from(["rho", "credential-store", "set", "sqlite"]).is_err());
+}
+
+#[test]
 fn parses_structured_output_and_execution_bounds() {
     let cli = Cli::try_parse_from([
         "rho",

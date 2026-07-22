@@ -3033,6 +3033,7 @@ dependencies = [
  "base64",
  "futures-util",
  "keyring",
+ "libc",
  "pretty_assertions",
  "rand 0.8.6",
  "reqwest",
@@ -3050,6 +3051,7 @@ dependencies = [
  "toml 0.8.23",
  "url",
  "webbrowser",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
