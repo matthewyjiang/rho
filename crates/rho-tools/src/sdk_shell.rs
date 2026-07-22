@@ -327,6 +327,26 @@ fn map_app_error(error: AppToolError) -> ToolError {
 #[path = "sdk_shell_tests.rs"]
 mod tests;
 
+/// Builds the platform default shell invocation for a command string.
+///
+/// Linux/macOS use `bash -lc`. Windows uses PowerShell with the shared
+/// [`crate::powershell::wrapped_command`] wrapper.
+pub fn shell_invocation(command: impl Into<String>) -> ProcessInvocation {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        ShellKind::Bash.invocation(command.into())
+    }
+    #[cfg(windows)]
+    {
+        ShellKind::PowerShell.invocation(command.into())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = command;
+        compile_error!("shell_invocation requires linux, macos, or windows");
+    }
+}
+
 /// Returns the workspace shell tool (`bash` on Linux/macOS, PowerShell on
 /// Windows) as an SDK tool trait object.
 ///

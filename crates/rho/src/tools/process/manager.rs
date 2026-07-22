@@ -72,7 +72,7 @@ impl ProcessManager {
     ) -> Result<Snapshot, String> {
         let execution = ProcessExecution::new(
             cwd,
-            process_invocation(&command),
+            rho_tools::shell_invocation(command),
             self.environment.clone(),
             ProcessOutputLimits::new(1, timeout),
         );
@@ -311,24 +311,6 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
         }
         _ => Err("unsupported process invocation".into()),
     }
-}
-
-#[cfg(unix)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command.to_string())
-}
-
-#[cfg(windows)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path(
-        "powershell.exe",
-        vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-        ],
-        rho_tools::powershell::wrapped_command(command),
-    )
 }
 
 fn snapshot(rec: &SharedRecord, cursor: u64) -> Snapshot {

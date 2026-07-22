@@ -555,50 +555,35 @@ mod tests {
         const CREDENTIAL_VAR: &str = "RHO_TEST_PROVIDER_API_KEY";
         const MARKER_VAR: &str = "RHO_TEST_SAFE_ENV_MARKER";
 
-        struct EnvGuard {
-            keys: &'static [&'static str],
-        }
-        impl Drop for EnvGuard {
-            fn drop(&mut self) {
-                for key in self.keys {
-                    std::env::remove_var(key);
-                }
-            }
-        }
-
-        let _guard = EnvGuard {
-            keys: &[CREDENTIAL_VAR, MARKER_VAR],
-        };
-        // Scoped env mutation for this test only.
-        std::env::set_var(CREDENTIAL_VAR, "secret-should-not-leak");
-        std::env::set_var(MARKER_VAR, "keep-me");
-
-        let execution = ProcessExecution::new(
-            std::env::temp_dir(),
-            ProcessInvocation::shell_from_path(
-                "bash",
-                vec!["-lc".into()],
-                format!(
+        // Child-only overrides: do not mutate the test process environment.
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .args([
+                "-lc",
+                &format!(
                     "printf 'credential=%s;marker=%s' \"${{{CREDENTIAL_VAR}-}}\" \"${{{MARKER_VAR}-}}\""
                 ),
-            ),
-            ProcessEnvironment::inherit_except([CREDENTIAL_VAR]),
-            ProcessOutputLimits::new(12_000, Some(std::time::Duration::from_secs(30))),
-        );
-        let result = execute_process(
-            execution,
-            "call_1".into(),
-            RunCancellation::default(),
-            &mut |_| {},
+            ])
+            .env(CREDENTIAL_VAR, "secret-should-not-leak")
+            .env(MARKER_VAR, "keep-me")
+            .kill_on_drop(true);
+        crate::apply_process_environment(
+            &mut command,
+            &ProcessEnvironment::inherit_except([CREDENTIAL_VAR]),
         )
-        .await
-        .expect("scrubbed command should run");
+        .expect("inherit_except must apply");
 
-        assert!(result.ok, "command should succeed: {}", result.content);
+        let output = command.output().await.expect("scrubbed command should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            result.content.contains("credential=;marker=keep-me"),
-            "credential must be absent while non-sensitive vars remain: {}",
-            result.content
+            output.status.success(),
+            "command should succeed: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            stdout, "credential=;marker=keep-me",
+            "credential must be absent while non-sensitive vars remain"
         );
     }
 }

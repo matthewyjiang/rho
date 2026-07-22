@@ -7,7 +7,7 @@ use rho_sdk::{
         ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits,
+    ProcessOutputLimits,
 };
 use rho_tools::tool::{Tool as LegacyTool, ToolContext as LegacyToolContext};
 
@@ -76,7 +76,7 @@ impl SdkProcess {
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
         let execution = ProcessExecution::new(
             cwd.path(),
-            process_invocation(&command),
+            rho_tools::shell_invocation(command),
             self.environment.clone(),
             ProcessOutputLimits::new(self.max_output_bytes, timeout),
         );
@@ -97,14 +97,19 @@ impl SdkProcess {
             .revalidate(&cwd)
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
 
+        // Cancel only before spawn. Once start_execution begins, its result is
+        // the source of truth so a registered process is never dropped on a
+        // select race with cancellation.
+        if context.cancellation().is_cancelled() {
+            return Err(ToolError::cancelled());
+        }
+        let snapshot = self
+            .process
+            .start_execution(execution)
+            .await
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
         let mut updates = Vec::new();
         let mut collect_update = |lines| updates.push(lines);
-        let start = self.process.start_execution(execution);
-        let snapshot = tokio::select! {
-            result = start => result,
-            () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
-        }
-        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
         collect_update(super::display::snapshot_progress_lines(&snapshot));
         for lines in updates {
             if !context
@@ -241,24 +246,6 @@ async fn execute_prepared(
         return Err(ToolError::new(ToolErrorKind::Execution, result.content));
     }
     Ok(ToolOutput::text(result.content).metadata(process_metadata()))
-}
-
-#[cfg(unix)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command.to_string())
-}
-
-#[cfg(windows)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path(
-        "powershell.exe",
-        vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-        ],
-        rho_tools::powershell::wrapped_command(command),
-    )
 }
 
 fn process_metadata() -> ToolMetadata {
