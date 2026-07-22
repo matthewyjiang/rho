@@ -29,17 +29,6 @@ struct PickerMatchCache {
     indices: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DetailScroll {
-    Manual { top_line: usize },
-}
-
-impl Default for DetailScroll {
-    fn default() -> Self {
-        Self::Manual { top_line: 0 }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 struct DetailWrapCache {
     selected: usize,
@@ -58,7 +47,8 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
-    pub(super) detail_scroll: DetailScroll,
+    /// Top visible detail line for overlay pickers.
+    pub(super) detail_scroll: usize,
     pub(super) confirm_verb: Option<String>,
     pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
     parent: Option<Box<UiPicker>>,
@@ -152,7 +142,7 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
-            detail_scroll: DetailScroll::default(),
+            detail_scroll: 0,
             confirm_verb: None,
             overlay_chrome: None,
             parent: None,
@@ -183,13 +173,7 @@ impl UiPicker {
     }
 
     pub(super) fn reset_detail_scroll(&mut self) {
-        self.detail_scroll = DetailScroll::Manual { top_line: 0 };
-    }
-
-    pub(super) fn detail_scroll_top(&self) -> usize {
-        match self.detail_scroll {
-            DetailScroll::Manual { top_line } => top_line,
-        }
+        self.detail_scroll = 0;
     }
 
     pub(super) fn scroll_detail_by(
@@ -200,13 +184,11 @@ impl UiPicker {
         if !self.has_scrollable_detail() {
             return;
         }
-        let top = self.detail_scroll_top();
-        let next = if delta < 0 {
-            top.saturating_sub(delta.unsigned_abs())
+        self.detail_scroll = if delta < 0 {
+            self.detail_scroll.saturating_sub(delta.unsigned_abs())
         } else {
-            top.saturating_add(delta as usize)
+            self.detail_scroll.saturating_add(delta as usize)
         };
-        self.detail_scroll = DetailScroll::Manual { top_line: next };
         self.clamp_detail_scroll(viewport);
     }
 
@@ -222,8 +204,7 @@ impl UiPicker {
             return;
         }
         let line_count = self.detail_line_count(viewport.width);
-        let top = line_count.saturating_sub(viewport.rows.max(1));
-        self.detail_scroll = DetailScroll::Manual { top_line: top };
+        self.detail_scroll = line_count.saturating_sub(viewport.rows.max(1));
     }
 
     pub(super) fn scroll_detail_page(
@@ -243,12 +224,11 @@ impl UiPicker {
             return;
         }
         let line_count = self.detail_line_count(viewport.width);
-        let top = super::picker_overlay::clamp_detail_scroll(
-            self.detail_scroll_top(),
+        self.detail_scroll = super::picker_overlay::clamp_detail_scroll(
+            self.detail_scroll,
             line_count,
             viewport.rows,
         );
-        self.detail_scroll = DetailScroll::Manual { top_line: top };
     }
 
     pub(super) fn detail_line_count(&self, detail_width: usize) -> usize {

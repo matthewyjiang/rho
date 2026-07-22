@@ -209,6 +209,5 @@ fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     picker.scroll_detail_end(layout.detail_viewport());
     let line_count = overlay_detail_lines(picker.selected_detail(), layout.detail_width).len();
     let expected = line_count.saturating_sub(layout.detail_viewport_rows.max(1));
-    assert_eq!(picker.detail_scroll_top(), expected);
-    assert_ne!(picker.detail_scroll_top(), usize::MAX);
+    assert_eq!(picker.detail_scroll, expected);
 }

@@ -263,7 +263,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     )
 }
 
-fn picker_badge_style(tone: PickerBadgeTone) -> Style {
+pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
         PickerBadgeTone::Internal => Theme::accent(),
         PickerBadgeTone::Selected => Theme::warning(),

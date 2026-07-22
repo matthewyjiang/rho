@@ -10,10 +10,7 @@ use ratatui::{
 };
 
 use super::render::wrap_line_at_whitespace;
-use super::{
-    display_width, styled_line, truncate_one_line, LineFill, PickerBadgeTone, PickerItem, Theme,
-    UiPicker,
-};
+use super::{display_width, styled_line, truncate_one_line, LineFill, PickerItem, Theme, UiPicker};
 
 const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
@@ -125,7 +122,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         selected_position,
         match_count: matching.len(),
         detail: &detail,
-        detail_scroll: picker.detail_scroll_top(),
+        detail_scroll: picker.detail_scroll,
         footer: &footer,
         chrome,
     };
@@ -408,7 +405,7 @@ fn nav_item_line(item: &PickerItem, selected: bool, width: usize) -> Line<'stati
     )];
     if let Some((text, tone)) = badge {
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(text, badge_style(tone)));
+        spans.push(Span::styled(text, super::render::picker_badge_style(tone)));
     }
     Line::from(spans)
 }
@@ -594,15 +591,6 @@ fn pad_text(text: &str, width: usize) -> String {
     let text = truncate_one_line(text, width);
     let pad = width.saturating_sub(display_width(&text));
     format!("{text}{}", " ".repeat(pad))
-}
-
-fn badge_style(tone: PickerBadgeTone) -> ratatui::style::Style {
-    match tone {
-        PickerBadgeTone::Internal => Theme::accent(),
-        PickerBadgeTone::Selected => Theme::warning(),
-        PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
-        PickerBadgeTone::Warning => Theme::warning(),
-    }
 }
 
 #[cfg(test)]
