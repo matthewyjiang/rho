@@ -84,30 +84,31 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 }
 
 pub fn login_groups() -> Vec<LoginGroup> {
-    let mut groups = [
-        (
-            "openai",
-            "OpenAI",
-            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
-        ),
+    // Keep alphabetical by display `prompt` so login pickers stay sorted as groups are added.
+    [
         ("anthropic", "Anthropic", &[("API Key", "anthropic")][..]),
-        ("google", "Google Gemini", &[("API Key", "google")][..]),
         (
             "github-copilot",
             "GitHub Copilot",
             &[("OAuth", "github-copilot")][..],
         ),
+        ("google", "Google Gemini", &[("API Key", "google")][..]),
         (
             "moonshot",
             "Moonshot AI",
             &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
         ),
-        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
+        (
+            "openai",
+            "OpenAI",
+            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
+        ),
         (
             "openrouter",
             "OpenRouter",
             &[("API Key", "openrouter"), ("OAuth", "openrouter-oauth")][..],
         ),
+        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
         (
             "xai",
             "xAI",
@@ -127,13 +128,7 @@ pub fn login_groups() -> Vec<LoginGroup> {
             })
             .collect(),
     })
-    .collect::<Vec<_>>();
-    groups.sort_by(|left, right| {
-        left.prompt
-            .to_ascii_lowercase()
-            .cmp(&right.prompt.to_ascii_lowercase())
-    });
-    groups
+    .collect()
 }
 
 pub fn login_group(id: &str) -> Option<LoginGroup> {
@@ -614,9 +609,9 @@ mod tests {
             .into_iter()
             .map(|group| group.prompt)
             .collect::<Vec<_>>();
-        let mut sorted = prompts.clone();
-        sorted.sort_by(|left, right| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()));
-        assert_eq!(prompts, sorted);
+        assert!(prompts
+            .windows(2)
+            .all(|pair| { pair[0].to_ascii_lowercase() <= pair[1].to_ascii_lowercase() }));
     }
 
     #[test]

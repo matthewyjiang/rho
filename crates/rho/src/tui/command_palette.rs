@@ -56,11 +56,7 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        template_matches.sort_by(|left, right| {
-            left.name
-                .to_ascii_lowercase()
-                .cmp(&right.name.to_ascii_lowercase())
-        });
+        // prompt_templates is a BTreeMap, so iteration is already name-ordered.
         if let Some(index) = template_matches.iter().position(|choice| {
             choice
                 .name
@@ -71,29 +67,24 @@ impl App {
             matches.insert(0, exact);
         }
         matches.extend(template_matches);
-        let mut skill_matches = self
-            .discovered_skills()
-            .iter()
-            .filter(|skill| {
-                skill.name.starts_with(&prefix)
-                    || format!("skill:{}", skill.name).starts_with(&prefix)
-            })
-            .map(|skill| {
-                let command_name = format!("skill:{}", skill.name);
-                CommandChoice {
-                    usage: format!("/{command_name}"),
-                    name: command_name,
-                    description: skill.description.clone(),
-                    kind: CommandChoiceKind::Skill,
-                }
-            })
-            .collect::<Vec<_>>();
-        skill_matches.sort_by(|left, right| {
-            left.name
-                .to_ascii_lowercase()
-                .cmp(&right.name.to_ascii_lowercase())
-        });
-        matches.extend(skill_matches);
+        // discovered skills are sorted by name; filtering preserves that order.
+        matches.extend(
+            self.discovered_skills()
+                .iter()
+                .filter(|skill| {
+                    skill.name.starts_with(&prefix)
+                        || format!("skill:{}", skill.name).starts_with(&prefix)
+                })
+                .map(|skill| {
+                    let command_name = format!("skill:{}", skill.name);
+                    CommandChoice {
+                        usage: format!("/{command_name}"),
+                        name: command_name,
+                        description: skill.description.clone(),
+                        kind: CommandChoiceKind::Skill,
+                    }
+                }),
+        );
         matches
     }
 

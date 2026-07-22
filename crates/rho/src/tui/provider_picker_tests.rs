@@ -39,9 +39,9 @@ fn login_picker_lists_providers_alphabetically_by_label() {
         .iter()
         .map(|item| item.label.as_str())
         .collect::<Vec<_>>();
-    let mut sorted = labels.clone();
-    sorted.sort_by(|left, right| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()));
-    assert_eq!(labels, sorted);
+    assert!(labels
+        .windows(2)
+        .all(|pair| { pair[0].to_ascii_lowercase() <= pair[1].to_ascii_lowercase() }));
 }
 
 #[test]

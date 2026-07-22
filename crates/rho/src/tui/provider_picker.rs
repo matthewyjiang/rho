@@ -1,4 +1,4 @@
-use super::{PickerAction, PickerItem, UiPicker};
+use super::{sort_items_by_ascii_label, PickerAction, PickerItem, UiPicker};
 use rho_providers::{
     auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore, model::catalog,
     provider,
@@ -7,7 +7,6 @@ use rho_providers::{
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
 
 pub(super) fn login_group_picker() -> UiPicker {
-    // login_groups() is already alphabetical by display prompt.
     let items = catalog::login_groups()
         .into_iter()
         .map(|group| PickerItem {
@@ -70,12 +69,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
             value: descriptor.name.into(),
         })
         .collect::<Vec<_>>();
-    providers.sort_by(|left, right| {
-        left.label
-            .to_ascii_lowercase()
-            .cmp(&right.label.to_ascii_lowercase())
-            .then_with(|| left.value.cmp(&right.value))
-    });
+    sort_items_by_ascii_label(&mut providers);
     items.extend(providers);
     UiPicker::new(
         "Refresh model lists",
@@ -116,11 +110,7 @@ fn provider_picker_for_targets(
             value: target.provider,
         })
         .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        left.label
-            .to_ascii_lowercase()
-            .cmp(&right.label.to_ascii_lowercase())
-    });
+    sort_items_by_ascii_label(&mut items);
 
     UiPicker::new(
         format!("select provider to {verb}"),

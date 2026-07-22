@@ -232,13 +232,11 @@ pub fn matching_commands(prefix: &str) -> Vec<&'static CommandSpec> {
         .strip_prefix('/')
         .unwrap_or(prefix)
         .to_ascii_lowercase();
-    // COMMANDS is defined alphabetically; keep this explicit for callers/tests.
-    let mut matches = COMMANDS
+    // COMMANDS is kept alphabetical by name; filtering preserves that order.
+    COMMANDS
         .iter()
         .filter(|command| command.name.starts_with(&prefix))
-        .collect::<Vec<_>>();
-    matches.sort_by(|left, right| left.name.cmp(right.name));
-    matches
+        .collect()
 }
 
 pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandParseError> {

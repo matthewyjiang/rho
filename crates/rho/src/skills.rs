@@ -64,10 +64,17 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
             .flat_map(|root| skill_paths(&root))
             .filter_map(|path| read_skill(&path).ok()),
     );
-    discovered
+    let mut skills = discovered
         .into_iter()
         .filter(|skill| seen.insert(skill.name.clone()))
-        .collect()
+        .collect::<Vec<_>>();
+    // Sort after precedence/dedup so every presentation surface shares one order.
+    skills.sort_by(|left, right| {
+        left.name
+            .to_ascii_lowercase()
+            .cmp(&right.name.to_ascii_lowercase())
+    });
+    skills
 }
 
 fn skill_paths(root: &Path) -> Vec<PathBuf> {
@@ -338,11 +345,11 @@ mod tests {
         assert_eq!(
             names,
             [
-                "rho-diagnostics",
-                "rho-agent-creator",
-                "rho-skill",
                 "agent-skill",
-                "project-skill"
+                "project-skill",
+                "rho-agent-creator",
+                "rho-diagnostics",
+                "rho-skill",
             ]
         );
     }
@@ -405,8 +412,8 @@ mod tests {
         let skills = discover_with_home(root.path(), Some(root.path()));
 
         assert_eq!(skills.len(), 2);
-        assert_eq!(skills[0].name, "rho-diagnostics");
-        assert_eq!(skills[1].name, "rho-agent-creator");
+        assert_eq!(skills[0].name, "rho-agent-creator");
+        assert_eq!(skills[1].name, "rho-diagnostics");
     }
 
     #[test]
@@ -417,8 +424,8 @@ mod tests {
         let skills = discover_with_home(root.path(), Some(root.path()));
 
         assert_eq!(skills.len(), 2);
-        assert_eq!(skills[0].name, "rho-diagnostics");
-        assert_eq!(skills[1].name, "rho-agent-creator");
+        assert_eq!(skills[0].name, "rho-agent-creator");
+        assert_eq!(skills[1].name, "rho-diagnostics");
     }
 
     #[test]
@@ -429,8 +436,8 @@ mod tests {
         let skills = discover_with_home(root.path(), Some(root.path()));
 
         assert_eq!(skills.len(), 2);
-        assert_eq!(skills[0].name, "rho-diagnostics");
-        assert_eq!(skills[1].name, "rho-agent-creator");
+        assert_eq!(skills[0].name, "rho-agent-creator");
+        assert_eq!(skills[1].name, "rho-diagnostics");
     }
 
     #[test]
@@ -441,8 +448,8 @@ mod tests {
         let skills = discover_with_home(root.path(), Some(root.path()));
 
         assert_eq!(skills.len(), 2);
-        assert_eq!(skills[0].name, "rho-diagnostics");
-        assert_eq!(skills[1].name, "rho-agent-creator");
+        assert_eq!(skills[0].name, "rho-agent-creator");
+        assert_eq!(skills[1].name, "rho-diagnostics");
     }
 
     #[test]
