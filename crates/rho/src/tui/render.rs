@@ -46,10 +46,10 @@ pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let divider = "─".repeat(width.max(1));
     let mut lines = vec![
-        Line::styled(divider.clone(), Theme::dim()),
+        Line::raw(""),
         Line::from(vec![
+            Span::raw(" "),
             Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
             Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
@@ -65,7 +65,6 @@ pub(super) fn session_header_lines(
             ),
         ]));
     }
-    lines.push(Line::styled(divider, Theme::dim()));
     lines.push(Line::raw(""));
     lines
 }
