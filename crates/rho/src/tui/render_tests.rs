@@ -406,6 +406,10 @@ fn visual_cursor_movement_preserves_ascii_wrapped_column() {
 fn session_header_lists_dim_control_hints() {
     let lines = session_header_lines(None, 80);
     let version = env!("CARGO_PKG_VERSION");
+    let hint_lines = [
+        " shift+tab    Cycle reasoning level",
+        " /            Show available commands",
+    ];
 
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
@@ -413,19 +417,21 @@ fn session_header_lists_dim_control_hints() {
             String::new(),
             format!(" rho  v{version}"),
             String::new(),
-            " shift+tab    Cycle reasoning level".into(),
-            " /            Show available commands".into(),
+            hint_lines[0].into(),
+            hint_lines[1].into(),
             String::new(),
         ]
     );
-    assert!(lines[3]
-        .spans
-        .iter()
-        .all(|span| span.style == Theme::dim() || span.content.is_empty()));
-    assert!(lines[4]
-        .spans
-        .iter()
-        .all(|span| span.style == Theme::dim() || span.content.is_empty()));
+    for hint in hint_lines {
+        let line = lines
+            .iter()
+            .find(|line| line_text(line) == hint)
+            .expect("hint line");
+        assert!(line
+            .spans
+            .iter()
+            .all(|span| span.style == Theme::dim() || span.content.is_empty()));
+    }
 }
 
 #[test]
