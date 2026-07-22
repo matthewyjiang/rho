@@ -89,6 +89,7 @@ pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
         MissingCredential::Google => ModelError::MissingGoogleApiKey,
         MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
         MissingCredential::OpenRouter => ModelError::MissingOpenRouterApiKey,
+        MissingCredential::Profile(message) => ModelError::MissingCredentialProfile(message),
         MissingCredential::Xai => ModelError::MissingXaiApiKey,
     }
 }

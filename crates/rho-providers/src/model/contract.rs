@@ -30,6 +30,8 @@ pub enum ModelError {
     MissingMoonshotApiKey,
     #[error("missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override")]
     MissingOpenRouterApiKey,
+    #[error("{0}")]
+    MissingCredentialProfile(&'static str),
     #[error("missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override")]
     MissingKimiAuth,
     #[error(

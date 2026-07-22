@@ -194,6 +194,7 @@ pub enum MissingCredential {
     Google,
     Moonshot,
     OpenRouter,
+    Profile(&'static str),
     Xai,
 }
 
@@ -358,7 +359,9 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::BearerCredential {
             env_var: "OPENROUTER_API_KEY",
             account: OPENROUTER_OAUTH_KEY_ACCOUNT,
-            missing: MissingCredential::OpenRouter,
+            missing: MissingCredential::Profile(
+                "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
+            ),
             acquisition: BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter),
         },
         model_source: ProviderModelSource::CachedProviderModels,
