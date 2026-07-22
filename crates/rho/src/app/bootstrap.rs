@@ -21,6 +21,7 @@ use super::{
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    rho_providers::install_managed_credential_env_vars();
     let run_output = match &cli.command {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,

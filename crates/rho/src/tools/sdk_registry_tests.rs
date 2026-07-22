@@ -242,7 +242,10 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     );
     assert_eq!(execution.invocation().arguments(), ["-lc"]);
     assert_eq!(execution.invocation().shell_command(), Some(command));
-    assert_eq!(execution.environment(), &ProcessEnvironment::InheritAll);
+    assert_eq!(
+        execution.environment(),
+        &ProcessEnvironment::inherit_default()
+    );
     assert_eq!(execution.output_limits().max_output_bytes(), 777);
     assert_eq!(execution.output_limits().timeout().unwrap().as_secs(), 9);
     assert!(!format!("{request:?}").contains("$TOKEN"));

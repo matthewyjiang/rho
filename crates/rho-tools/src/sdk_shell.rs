@@ -96,7 +96,7 @@ impl ShellPlan {
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
             kind.invocation(arguments.command),
-            ProcessEnvironment::InheritAll,
+            ProcessEnvironment::inherit_default(),
             ProcessOutputLimits::new(max_output_bytes, timeout),
         );
         Ok(Self {

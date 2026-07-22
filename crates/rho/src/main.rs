@@ -7,6 +7,7 @@ use rho_coding_agent::{run, AutomationExit, AutomationInterrupted, Cli};
 async fn main() -> ExitCode {
     rho_providers::set_rho_version(env!("CARGO_PKG_VERSION"))
         .expect("provider version must be configured before provider initialization");
+    rho_providers::install_managed_credential_env_vars();
 
     match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,

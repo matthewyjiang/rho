@@ -143,7 +143,7 @@ impl RhoLaunchPlan {
     }
 }
 
-/// Baseline env pairs applied after host-marker stripping.
+/// Baseline env pairs that form the complete child environment for isolated runs.
 pub fn default_clean_env() -> Vec<(String, String)> {
     let mut env = vec![
         ("TERM".into(), "xterm-256color".into()),
@@ -155,8 +155,21 @@ pub fn default_clean_env() -> Vec<(String, String)> {
     if let Ok(path) = env::var("PATH") {
         env.push(("PATH".into(), path));
     }
-    if let Ok(lib) = env::var("LD_LIBRARY_PATH") {
-        env.push(("LD_LIBRARY_PATH".into(), lib));
+    // Runtime/loader and temp dirs are not credentials; keep them so binaries start.
+    for key in [
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "XDG_RUNTIME_DIR",
+    ] {
+        if let Ok(value) = env::var(key) {
+            env.push((key.into(), value));
+        }
     }
     env
 }

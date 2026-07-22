@@ -142,7 +142,7 @@ fn process_plan(
             ProcessExecution::new(
                 working_directory,
                 ProcessInvocation::executable_from_path("git", arguments),
-                ProcessEnvironment::InheritAll,
+                ProcessEnvironment::inherit_default(),
                 ProcessOutputLimits::new(max_output_bytes, Some(GIT_TIMEOUT)),
             )
         })
@@ -161,7 +161,10 @@ async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
             "fetch_content received an unsupported process plan",
         ));
     };
-    if execution.environment() != &ProcessEnvironment::InheritAll {
+    if !matches!(
+        execution.environment(),
+        ProcessEnvironment::InheritAll | ProcessEnvironment::InheritExcept { .. }
+    ) {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             "fetch_content received an unsupported process environment",
@@ -175,6 +178,11 @@ async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if let ProcessEnvironment::InheritExcept { variable_names } = execution.environment() {
+        for name in variable_names {
+            command.env_remove(name);
+        }
+    }
     let timeout = execution.output_limits().timeout().unwrap_or(GIT_TIMEOUT);
     let status = tokio::time::timeout(timeout, command.status())
         .await

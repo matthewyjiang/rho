@@ -704,3 +704,22 @@ async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
     );
     assert_eq!(prompt_count(&approvals), 2);
 }
+
+#[test]
+fn process_environment_inherit_except_dedupes_and_defaults() {
+    assert_eq!(
+        ProcessEnvironment::inherit_except(std::iter::empty::<String>()),
+        ProcessEnvironment::InheritAll
+    );
+    assert_eq!(
+        ProcessEnvironment::inherit_except(["B_KEY", "A_KEY", "B_KEY"]),
+        ProcessEnvironment::InheritExcept {
+            variable_names: vec!["A_KEY".into(), "B_KEY".into()],
+        }
+    );
+    // Without host registration, inherit_default matches full inheritance.
+    assert_eq!(
+        ProcessEnvironment::inherit_default(),
+        ProcessEnvironment::InheritAll
+    );
+}

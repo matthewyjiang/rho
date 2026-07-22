@@ -86,7 +86,7 @@ mod unix {
         let expected = ProcessExecution::new(
             root.path().canonicalize().unwrap(),
             ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command),
-            ProcessEnvironment::InheritAll,
+            ProcessEnvironment::inherit_default(),
             ProcessOutputLimits::new(777, Some(std::time::Duration::from_secs(9))),
         );
         let requests = approvals

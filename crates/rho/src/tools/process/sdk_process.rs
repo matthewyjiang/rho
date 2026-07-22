@@ -196,7 +196,7 @@ async fn authorize_start(
     let execution = ProcessExecution::new(
         cwd.path(),
         process_invocation(command),
-        ProcessEnvironment::InheritAll,
+        ProcessEnvironment::inherit_default(),
         ProcessOutputLimits::new(max_output_bytes, timeout),
     );
     context

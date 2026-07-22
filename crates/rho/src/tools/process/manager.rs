@@ -89,6 +89,9 @@ impl ProcessManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for credential_var in rho_sdk::managed_credential_env_vars() {
+            cmd.env_remove(credential_var);
+        }
         match cmd.spawn() {
             Ok(mut child) => {
                 let tree = match ProcessTree::attach(&child) {

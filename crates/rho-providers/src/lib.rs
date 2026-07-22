@@ -51,6 +51,7 @@ pub use credentials::{
     OsCredentialStore,
 };
 pub use model::ModelError;
+pub use provider::{credential_env_vars, install_managed_credential_env_vars};
 pub use providers::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,
     ProviderBuildOptions, UnavailableProvider,

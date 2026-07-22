@@ -85,7 +85,7 @@ impl Tool for Bash {
         let execution = ProcessExecution::new(
             &ctx.cwd,
             ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], &args.command),
-            ProcessEnvironment::InheritAll,
+            ProcessEnvironment::inherit_default(),
             ProcessOutputLimits::new(
                 ctx.max_output_bytes,
                 args.timeout_seconds.map(std::time::Duration::from_secs),
@@ -116,7 +116,10 @@ pub(super) async fn execute_process(
             "bash received an unsupported process plan".into(),
         ));
     };
-    if execution.environment() != &ProcessEnvironment::InheritAll {
+    if !matches!(
+        execution.environment(),
+        ProcessEnvironment::InheritAll | ProcessEnvironment::InheritExcept { .. }
+    ) {
         return Err(ToolError::Message(
             "bash received an unsupported process environment".into(),
         ));
@@ -132,6 +135,7 @@ pub(super) async fn execute_process(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
+    super::process_env::apply_process_environment(&mut command, execution.environment());
     let mut child = command.spawn()?;
     let mut process_group = ProcessGroupGuard::new(child.id());
 
@@ -552,6 +556,58 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         assert!(!marker.exists(), "background process survived the timeout");
+    }
+
+    #[tokio::test]
+    async fn inherit_except_scrubs_named_credentials_from_child_env() {
+        const CREDENTIAL_VAR: &str = "RHO_TEST_PROVIDER_API_KEY";
+        const MARKER_VAR: &str = "RHO_TEST_SAFE_ENV_MARKER";
+
+        struct EnvGuard {
+            keys: &'static [&'static str],
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                for key in self.keys {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+
+        let _guard = EnvGuard {
+            keys: &[CREDENTIAL_VAR, MARKER_VAR],
+        };
+        // Scoped env mutation for this test only.
+        std::env::set_var(CREDENTIAL_VAR, "secret-should-not-leak");
+        std::env::set_var(MARKER_VAR, "keep-me");
+
+        let execution = ProcessExecution::new(
+            std::env::temp_dir(),
+            ProcessInvocation::shell_from_path(
+                "bash",
+                vec!["-lc".into()],
+                format!(
+                    "printf 'credential=%s;marker=%s' \"${{{CREDENTIAL_VAR}-}}\" \"${{{MARKER_VAR}-}}\""
+                ),
+            ),
+            ProcessEnvironment::inherit_except([CREDENTIAL_VAR]),
+            ProcessOutputLimits::new(12_000, Some(std::time::Duration::from_secs(30))),
+        );
+        let result = execute_process(
+            execution,
+            "call_1".into(),
+            RunCancellation::default(),
+            &mut |_| {},
+        )
+        .await
+        .expect("scrubbed command should run");
+
+        assert!(result.ok, "command should succeed: {}", result.content);
+        assert!(
+            result.content.contains("credential=;marker=keep-me"),
+            "credential must be absent while non-sensitive vars remain: {}",
+            result.content
+        );
     }
 }
 

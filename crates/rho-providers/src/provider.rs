@@ -509,6 +509,34 @@ pub fn providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
 }
 
+/// Environment variable names used as provider credential overrides.
+///
+/// Derived from [`PROVIDERS`] auth kinds so newly registered provider credentials
+/// are included automatically. Hosts should strip these from child process
+/// environments by default.
+pub fn credential_env_vars() -> &'static [&'static str] {
+    use std::sync::OnceLock;
+
+    static VARS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    VARS.get_or_init(|| {
+        let mut vars: Vec<&'static str> = PROVIDERS
+            .iter()
+            .filter_map(|descriptor| descriptor.auth_kind.env_var())
+            .collect();
+        vars.sort_unstable();
+        vars.dedup();
+        vars
+    })
+    .as_slice()
+}
+
+/// Registers provider credential env vars with the SDK process environment policy.
+///
+/// Safe to call more than once; the first registration wins.
+pub fn install_managed_credential_env_vars() {
+    rho_sdk::set_managed_credential_env_vars(credential_env_vars());
+}
+
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
     providers()
         .iter()
