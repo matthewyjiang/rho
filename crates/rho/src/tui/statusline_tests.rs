@@ -58,7 +58,7 @@ fn wide_statusline_keeps_only_summary_fields() {
     let lines = statusline_lines(&test_state(usage), 80, None);
     let bottom = line_text(&lines[1]);
 
-    assert!(bottom.contains("~25.0% ctx"), "{bottom}");
+    assert!(bottom.contains("25.0K (25.0%)"), "{bottom}");
     assert!(bottom.contains("$0.570"), "{bottom}");
     assert!(bottom.contains("Auto · gpt-test · low"), "{bottom}");
     assert!(!bottom.contains("300.0k"), "{bottom}");
@@ -75,7 +75,7 @@ fn narrow_statusline_drops_whole_optional_fields() {
     let lines = statusline_lines(&test_state(usage), 24, None);
     let bottom = line_text(&lines[1]);
 
-    assert!(bottom.contains("~25.0% ctx"), "{bottom}");
+    assert!(bottom.contains("25.0K (25.0%)"), "{bottom}");
     assert!(bottom.contains("Auto"), "{bottom}");
     assert!(!bottom.contains('$'), "{bottom}");
     assert!(!bottom.contains("low"), "{bottom}");
@@ -92,7 +92,8 @@ fn very_narrow_statusline_drops_context_to_preserve_permission_mode() {
     let bottom = line_text(&statusline_lines(&state, 12, None)[1]);
 
     assert!(bottom.contains("Supervised"), "{bottom}");
-    assert!(!bottom.contains("ctx"), "{bottom}");
+    assert!(!bottom.contains('%'), "{bottom}");
+    assert!(!bottom.contains('K'), "{bottom}");
 }
 
 #[test]
@@ -134,11 +135,19 @@ fn statusline_shows_blocked_goal_indicator() {
 }
 
 #[test]
-fn context_summary_marks_estimates() {
+fn context_summary_formats_tokens_and_percent() {
     assert_eq!(
         format_context_summary(&test_state(ModelUsage::default())),
-        "~25.0% ctx"
+        "25.0K (25.0%)"
     );
+}
+
+#[test]
+fn format_token_count_uses_k_and_m() {
+    assert_eq!(format_token_count(812), "812");
+    assert_eq!(format_token_count(12_000), "12.0K");
+    assert_eq!(format_token_count(1_250_000), "1.2M");
+    assert_eq!(format_token_count(1_260_000), "1.3M");
 }
 
 fn test_info(cwd: PathBuf) -> RuntimeModelView {

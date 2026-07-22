@@ -276,16 +276,24 @@ fn format_context_summary(state: &StatusLineState) -> String {
     else {
         return String::new();
     };
-    let marker = match context.source {
-        ContextUsageSource::Estimated => "~",
-        ContextUsageSource::ProviderReported => "",
-        ContextUsageSource::UnknownAfterCompaction => "?",
-    };
     let Some(tokens) = context.tokens else {
-        return format!("{marker}ctx");
+        return match context.source {
+            ContextUsageSource::UnknownAfterCompaction => "?".into(),
+            ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => String::new(),
+        };
     };
     let percent = tokens as f64 * 100.0 / window as f64;
-    format!("{marker}{percent:.1}% ctx")
+    format!("{} ({percent:.1}%)", format_token_count(tokens))
+}
+
+fn format_token_count(tokens: u64) -> String {
+    if tokens < 1_000 {
+        tokens.to_string()
+    } else if tokens < 1_000_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
 }
 
 fn status_cost(state: &StatusLineState) -> Option<String> {
