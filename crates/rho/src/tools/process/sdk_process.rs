@@ -16,13 +16,19 @@ use super::{Process, ProcessArgs};
 pub(crate) struct SdkProcess {
     process: Process,
     max_output_bytes: usize,
+    environment: ProcessEnvironment,
 }
 
 impl SdkProcess {
-    pub(crate) fn new(process: Process, max_output_bytes: usize) -> Self {
+    pub(crate) fn new(
+        process: Process,
+        max_output_bytes: usize,
+        environment: ProcessEnvironment,
+    ) -> Self {
         Self {
             process,
             max_output_bytes,
+            environment,
         }
     }
 
@@ -31,28 +37,87 @@ impl SdkProcess {
         args: ProcessArgs,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        if let ProcessArgs::Start {
-            command,
-            timeout_seconds,
-        } = &args
-        {
-            authorize_start(
-                context,
+        match args {
+            ProcessArgs::Start {
                 command,
-                timeout_seconds.map(Duration::from_secs),
-                self.max_output_bytes,
-            )
-            .await?;
+                timeout_seconds,
+            } => {
+                self.execute_start(command, timeout_seconds.map(Duration::from_secs), context)
+                    .await
+            }
+            args => {
+                execute_prepared(
+                    &self.process,
+                    args,
+                    context.workspace_root(),
+                    self.max_output_bytes,
+                    context.cancellation(),
+                    context.progress(),
+                )
+                .await
+            }
         }
-        execute_prepared(
-            &self.process,
-            args,
-            context.workspace_root(),
-            self.max_output_bytes,
-            context.cancellation(),
-            context.progress(),
-        )
-        .await
+    }
+
+    async fn execute_start(
+        &self,
+        command: String,
+        timeout: Option<Duration>,
+        context: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let workspace = context.workspace().ok_or_else(|| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                "process requires a configured workspace",
+            )
+        })?;
+        let cwd = workspace
+            .resolve_for_read(workspace.root())
+            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        let execution = ProcessExecution::new(
+            cwd.path(),
+            process_invocation(&command),
+            self.environment.clone(),
+            ProcessOutputLimits::new(self.max_output_bytes, timeout),
+        );
+        context
+            .authorize(CapabilityRequest::process(
+                execution.clone(),
+                CapabilitySource::built_in_tool("process"),
+            ))
+            .await
+            .map_err(|error| {
+                if error.kind() == rho_sdk::AuthorizationDenialKind::Cancelled {
+                    ToolError::cancelled()
+                } else {
+                    ToolError::policy_denied(&error)
+                }
+            })?;
+        workspace
+            .revalidate(&cwd)
+            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+
+        let mut updates = Vec::new();
+        let mut collect_update = |lines| updates.push(lines);
+        let start = self.process.start_execution(execution);
+        let snapshot = tokio::select! {
+            result = start => result,
+            () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
+        }
+        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+        collect_update(super::display::snapshot_progress_lines(&snapshot));
+        for lines in updates {
+            if !context
+                .progress()
+                .send(ToolProgress::message(lines.join("\n")))
+                .await
+            {
+                break;
+            }
+        }
+        let content = serde_json::to_string(&snapshot)
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        Ok(ToolOutput::text(content).metadata(process_metadata()))
     }
 }
 
@@ -178,45 +243,6 @@ async fn execute_prepared(
     Ok(ToolOutput::text(result.content).metadata(process_metadata()))
 }
 
-async fn authorize_start(
-    context: &ToolContext,
-    command: &str,
-    timeout: Option<Duration>,
-    max_output_bytes: usize,
-) -> Result<(), ToolError> {
-    let workspace = context.workspace().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "process requires a configured workspace",
-        )
-    })?;
-    let cwd = workspace
-        .resolve_for_read(workspace.root())
-        .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-    let execution = ProcessExecution::new(
-        cwd.path(),
-        process_invocation(command),
-        ProcessEnvironment::inherit_default(),
-        ProcessOutputLimits::new(max_output_bytes, timeout),
-    );
-    context
-        .authorize(CapabilityRequest::process(
-            execution,
-            CapabilitySource::built_in_tool("process"),
-        ))
-        .await
-        .map_err(|error| {
-            if error.kind() == rho_sdk::AuthorizationDenialKind::Cancelled {
-                ToolError::cancelled()
-            } else {
-                ToolError::policy_denied(&error)
-            }
-        })?;
-    workspace
-        .revalidate(&cwd)
-        .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))
-}
-
 #[cfg(unix)]
 fn process_invocation(command: &str) -> ProcessInvocation {
     ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command.to_string())
@@ -251,6 +277,10 @@ fn map_legacy_error(error: rho_tools::tool::ToolError) -> ToolError {
     }
 }
 
-pub(super) fn tool(process: Process, max_output_bytes: usize) -> Arc<dyn rho_sdk::tool::Tool> {
-    Arc::new(SdkProcess::new(process, max_output_bytes))
+pub(super) fn tool(
+    process: Process,
+    max_output_bytes: usize,
+    environment: ProcessEnvironment,
+) -> Arc<dyn rho_sdk::tool::Tool> {
+    Arc::new(SdkProcess::new(process, max_output_bytes, environment))
 }

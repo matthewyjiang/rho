@@ -14,9 +14,9 @@ pub use approval::{
 };
 pub(crate) use approval::{authorize_for_call, ApprovalAuditLog, SessionApprovals};
 pub use capability::{
-    managed_credential_env_vars, set_managed_credential_env_vars, CapabilityKind,
-    CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection, NetworkTarget,
-    PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
+    NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,
+    ProcessOutputLimits,
 };
 pub use path::{
     ResolvedWorkspacePath, Workspace, WorkspacePathError, WorkspacePathErrorKind,

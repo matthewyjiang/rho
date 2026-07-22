@@ -81,7 +81,7 @@ async fn authorize_process(
     let execution = ProcessExecution::new(
         cwd.path(),
         invocation,
-        ProcessEnvironment::inherit_default(),
+        ProcessEnvironment::InheritAll,
         ProcessOutputLimits::new(max_output_bytes, timeout),
     );
     authorize_request(context, CapabilityRequest::process(execution, source)).await?;

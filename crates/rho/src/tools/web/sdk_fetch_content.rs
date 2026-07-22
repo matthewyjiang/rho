@@ -28,6 +28,7 @@ const FETCH_CONTENT_TOOL: &str = "fetch_content";
 pub(in crate::tools) struct SdkFetchContent {
     client: reqwest::Client,
     max_output_bytes: usize,
+    process_environment: rho_sdk::ProcessEnvironment,
     /// Test-only override installed around the tool future so the fetch choke
     /// point can allow loopback without threading policy through plan types.
     #[cfg(test)]
@@ -35,10 +36,14 @@ pub(in crate::tools) struct SdkFetchContent {
 }
 
 impl SdkFetchContent {
-    pub(in crate::tools) fn new(max_output_bytes: usize) -> Self {
+    pub(in crate::tools) fn new(
+        max_output_bytes: usize,
+        process_environment: rho_sdk::ProcessEnvironment,
+    ) -> Self {
         Self {
             client: util::fetch_http_client(),
             max_output_bytes,
+            process_environment,
             #[cfg(test)]
             allow_ranges_override: None,
         }
@@ -52,6 +57,7 @@ impl SdkFetchContent {
         Self {
             client: util::fetch_http_client(),
             max_output_bytes,
+            process_environment: rho_sdk::ProcessEnvironment::InheritAll,
             allow_ranges_override: Some(allow_ranges),
         }
     }
@@ -76,6 +82,7 @@ struct TargetOptions<'a> {
     frames: usize,
     force_clone: bool,
     max_output_bytes: usize,
+    process_environment: rho_sdk::ProcessEnvironment,
 }
 
 struct FetchPlan {
@@ -130,6 +137,7 @@ impl FetchPlan {
         arguments: Value,
         context: &ToolContext,
         max_output_bytes: usize,
+        process_environment: rho_sdk::ProcessEnvironment,
     ) -> Result<Self, ToolError> {
         let arguments: FetchContentArgs = serde_json::from_value(arguments).map_err(|error| {
             ToolError::new(
@@ -160,6 +168,7 @@ impl FetchPlan {
                     frames,
                     force_clone,
                     max_output_bytes,
+                    process_environment: process_environment.clone(),
                 },
             )?);
         }
@@ -234,6 +243,7 @@ impl TargetPlan {
                     options.target_index,
                     workspace.root(),
                     options.max_output_bytes,
+                    options.process_environment,
                 )));
             }
             let api_url = github::api_url(&target);
@@ -410,8 +420,12 @@ impl Tool for SdkFetchContent {
 
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            let plan =
-                FetchPlan::parse(invocation.into_arguments(), &context, self.max_output_bytes)?;
+            let plan = FetchPlan::parse(
+                invocation.into_arguments(),
+                &context,
+                self.max_output_bytes,
+                self.process_environment.clone(),
+            )?;
             plan.authorize(&context).await?;
             let execute = plan.execute(&self.client, &context, self.max_output_bytes);
             #[cfg(test)]

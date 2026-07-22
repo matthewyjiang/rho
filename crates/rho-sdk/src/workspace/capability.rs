@@ -1,27 +1,8 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
-    sync::OnceLock,
     time::Duration,
 };
-
-static MANAGED_CREDENTIAL_ENV_VARS: OnceLock<&'static [&'static str]> = OnceLock::new();
-
-/// Registers credential environment variable names managed by the host.
-///
-/// Process tools remove these names from inherited child environments when
-/// using [`ProcessEnvironment::inherit_default`]. The first registration wins;
-/// later calls are ignored so startup is idempotent across tests and binaries.
-pub fn set_managed_credential_env_vars(vars: &'static [&'static str]) {
-    let _ = MANAGED_CREDENTIAL_ENV_VARS.set(vars);
-}
-
-/// Returns host-registered credential environment variable names.
-///
-/// Empty until [`set_managed_credential_env_vars`] runs.
-pub fn managed_credential_env_vars() -> &'static [&'static str] {
-    MANAGED_CREDENTIAL_ENV_VARS.get().copied().unwrap_or(&[])
-}
 
 /// Independently grantable classes of security-sensitive work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -216,14 +197,6 @@ impl ProcessEnvironment {
             return Self::InheritAll;
         }
         Self::InheritExcept { variable_names }
-    }
-
-    /// Inherit ambient variables after removing host-managed credentials.
-    ///
-    /// When the host has not registered managed credential names, this is
-    /// equivalent to [`ProcessEnvironment::InheritAll`].
-    pub fn inherit_default() -> Self {
-        Self::inherit_except(managed_credential_env_vars().iter().copied())
     }
 }
 

@@ -85,7 +85,7 @@ impl Tool for Bash {
         let execution = ProcessExecution::new(
             &ctx.cwd,
             ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], &args.command),
-            ProcessEnvironment::inherit_default(),
+            ProcessEnvironment::InheritAll,
             ProcessOutputLimits::new(
                 ctx.max_output_bytes,
                 args.timeout_seconds.map(std::time::Duration::from_secs),
@@ -116,15 +116,6 @@ pub(super) async fn execute_process(
             "bash received an unsupported process plan".into(),
         ));
     };
-    if !matches!(
-        execution.environment(),
-        ProcessEnvironment::InheritAll | ProcessEnvironment::InheritExcept { .. }
-    ) {
-        return Err(ToolError::Message(
-            "bash received an unsupported process environment".into(),
-        ));
-    }
-
     let mut command = Command::new(executable);
     command
         .args(arguments)
@@ -135,7 +126,8 @@ pub(super) async fn execute_process(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
-    super::process_env::apply_process_environment(&mut command, execution.environment());
+    super::process_env::apply_process_environment(&mut command, execution.environment())
+        .map_err(ToolError::Message)?;
     let mut child = command.spawn()?;
     let mut process_group = ProcessGroupGuard::new(child.id());
 

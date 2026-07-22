@@ -92,7 +92,7 @@ impl Tool for PowerShell {
                 ],
                 wrapped_command(&args.command),
             ),
-            ProcessEnvironment::inherit_default(),
+            ProcessEnvironment::InheritAll,
             ProcessOutputLimits::new(
                 ctx.max_output_bytes,
                 args.timeout_seconds.map(std::time::Duration::from_secs),
@@ -123,15 +123,6 @@ pub(super) async fn execute_process(
             "PowerShell received an unsupported process plan".into(),
         ));
     };
-    if !matches!(
-        execution.environment(),
-        ProcessEnvironment::InheritAll | ProcessEnvironment::InheritExcept { .. }
-    ) {
-        return Err(ToolError::Message(
-            "PowerShell received an unsupported process environment".into(),
-        ));
-    }
-
     let start = Instant::now();
     let mut command = Command::new(executable);
     command
@@ -142,7 +133,8 @@ pub(super) async fn execute_process(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    super::process_env::apply_process_environment(&mut command, execution.environment());
+    super::process_env::apply_process_environment(&mut command, execution.environment())
+        .map_err(ToolError::Message)?;
     let mut child = command.spawn()?;
     let mut process_tree = ProcessTreeGuard::attach(&child)?;
 

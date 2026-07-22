@@ -717,9 +717,4 @@ fn process_environment_inherit_except_dedupes_and_defaults() {
             variable_names: vec!["A_KEY".into(), "B_KEY".into()],
         }
     );
-    // Without host registration, inherit_default matches full inheritance.
-    assert_eq!(
-        ProcessEnvironment::inherit_default(),
-        ProcessEnvironment::InheritAll
-    );
 }

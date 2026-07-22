@@ -31,7 +31,11 @@ fn one_access(
 #[tokio::test]
 async fn process_actions_prepare_with_audited_policies() {
     let manager = process::ProcessManager::new(process::ProcessLimits::default());
-    let tool = process::sdk_process::SdkProcess::new(process::Process::new(manager), 12_000);
+    let tool = process::sdk_process::SdkProcess::new(
+        process::Process::new(manager),
+        12_000,
+        rho_sdk::ProcessEnvironment::InheritAll,
+    );
 
     let start = tool
         .prepare(
@@ -113,7 +117,11 @@ async fn skill_prepares_builtin_and_file_resources() {
 #[tokio::test]
 async fn preparation_rejects_invalid_resource_keys_and_actions() {
     let manager = process::ProcessManager::new(process::ProcessLimits::default());
-    let process = process::sdk_process::SdkProcess::new(process::Process::new(manager), 12_000);
+    let process = process::sdk_process::SdkProcess::new(
+        process::Process::new(manager),
+        12_000,
+        rho_sdk::ProcessEnvironment::InheritAll,
+    );
     let process_error = process
         .prepare(
             invocation(json!({

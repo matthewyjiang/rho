@@ -23,6 +23,13 @@ impl Process {
     pub fn new(manager: ProcessManager) -> Self {
         Self(manager)
     }
+
+    pub(super) async fn start_execution(
+        &self,
+        execution: rho_sdk::ProcessExecution,
+    ) -> Result<Snapshot, String> {
+        self.0.start_execution(execution).await
+    }
 }
 
 #[derive(Deserialize)]

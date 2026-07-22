@@ -57,7 +57,13 @@ async fn run_fetch(
     policy: impl WorkspacePolicy + 'static,
     arguments: serde_json::Value,
 ) -> ToolCompletion {
-    run_fetch_with_tool(workspace, policy, arguments, SdkFetchContent::new(12_000)).await
+    run_fetch_with_tool(
+        workspace,
+        policy,
+        arguments,
+        SdkFetchContent::new(12_000, rho_sdk::ProcessEnvironment::InheritAll),
+    )
+    .await
 }
 
 async fn run_fetch_with_tool(

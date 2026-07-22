@@ -244,7 +244,7 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     assert_eq!(execution.invocation().shell_command(), Some(command));
     assert_eq!(
         execution.environment(),
-        &ProcessEnvironment::inherit_default()
+        &ProcessEnvironment::inherit_except(rho_providers::credential_env_vars().iter().copied())
     );
     assert_eq!(execution.output_limits().max_output_bytes(), 777);
     assert_eq!(execution.output_limits().timeout().unwrap().as_secs(), 9);
@@ -293,7 +293,9 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
         .provider(provider)
         .workspace(Workspace::new(root.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_processes());
-    builder = builder.tool_shared(rho_tools::shell_tool(12_000));
+    builder = builder.tool_shared(rho_tools::shell_tool(
+        rho_tools::ShellToolOptions::new().max_output_bytes(12_000),
+    ));
     let runtime = builder.build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("run it")).await.unwrap();
