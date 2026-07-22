@@ -86,7 +86,9 @@ impl App {
                         StreamControl::Interrupt => {
                             break Err(anyhow::anyhow!("compaction interrupted"));
                         }
-                        StreamControl::Continue | StreamControl::Resize => {}
+                        StreamControl::Continue
+                        | StreamControl::Resize
+                        | StreamControl::ApprovalResolved => {}
                     }
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     terminal.draw(|frame| self.draw(frame))?;

@@ -198,8 +198,6 @@ impl App {
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
-                    let awaiting_approval =
-                        matches!(self.composer, ComposerMode::Approval(_));
                     match self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
@@ -207,23 +205,11 @@ impl App {
                         &tool_call_active,
                         RunningInputMode::Turn,
                     ) {
-                        Ok(control) => {
-                            if awaiting_approval
-                                && !matches!(self.composer, ComposerMode::Approval(_))
-                                && matches!(
-                                    control,
-                                    StreamControl::Continue | StreamControl::Resize
-                                )
-                                && self.running
-                            {
-                                // Approval resolved without cancelling the turn.
-                                self.report_herdr_working().await;
-                            }
-                            match control {
-                                StreamControl::Interrupt => agent.cancel(),
-                                StreamControl::Continue | StreamControl::Resize => {}
-                            }
+                        Ok(StreamControl::Interrupt) => agent.cancel(),
+                        Ok(StreamControl::ApprovalResolved) => {
+                            self.report_herdr_working().await;
                         }
+                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
                         Err(error) => {
                             sdk_failure = Some(error.to_string());
                             agent.cancel();
@@ -257,7 +243,6 @@ impl App {
                     };
                     match reply {
                         QuestionnaireReply::Answer(response) => {
-                            // Resume working once the user answered.
                             self.report_herdr_working().await;
                             if let Err(error) = agent
                                 .respond(request_id, event_adapter::host_response(response))
@@ -287,9 +272,7 @@ impl App {
                     let event = match event {
                         RuntimeEvent::Approval(pending) => {
                             self.finish_streams();
-                            self.open_approval(pending);
-                            self.report_herdr_waiting_for_user("waiting for approval")
-                                .await;
+                            self.open_approval(pending).await;
                             self.draw_running_frame(terminal, &mut frame_scheduler)?;
                             continue;
                         }
@@ -322,18 +305,9 @@ impl App {
                                 /*questionnaire_active*/ pending_questionnaire.is_some(),
                             );
                             if interaction_available {
-                                let request_id = request.id().clone();
-                                let (reply_tx, reply_rx) = oneshot::channel();
-                                self.open_questionnaire(
-                                    QuestionAnswerRequest {
-                                        request: event_adapter::questionnaire_request(&request),
-                                        response: QuestionnaireResponseChannel::new(reply_tx),
-                                    },
-                                    terminal,
-                                )?;
-                                self.report_herdr_waiting_for_user("waiting for your answers")
-                                    .await;
-                                pending_questionnaire = Some((call_id, request_id, reply_rx));
+                                pending_questionnaire = Some(
+                                    self.begin_pending_questionnaire(call_id, request).await?,
+                                );
                                 interaction_ready = true;
                             } else {
                                 queued_questionnaires.push_back((call_id, request));
@@ -367,18 +341,8 @@ impl App {
                 )
             {
                 if let Some((call_id, request)) = queued_questionnaires.pop_front() {
-                    let request_id = request.id().clone();
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    self.open_questionnaire(
-                        QuestionAnswerRequest {
-                            request: event_adapter::questionnaire_request(&request),
-                            response: QuestionnaireResponseChannel::new(reply_tx),
-                        },
-                        terminal,
-                    )?;
-                    self.report_herdr_waiting_for_user("waiting for your answers")
-                        .await;
-                    pending_questionnaire = Some((call_id, request_id, reply_rx));
+                    pending_questionnaire =
+                        Some(self.begin_pending_questionnaire(call_id, request).await?);
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
             }
@@ -500,6 +464,25 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
         frame_scheduler.rendered(Instant::now());
         Ok(())
+    }
+
+    async fn begin_pending_questionnaire(
+        &mut self,
+        call_id: rho_sdk::ToolCallId,
+        request: rho_sdk::HostInputRequest,
+    ) -> anyhow::Result<(
+        rho_sdk::ToolCallId,
+        rho_sdk::HostInputId,
+        oneshot::Receiver<QuestionnaireReply>,
+    )> {
+        let request_id = request.id().clone();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.open_questionnaire(QuestionAnswerRequest {
+            request: event_adapter::questionnaire_request(&request),
+            response: QuestionnaireResponseChannel::new(reply_tx),
+        })
+        .await?;
+        Ok((call_id, request_id, reply_rx))
     }
 
     fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {

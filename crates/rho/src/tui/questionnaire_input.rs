@@ -1,9 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::DefaultTerminal;
 
 use super::{
     questionnaire::{QuestionnaireComposer, QuestionnaireEnterAction},
-    questionnaire_notice_text, App, ComposerMode, Entry, QuestionAnswerRequest,
+    questionnaire_notice_text, App, ComposerMode, Entry, HerdrUserWait, QuestionAnswerRequest,
 };
 
 impl App {
@@ -244,10 +243,9 @@ impl App {
         self.status = "answer cancelled".into();
     }
 
-    pub(super) fn open_questionnaire(
+    pub(super) async fn open_questionnaire(
         &mut self,
         request: QuestionAnswerRequest,
-        _terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
         self.finish_streams();
         self.input.clear();
@@ -260,7 +258,9 @@ impl App {
             request.request,
             request.response,
         ));
-        self.status = "waiting for your answers".into();
+        self.status = HerdrUserWait::Questionnaire.message().into();
+        self.report_herdr_waiting_for_user(HerdrUserWait::Questionnaire)
+            .await;
         Ok(())
     }
 }

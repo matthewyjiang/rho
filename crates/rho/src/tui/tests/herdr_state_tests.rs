@@ -1,24 +1,56 @@
-use std::path::Path;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    ApprovalDecision, ApprovalRequest, CapabilityRequest, CapabilitySource, PathScope,
+    PendingApproval,
+};
 
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use crate::{
+    herdr::test_support::{reporter_for_socket, TestHerdrServer},
+    questionnaire::QuestionnaireQuestionKind,
+};
 
+use super::super::{
+    approval::ApprovalKeyOutcome,
+    questionnaire::{
+        QuestionAnswerRequest, QuestionnaireQuestion, QuestionnaireRequest,
+        QuestionnaireResponseChannel,
+    },
+};
 use super::*;
 
 #[cfg(unix)]
 #[tokio::test]
-async fn waiting_for_user_reports_herdr_blocked_then_working_resumes() {
+async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
     let mut server = TestHerdrServer::bind(&socket_path).await;
     let mut bootstrap = test_bootstrap();
-    bootstrap.services.herdr = herdr_for_socket(&socket_path);
+    bootstrap.services.herdr = reporter_for_socket(&socket_path);
     bootstrap.session.session_id = Some("session-questionnaire".into());
-    let app = App::new(bootstrap);
+    let mut app = App::new(bootstrap);
+    let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
 
-    app.report_herdr_waiting_for_user("waiting for your answers")
-        .await;
-    app.report_herdr_working().await;
+    app.open_questionnaire(QuestionAnswerRequest {
+        request: QuestionnaireRequest {
+            title: None,
+            reason: None,
+            questions: vec![QuestionnaireQuestion {
+                id: "choice".into(),
+                question: "Pick one".into(),
+                header: None,
+                help: None,
+                default: None,
+                kind: QuestionnaireQuestionKind::Choice,
+                required: true,
+                choices: vec!["alpha".into(), "beta".into()],
+                allow_other: false,
+            }],
+        },
+        response: QuestionnaireResponseChannel::new(reply_tx),
+    })
+    .await
+    .unwrap();
 
     let blocked = server.next_request().await;
     assert_eq!(blocked["method"], "pane.report_agent");
@@ -28,11 +60,67 @@ async fn waiting_for_user_reports_herdr_blocked_then_working_resumes() {
         blocked["params"]["agent_session_id"],
         "session-questionnaire"
     );
+    assert!(matches!(app.composer, ComposerMode::Questionnaire(_)));
 
+    app.report_herdr_working().await;
     let working = server.next_request().await;
-    assert_eq!(working["method"], "pane.report_agent");
     assert_eq!(working["params"]["state"], "working");
     assert!(working["params"].get("message").is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolving_approval_reports_blocked_then_signals_resume() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let mut server = TestHerdrServer::bind(&socket_path).await;
+    let mut bootstrap = test_bootstrap();
+    bootstrap.services.herdr = reporter_for_socket(&socket_path);
+    bootstrap.session.session_id = Some("session-approval".into());
+    let mut app = App::new(bootstrap);
+    let (pending, mut decision_rx) = test_pending_approval();
+
+    app.open_approval(pending).await;
+
+    let blocked = server.next_request().await;
+    assert_eq!(blocked["params"]["state"], "blocked");
+    assert_eq!(blocked["params"]["message"], "waiting for approval");
+    assert!(matches!(app.composer, ComposerMode::Approval(_)));
+
+    let outcome = app
+        .handle_approval_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 80)
+        .unwrap();
+    assert_eq!(outcome, ApprovalKeyOutcome::Resolved);
+    assert!(matches!(app.composer, ComposerMode::Input));
+    assert_eq!(decision_rx.try_recv(), Ok(ApprovalDecision::AllowOnce));
+
+    // prompt_turn maps ApprovalResolved onto this resume report.
+    app.report_herdr_working().await;
+    let working = server.next_request().await;
+    assert_eq!(working["params"]["state"], "working");
+    assert!(working["params"].get("message").is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn esc_approval_resolves_without_requiring_working_resume() {
+    let mut app = test_app();
+    let (pending, mut decision_rx) = test_pending_approval();
+    app.open_approval(pending).await;
+
+    let outcome = app
+        .handle_approval_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 80)
+        .unwrap();
+    assert_eq!(outcome, ApprovalKeyOutcome::Resolved);
+    assert!(matches!(app.composer, ComposerMode::Input));
+    assert_eq!(
+        decision_rx.try_recv(),
+        Ok(ApprovalDecision::Deny {
+            reason: "cancelled by user".into()
+        })
+    );
+    // Esc during a turn becomes StreamControl::Interrupt in the event loop, so
+    // herdr stays blocked until report_resting_herdr_state at turn end.
 }
 
 #[cfg(unix)]
@@ -42,7 +130,7 @@ async fn resting_herdr_state_stays_blocked_when_auth_is_unavailable() {
     let socket_path = socket_dir.path().join("herdr.sock");
     let mut server = TestHerdrServer::bind(&socket_path).await;
     let mut bootstrap = test_bootstrap();
-    bootstrap.services.herdr = herdr_for_socket(&socket_path);
+    bootstrap.services.herdr = reporter_for_socket(&socket_path);
     bootstrap.services.auth_unavailable = Some("login required".into());
     let app = App::new(bootstrap);
 
@@ -54,46 +142,16 @@ async fn resting_herdr_state_stays_blocked_when_auth_is_unavailable() {
 }
 
 #[cfg(unix)]
-fn herdr_for_socket(socket_path: &Path) -> HerdrReporter {
-    let socket_path = socket_path.to_string_lossy().to_string();
-    HerdrReporter::from_env_vars(|key| match key {
-        "HERDR_ENV" => Some("1".into()),
-        "HERDR_SOCKET_PATH" => Some(socket_path.clone()),
-        "HERDR_PANE_ID" => Some("w1:p1".into()),
-        _ => None,
-    })
-}
-
-#[cfg(unix)]
-struct TestHerdrServer {
-    requests: tokio::sync::mpsc::UnboundedReceiver<Value>,
-}
-
-#[cfg(unix)]
-impl TestHerdrServer {
-    async fn bind(socket_path: &Path) -> Self {
-        let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
-        let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let mut stream = BufReader::new(stream);
-                    let mut line = String::new();
-                    stream.read_line(&mut line).await.unwrap();
-                    let request = serde_json::from_str(&line).unwrap();
-                    tx.send(request).unwrap();
-                    stream.get_mut().write_all(b"{}\n").await.unwrap();
-                });
-            }
-        });
-        Self { requests }
-    }
-
-    async fn next_request(&mut self) -> Value {
-        self.requests.recv().await.unwrap()
-    }
+fn test_pending_approval() -> (
+    PendingApproval,
+    tokio::sync::oneshot::Receiver<ApprovalDecision>,
+) {
+    PendingApproval::new(ApprovalRequest::new(
+        CapabilityRequest::write_path(
+            "src/main.rs",
+            PathScope::PrimaryWorkspace,
+            CapabilitySource::built_in_tool("bash"),
+        ),
+        "needs editing",
+    ))
 }

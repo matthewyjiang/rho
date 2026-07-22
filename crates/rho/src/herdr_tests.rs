@@ -1,7 +1,5 @@
 use super::{HerdrReporter, HerdrState};
-use serde_json::Value;
-use std::{collections::HashMap, path::Path};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::collections::HashMap;
 
 #[test]
 fn disabled_without_complete_herdr_environment() {
@@ -46,7 +44,7 @@ fn socket_reachability_connects_to_live_socket() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
     let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
-    let reporter = reporter_for_socket(&socket_path);
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
 
     assert_eq!(reporter.socket_is_reachable(), Some(true));
 }
@@ -57,7 +55,7 @@ fn socket_reachability_rejects_regular_file() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
     std::fs::write(&socket_path, "not a socket").unwrap();
-    let reporter = reporter_for_socket(&socket_path);
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
 
     assert_eq!(reporter.socket_is_reachable(), Some(false));
 }
@@ -67,8 +65,8 @@ fn socket_reachability_rejects_regular_file() {
 async fn report_state_sends_herdr_json_rpc_request() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
-    let server = TestHerdrServer::bind(&socket_path).await;
-    let reporter = reporter_for_socket(&socket_path);
+    let mut server = super::test_support::TestHerdrServer::bind(&socket_path).await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
 
     reporter
         .report_state(
@@ -94,8 +92,8 @@ async fn report_state_sends_herdr_json_rpc_request() {
 async fn report_session_sends_session_reference() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
-    let server = TestHerdrServer::bind(&socket_path).await;
-    let reporter = reporter_for_socket(&socket_path);
+    let mut server = super::test_support::TestHerdrServer::bind(&socket_path).await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
 
     reporter.report_session(Some("session-2")).await;
 
@@ -110,8 +108,8 @@ async fn report_session_sends_session_reference() {
 async fn release_sends_release_request() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
-    let server = TestHerdrServer::bind(&socket_path).await;
-    let reporter = reporter_for_socket(&socket_path);
+    let mut server = super::test_support::TestHerdrServer::bind(&socket_path).await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
 
     reporter.release().await;
 
@@ -120,49 +118,4 @@ async fn release_sends_release_request() {
     assert_eq!(request["params"]["pane_id"], "w1:p1");
     assert_eq!(request["params"]["agent"], "rho");
     assert!(request["params"].get("seq").is_none());
-}
-
-#[cfg(unix)]
-fn reporter_for_socket(socket_path: &Path) -> HerdrReporter {
-    let socket_path = socket_path.to_string_lossy().to_string();
-    HerdrReporter::from_env_vars(|key| match key {
-        "HERDR_ENV" => Some("1".into()),
-        "HERDR_SOCKET_PATH" => Some(socket_path.clone()),
-        "HERDR_PANE_ID" => Some("w1:p1".into()),
-        _ => None,
-    })
-}
-
-#[cfg(unix)]
-struct TestHerdrServer {
-    requests: tokio::sync::mpsc::UnboundedReceiver<Value>,
-}
-
-#[cfg(unix)]
-impl TestHerdrServer {
-    async fn bind(socket_path: &Path) -> Self {
-        let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
-        let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let mut stream = BufReader::new(stream);
-                    let mut line = String::new();
-                    stream.read_line(&mut line).await.unwrap();
-                    let request = serde_json::from_str(&line).unwrap();
-                    tx.send(request).unwrap();
-                    stream.get_mut().write_all(b"{}\n").await.unwrap();
-                });
-            }
-        });
-        Self { requests }
-    }
-
-    async fn next_request(mut self) -> Value {
-        self.requests.recv().await.unwrap()
-    }
 }

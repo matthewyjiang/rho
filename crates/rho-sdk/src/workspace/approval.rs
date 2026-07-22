@@ -33,8 +33,7 @@ pub struct ApprovalRequest {
 }
 
 impl ApprovalRequest {
-    #[cfg(test)]
-    pub(crate) fn new(capability: CapabilityRequest, reason: impl Into<String>) -> Self {
+    pub fn new(capability: CapabilityRequest, reason: impl Into<String>) -> Self {
         Self {
             capability,
             reason: reason.into(),
@@ -151,6 +150,18 @@ pub struct PendingApproval {
 }
 
 impl PendingApproval {
+    /// Build a pending approval for hosts and tests that drive the prompt directly.
+    pub fn new(request: ApprovalRequest) -> (Self, oneshot::Receiver<ApprovalDecision>) {
+        let (response, receiver) = oneshot::channel();
+        (
+            Self {
+                request,
+                response: Some(response),
+            },
+            receiver,
+        )
+    }
+
     fn is_live(&self) -> bool {
         self.response
             .as_ref()

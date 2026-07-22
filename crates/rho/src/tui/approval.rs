@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use rho_sdk::{ApprovalDecision, PendingApproval};
 
-use super::{App, ComposerMode};
+use super::{App, ComposerMode, HerdrUserWait};
 
 mod render;
 
@@ -11,6 +11,13 @@ pub(in crate::tui) use render::approval_lines;
 const APPROVAL_CHOICE_COUNT: usize = 3;
 const DENIED_BY_USER_REASON: &str = "denied by user";
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ApprovalKeyOutcome {
+    Ignored,
+    Handled,
+    Resolved,
+}
 
 #[derive(Debug)]
 pub(super) struct ApprovalComposer {
@@ -84,50 +91,62 @@ pub(super) fn approval_decision(active: usize) -> ApprovalDecision {
 }
 
 impl App {
-    pub(super) fn open_approval(&mut self, pending: PendingApproval) {
+    pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
         self.composer = ComposerMode::Approval(ApprovalComposer::new(pending));
         self.status = "approval requested".into();
+        self.report_herdr_waiting_for_user(HerdrUserWait::Approval)
+            .await;
     }
 
     pub(super) fn handle_approval_key(
         &mut self,
         key: KeyEvent,
         width: usize,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ApprovalKeyOutcome> {
         if !matches!(self.composer, ComposerMode::Approval(_)) {
-            return Ok(false);
+            return Ok(ApprovalKeyOutcome::Ignored);
         }
 
-        match key.code {
+        let outcome = match key.code {
             KeyCode::Left | KeyCode::Up => {
                 if let ComposerMode::Approval(approval) = &mut self.composer {
                     approval.move_previous();
                 }
+                ApprovalKeyOutcome::Handled
             }
             KeyCode::Right | KeyCode::Down => {
                 if let ComposerMode::Approval(approval) = &mut self.composer {
                     approval.move_next();
                 }
+                ApprovalKeyOutcome::Handled
             }
             KeyCode::PageUp => {
                 if let ComposerMode::Approval(approval) = &mut self.composer {
                     approval.scroll_details_up(width);
                 }
+                ApprovalKeyOutcome::Handled
             }
             KeyCode::PageDown => {
                 if let ComposerMode::Approval(approval) = &mut self.composer {
                     approval.scroll_details_down();
                 }
+                ApprovalKeyOutcome::Handled
             }
-            KeyCode::Enter => self.finish_approval(None),
-            KeyCode::Esc => self.finish_approval(Some(ApprovalDecision::Deny {
-                reason: CANCELLED_BY_USER_REASON.into(),
-            })),
-            _ => return Ok(true),
-        }
+            KeyCode::Enter => {
+                self.finish_approval(None);
+                ApprovalKeyOutcome::Resolved
+            }
+            KeyCode::Esc => {
+                self.finish_approval(Some(ApprovalDecision::Deny {
+                    reason: CANCELLED_BY_USER_REASON.into(),
+                }));
+                ApprovalKeyOutcome::Resolved
+            }
+            _ => ApprovalKeyOutcome::Handled,
+        };
         self.paste_burst.clear();
         self.ctrl_c_streak = 0;
-        Ok(true)
+        Ok(outcome)
     }
 
     pub(super) fn cancel_approval(&mut self) {

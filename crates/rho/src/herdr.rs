@@ -189,6 +189,58 @@ async fn send_payload(_socket_path: PathBuf, _payload: Vec<u8>) -> std::io::Resu
     Ok(())
 }
 
+#[cfg(all(test, unix))]
+pub(crate) mod test_support {
+    use std::path::Path;
+
+    use serde_json::Value;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::HerdrReporter;
+
+    pub(crate) fn reporter_for_socket(socket_path: &Path) -> HerdrReporter {
+        let socket_path = socket_path.to_string_lossy().to_string();
+        HerdrReporter::from_env_vars(|key| match key {
+            "HERDR_ENV" => Some("1".into()),
+            "HERDR_SOCKET_PATH" => Some(socket_path.clone()),
+            "HERDR_PANE_ID" => Some("w1:p1".into()),
+            _ => None,
+        })
+    }
+
+    pub(crate) struct TestHerdrServer {
+        requests: tokio::sync::mpsc::UnboundedReceiver<Value>,
+    }
+
+    impl TestHerdrServer {
+        pub(crate) async fn bind(socket_path: &Path) -> Self {
+            let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
+            let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((stream, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let mut stream = BufReader::new(stream);
+                        let mut line = String::new();
+                        stream.read_line(&mut line).await.unwrap();
+                        let request = serde_json::from_str(&line).unwrap();
+                        tx.send(request).unwrap();
+                        stream.get_mut().write_all(b"{}\n").await.unwrap();
+                    });
+                }
+            });
+            Self { requests }
+        }
+
+        pub(crate) async fn next_request(&mut self) -> Value {
+            self.requests.recv().await.unwrap()
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "herdr_tests.rs"]
 mod tests;
