@@ -11,8 +11,6 @@ use super::{
     UiPicker,
 };
 
-const PROMPT_PREVIEW_MAX_CHARS: usize = 500;
-
 pub(super) struct AgentModelView<'a> {
     provider: &'a str,
     model: &'a str,
@@ -51,7 +49,7 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         items,
         PickerAction::ViewAgent,
     )
-    .with_layout(PickerLayout::MasterDetail)
+    .with_layout(PickerLayout::NavigablePopup)
 }
 
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
@@ -116,14 +114,12 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
     };
     let prompt = match &definition.prompt {
         PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
-        PromptPolicy::Extend(text) => format!(
-            "extend system prompt\n\nPrompt extension preview\n{}",
-            prompt_preview(text)
-        ),
-        PromptPolicy::Replace(text) => format!(
-            "replace system prompt\n\nReplacement prompt preview\n{}",
-            prompt_preview(text)
-        ),
+        PromptPolicy::Extend(text) => {
+            format!("extend system prompt\n\nPrompt extension\n{text}")
+        }
+        PromptPolicy::Replace(text) => {
+            format!("replace system prompt\n\nReplacement prompt\n{text}")
+        }
     };
 
     let restrictions = if entry.metadata.origin == AgentOrigin::Internal {
@@ -136,19 +132,6 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{restrictions}",
         definition.description
     )
-}
-
-fn prompt_preview(prompt: &str) -> String {
-    let mut chars = prompt.chars();
-    let preview = chars
-        .by_ref()
-        .take(PROMPT_PREVIEW_MAX_CHARS)
-        .collect::<String>();
-    if chars.next().is_some() {
-        format!("{preview}\n… (preview truncated)")
-    } else {
-        preview
-    }
 }
 
 fn model_name(selection: &ModelSelection) -> String {

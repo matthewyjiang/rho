@@ -38,6 +38,7 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
+    pub(super) detail_scroll: usize,
     pub(super) confirm_verb: Option<String>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
@@ -71,7 +72,7 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerLayout {
     #[default]
     List,
-    MasterDetail,
+    NavigablePopup,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +122,7 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
+            detail_scroll: 0,
             confirm_verb: None,
             parent: None,
             matches: RefCell::default(),
@@ -130,6 +132,63 @@ impl UiPicker {
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
         self
+    }
+
+    pub(super) fn uses_navigable_popup(&self) -> bool {
+        matches!(self.layout, PickerLayout::NavigablePopup)
+    }
+
+    pub(super) fn reset_detail_scroll(&mut self) {
+        self.detail_scroll = 0;
+    }
+
+    pub(super) fn scroll_detail_by(&mut self, delta: isize) {
+        if delta < 0 {
+            self.detail_scroll = self.detail_scroll.saturating_sub(delta.unsigned_abs());
+        } else {
+            self.detail_scroll = self.detail_scroll.saturating_add(delta as usize);
+        }
+    }
+
+    pub(super) fn scroll_detail_home(&mut self) {
+        self.detail_scroll = 0;
+    }
+
+    pub(super) fn scroll_detail_end(&mut self) {
+        self.detail_scroll = usize::MAX;
+    }
+
+    pub(super) fn clamp_detail_scroll_for(&mut self, detail_width: usize, viewport_rows: usize) {
+        let detail = self.selected_detail();
+        let line_count =
+            super::navigable_popup::navigable_popup_detail_lines(detail, detail_width).len();
+        self.detail_scroll = super::navigable_popup::clamp_detail_scroll(
+            self.detail_scroll,
+            line_count,
+            viewport_rows,
+        );
+    }
+
+    pub(super) fn selected_detail(&self) -> &str {
+        self.selected_item()
+            .and_then(|item| item.detail.as_deref())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn navigable_popup_action_footer(&self) -> String {
+        let action = match self.action {
+            PickerAction::ViewAgent
+                if self
+                    .selected_item()
+                    .and_then(|item| item.badge.as_ref())
+                    .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
+            {
+                "Enter configure"
+            }
+            PickerAction::ViewAgent => "Enter close",
+            _ => "Enter select",
+        };
+        format!("{action} · Esc close")
     }
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
@@ -167,6 +226,7 @@ impl UiPicker {
             }
         };
         self.selected = next;
+        self.reset_detail_scroll();
     }
 
     pub(super) fn select_next(&mut self) {
@@ -182,16 +242,19 @@ impl UiPicker {
             matches[(position + 1) % matches.len()]
         };
         self.selected = next;
+        self.reset_detail_scroll();
     }
 
     pub(super) fn push_filter_char(&mut self, ch: char) {
         self.filter.push(ch);
         self.select_first_match();
+        self.reset_detail_scroll();
     }
 
     pub(super) fn pop_filter_char(&mut self) {
         self.filter.pop();
         self.select_first_match();
+        self.reset_detail_scroll();
     }
 
     pub(super) fn complete_filter(&mut self) {
@@ -379,6 +442,14 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
 }
 
 impl super::App {
+    pub(super) fn reset_navigable_popup_detail_scroll(&mut self) {
+        if let super::ComposerMode::Picker(picker) = &mut self.composer {
+            if picker.uses_navigable_popup() {
+                picker.reset_detail_scroll();
+            }
+        }
+    }
+
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {
         let previous = std::mem::replace(&mut self.composer, super::ComposerMode::Input);
         let super::ComposerMode::Picker(parent) = previous else {

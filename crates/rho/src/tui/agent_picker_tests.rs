@@ -3,7 +3,7 @@ use tempfile::TempDir;
 use {super::*, crate::config::Config};
 
 #[test]
-fn formats_agent_metadata_with_prompt_extension_preview() {
+fn formats_agent_metadata_with_prompt_extension() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     let directory = home.path().join(".rho/agents");
@@ -23,14 +23,15 @@ fn formats_agent_metadata_with_prompt_extension_preview() {
         .unwrap();
     let detail = item.detail.as_deref().unwrap();
 
-    assert_eq!(picker.layout, PickerLayout::MasterDetail);
+    assert_eq!(picker.layout, PickerLayout::NavigablePopup);
+    assert!(picker.uses_navigable_popup());
     assert!(detail.contains("Reviews releases before deployment."));
     assert!(detail.contains("~/.rho/agents"));
     assert!(detail.contains("require anthropic/claude-sonnet"));
     assert!(detail.contains("high"));
     assert!(detail.contains("bash, read_file"));
     assert!(detail.contains("extend system prompt"));
-    assert!(detail.contains("Prompt extension preview"));
+    assert!(detail.contains("Prompt extension"));
     assert!(detail.contains("SECRET PROMPT BODY"));
 }
 
@@ -124,15 +125,4 @@ fn unavailable_internal_agent_override_keeps_conversation_choice_selectable() {
         picker.selected_item().unwrap().value,
         crate::tui::model_picker::USE_CONVERSATION_MODEL
     );
-}
-
-#[test]
-fn truncates_long_prompt_previews_at_character_boundaries() {
-    let prompt = format!("{}suffix", "🦀".repeat(PROMPT_PREVIEW_MAX_CHARS));
-
-    let preview = prompt_preview(&prompt);
-
-    assert_eq!(preview.matches('🦀').count(), PROMPT_PREVIEW_MAX_CHARS);
-    assert!(preview.ends_with("\n… (preview truncated)"));
-    assert!(!preview.contains("suffix"));
 }

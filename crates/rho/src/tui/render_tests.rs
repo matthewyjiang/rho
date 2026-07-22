@@ -112,114 +112,33 @@ fn narrow_picker_rows_do_not_exceed_width() {
 }
 
 #[test]
-fn master_detail_picker_renders_selected_detail_in_two_columns() {
+fn list_picker_height_stays_stable_when_selected_detail_is_missing() {
     let mut picker = UiPicker::new(
-        "agents",
-        "enter close",
+        "models",
+        "enter confirm",
         vec![
             PickerItem {
-                label: "explorer".into(),
-                detail: Some("Description\nread-only investigation".into()),
+                label: "plain".into(),
+                detail: None,
                 preview: None,
                 badge: None,
-                value: "explorer".into(),
+                value: "plain".into(),
             },
             PickerItem {
-                label: "worker".into(),
-                detail: Some("Description\nimplementation work".into()),
+                label: "detailed".into(),
+                detail: Some("extra context".into()),
                 preview: None,
                 badge: None,
-                value: "worker".into(),
+                value: "detailed".into(),
             },
         ],
-        crate::tui::PickerAction::ViewAgent,
-    )
-    .with_layout(crate::tui::PickerLayout::MasterDetail);
+        crate::tui::PickerAction::SelectModel,
+    );
 
-    let first = picker_lines(&picker, 80)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let first_height = picker_lines(&picker, 80).len();
     picker.select_next();
-    let second = picker_lines(&picker, 80)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>()
-        .join("\n");
 
-    assert!(first.contains("│ Description"));
-    assert!(first.contains("read-only investigation"));
-    assert!(!first.contains("implementation work"));
-    assert!(second.contains("implementation work"));
-    assert!(!second.contains("read-only investigation"));
-}
-
-#[test]
-fn master_detail_picker_stacks_details_at_narrow_widths() {
-    let picker = UiPicker::new(
-        "agents",
-        "enter close",
-        vec![PickerItem {
-            label: "explorer".into(),
-            detail: Some("Description\nread-only investigation across many files".into()),
-            preview: None,
-            badge: None,
-            value: "explorer".into(),
-        }],
-        crate::tui::PickerAction::ViewAgent,
-    )
-    .with_layout(crate::tui::PickerLayout::MasterDetail);
-
-    let lines = picker_lines(&picker, 30);
-    let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
-
-    assert!(!text.contains('│'));
-    assert!(text.contains("Description"));
-    assert!(lines
-        .iter()
-        .all(|line| display_width(&line_text(line)) <= 30));
-}
-
-#[test]
-fn narrow_master_detail_picker_keeps_selected_detail_above_long_list() {
-    let items = (0..16)
-        .map(|index| PickerItem {
-            label: format!("agent-{index:02}"),
-            detail: Some(format!(
-                "Description\nagent {index:02} handles investigation across many files and subsystems"
-            )),
-            preview: None,
-            badge: None,
-            value: format!("agent-{index:02}"),
-        })
-        .collect();
-    let mut picker = UiPicker::new(
-        "agents",
-        "enter close",
-        items,
-        crate::tui::PickerAction::ViewAgent,
-    )
-    .with_layout(crate::tui::PickerLayout::MasterDetail);
-    for _ in 0..15 {
-        picker.select_next();
-    }
-
-    let lines = picker_lines(&picker, 30)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>();
-    let detail_row = lines
-        .iter()
-        .position(|line| line.contains("agent 15 handles"))
-        .unwrap();
-    let selected_row = lines
-        .iter()
-        .position(|line| line.contains("agent-15"))
-        .unwrap();
-
-    assert!(detail_row < selected_row, "{lines:#?}");
-    assert!(detail_row < MAX_PICKER_ITEMS, "{lines:#?}");
+    assert_eq!(picker_lines(&picker, 80).len(), first_height);
 }
 
 #[test]

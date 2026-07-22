@@ -2,6 +2,7 @@
 
 mod config;
 mod goal;
+mod pickers;
 mod runtime_info;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
@@ -9,6 +10,7 @@ use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
 
@@ -113,9 +115,9 @@ const DEFAULT_SIZE: PtySize = PtySize {
     cols: 100,
 };
 
-const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
+pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
-const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
+pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 
 const STARTUP_STREAM_EXIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -584,57 +586,6 @@ const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("/model"),
-    Step::WaitText {
-        text: "select model",
-        timeout: STARTUP,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("/agents"),
-    Step::WaitText {
-        text: "goal-judge",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Internal agent that evaluates goal completion"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "Use conversation model",
-        timeout: SETTLE,
-    },
-    Step::AssertText("select model for goal-judge"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "goal-judge",
-        timeout: SETTLE,
-    },
-    Step::Resize { rows: 32, cols: 50 },
-    Step::WaitText {
-        text: "Internal agent that evaluates",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::ExitCommand,
-];
-
 const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Phase("open_group_picker"),
     Step::WaitText {
@@ -883,7 +834,8 @@ pub fn all_scenarios() -> &'static [Scenario] {
         },
         Scenario {
             id: "open_agents_picker",
-            description: "Browse agent metadata and adapt the picker to a narrow terminal",
+            description:
+                "Browse agent metadata in a navigable popup and scroll hidden detail into view",
             size: DEFAULT_SIZE,
             steps: OPEN_AGENTS_PICKER_STEPS,
             smoke: false,
