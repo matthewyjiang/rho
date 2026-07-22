@@ -200,7 +200,8 @@ async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/big");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = [super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::fetch::fetch_url_text(&client, &url, &loopback).await;
     server.join().unwrap();
 
     let content = result.expect("truncated fetch of valid UTF-8 must not fail");
@@ -239,7 +240,8 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/small");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = [super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::fetch::fetch_url_text(&client, &url, &loopback).await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
@@ -277,8 +279,21 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/exact-cap");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = [super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::fetch::fetch_url_text(&client, &url, &loopback).await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
+}
+
+#[tokio::test]
+async fn fetch_url_text_blocks_loopback_by_default() {
+    let client = reqwest::Client::new();
+    let error = super::fetch::fetch_url_text(&client, "http://127.0.0.1:9/", &[])
+        .await
+        .expect_err("loopback must be refused");
+    assert!(
+        error.to_string().contains("blocked"),
+        "unexpected error: {error}"
+    );
 }

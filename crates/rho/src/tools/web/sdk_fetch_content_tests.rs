@@ -57,6 +57,15 @@ async fn run_fetch(
     policy: impl WorkspacePolicy + 'static,
     arguments: serde_json::Value,
 ) -> ToolCompletion {
+    run_fetch_with_tool(workspace, policy, arguments, SdkFetchContent::new(12_000)).await
+}
+
+async fn run_fetch_with_tool(
+    workspace: Workspace,
+    policy: impl WorkspacePolicy + 'static,
+    arguments: serde_json::Value,
+    tool: SdkFetchContent,
+) -> ToolCompletion {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
         [
@@ -76,7 +85,7 @@ async fn run_fetch(
         .provider(provider)
         .workspace(workspace)
         .workspace_policy(policy)
-        .tool(SdkFetchContent::new(12_000))
+        .tool(tool)
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
@@ -268,11 +277,16 @@ async fn authorized_http_target_executes_the_authorized_url() {
     let policy = RecordingPolicy::new(ScopedWorkspacePolicy::new().allow_network_host("127.0.0.1"));
     let root = tempfile::tempdir().unwrap();
     let url = format!("http://{address}/article");
+    let tool = SdkFetchContent::with_allow_ranges(
+        12_000,
+        vec![super::super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()],
+    );
 
-    let completion = run_fetch(
+    let completion = run_fetch_with_tool(
         Workspace::new(root.path()).unwrap(),
         policy.clone(),
         json!({"urls": [&url]}),
+        tool,
     )
     .await;
     server.join().unwrap();

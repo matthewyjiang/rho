@@ -28,6 +28,7 @@ const FETCH_CONTENT_TOOL: &str = "fetch_content";
 pub(in crate::tools) struct SdkFetchContent {
     client: reqwest::Client,
     max_output_bytes: usize,
+    allow_ranges: Vec<super::ssrf::Cidr>,
 }
 
 impl SdkFetchContent {
@@ -35,6 +36,19 @@ impl SdkFetchContent {
         Self {
             client: util::fetch_http_client(),
             max_output_bytes,
+            allow_ranges: super::ssrf::allow_ranges_from_env(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_allow_ranges(
+        max_output_bytes: usize,
+        allow_ranges: Vec<super::ssrf::Cidr>,
+    ) -> Self {
+        Self {
+            client: util::fetch_http_client(),
+            max_output_bytes,
+            allow_ranges,
         }
     }
 }
@@ -164,12 +178,13 @@ impl FetchPlan {
         client: &reqwest::Client,
         context: &ToolContext,
         max_output_bytes: usize,
+        allow_ranges: &[super::ssrf::Cidr],
     ) -> Result<ToolOutput, ToolError> {
         let mut items = Vec::with_capacity(self.targets.len());
         let mut previews = Vec::with_capacity(self.targets.len());
         for target in self.targets {
             let requested = target.requested().to_owned();
-            let fetched = target.execute(client, context).await?;
+            let fetched = target.execute(client, context, allow_ranges).await?;
             previews.push(fetched.preview.clone());
             items.push(StoredItem {
                 url: Some(requested),
@@ -319,6 +334,7 @@ impl TargetPlan {
         self,
         client: &reqwest::Client,
         context: &ToolContext,
+        allow_ranges: &[super::ssrf::Cidr],
     ) -> Result<FetchedTarget, ToolError> {
         match self {
             Self::Local(plan) => {
@@ -339,9 +355,11 @@ impl TargetPlan {
                 )
                 .map_err(map_app_tool_error)
             }
-            Self::Http(plan) => fetch::fetch_http_url(client, &plan.url, plan.prompt.as_deref())
-                .await
-                .map_err(map_app_tool_error),
+            Self::Http(plan) => {
+                fetch::fetch_http_url(client, &plan.url, plan.prompt.as_deref(), allow_ranges)
+                    .await
+                    .map_err(map_app_tool_error)
+            }
             Self::Placeholder(plan) => Ok(match plan.kind {
                 PlaceholderKind::YouTube => fetch::youtube_placeholder(
                     &plan.requested,
@@ -395,8 +413,13 @@ impl Tool for SdkFetchContent {
             let plan =
                 FetchPlan::parse(invocation.into_arguments(), &context, self.max_output_bytes)?;
             plan.authorize(&context).await?;
-            plan.execute(&self.client, &context, self.max_output_bytes)
-                .await
+            plan.execute(
+                &self.client,
+                &context,
+                self.max_output_bytes,
+                &self.allow_ranges,
+            )
+            .await
         })
     }
 }

@@ -24,8 +24,9 @@ pub(super) async fn fetch_http_url(
     client: &reqwest::Client,
     url: &Url,
     prompt: Option<&str>,
+    allow_ranges: &[super::ssrf::Cidr],
 ) -> Result<FetchedTarget, ToolError> {
-    let content = fetch_url_text(client, url.as_str()).await?;
+    let content = fetch_url_text(client, url.as_str(), allow_ranges).await?;
     let title = extract_title(&content);
     let markdown = html_to_text(&content);
     Ok(FetchedTarget {
@@ -44,20 +45,25 @@ pub(super) async fn fetch_http_url(
 pub(super) async fn fetch_url_text(
     client: &reqwest::Client,
     url: &str,
+    allow_ranges: &[super::ssrf::Cidr],
 ) -> Result<String, ToolError> {
-    fetch_url_text_with_auth(client, url, None).await
+    fetch_url_text_with_auth(client, url, None, allow_ranges).await
 }
 
 async fn fetch_url_text_with_auth(
     client: &reqwest::Client,
     url: &str,
     bearer_token: Option<&str>,
+    allow_ranges: &[super::ssrf::Cidr],
 ) -> Result<String, ToolError> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(ToolError::Message(
             "only http and https URLs are supported".into(),
         ));
     }
+    // Resolve and reject private/loopback targets before connecting. Redirects
+    // are disabled on the fetch client, so this single check is the full guard.
+    super::ssrf::ensure_public_url(url, allow_ranges).await?;
     let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);

@@ -165,7 +165,7 @@ pub(super) async fn item_content(
     let Some(url) = item.url.as_deref() else {
         return (item.snippet.clone(), "snippet");
     };
-    match fetch_url_text(client, url).await {
+    match fetch_url_text(client, url, &super::ssrf::allow_ranges_from_env()).await {
         Ok(content) => (content, "source_page"),
         Err(err) => {
             let warning = format!("content fetch failed for {url}: {err}");
