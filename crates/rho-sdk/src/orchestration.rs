@@ -306,7 +306,9 @@ async fn maybe_compact(
         }
     };
     let (replacement, usage) = output.into_parts();
-    let outcome = core.commit_compaction(previous, replacement.clone(), usage)?;
+    let outcome = core
+        .commit_compaction(previous, replacement.clone(), usage)?
+        .with_committed_snapshot(core.persistence_snapshot());
     *history = replacement;
     emit(
         events,

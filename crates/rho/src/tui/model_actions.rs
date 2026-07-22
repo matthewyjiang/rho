@@ -244,6 +244,9 @@ impl App {
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
+            PickerAction::SelectTreeNode => {
+                self.submit_tree_selection(&value, terminal, agent).await
+            }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::ViewAgent => {
                 if !self.open_selected_internal_agent_model_picker(&value) {
@@ -350,6 +353,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode
             | PickerAction::Config
             | PickerAction::Doctor => return Ok(()),
         };
@@ -410,6 +414,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode
             | PickerAction::Config
             | PickerAction::Doctor => return None,
         };

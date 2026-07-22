@@ -21,6 +21,10 @@ mod snapshot_store;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+pub(crate) mod tree;
+#[cfg(test)]
+#[path = "session_tree_tests.rs"]
+mod tree_tests;
 #[cfg(test)]
 #[path = "session_version_tests.rs"]
 mod version_tests;
@@ -86,6 +90,10 @@ pub(super) struct SessionIndexRecord {
     pub(super) summary: SessionSummary,
     pub(super) file_size: Option<i64>,
     pub(super) file_mtime: Option<i64>,
+    pub(super) node_count: u64,
+    pub(super) branch_count: u64,
+    pub(super) active_leaf_id: Option<String>,
+    pub(super) effective_format_version: u32,
 }
 
 impl Session {
@@ -120,6 +128,15 @@ impl Session {
         ))
     }
 
+    pub(crate) fn tree_facts_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<tree::SessionTreeFacts> {
+        let store = SessionStore::new(&session_root()?, cwd);
+        let resolved = store.resolve(id_prefix)?;
+        Ok(resolved.tree()?.facts())
+    }
+
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
         Self::export_by_id_in_root(&session_root()?, cwd, id_prefix)
     }
@@ -131,7 +148,7 @@ impl Session {
     ) -> anyhow::Result<SessionExport> {
         let store = SessionStore::new(session_root, cwd);
         let resolved = store.resolve(id_prefix)?;
-        let record = resolved.summary(cwd)?;
+        let (record, tree) = resolved.summary_with_tree(cwd)?;
         let title = Self::list_in_root(session_root, cwd)
             .ok()
             .and_then(|summaries| {
@@ -141,8 +158,10 @@ impl Session {
                     .and_then(|summary| summary.title)
             });
 
-        let state = resolved.state()?;
-        let mut messages = state.display;
+        let mut messages = match tree.active_leaf_id() {
+            Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
+            None => Vec::new(),
+        };
         let complete_len = drop_incomplete_tool_turn_tail(
             messages.iter().map(|entry| entry.message.clone()).collect(),
         )

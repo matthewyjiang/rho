@@ -36,9 +36,19 @@ Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` ope
 
 After you send at least one message, Rho restores your shell view on exit and prints a short saved-session summary plus a resume command that you can paste later.
 
-## Auto compaction and transcript history
+## Conversation trees
 
-When [auto compaction](/configuration#auto-compaction) is enabled, Rho can append a replacement-history entry that summarizes older model context for future requests and resume. The original message entries remain in the session file for transcript reconstruction. Auto compaction is not a privacy or deletion feature.
+Each saved session is an append-only tree of completed conversation states. Use `/tree` to select any valid turn or compaction state in the current session. Press `up` or `down` to move, type to filter, press `enter` to restore, or press `escape` to cancel. Continuing after you restore an earlier state creates a branch without deleting the path you left. `/info` shows the active leaf ID, node count, and branch count.
+
+Navigation restores conversation and model state only. It does not undo file edits, shell commands, network requests, or any other tool side effects. `/export` renders the active path. The resume picker still shows one row for the whole session, and deleting a session deletes all its branches.
+
+## Compaction and transcript history
+
+Manual and automatic compactions are durable tree states. A compaction node stores the exact model context after summary generation succeeds, while its parent keeps the exact pre-compaction state. The visible transcript keeps the original user, assistant, and tool messages. Selecting the parent lets you continue without that compaction; descendants of the compaction always include it.
+
+Session files use format version 4 for new trees. Rho reads version 1, 2, and 3 files as a single legacy path without rewriting them. The first tree change appends an upgrade record and leaves old bytes unchanged. Older Rho versions cannot resume a session after version 4 records have been appended.
+
+Auto compaction is not a privacy or deletion feature.
 
 ## Resetting history
 

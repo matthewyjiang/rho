@@ -7,6 +7,7 @@ pub enum CommandId {
     Logout,
     Model,
     Resume,
+    Tree,
     Config,
     Info,
     Compact,
@@ -97,6 +98,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "resume",
         usage: "/resume [id]",
         description: "resume a saved session",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Tree,
+        name: "tree",
+        usage: "/tree",
+        description: "navigate this session's conversation tree",
         argument_choices: &[],
     },
     CommandSpec {

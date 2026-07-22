@@ -48,11 +48,25 @@ pub(super) struct RuntimeInfo {
     latest_usage: Option<ModelUsage>,
     context_usage: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
+    tree: Option<crate::session::tree::SessionTreeFacts>,
+    tree_error: Option<String>,
 }
 
 impl App {
     pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
+        let (tree, tree_error) = match self.info.session.session_id.as_deref() {
+            Some(_) if self.running => (
+                None,
+                Some("tree facts are available after the current model turn".into()),
+            ),
+            Some(id) => match crate::session::Session::tree_facts_by_id(&self.info.runtime.cwd, id)
+            {
+                Ok(facts) => (Some(facts), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+            None => (None, None),
+        };
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
             provider: identity.provider.to_string(),
@@ -70,6 +84,8 @@ impl App {
             latest_usage: self.latest_usage.clone(),
             context_usage: self.current_context.clone(),
             model_metadata: self.model_metadata.clone(),
+            tree,
+            tree_error,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.status = "runtime info".into();
@@ -87,6 +103,22 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_field("Reasoning", &info.reasoning);
     block.push_field("Permissions", &info.permission_mode);
     block.push_field("Billing", info.billing.description());
+
+    block.push_section("Session");
+    if let Some(tree) = &info.tree {
+        block.push_field(
+            "Active leaf",
+            tree.active_leaf_id
+                .as_ref()
+                .map_or("none", |id| id.as_str()),
+        );
+        block.push_field("Nodes", &tree.node_count.to_string());
+        block.push_field("Branches", &tree.branch_count.to_string());
+    } else if let Some(error) = &info.tree_error {
+        block.push_note(&format!("Session tree unavailable: {error}"));
+    } else {
+        block.push_note("No durable conversation state yet.");
+    }
 
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
