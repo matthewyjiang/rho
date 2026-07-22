@@ -82,16 +82,23 @@ impl ProcessManager {
     /// Starts a process from an already authorized execution plan.
     pub async fn start_execution(&self, execution: ProcessExecution) -> Result<Snapshot, String> {
         self.prune();
-        let command = execution
-            .invocation()
-            .shell_command()
-            .ok_or_else(|| "process manager requires a shell invocation".to_string())?
-            .to_string();
+        // Build the spawn plan before registering a live record so setup failures
+        // cannot leave a Starting entry with no completion.
+        let command = record_command(execution.invocation())?;
+        let mut cmd = command_from_execution(&execution)?;
+        cmd.current_dir(execution.working_directory())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
+        let timeout = execution.output_limits().timeout();
+
         let id = Uuid::new_v4().to_string();
         let notify = Arc::new(Notify::new());
         let rec = Arc::new(Mutex::new(Record {
             id: id.clone(),
-            command: command.clone(),
+            command,
             state: State::Starting,
             started: Instant::now(),
             completed: None,
@@ -116,14 +123,6 @@ impl ProcessManager {
             }
             inner.records.insert(id.clone(), rec.clone());
         }
-        let mut cmd = command_from_execution(&execution)?;
-        cmd.current_dir(execution.working_directory())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
-        let timeout = execution.output_limits().timeout();
         match cmd.spawn() {
             Ok(mut child) => {
                 let tree = match ProcessTree::attach(&child) {
@@ -281,6 +280,27 @@ impl ProcessManager {
                 i.records.remove(&k);
             }
         }
+    }
+}
+
+fn record_command(invocation: &ProcessInvocation) -> Result<String, String> {
+    if let Some(command) = invocation.shell_command() {
+        return Ok(command.to_string());
+    }
+    match invocation {
+        ProcessInvocation::Executable {
+            executable,
+            arguments,
+            ..
+        } => {
+            let mut label = executable.display().to_string();
+            for argument in arguments {
+                label.push(' ');
+                label.push_str(argument);
+            }
+            Ok(label)
+        }
+        _ => Err("unsupported process invocation".into()),
     }
 }
 
