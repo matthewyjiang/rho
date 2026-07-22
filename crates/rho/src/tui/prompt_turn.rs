@@ -142,15 +142,7 @@ impl App {
         self.status = "running".into();
         self.running = true;
         self.activity_phase = ActivityPhase::Starting;
-        self.info
-            .services
-            .herdr
-            .report_state(
-                HerdrState::Working,
-                None,
-                self.info.session.session_id.as_deref(),
-            )
-            .await;
+        self.report_herdr_working().await;
         self.loading_spinner.start();
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
@@ -206,6 +198,8 @@ impl App {
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                    let awaiting_approval =
+                        matches!(self.composer, ComposerMode::Approval(_));
                     match self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
@@ -213,8 +207,23 @@ impl App {
                         &tool_call_active,
                         RunningInputMode::Turn,
                     ) {
-                        Ok(StreamControl::Interrupt) => agent.cancel(),
-                        Ok(StreamControl::Continue | StreamControl::Resize) => {}
+                        Ok(control) => {
+                            if awaiting_approval
+                                && !matches!(self.composer, ComposerMode::Approval(_))
+                                && matches!(
+                                    control,
+                                    StreamControl::Continue | StreamControl::Resize
+                                )
+                                && self.running
+                            {
+                                // Approval resolved without cancelling the turn.
+                                self.report_herdr_working().await;
+                            }
+                            match control {
+                                StreamControl::Interrupt => agent.cancel(),
+                                StreamControl::Continue | StreamControl::Resize => {}
+                            }
+                        }
                         Err(error) => {
                             sdk_failure = Some(error.to_string());
                             agent.cancel();
@@ -248,6 +257,8 @@ impl App {
                     };
                     match reply {
                         QuestionnaireReply::Answer(response) => {
+                            // Resume working once the user answered.
+                            self.report_herdr_working().await;
                             if let Err(error) = agent
                                 .respond(request_id, event_adapter::host_response(response))
                                 .await
@@ -277,6 +288,8 @@ impl App {
                         RuntimeEvent::Approval(pending) => {
                             self.finish_streams();
                             self.open_approval(pending);
+                            self.report_herdr_waiting_for_user("waiting for approval")
+                                .await;
                             self.draw_running_frame(terminal, &mut frame_scheduler)?;
                             continue;
                         }
@@ -318,6 +331,8 @@ impl App {
                                     },
                                     terminal,
                                 )?;
+                                self.report_herdr_waiting_for_user("waiting for your answers")
+                                    .await;
                                 pending_questionnaire = Some((call_id, request_id, reply_rx));
                                 interaction_ready = true;
                             } else {
@@ -361,6 +376,8 @@ impl App {
                         },
                         terminal,
                     )?;
+                    self.report_herdr_waiting_for_user("waiting for your answers")
+                        .await;
                     pending_questionnaire = Some((call_id, request_id, reply_rx));
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }

@@ -1898,6 +1898,23 @@ impl App {
         Ok(())
     }
 
+    async fn report_herdr_state(&self, state: HerdrState, message: Option<&str>) {
+        self.info
+            .services
+            .herdr
+            .report_state(state, message, self.info.session.session_id.as_deref())
+            .await;
+    }
+
+    async fn report_herdr_working(&self) {
+        self.report_herdr_state(HerdrState::Working, None).await;
+    }
+
+    async fn report_herdr_waiting_for_user(&self, message: &str) {
+        self.report_herdr_state(HerdrState::Blocked, Some(message))
+            .await;
+    }
+
     async fn report_resting_herdr_state(&self) {
         let goal_blocked_reason = self
             .goal
@@ -1915,11 +1932,7 @@ impl App {
         } else {
             HerdrState::Idle
         };
-        self.info
-            .services
-            .herdr
-            .report_state(state, message, self.info.session.session_id.as_deref())
-            .await;
+        self.report_herdr_state(state, message).await;
     }
 
     fn paste_clipboard_image(&mut self) {
@@ -3710,6 +3723,8 @@ mod tests {
 
     #[path = "activity_phase_tests.rs"]
     mod activity_phase_tests;
+    #[path = "herdr_state_tests.rs"]
+    mod herdr_state_tests;
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
     #[path = "layout_tests.rs"]

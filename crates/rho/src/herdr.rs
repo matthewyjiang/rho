@@ -42,7 +42,7 @@ impl HerdrReporter {
         Self::from_env_vars(|key| env::var(key).ok())
     }
 
-    fn from_env_vars(mut get_var: impl FnMut(&str) -> Option<String>) -> Self {
+    pub(crate) fn from_env_vars(mut get_var: impl FnMut(&str) -> Option<String>) -> Self {
         let enabled = platform_supported() && get_var("HERDR_ENV").as_deref() == Some("1");
         let socket_path = get_var("HERDR_SOCKET_PATH").filter(|value| !value.is_empty());
         let pane_id = get_var("HERDR_PANE_ID").filter(|value| !value.is_empty());
