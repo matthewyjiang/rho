@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.6.0...rho-providers-v0.7.0) (2026-07-22)
+
+
+### Features
+
+* **providers:** add Poolside API platform ([#483](https://github.com/matthewyjiang/rho/issues/483)) ([4684de7](https://github.com/matthewyjiang/rho/commit/4684de700f4312a90fa6d3173343a1dcfe7ef44d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.0 to 1.7.1
+
 ## [0.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.5.0...rho-providers-v0.6.0) (2026-07-22)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.0...rho-sdk-v1.7.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **sdk:** serialize identical concurrent approval requests to prompt once ([#469](https://github.com/matthewyjiang/rho/issues/469)) ([45b2b0a](https://github.com/matthewyjiang/rho/commit/45b2b0a34fd3a2482f515a4a4e613fd18ffa103f))
+
 ## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.6.0...rho-sdk-v1.7.0) (2026-07-22)
 
 
