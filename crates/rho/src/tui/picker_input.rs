@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_layout, DetailViewport},
+    picker_overlay::{picker_overlay_body, picker_overlay_layout, DetailViewport, OverlayBody},
     App, InteractiveRuntime, UiPicker,
 };
 
@@ -15,15 +15,34 @@ enum PickerKeyEffect {
     ToggleFavorite,
 }
 
-fn overlay_detail_viewport(terminal: &DefaultTerminal) -> Option<DetailViewport> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayKeyViewport {
+    Detail(DetailViewport),
+    Nav { rows: usize },
+}
+
+fn overlay_key_viewport(
+    picker: &UiPicker,
+    terminal: &DefaultTerminal,
+) -> Option<OverlayKeyViewport> {
+    if !picker.is_overlay() {
+        return None;
+    }
     let size = terminal.size().ok()?;
-    Some(picker_overlay_layout(Rect::new(0, 0, size.width, size.height)).detail_viewport())
+    let body = picker_overlay_body(picker);
+    let layout = picker_overlay_layout(Rect::new(0, 0, size.width, size.height), body);
+    Some(match body {
+        OverlayBody::NavAndDetail => OverlayKeyViewport::Detail(layout.detail_viewport()),
+        OverlayBody::NavOnly => OverlayKeyViewport::Nav {
+            rows: layout.nav_viewport_rows.max(1),
+        },
+    })
 }
 
 fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
-    viewport: Option<DetailViewport>,
+    viewport: Option<OverlayKeyViewport>,
     model_picker_open: bool,
     space_confirms: bool,
 ) -> PickerKeyEffect {
@@ -37,24 +56,44 @@ fn apply_picker_key(
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageUp) => {
-            if let Some(viewport) = viewport {
-                picker.scroll_detail_page(-1, viewport);
+            match viewport {
+                Some(OverlayKeyViewport::Detail(viewport)) => {
+                    picker.scroll_detail_page(-1, viewport);
+                }
+                Some(OverlayKeyViewport::Nav { rows }) => {
+                    picker.select_by_offset(-(rows as isize));
+                }
+                None => {}
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageDown) => {
-            if let Some(viewport) = viewport {
-                picker.scroll_detail_page(1, viewport);
+            match viewport {
+                Some(OverlayKeyViewport::Detail(viewport)) => {
+                    picker.scroll_detail_page(1, viewport);
+                }
+                Some(OverlayKeyViewport::Nav { rows }) => {
+                    picker.select_by_offset(rows as isize);
+                }
+                None => {}
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Home) => {
-            picker.scroll_detail_home();
+            match viewport {
+                Some(OverlayKeyViewport::Detail(_)) => picker.scroll_detail_home(),
+                Some(OverlayKeyViewport::Nav { .. }) => picker.select_first_match(),
+                None => {}
+            }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::End) => {
-            if let Some(viewport) = viewport {
-                picker.scroll_detail_end(viewport);
+            match viewport {
+                Some(OverlayKeyViewport::Detail(viewport)) => {
+                    picker.scroll_detail_end(viewport);
+                }
+                Some(OverlayKeyViewport::Nav { .. }) => picker.select_last_match(),
+                None => {}
             }
             PickerKeyEffect::Handled
         }
@@ -93,7 +132,12 @@ impl App {
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
-        let viewport = overlay_detail_viewport(terminal);
+        let viewport = {
+            let super::ComposerMode::Picker(picker) = &self.composer else {
+                return Ok(false);
+            };
+            overlay_key_viewport(picker, terminal)
+        };
         let effect = {
             let super::ComposerMode::Picker(picker) = &mut self.composer else {
                 return Ok(false);
@@ -140,7 +184,12 @@ impl App {
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
-        let viewport = overlay_detail_viewport(terminal);
+        let viewport = {
+            let super::ComposerMode::Picker(picker) = &self.composer else {
+                return Ok(false);
+            };
+            overlay_key_viewport(picker, terminal)
+        };
         let effect = {
             let super::ComposerMode::Picker(picker) = &mut self.composer else {
                 return Ok(false);

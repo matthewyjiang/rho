@@ -55,7 +55,7 @@ fn long_detail() -> String {
 
 #[test]
 fn tiny_stacked_layout_keeps_viewports_within_the_body() {
-    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1));
+    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1), OverlayBody::NavAndDetail);
 
     assert_eq!(layout.orientation, OverlayOrientation::Stacked);
     assert!(layout.detail_viewport_rows + layout.nav_viewport_rows <= layout.body_rows);
@@ -65,7 +65,7 @@ fn tiny_stacked_layout_keeps_viewports_within_the_body() {
 #[test]
 fn popup_uses_most_of_the_terminal_and_stays_centered() {
     let area = Rect::new(0, 0, 100, 40);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, OverlayBody::NavAndDetail);
     let outer = layout.outer;
 
     assert!(outer.width >= 90);
@@ -77,7 +77,7 @@ fn popup_uses_most_of_the_terminal_and_stays_centered() {
 #[test]
 fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
     let area = Rect::new(0, 0, 80, 24);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, OverlayBody::NavAndDetail);
     let mut picker = sample_picker(
         "Description\nread-only investigation\n\nTools\nlist_dir, read_file",
         "Description\nimplementation work",
@@ -143,7 +143,7 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
 #[test]
 fn stacked_layout_places_detail_above_navigation() {
     let area = Rect::new(0, 0, 48, 24);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, OverlayBody::NavAndDetail);
     let picker = sample_picker(
         "Description\nread-only investigation across many files",
         "Description\nimplementation work",
@@ -165,9 +165,46 @@ fn stacked_layout_places_detail_above_navigation() {
 }
 
 #[test]
+fn list_only_layout_uses_full_width_navigation() {
+    let area = Rect::new(0, 0, 80, 24);
+    let layout = picker_overlay_layout(area, OverlayBody::NavOnly);
+    let mut picker = sample_picker(
+        "Description\nread-only investigation",
+        "Description\nimplementation work",
+    );
+    picker.layout = PickerLayout::OverlayList;
+    picker.overlay_chrome = Some(OverlayChrome {
+        nav_label: " TREE".into(),
+        detail_label: String::new(),
+        nav_keys_hint: "↑↓ turns".into(),
+    });
+    let frame = render_picker_overlay(&picker, area);
+    let text = frame
+        .lines
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(layout.orientation, OverlayOrientation::ListOnly);
+    assert_eq!(layout.nav_width, layout.inner_width);
+    assert_eq!(layout.detail_viewport_rows, 0);
+    assert_eq!(layout.nav_viewport_rows, layout.body_rows);
+    assert!(text.contains(" TREE"));
+    assert!(text.contains("explorer"));
+    assert!(text.contains("worker"));
+    assert!(!text.contains(" DETAILS"));
+    assert!(!text.contains("read-only investigation"));
+    assert!(!text.contains(" │ "));
+    assert!(!text.contains("PgUp/PgDn details"));
+    assert!(text.contains("PgUp/PgDn"));
+    assert!(text.contains("↑↓ turns"));
+}
+
+#[test]
 fn detail_scroll_reveals_content_below_the_viewport() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, OverlayBody::NavAndDetail);
     let mut picker = sample_picker(&long_detail(), "other");
     let hidden_index = layout.detail_viewport_rows.saturating_add(5);
     let hidden_marker = format!("detail line {hidden_index:02}");
@@ -204,7 +241,7 @@ fn clamp_detail_scroll_respects_viewport() {
 #[test]
 fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, OverlayBody::NavAndDetail);
     let mut picker = sample_picker(&long_detail(), "other");
     picker.scroll_detail_end(layout.detail_viewport());
     let line_count = overlay_detail_lines(picker.selected_detail(), layout.detail_width).len();

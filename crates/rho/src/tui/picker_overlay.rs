@@ -2,7 +2,7 @@
 //!
 //! Feature policy (what items mean, confirm verbs, filters, chrome labels)
 //! stays at call sites. This module only lays out a bordered overlay with a
-//! navigation list and an independently scrollable detail pane.
+//! navigation list and an optional independently scrollable detail pane.
 
 use ratatui::{
     layout::{Position, Rect},
@@ -30,10 +30,20 @@ pub(super) struct OverlayChrome {
     pub(super) nav_keys_hint: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum OverlayBody {
+    /// Navigation list plus detail pane.
+    #[default]
+    NavAndDetail,
+    /// Full-width navigation list only.
+    NavOnly,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum OverlayOrientation {
     SideBySide,
     Stacked,
+    ListOnly,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,8 +101,16 @@ struct OverlayContent<'a> {
     chrome: OverlayChromeView<'a>,
 }
 
-pub(super) fn picker_overlay_layout(area: Rect) -> OverlayLayout {
-    layout_for_outer(outer_rect(area))
+pub(super) fn picker_overlay_body(picker: &UiPicker) -> OverlayBody {
+    if picker.shows_detail() {
+        OverlayBody::NavAndDetail
+    } else {
+        OverlayBody::NavOnly
+    }
+}
+
+pub(super) fn picker_overlay_layout(area: Rect, body: OverlayBody) -> OverlayLayout {
+    layout_for_outer(outer_rect(area), body)
 }
 
 pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
@@ -102,10 +120,18 @@ pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<Over
 }
 
 pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
-    let layout = picker_overlay_layout(area);
+    let body = picker_overlay_body(picker);
+    let layout = picker_overlay_layout(area, body);
     // Own footer and wrap detail before matching indices so temporary match
     // cache borrows from footer/detail helpers do not overlap.
-    let detail = picker.wrapped_detail_lines(layout.detail_width);
+    let detail_holder;
+    let empty_detail = Vec::new();
+    let detail: &[String] = if picker.shows_detail() {
+        detail_holder = picker.wrapped_detail_lines(layout.detail_width);
+        &detail_holder
+    } else {
+        &empty_detail
+    };
     let footer = picker.action_footer();
     let matching = picker.matching_indices();
     let selected_position = matching
@@ -121,7 +147,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         selected: picker.selected,
         selected_position,
         match_count: matching.len(),
-        detail: &detail,
+        detail,
         detail_scroll: picker.detail_scroll,
         footer: &footer,
         chrome,
@@ -183,38 +209,42 @@ fn outer_rect(area: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-fn layout_for_outer(outer: Rect) -> OverlayLayout {
+fn layout_for_outer(outer: Rect, body: OverlayBody) -> OverlayLayout {
     let outer_width = outer.width as usize;
     let outer_height = outer.height as usize;
     let inner_width = outer_width.saturating_sub(2).max(1);
     let inner_height = outer_height.saturating_sub(2).max(1);
     let body_rows = inner_height.saturating_sub(INNER_CHROME_ROWS).max(1);
-    let orientation = if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        OverlayOrientation::Stacked
-    } else {
-        OverlayOrientation::SideBySide
-    };
 
-    let (nav_width, detail_width, detail_viewport_rows, nav_viewport_rows) = match orientation {
-        OverlayOrientation::SideBySide => {
+    let (orientation, nav_width, detail_width, detail_viewport_rows, nav_viewport_rows) = match body
+    {
+        OverlayBody::NavOnly => (OverlayOrientation::ListOnly, inner_width, 0, 0, body_rows),
+        OverlayBody::NavAndDetail if inner_width < TWO_COLUMN_MIN_INNER_WIDTH => {
+            let detail_viewport_rows = (body_rows.saturating_mul(3) / 5)
+                .max(2)
+                .min(body_rows.saturating_sub(1));
+            let nav_viewport_rows = body_rows.saturating_sub(detail_viewport_rows);
+            (
+                OverlayOrientation::Stacked,
+                inner_width,
+                inner_width,
+                detail_viewport_rows,
+                nav_viewport_rows,
+            )
+        }
+        OverlayBody::NavAndDetail => {
             let nav_width = ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH);
             let separator_width = display_width(SEPARATOR);
             let detail_width = inner_width
                 .saturating_sub(nav_width)
                 .saturating_sub(separator_width)
                 .max(1);
-            (nav_width, detail_width, body_rows, body_rows)
-        }
-        OverlayOrientation::Stacked => {
-            let detail_viewport_rows = (body_rows.saturating_mul(3) / 5)
-                .max(2)
-                .min(body_rows.saturating_sub(1));
-            let nav_viewport_rows = body_rows.saturating_sub(detail_viewport_rows);
             (
-                inner_width,
-                inner_width,
-                detail_viewport_rows,
-                nav_viewport_rows,
+                OverlayOrientation::SideBySide,
+                nav_width,
+                detail_width,
+                body_rows,
+                body_rows,
             )
         }
     };
@@ -268,6 +298,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
     let body = match layout.orientation {
         OverlayOrientation::SideBySide => side_by_side_body(layout, &content),
         OverlayOrientation::Stacked => stacked_body(layout, &content),
+        OverlayOrientation::ListOnly => list_only_body(layout, &content),
     };
     for row in body {
         lines.push(content_row(layout.inner_width, row));
@@ -336,6 +367,22 @@ fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line
         layout.nav_width,
         layout.nav_viewport_rows,
     ));
+    rows.truncate(layout.body_rows);
+    while rows.len() < layout.body_rows {
+        rows.push(Line::raw(""));
+    }
+    rows
+}
+
+fn list_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
+    let mut rows = nav_item_rows(
+        content.items,
+        content.matching,
+        content.selected,
+        content.selected_position,
+        layout.nav_width,
+        layout.nav_viewport_rows,
+    );
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
         rows.push(Line::raw(""));
@@ -450,33 +497,6 @@ fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
 }
 
 fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'static> {
-    let detail_lines = content.detail.len();
-    let scroll = clamp_detail_scroll(
-        content.detail_scroll,
-        detail_lines,
-        layout.detail_viewport_rows,
-    );
-    let visible_end = if detail_lines == 0 {
-        0
-    } else {
-        (scroll + layout.detail_viewport_rows).min(detail_lines)
-    };
-    let visible_start = if detail_lines == 0 {
-        0
-    } else {
-        scroll.saturating_add(1)
-    };
-    let overflow = if detail_lines > layout.detail_viewport_rows {
-        if scroll + layout.detail_viewport_rows < detail_lines {
-            " ↓ more"
-        } else if scroll > 0 {
-            " ↑ more"
-        } else {
-            ""
-        }
-    } else {
-        ""
-    };
     let position = if content.match_count == 0 {
         "0/0".to_string()
     } else {
@@ -486,12 +506,47 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
-    let detail_position =
-        format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
-    let text = format!(
-        " {} · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
-        content.chrome.nav_keys_hint, content.footer
-    );
+    let text = match layout.orientation {
+        OverlayOrientation::ListOnly => format!(
+            " {} · PgUp/PgDn · Type search · {} · {position}",
+            content.chrome.nav_keys_hint, content.footer
+        ),
+        OverlayOrientation::SideBySide | OverlayOrientation::Stacked => {
+            let detail_lines = content.detail.len();
+            let scroll = clamp_detail_scroll(
+                content.detail_scroll,
+                detail_lines,
+                layout.detail_viewport_rows,
+            );
+            let visible_end = if detail_lines == 0 {
+                0
+            } else {
+                (scroll + layout.detail_viewport_rows).min(detail_lines)
+            };
+            let visible_start = if detail_lines == 0 {
+                0
+            } else {
+                scroll.saturating_add(1)
+            };
+            let overflow = if detail_lines > layout.detail_viewport_rows {
+                if scroll + layout.detail_viewport_rows < detail_lines {
+                    " ↓ more"
+                } else if scroll > 0 {
+                    " ↑ more"
+                } else {
+                    ""
+                }
+            } else {
+                ""
+            };
+            let detail_position =
+                format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
+            format!(
+                " {} · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
+                content.chrome.nav_keys_hint, content.footer
+            )
+        }
+    };
     styled_line(
         truncate_one_line(&text, layout.inner_width),
         layout.inner_width,
@@ -513,6 +568,12 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
         }
         OverlayOrientation::Stacked => styled_line(
             pad_text(chrome.detail_label, layout.inner_width),
+            layout.inner_width,
+            Theme::text_strong(),
+            LineFill::PadToWidth,
+        ),
+        OverlayOrientation::ListOnly => styled_line(
+            pad_text(chrome.nav_label, layout.inner_width),
             layout.inner_width,
             Theme::text_strong(),
             LineFill::PadToWidth,
