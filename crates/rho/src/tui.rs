@@ -324,7 +324,6 @@ struct App {
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
     provider_attempt: ProviderAttempt,
-    active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
     reasoning_started_at: Option<Instant>,
     running: bool,
@@ -651,7 +650,6 @@ impl App {
             .as_ref()
             .map(|_| "no providers configured; run /login to sign in".into())
             .unwrap_or_else(|| "ready".into());
-        let active_turn_show_reasoning_output = info.runtime.show_reasoning_output;
         let pending_update_notice = info.services.pending_update_notice.take();
         let statusline = StatusLine::new(&info.runtime);
         Self {
@@ -673,7 +671,6 @@ impl App {
             live_stream_preview: None,
             current_turn_start: None,
             provider_attempt: ProviderAttempt::default(),
-            active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
             reasoning_started_at: None,
             running: false,
@@ -2525,6 +2522,46 @@ impl App {
         self.reasoning_started_at = None;
     }
 
+    /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
+    pub(super) fn apply_reasoning_output_visibility(&mut self) {
+        if self.info.runtime.show_reasoning_output {
+            self.hidden_reasoning_active = false;
+            return;
+        }
+
+        self.discard_live_reasoning_output();
+
+        // Keep the Thinking... placeholder while this step is still waiting for
+        // or streaming reasoning. Later phases (response, tools) stay clear.
+        self.hidden_reasoning_active = self.running
+            && (self.reasoning_started_at.is_some()
+                || matches!(
+                    self.activity_phase,
+                    ActivityPhase::Starting
+                        | ActivityPhase::WaitingForProvider
+                        | ActivityPhase::Thinking
+                        | ActivityPhase::RetryingProvider
+                ));
+    }
+
+    fn discard_live_reasoning_output(&mut self) {
+        let clearing_reasoning = matches!(self.current_stream_kind, Some(StreamKind::Reasoning))
+            || self
+                .live_stream_preview
+                .as_ref()
+                .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
+        if !clearing_reasoning {
+            return;
+        }
+        if matches!(self.current_stream_kind, Some(StreamKind::Reasoning)) {
+            self.reasoning_stream.reset();
+            self.reasoning_stream_code_fence = CodeFenceState::default();
+            self.current_stream_kind = None;
+        }
+        self.stream_preview_deadline = None;
+        self.live_stream_preview = None;
+    }
+
     fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
         self.tool_calls.clear();
@@ -2720,7 +2757,7 @@ impl App {
             }
             ViewModelEvent::ReasoningDelta(text) => {
                 self.mark_reasoning_started();
-                if !self.active_turn_show_reasoning_output {
+                if !self.info.runtime.show_reasoning_output {
                     self.hidden_reasoning_active = true;
                     return Ok(true);
                 }
@@ -3040,7 +3077,7 @@ impl App {
                 self.usage_before_current_attempt = None;
                 self.reset_streams();
                 self.provider_attempt.begin(self.transcript.len());
-                self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
+                self.hidden_reasoning_active = !self.info.runtime.show_reasoning_output;
                 self.running = true;
                 self.tool_calls.clear();
                 self.loading_spinner.start_if_needed();

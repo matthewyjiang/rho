@@ -136,9 +136,8 @@ impl App {
         }
         let model_input = failed_turn.model_input()?;
         self.current_turn_start = Some(self.transcript.len());
-        self.active_turn_show_reasoning_output = self.info.runtime.show_reasoning_output;
         self.reset_streams();
-        self.hidden_reasoning_active = !self.active_turn_show_reasoning_output;
+        self.hidden_reasoning_active = !self.info.runtime.show_reasoning_output;
         self.status = "running".into();
         self.running = true;
         self.activity_phase = ActivityPhase::Starting;

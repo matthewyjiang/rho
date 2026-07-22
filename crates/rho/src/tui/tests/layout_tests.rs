@@ -654,7 +654,7 @@ fn repeated_statusline_frames_render_once() {
 #[test]
 fn hidden_reasoning_shows_thinking_placeholder() {
     let mut app = test_app();
-    app.active_turn_show_reasoning_output = false;
+    app.info.runtime.show_reasoning_output = false;
     app.record_agent_event(ViewModelEvent::StepStarted(1));
 
     let thinking = app
@@ -672,7 +672,7 @@ fn hidden_reasoning_shows_thinking_placeholder() {
 fn hidden_reasoning_replaces_thinking_with_thought_summary() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    app.active_turn_show_reasoning_output = false;
+    app.info.runtime.show_reasoning_output = false;
     app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
         .unwrap();
     app.handle_agent_event(
@@ -707,7 +707,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
 fn shown_reasoning_appends_thought_summary_after_reasoning() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    app.active_turn_show_reasoning_output = true;
+    app.info.runtime.show_reasoning_output = true;
     app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
         .unwrap();
     app.handle_agent_event(
@@ -739,7 +739,7 @@ fn shown_reasoning_appends_thought_summary_after_reasoning() {
 fn thinking_without_reasoning_deltas_skips_thought_summary() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    app.active_turn_show_reasoning_output = false;
+    app.info.runtime.show_reasoning_output = false;
     app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
         .unwrap();
     app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
@@ -748,6 +748,108 @@ fn thinking_without_reasoning_deltas_skips_thought_summary() {
 
     assert!(
         matches!(app.transcript.as_slice(), [Entry::Assistant(answer)] if answer == "answer"),
+        "{:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.info.runtime.show_reasoning_output = true;
+    app.running = true;
+    app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
+        .unwrap();
+    // Trailing newline makes the first stretch drain into the transcript.
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("visible first\n".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    assert!(
+        matches!(app.transcript.as_slice(), [Entry::Reasoning(text)] if text.contains("visible first")),
+        "{:?}",
+        app.transcript
+    );
+
+    app.info.runtime.show_reasoning_output = false;
+    app.apply_reasoning_output_visibility();
+    assert!(app.hidden_reasoning_active);
+    assert!(app
+        .history_live_lines(60, Instant::now())
+        .iter()
+        .any(|line| line_text(line).contains("Thinking...")));
+
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("hidden later".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
+        .unwrap();
+    app.finish_streams();
+
+    assert!(
+        matches!(
+            app.transcript.as_slice(),
+            [
+                Entry::Reasoning(reasoning),
+                Entry::Thought(thought),
+                Entry::Assistant(answer)
+            ] if reasoning.contains("visible first")
+                && !reasoning.contains("hidden later")
+                && thought.starts_with("Thought for ")
+                && answer == "answer"
+        ),
+        "{:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.info.runtime.show_reasoning_output = false;
+    app.running = true;
+    app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
+        .unwrap();
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("hidden first".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    assert!(app.hidden_reasoning_active);
+
+    app.info.runtime.show_reasoning_output = true;
+    app.apply_reasoning_output_visibility();
+    assert!(!app.hidden_reasoning_active);
+    assert!(app
+        .history_live_lines(60, Instant::now())
+        .iter()
+        .all(|line| !line_text(line).contains("Thinking...")));
+
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("visible later".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
+        .unwrap();
+    app.finish_streams();
+
+    assert!(
+        matches!(
+            app.transcript.as_slice(),
+            [
+                Entry::Reasoning(reasoning),
+                Entry::Thought(thought),
+                Entry::Assistant(answer)
+            ] if reasoning == "visible later"
+                && thought.starts_with("Thought for ")
+                && answer == "answer"
+        ),
         "{:?}",
         app.transcript
     );
