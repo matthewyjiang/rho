@@ -6,18 +6,26 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust to stay fast an
 
 [![Rho terminal UI showing a code inspection, Rust edit, and focused test run](docs/assets/rho-ui-demo.svg)](https://matthewyjiang.github.io/rho/interactive-tui)
 
+## Why Rho
+
+- **Rust-native**: Starts fast and stays light. No Node runtime under the harness.
+- **Terminal-first**: A fullscreen TUI for day-to-day coding, not a thin REPL wrapper.
+- **One binary, two modes**: `rho` for interactive work; `rho run` for scripts, hooks, and CI.
+- **Bring your own provider**: OpenAI, Anthropic, Gemini, Copilot, Ollama, OpenRouter, and more. Switch with `/model` without rewriting your setup.
+- **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
+
 ## Install
 
 Install on macOS and Linux:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
 Or with Scoop:
