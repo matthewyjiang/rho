@@ -3,7 +3,7 @@
 Install the latest prebuilt Rho binary on macOS and Linux:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
 ```
 
 On Windows PowerShell:
@@ -19,7 +19,7 @@ After installing the binary, Rho leaves the credential backend unset and uses th
 Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set os` or `rho credential-store set file`, to make this choice without the login picker:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_CREDENTIAL_STORE=file sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_CREDENTIAL_STORE=file sh
 ```
 
 ```powershell
@@ -44,7 +44,7 @@ scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rh
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_INSTALL_DIR=/usr/local/bin sh
 ```
 
 ```powershell
@@ -54,7 +54,7 @@ $env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"; irm https://matthew
 To install a specific release, set `RHO_VERSION`. Accepted forms include `v0.9.0`, `0.9.0`, and the full release tag `rho-coding-agent-v0.9.0`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_VERSION=v0.9.0 sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_VERSION=v0.9.0 sh
 ```
 
 ```powershell

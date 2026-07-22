@@ -8,12 +8,11 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust.
 
 ## Why Rho
 
+- **Lightweight**: Compare the CLI process overhead and memory usage with other coding harnesses:
 ![CLI startup time and peak RSS for rho versus Codex, Claude Code, OpenCode, and Pi without extensions](docs/assets/cli-overhead.svg)
 
 - **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, OpenRouter, and more. Use API keys or subscription plans.
 - **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
-
-Help-startup process overhead on Linux x86_64. Pi is measured with `--no-extensions`. Not interactive TUI cost or model latency.
 
 ```bash
 cargo build -p rho-coding-agent --release
@@ -25,7 +24,7 @@ python3 scripts/bench_cli_startup.py
 Install on macOS and Linux:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
 ```
 
 On Windows PowerShell:
