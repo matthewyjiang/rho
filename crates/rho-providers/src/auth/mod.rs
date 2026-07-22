@@ -4,6 +4,8 @@ pub mod github_copilot_token;
 pub mod kimi_oauth;
 pub mod kimi_token;
 pub mod login_dispatch;
+pub(crate) mod loopback;
+pub mod openrouter_oauth;
 pub mod provider_credentials;
 pub mod xai_oauth;
 pub mod xai_token;

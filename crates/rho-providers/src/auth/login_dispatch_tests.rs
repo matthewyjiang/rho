@@ -28,11 +28,21 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
         }
     );
     assert_eq!(
+        ProviderAuthentication::method("openrouter-oauth").unwrap(),
+        AuthenticationMethod::OAuth {
+            provider_label: "OpenRouter",
+        }
+    );
+    assert_eq!(
         ProviderAuthentication::method("xai-oauth").unwrap(),
         AuthenticationMethod::OAuth {
             provider_label: "xAI",
         }
     );
+    assert!(ProviderAuthentication::supports_device_login("xai-oauth"));
+    assert!(!ProviderAuthentication::supports_device_login(
+        "openrouter-oauth"
+    ));
 }
 
 #[test]

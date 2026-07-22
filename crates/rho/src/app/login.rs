@@ -40,10 +40,17 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
     let login = ProviderAuthentication::start_oauth(&target.provider, mode).await?;
     match &login.user_action {
         OAuthUserAction::BrowserOpened => {
-            eprintln!(
-                "Opening browser for {} login. On a remote or headless session, use `rho login {} --device-auth` instead.",
-                login.provider_label, target.provider
-            );
+            if ProviderAuthentication::supports_device_login(&target.provider) {
+                eprintln!(
+                    "Opening browser for {} login. On a remote or headless session, use `rho login {} --device-auth` instead.",
+                    login.provider_label, target.provider
+                );
+            } else {
+                eprintln!(
+                    "Opening browser for {} login. This provider does not support device login; use an API key on a remote or headless session.",
+                    login.provider_label
+                );
+            }
         }
         OAuthUserAction::DeviceCode {
             verification_uri,

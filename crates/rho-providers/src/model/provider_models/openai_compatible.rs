@@ -56,6 +56,18 @@ pub(super) async fn fetch(
     let token = match descriptor.auth_kind {
         ProviderAuthKind::None => None,
         ProviderAuthKind::ApiKey { .. } => Some(load_api_key_auth(descriptor.name, store)?),
+        ProviderAuthKind::BearerCredential {
+            env_var,
+            account,
+            missing,
+            ..
+        } => Some(match std::env::var(env_var) {
+            Ok(key) if !key.trim().is_empty() => key,
+            _ => store
+                .get_secret(account)?
+                .filter(|key| !key.trim().is_empty())
+                .ok_or_else(|| crate::model::registry::missing_credential_error(missing))?,
+        }),
         ProviderAuthKind::KimiOAuth { .. } => {
             let env_var = descriptor
                 .auth_kind

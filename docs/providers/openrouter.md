@@ -1,42 +1,60 @@
 # OpenRouter
 
-Rho supports OpenRouter through its OpenAI-compatible Chat Completions API using API-key authentication.
+Rho supports OpenRouter through its OpenAI-compatible Chat Completions API. You can use an API key or sign in through OpenRouter OAuth.
 
 ## At a glance
 
-| Setting | Value |
-| --- | --- |
-| Provider | `openrouter` |
-| Auth | `openrouter-api-key` |
-| Environment override | `OPENROUTER_API_KEY` |
-| API base | `https://openrouter.ai/api/v1` |
-| Model list | Refreshable after authentication |
+| Method | Provider | Auth | Login |
+| --- | --- | --- | --- |
+| API key | `openrouter` | `openrouter-api-key` | `/login openrouter` |
+| OAuth | `openrouter-oauth` | `openrouter-oauth` | `/login openrouter-oauth` |
+
+Both methods use:
+
+- Environment override: `OPENROUTER_API_KEY`
+- API base: `https://openrouter.ai/api/v1`
+- A model list that Rho can refresh after login
 
 ## Login and model selection
 
-In the interactive TUI, run:
+Run `/login` and select **OpenRouter**, then choose **API Key** or **OAuth**. You can also start either method at once:
 
 ```text
 /login openrouter
-/model openrouter/<model-id>
+/login openrouter-oauth
 ```
 
-Rho stores the API key in the OS credential store. For CI and development, `OPENROUTER_API_KEY` overrides the stored key. Remove the stored key with `/logout openrouter`.
+API-key login opens a masked key entry box. OAuth opens OpenRouter in your browser. Rho uses S256 PKCE, listens on an unused localhost port for the redirect, exchanges the code for a user-controlled OpenRouter API key, and saves that key in the OS credential store. The callback listener closes when login ends.
 
-OpenRouter model IDs commonly contain a slash, so a complete selection can look like:
+OpenRouter does not offer a device-code flow. Browser login therefore needs a browser that can reach the localhost callback. On a remote or headless host, use API-key login or set `OPENROUTER_API_KEY`.
+
+The OAuth key and a manually entered key have separate credential-store entries. `/logout openrouter` removes the manual key, while `/logout openrouter-oauth` removes the OAuth key. For CI and development, `OPENROUTER_API_KEY` overrides either stored key.
+
+OpenRouter model IDs often contain a slash. Select a model under the provider that matches your login method:
 
 ```text
 /model openrouter/anthropic/claude-sonnet-4
+/model openrouter-oauth/anthropic/claude-sonnet-4
 ```
 
-The model list is fetched from OpenRouter's `/models` endpoint after authentication. Choose **Refresh model lists** in `/config` when models are added or removed. Rho sends turns to `/chat/completions`.
+Rho fetches the model list from OpenRouter's `/models` endpoint after login. Choose **Refresh model lists** in `/config` when models change. Rho sends turns to `/chat/completions`.
 
 ## Automation
 
-Select the OpenRouter provider, API-key auth mode, and a model:
+You can complete browser OAuth from the command line:
+
+```sh
+rho login openrouter-oauth
+```
+
+Do not pass `--device-auth`, since OpenRouter does not support device login. Then select the OAuth provider, auth mode, and model:
+
+```sh
+rho --provider openrouter-oauth --auth openrouter-oauth --model anthropic/claude-sonnet-4 run "hello"
+```
+
+For API-key automation, keep using:
 
 ```sh
 rho --provider openrouter --auth openrouter-api-key --model anthropic/claude-sonnet-4 run "hello"
 ```
-
-Provide `OPENROUTER_API_KEY` in the automation environment or log in once through the TUI so Rho can read the stored key.
