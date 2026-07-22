@@ -20,11 +20,11 @@ use super::{
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
     display_width, highlight_selection, input_cursor_position, input_lines_with_images,
-    is_tool_entry, oauth_pending_lines, pad_display_line, padded_content_width, picker_lines,
-    picker_overlay::picker_overlay_frame, questionnaire_cursor_position, questionnaire_lines,
-    recovered_history_tail, render_copy_notice, scroll_state_for_top_line, secret_input_lines,
-    session_header_lines, styled_line, tool_entry_lines, transcript_entries_from_messages,
-    truncate_one_line,
+    is_tool_entry, login::credential_store_choice_lines, oauth_pending_lines, pad_display_line,
+    padded_content_width, picker_lines, picker_overlay::picker_overlay_frame,
+    questionnaire_cursor_position, questionnaire_lines, recovered_history_tail, render_copy_notice,
+    scroll_state_for_top_line, secret_input_lines, session_header_lines, styled_line,
+    tool_entry_lines, transcript_entries_from_messages, truncate_one_line,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -344,7 +344,8 @@ impl App {
             },
             ComposerMode::Picker(_)
             | ComposerMode::Questionnaire(_)
-            | ComposerMode::Approval(_) => Theme::input_prompt(),
+            | ComposerMode::Approval(_)
+            | ComposerMode::CredentialStoreChoice(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
@@ -745,6 +746,9 @@ impl App {
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
             ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
+            ComposerMode::CredentialStoreChoice(choice) => {
+                credential_store_choice_lines(choice, width)
+            }
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
             ComposerMode::Approval(approval) => approval_lines(approval, width),
         }
@@ -796,7 +800,9 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire_cursor_position(questionnaire, width)
             }
-            ComposerMode::OAuthPending(_) | ComposerMode::Approval(_) => Position { x: 0, y: 0 },
+            ComposerMode::OAuthPending(_)
+            | ComposerMode::Approval(_)
+            | ComposerMode::CredentialStoreChoice(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
                 x: display_width(&picker.filter)
                     .saturating_add(2)

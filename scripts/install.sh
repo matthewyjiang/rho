@@ -135,85 +135,21 @@ asset_url() {
 configure_credential_store() {
   rho_bin="$1"
 
-  if [ -n "${RHO_CREDENTIAL_STORE:-}" ]; then
-    if [ "$RHO_CREDENTIAL_STORE" = "file" ] &&
-      ! "$rho_bin" credential-store probe file; then
-      echo "error: local file credential storage is unavailable" >&2
-      return 1
-    fi
-    if ! "$rho_bin" credential-store set "$RHO_CREDENTIAL_STORE"; then
-      echo "error: failed to set credential store to $RHO_CREDENTIAL_STORE" >&2
-      return 1
-    fi
+  if [ -z "${RHO_CREDENTIAL_STORE:-}" ]; then
+    echo "note: credential store left unset (OS default until first login)." >&2
+    echo "      choose a backend at first /login, or run:" >&2
+    echo "      '$rho_bin credential-store set os|file'" >&2
     return
   fi
 
-  status="$("$rho_bin" credential-store status 2>/dev/null || true)"
-  if [ "$status" = "os" ] || [ "$status" = "file" ]; then
-    echo "credential-store choice already configured ($status); keeping it" >&2
-    return
+  if [ "$RHO_CREDENTIAL_STORE" = "file" ] &&
+    ! "$rho_bin" credential-store probe file; then
+    echo "error: local file credential storage is unavailable" >&2
+    return 1
   fi
-
-  # CI and explicit noninteractive installs must not block on /dev/tty prompts.
-  # curl|sh still prompts when a controlling terminal exists unless CI is set.
-  if [ -n "${CI:-}" ] || [ -n "${RHO_INSTALL_NONINTERACTIVE:-}" ] ||
-    ! (: </dev/tty) 2>/dev/null; then
-    echo "note: credential store left unset (OS default)." >&2
-    echo "      run '$rho_bin credential-store probe os' to check OS credential storage" >&2
-    echo "      use '$rho_bin credential-store set file' for owner-only local file storage" >&2
-    return
-  fi
-
-  set_file_backend() {
-    echo "File storage uses owner-only permissions but is not encrypted at rest." >/dev/tty
-    if ! "$rho_bin" credential-store probe file; then
-      echo "warning: local file credential storage is unavailable; leaving the OS default" >&2
-      return 1
-    fi
-    if ! "$rho_bin" credential-store set file; then
-      echo "warning: failed to set credential store to file; leaving the OS default" >&2
-      return 1
-    fi
-  }
-
-  set_os_backend() {
-    if ! "$rho_bin" credential-store set os; then
-      echo "warning: failed to set credential store to os; leaving the OS default" >&2
-      return 1
-    fi
-  }
-
-  read_yes_no() {
-    prompt="$1"
-    printf '%s' "$prompt" >/dev/tty
-    if ! IFS= read -r answer </dev/tty; then
-      echo "warning: could not read credential-store choice; leaving the OS default" >&2
-      return 2
-    fi
-    case "$answer" in
-      ""|y|Y|yes|YES) return 0 ;;
-      n|N|no|NO) return 1 ;;
-      *)
-        echo "warning: unrecognized choice; leaving the OS default" >&2
-        return 2
-        ;;
-    esac
-  }
-
-  if "$rho_bin" credential-store probe os >/dev/null 2>&1; then
-    if read_yes_no "OS credential store is available and recommended. Use it? [Y/n] "; then
-      set_os_backend || true
-    elif [ $? -eq 1 ]; then
-      set_file_backend || true
-    fi
-    return
-  fi
-
-  echo "No usable OS credential store was found in this session." >/dev/tty
-  if read_yes_no "Use local file credential storage? [Y/n] "; then
-    set_file_backend || true
-  elif [ $? -eq 1 ]; then
-    echo "warning: leaving the OS default; configure the OS credential store before login" >&2
+  if ! "$rho_bin" credential-store set "$RHO_CREDENTIAL_STORE"; then
+    echo "error: failed to set credential store to $RHO_CREDENTIAL_STORE" >&2
+    return 1
   fi
 }
 

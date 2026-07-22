@@ -129,7 +129,7 @@ use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
-use login::{PendingOAuthLogin, SecretInput};
+use login::{CredentialStoreChoice, PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
@@ -411,6 +411,7 @@ enum ComposerMode {
     ConfigNumberInput(ConfigNumberInput),
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
+    CredentialStoreChoice(CredentialStoreChoice),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
 }
@@ -998,6 +999,13 @@ impl App {
         }
 
         if self.handle_oauth_pending_key(key)? {
+            return Ok(());
+        }
+
+        if self
+            .handle_credential_store_choice_key(key, terminal, agent)
+            .await?
+        {
             return Ok(());
         }
 
@@ -1947,8 +1955,10 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }
-            ComposerMode::Approval(_) | ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {
-            }
+            ComposerMode::Approval(_)
+            | ComposerMode::Picker(_)
+            | ComposerMode::OAuthPending(_)
+            | ComposerMode::CredentialStoreChoice(_) => {}
         }
     }
 

@@ -91,3 +91,85 @@ fn first_login_preserves_explicit_reasoning_when_capabilities_are_unknown() {
         assert_eq!(resolved.source, ReasoningRequestSource::Explicit);
     });
 }
+
+#[test]
+fn credential_store_choice_defaults_to_first_available_and_skips_unavailable() {
+    use rho_providers::credentials::{CredentialStoreBackend, CredentialStoreProbe};
+
+    use super::{CredentialStoreChoice, StoreChoiceNext};
+    use crate::credential_store::StoreChoiceRequest;
+
+    let request = StoreChoiceRequest {
+        os: CredentialStoreProbe {
+            backend: CredentialStoreBackend::Os,
+            available: false,
+            detail: "no keyring".into(),
+        },
+        file: CredentialStoreProbe {
+            backend: CredentialStoreBackend::File,
+            available: true,
+            detail: "ok".into(),
+        },
+    };
+    let mut choice =
+        CredentialStoreChoice::new(request, StoreChoiceNext::OpenPicker).expect("file available");
+    assert_eq!(
+        choice.selected_backend(),
+        CredentialStoreBackend::File,
+        "default should land on first available backend"
+    );
+
+    choice.move_previous();
+    assert_eq!(
+        choice.selected_backend(),
+        CredentialStoreBackend::File,
+        "navigation must not land on unavailable OS backend"
+    );
+    choice.move_next();
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
+
+    assert_eq!(
+        choice.select_shortcut('1'),
+        None,
+        "unavailable OS shortcut should be ignored"
+    );
+    assert_eq!(
+        choice.select_shortcut('2'),
+        Some(CredentialStoreBackend::File)
+    );
+    assert_eq!(
+        choice.select_shortcut('f'),
+        Some(CredentialStoreBackend::File)
+    );
+}
+
+#[test]
+fn credential_store_choice_os_shortcut_when_available() {
+    use rho_providers::credentials::{CredentialStoreBackend, CredentialStoreProbe};
+
+    use super::{CredentialStoreChoice, StoreChoiceNext};
+    use crate::credential_store::StoreChoiceRequest;
+
+    let request = StoreChoiceRequest {
+        os: CredentialStoreProbe {
+            backend: CredentialStoreBackend::Os,
+            available: true,
+            detail: "ok".into(),
+        },
+        file: CredentialStoreProbe {
+            backend: CredentialStoreBackend::File,
+            available: true,
+            detail: "ok".into(),
+        },
+    };
+    let mut choice =
+        CredentialStoreChoice::new(request, StoreChoiceNext::OpenPicker).expect("backends");
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::Os);
+    choice.move_next();
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
+    assert_eq!(
+        choice.select_shortcut('o'),
+        Some(CredentialStoreBackend::Os)
+    );
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::Os);
+}

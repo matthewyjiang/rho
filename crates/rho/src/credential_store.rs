@@ -1,22 +1,81 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use rho_providers::credentials::{
-    open_credential_store, probe_credential_store, CredentialResult, CredentialStore,
-    CredentialStoreBackend, CredentialStoreProbe,
+    open_credential_store, probe_credential_store, CredentialError, CredentialResult,
+    CredentialStore, CredentialStoreBackend, CredentialStoreProbe,
 };
 
-const POLICY_FILE: &str = "credential-store";
+use crate::config::Config;
+
+const LEGACY_POLICY_FILE: &str = "credential-store";
 const ENV_BACKEND: &str = "RHO_CREDENTIAL_STORE";
 
-/// Application credential adapter selected by the user's persisted policy.
+/// Application credential adapter selected by the configured backend.
 ///
-/// The default policy uses only the OS credential store. File storage must be
-/// selected explicitly through the installer, CLI, or env var.
+/// Backend resolution order:
+/// 1. `RHO_CREDENTIAL_STORE` for the current process
+/// 2. `behavior.credential_store` in config.toml
+/// 3. OS store (default when unset)
+///
+/// File storage must be chosen explicitly through `/login`, the CLI, config, or env.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AppCredentialStore;
+
+#[derive(Clone, Debug)]
+pub(crate) struct StoreChoiceRequest {
+    pub os: CredentialStoreProbe,
+    pub file: CredentialStoreProbe,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StoreChoiceOption {
+    pub backend: CredentialStoreBackend,
+    pub available: bool,
+}
+
+impl StoreChoiceRequest {
+    pub fn probe() -> Self {
+        Self {
+            os: probe(CredentialStoreBackend::Os),
+            file: probe(CredentialStoreBackend::File),
+        }
+    }
+
+    pub fn options(&self) -> [StoreChoiceOption; 2] {
+        [
+            StoreChoiceOption {
+                backend: CredentialStoreBackend::Os,
+                available: self.os.available,
+            },
+            StoreChoiceOption {
+                backend: CredentialStoreBackend::File,
+                available: self.file.available,
+            },
+        ]
+    }
+
+    pub fn available_backends(&self) -> Vec<CredentialStoreBackend> {
+        self.options()
+            .into_iter()
+            .filter(|option| option.available)
+            .map(|option| option.backend)
+            .collect()
+    }
+
+    pub fn default_backend(&self) -> Option<CredentialStoreBackend> {
+        self.available_backends().into_iter().next()
+    }
+
+    pub fn detail_for(&self, backend: CredentialStoreBackend) -> &str {
+        match backend {
+            CredentialStoreBackend::Os => self.os.detail.as_str(),
+            CredentialStoreBackend::File => self.file.detail.as_str(),
+        }
+    }
+}
 
 impl CredentialStore for AppCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
@@ -36,44 +95,89 @@ pub(crate) fn probe(backend: CredentialStoreBackend) -> CredentialStoreProbe {
     probe_credential_store(backend)
 }
 
-/// Returns the backend saved in the policy file, ignoring env overrides.
+/// Backend saved in config, ignoring env overrides.
 ///
-/// `None` means no policy file exists yet (`unset` for installers).
-pub(crate) fn saved_policy_backend() -> CredentialResult<Option<CredentialStoreBackend>> {
-    let path = match policy_path() {
-        Ok(path) => path,
-        Err(_) => return Ok(None),
+/// `None` means the setting is unset and the OS store is used by default.
+/// Reads are non-destructive: legacy policy files are not removed here.
+pub(crate) fn saved_policy_backend(
+    config_path: Option<&Path>,
+) -> anyhow::Result<Option<CredentialStoreBackend>> {
+    let path = match config_path {
+        Some(path) => path.to_path_buf(),
+        None => Config::default_path()?,
     };
-    if !path.exists() {
-        return Ok(None);
+    if path.exists() {
+        let config = Config::load_settings_only(path)?;
+        if config.credential_store.is_some() {
+            return Ok(config.credential_store);
+        }
     }
-    Ok(Some(read_policy_backend(&path)?))
+    Ok(read_legacy_policy_file()?)
 }
 
-pub(crate) fn set_backend(backend: CredentialStoreBackend) -> anyhow::Result<PathBuf> {
-    let path = policy_path()?;
-    crate::config_writer::write_atomically(&path, &format!("{}\n", backend.as_str()))?;
+/// Persist the backend in config.toml and open it for this process.
+pub(crate) fn set_backend(
+    backend: CredentialStoreBackend,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
+    let availability = probe(backend);
+    if !availability.available {
+        anyhow::bail!(availability.detail);
+    }
+
+    let path = match config_path {
+        Some(path) => path,
+        None => Config::default_path()?,
+    };
+    let mut config = if path.exists() {
+        Config::load_settings_only(path.clone())?
+    } else {
+        Config::default()
+    };
+    config.credential_store = Some(backend);
+    config.write_settings(path.clone())?;
+    remember_config_path(&path);
+    activate(backend)?;
+    remove_legacy_policy_file()?;
     Ok(path)
 }
 
-pub(crate) fn configured_backend() -> CredentialResult<CredentialStoreBackend> {
-    configured_backend_from(
-        std::env::var(ENV_BACKEND).ok().as_deref(),
-        policy_path().ok().as_deref(),
-    )
-}
-
-pub(crate) fn initialize() -> CredentialResult<()> {
-    selected_store().map(|_| ())
-}
-
-fn selected_store() -> CredentialResult<Arc<dyn CredentialStore>> {
-    static STORE: OnceLock<Arc<dyn CredentialStore>> = OnceLock::new();
-    if let Some(store) = STORE.get() {
-        return Ok(Arc::clone(store));
+/// Resolve and open the backend once for this process from config + env.
+///
+/// Also migrates legacy policy/web-search secrets when needed. Call at startup,
+/// not on every settings read.
+pub(crate) fn initialize_from_config(
+    config: &mut Config,
+    config_path: &Path,
+) -> anyhow::Result<()> {
+    remember_config_path(config_path);
+    let mut dirty = absorb_legacy_policy(config)?;
+    let backend = resolve_backend(config.credential_store)?;
+    activate(backend)?;
+    if matches!(
+        config.migrate_legacy_web_search_credentials(&AppCredentialStore),
+        Ok(true)
+    ) {
+        dirty = true;
     }
-    let store = open_credential_store(configured_backend()?)?;
-    Ok(Arc::clone(STORE.get_or_init(|| store)))
+    if dirty {
+        config.write_settings(config_path.to_path_buf())?;
+    }
+    Ok(())
+}
+
+/// Whether config still needs an explicit credential-store choice before login.
+pub(crate) fn needs_explicit_choice(config: &Config) -> bool {
+    env_backend_override().is_none() && config.credential_store.is_none()
+}
+
+/// Build a choice request when login still needs an explicit backend selection.
+pub(crate) fn choice_request(config: &Config) -> Option<StoreChoiceRequest> {
+    needs_explicit_choice(config).then(StoreChoiceRequest::probe)
+}
+
+pub(crate) fn configured_backend() -> CredentialResult<CredentialStoreBackend> {
+    resolve_backend(read_config_backend().ok().flatten())
 }
 
 pub(crate) fn build_provider(
@@ -88,31 +192,149 @@ pub(crate) fn build_provider(
     rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
 }
 
-fn configured_backend_from(
-    environment: Option<&str>,
-    policy_path: Option<&Path>,
-) -> CredentialResult<CredentialStoreBackend> {
-    if let Some(value) = environment.filter(|value| !value.trim().is_empty()) {
-        return CredentialStoreBackend::parse(value);
-    }
-    let Some(path) = policy_path.filter(|path| path.exists()) else {
-        return Ok(CredentialStoreBackend::Os);
-    };
-    read_policy_backend(path)
+fn env_backend_override() -> Option<String> {
+    std::env::var(ENV_BACKEND)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
-fn read_policy_backend(path: &Path) -> CredentialResult<CredentialStoreBackend> {
-    let value = std::fs::read_to_string(path).map_err(|error| {
-        rho_providers::credentials::CredentialError::StoreUnavailable(format!(
-            "could not read credential-store policy {}: {error}",
+fn resolve_backend(
+    config_backend: Option<CredentialStoreBackend>,
+) -> CredentialResult<CredentialStoreBackend> {
+    if let Some(value) = env_backend_override() {
+        return CredentialStoreBackend::parse(&value);
+    }
+    Ok(config_backend.unwrap_or(CredentialStoreBackend::Os))
+}
+
+fn activate(backend: CredentialStoreBackend) -> CredentialResult<()> {
+    let store = open_credential_store(backend)?;
+    let mut guard = process_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    guard.store = Some(store);
+    Ok(())
+}
+
+fn remember_config_path(path: &Path) {
+    let mut guard = process_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    guard.config_path = Some(path.to_path_buf());
+}
+
+fn selected_store() -> CredentialResult<Arc<dyn CredentialStore>> {
+    {
+        let guard = process_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(store) = guard.store.as_ref() {
+            return Ok(Arc::clone(store));
+        }
+    }
+    let backend = configured_backend()?;
+    activate(backend)?;
+    let guard = process_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    guard.store.clone().ok_or_else(|| {
+        CredentialError::StoreUnavailable("credential store failed to initialize".into())
+    })
+}
+
+struct ProcessState {
+    store: Option<Arc<dyn CredentialStore>>,
+    config_path: Option<PathBuf>,
+}
+
+fn process_state() -> &'static Mutex<ProcessState> {
+    static STATE: OnceLock<Mutex<ProcessState>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        Mutex::new(ProcessState {
+            store: None,
+            config_path: None,
+        })
+    })
+}
+
+fn read_config_backend() -> anyhow::Result<Option<CredentialStoreBackend>> {
+    let path = {
+        let guard = process_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.config_path.clone()
+    };
+    let path = match path {
+        Some(path) => path,
+        None => Config::default_path()?,
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Config::load_settings_only(path)?.credential_store)
+}
+
+fn absorb_legacy_policy(config: &mut Config) -> anyhow::Result<bool> {
+    let Some(backend) = read_legacy_policy_file()? else {
+        return Ok(false);
+    };
+    let changed = if config.credential_store.is_none() {
+        config.credential_store = Some(backend);
+        true
+    } else {
+        false
+    };
+    remove_legacy_policy_file()?;
+    Ok(changed)
+}
+
+fn read_legacy_policy_file() -> CredentialResult<Option<CredentialStoreBackend>> {
+    let path = match legacy_policy_path() {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = std::fs::read_to_string(&path).map_err(|error| {
+        CredentialError::StoreUnavailable(format!(
+            "could not read legacy credential-store policy {}: {error}",
             path.display()
         ))
     })?;
-    CredentialStoreBackend::parse(&value)
+    Ok(Some(CredentialStoreBackend::parse(&value)?))
 }
 
-fn policy_path() -> anyhow::Result<PathBuf> {
-    Ok(crate::paths::rho_dir()?.join(POLICY_FILE))
+fn remove_legacy_policy_file() -> anyhow::Result<()> {
+    let path = legacy_policy_path()?;
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn legacy_policy_path() -> anyhow::Result<PathBuf> {
+    Ok(crate::paths::rho_dir()?.join(LEGACY_POLICY_FILE))
+}
+
+#[cfg(test)]
+fn resolve_backend_from(
+    environment: Option<&str>,
+    config_backend: Option<CredentialStoreBackend>,
+) -> CredentialResult<CredentialStoreBackend> {
+    if let Some(value) = environment.map(str::trim).filter(|value| !value.is_empty()) {
+        return CredentialStoreBackend::parse(value);
+    }
+    Ok(config_backend.unwrap_or(CredentialStoreBackend::Os))
+}
+
+#[cfg(test)]
+fn needs_explicit_choice_from(
+    env_set: bool,
+    config_backend: Option<CredentialStoreBackend>,
+) -> bool {
+    !env_set && config_backend.is_none()
 }
 
 #[cfg(test)]
