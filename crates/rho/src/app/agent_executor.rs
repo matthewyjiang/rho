@@ -160,7 +160,7 @@ impl AgentExecutor {
             let mut config = bound.config().clone();
             super::cli_config::prepare_model_metadata(
                 &config,
-                &rho_providers::credentials::OsCredentialStore,
+                &crate::credential_store::AppCredentialStore,
                 &super::cli_config::ProviderRefreshStatus::NotAttempted,
             )
             .await;

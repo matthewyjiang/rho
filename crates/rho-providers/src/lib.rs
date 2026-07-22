@@ -4,9 +4,12 @@
 //! provider and stream model responses over the provider's wire protocol:
 //!
 //! - [`providers`] builds [`rho_sdk::provider::ModelProvider`] instances,
-//!   bootstrapping credentials from the environment and the OS keyring.
+//!   bootstrapping credentials from the environment and a selected credential
+//!   store backend.
 //! - [`credentials`] and [`auth`] store API keys and OAuth tokens and run
-//!   provider login flows.
+//!   provider login flows. Credential backends are selected explicitly with
+//!   [`CredentialStoreBackend`] (`auto`, `os`, or `file`). `auto` uses the OS
+//!   keyring only and never falls back to local files.
 //! - [`model`] is the canonical request/response contract plus the model
 //!   catalog and metadata caches.
 //! - [`protocol`] translates between the canonical contract and provider
@@ -43,7 +46,11 @@ pub mod provider_backend;
 pub mod providers;
 pub mod reasoning;
 
-pub use credentials::{CredentialError, CredentialResult, CredentialStore, OsCredentialStore};
+pub use credentials::{
+    open_credential_store, probe_credential_store, CredentialError, CredentialResult,
+    CredentialStore, CredentialStoreBackend, CredentialStoreProbe, FileCredentialStore,
+    OsCredentialStore,
+};
 pub use model::ModelError;
 pub use providers::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,

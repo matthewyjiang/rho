@@ -7,7 +7,7 @@ use rho_sdk::{
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
 
-use rho_providers::providers::build_sdk_provider;
+use crate::credential_store::build_provider as build_sdk_provider;
 
 use super::{AgentDefinition, ModelPolicy, PromptPolicy, ToolPolicy};
 

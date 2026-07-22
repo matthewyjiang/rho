@@ -18,7 +18,7 @@ Anthropic uses API-key auth. For shared concepts such as credential storage and 
 /login anthropic
 ```
 
-`/login anthropic` opens a masked API-key entry box in the [interactive TUI](/interactive-tui). Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login anthropic` opens a masked API-key entry box in the [interactive TUI](/interactive-tui). Credentials are stored in the configured credential store, not in config or transcripts.
 
 ## Sign out
 

@@ -18,7 +18,7 @@ OpenAI uses API-key auth. For shared concepts such as credential storage and mod
 /login openai
 ```
 
-`/login openai` opens a masked API-key entry box in the [interactive TUI](/interactive-tui). Credentials are stored in the native OS credential store, not in config or transcripts.
+`/login openai` opens a masked API-key entry box in the [interactive TUI](/interactive-tui). Credentials are stored in the configured credential store, not in config or transcripts.
 
 ## Sign out
 

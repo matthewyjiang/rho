@@ -13,6 +13,7 @@ use {
     crate::agent::{PromptPolicy, ToolCapability},
     crate::cli::{Command, OutputFormat},
     crate::config::Config,
+    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
     crate::prompt,
@@ -22,7 +23,6 @@ use {
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
     crate::tui::AttachmentWriter,
-    rho_providers::credentials::OsCredentialStore,
     rho_providers::providers::build_automation_provider,
 };
 
@@ -154,7 +154,13 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
         Some(Command::Run { prompt, stdin, .. }) => {
             prompt_from_stdin(prompt.clone(), *stdin).map(Some)
         }
-        Some(Command::Attach { .. } | Command::Login { .. } | Command::Update) | None => Ok(None),
+        Some(
+            Command::Attach { .. }
+            | Command::Login { .. }
+            | Command::CredentialStore { .. }
+            | Command::Update,
+        )
+        | None => Ok(None),
     }
 }
 
@@ -431,7 +437,7 @@ async fn run_session_with_output(
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        Arc::new(OsCredentialStore),
+        Arc::new(AppCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let mut capabilities = startup.agent.capabilities().clone();

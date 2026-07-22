@@ -1,8 +1,9 @@
+use crate::credential_store::build_provider as build_sdk_provider;
 use ratatui::DefaultTerminal;
+
 use rho_providers::{
     credentials::available_auth_modes,
     model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
-    providers::build_sdk_provider,
 };
 
 use super::{

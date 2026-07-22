@@ -96,7 +96,7 @@ function ConvertTo-SingleQuotedLiteral($Value) {
     return "'$Escaped'"
 }
 
-function Start-DeferredCopy($Source, $Destination, $TempDir, $ParentPid) {
+function Start-DeferredCopy($Source, $Destination, $TempDir, $ParentPid, $CredentialBackend) {
     $Helper = Join-Path $TempDir "rho-complete-update.ps1"
     $HelperContent = @"
 `$ErrorActionPreference = "Stop"
@@ -104,6 +104,7 @@ function Start-DeferredCopy($Source, $Destination, $TempDir, $ParentPid) {
 `$Destination = $(ConvertTo-SingleQuotedLiteral $Destination)
 `$TempDir = $(ConvertTo-SingleQuotedLiteral $TempDir)
 `$ParentPid = $ParentPid
+`$CredentialBackend = $(ConvertTo-SingleQuotedLiteral $CredentialBackend)
 try {
     try {
         `$Process = Get-Process -Id `$ParentPid -ErrorAction SilentlyContinue
@@ -115,6 +116,14 @@ try {
     `$DestinationDir = Split-Path -Parent `$Destination
     New-Item -ItemType Directory -Force -Path `$DestinationDir | Out-Null
     Copy-Item -Path `$Source -Destination `$Destination -Force
+    if (`$CredentialBackend) {
+        if (`$CredentialBackend -eq "file") {
+            & `$Destination credential-store probe file
+            if (`$LASTEXITCODE -ne 0) { throw "local file credential storage is unavailable" }
+        }
+        & `$Destination credential-store set `$CredentialBackend
+        if (`$LASTEXITCODE -ne 0) { throw "failed to set credential store to `$CredentialBackend" }
+    }
 } finally {
     Remove-Item -Recurse -Force `$TempDir -ErrorAction SilentlyContinue
 }
@@ -124,6 +133,79 @@ try {
         "-NoProfile",
         "-File", "`"$Helper`""
     ) | Out-Null
+}
+
+function Set-CredentialStorePreference($RhoPath) {
+    if ($env:RHO_CREDENTIAL_STORE) {
+        if ($env:RHO_CREDENTIAL_STORE -eq "file") {
+            & $RhoPath credential-store probe file
+            if ($LASTEXITCODE -ne 0) {
+                throw "local file credential storage is unavailable"
+            }
+        }
+        & $RhoPath credential-store set $env:RHO_CREDENTIAL_STORE
+        if ($LASTEXITCODE -ne 0) {
+            throw "failed to set credential store to $env:RHO_CREDENTIAL_STORE"
+        }
+        return
+    }
+
+    & $RhoPath credential-store configured *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "credential-store choice already configured; keeping it"
+        return
+    }
+
+    if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
+        Write-Host "note: run '$RhoPath credential-store probe os' to check OS credential storage"
+        Write-Host "      use '$RhoPath credential-store set file' for private local file storage"
+        return
+    }
+
+    & $RhoPath credential-store probe os *> $null
+    $OsAvailable = $LASTEXITCODE -eq 0
+    if ($OsAvailable) {
+        Write-Host "OS credential storage is available and recommended."
+        try {
+            $Answer = Read-Host "Use the OS credential store? [Y/n]"
+        } catch {
+            Write-Warning "could not read credential-store choice; leaving the OS-only default"
+            return
+        }
+        $Backend = if ([string]::IsNullOrWhiteSpace($Answer) -or $Answer -match "^(y|yes)$") { "os" } elseif ($Answer -match "^(n|no)$") { "file" } else { $null }
+    } else {
+        Write-Host "No usable OS credential store was found in this session."
+        Write-Host "File storage uses a private user-only ACL but is not encrypted at rest."
+        try {
+            $Answer = Read-Host "Use local file credential storage? [Y/n]"
+        } catch {
+            Write-Warning "could not read credential-store choice; leaving the OS-only default"
+            return
+        }
+        $Backend = if ([string]::IsNullOrWhiteSpace($Answer) -or $Answer -match "^(y|yes)$") { "file" } elseif ($Answer -match "^(n|no)$") { "os" } else { $null }
+    }
+
+    if (-not $Backend) {
+        Write-Warning "unrecognized choice; leaving credential storage set to auto (OS only)"
+        return
+    }
+    if ($Backend -eq "file") {
+        if ($OsAvailable) {
+            Write-Host "File storage relies on filesystem access controls but is not encrypted at rest."
+        }
+        & $RhoPath credential-store probe file
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "local file credential storage is unavailable; leaving the OS-only default"
+            return
+        }
+    } elseif ($Backend -eq "os" -and -not $OsAvailable) {
+        Write-Warning "keeping the OS-only default; configure the OS credential store before login"
+        return
+    }
+    & $RhoPath credential-store set $Backend
+    if ($LASTEXITCODE -ne 0) {
+        throw "failed to set credential store to $Backend"
+    }
 }
 
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -158,7 +240,7 @@ try {
     if ($env:RHO_UPDATE_PARENT_PID) {
         $ParentPid = 0
         if ([int]::TryParse($env:RHO_UPDATE_PARENT_PID, [ref]$ParentPid) -and $ParentPid -gt 0) {
-            Start-DeferredCopy $Source $Destination $TempDir $ParentPid
+            Start-DeferredCopy $Source $Destination $TempDir $ParentPid $env:RHO_CREDENTIAL_STORE
             $DeferredCopyStarted = $true
         } else {
             throw "RHO_UPDATE_PARENT_PID is not a valid process id: $env:RHO_UPDATE_PARENT_PID"
@@ -172,6 +254,7 @@ try {
         Write-Host "rho update staged for $Destination. It will finish after the current rho process exits."
     } else {
         Write-Host "rho installed to $Destination"
+        Set-CredentialStorePreference $Destination
     }
     if ($PathChanged) {
         Write-Host "added $InstallDir to your user PATH. restart your terminal if rho is not found."

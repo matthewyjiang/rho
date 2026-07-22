@@ -45,6 +45,25 @@ fn agent_selection_is_global() {
 }
 
 #[test]
+fn parses_credential_store_commands() {
+    let probe = Cli::try_parse_from(["rho", "credential-store", "probe", "os"]).unwrap();
+    assert!(matches!(
+        probe.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Probe { backend }
+        }) if backend == "os"
+    ));
+
+    let set = Cli::try_parse_from(["rho", "credential-store", "set", "file"]).unwrap();
+    assert!(matches!(
+        set.command,
+        Some(Command::CredentialStore {
+            command: CredentialStoreCommand::Set { backend }
+        }) if backend == "file"
+    ));
+}
+
+#[test]
 fn parses_structured_output_and_execution_bounds() {
     let cli = Cli::try_parse_from([
         "rho",

@@ -15,7 +15,7 @@
       "reason": "keep the headless SDK independent from application and terminal policy"
     },
     {
-      "path": "crates/rho-providers/src/credentials.rs",
+      "path": "crates/rho-providers/src/credentials",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
     }

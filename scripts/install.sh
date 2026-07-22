@@ -59,23 +59,16 @@ github_api() {
   fi
 }
 
+compact_json() {
+  tr -d '[:space:]'
+}
+
 release_has_assets() {
   archive="$1"
   checksum="$2"
-  awk -v archive="$archive" -v checksum="$checksum" '
-    {
-      line=$0
-      while (match(line, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-        name=substr(line, RSTART, RLENGTH)
-        sub(/^[^:]*:[[:space:]]*"/, "", name)
-        sub(/"$/, "", name)
-        if (name == archive) have_archive=1
-        if (name == checksum) have_checksum=1
-        line=substr(line, RSTART + RLENGTH)
-      }
-    }
-    END { exit(have_archive && have_checksum ? 0 : 1) }
-  '
+  json="$(compact_json)"
+  printf '%s' "$json" | grep -Fq "\"name\":\"$archive\"" &&
+    printf '%s' "$json" | grep -Fq "\"name\":\"$checksum\""
 }
 
 release_tag() {
@@ -85,42 +78,26 @@ release_tag() {
     latest)
       latest_api="https://api.github.com/repos/$REPO/releases/latest"
       latest_json="$(github_api "$latest_api")"
-      tag="$(printf '%s\n' "$latest_json" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+      tag="$(printf '%s' "$latest_json" | compact_json | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')"
       if printf '%s\n' "$latest_json" | release_has_assets "$asset" "$checksum"; then
         printf '%s' "$tag"
         return
       fi
 
       releases_api="https://api.github.com/repos/$REPO/releases?per_page=100"
-      fallback="$(github_api "$releases_api" | awk -v archive="$asset" -v checksum="$checksum" '
-        function select_release() {
-          if (tag != "" && have_archive && have_checksum) {
-            print tag
-            found=1
-            exit
-          }
-        }
-        {
-          line=$0
-          while (match(line, /"(tag_name|name)"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
-            field=substr(line, RSTART, RLENGTH)
-            value=field
-            sub(/^[^:]*:[[:space:]]*"/, "", value)
-            sub(/"$/, "", value)
-            if (field ~ /^"tag_name"/) {
-              select_release()
-              tag=value
-              have_archive=0
-              have_checksum=0
-            } else {
-              if (value == archive) have_archive=1
-              if (value == checksum) have_checksum=1
-            }
-            line=substr(line, RSTART + RLENGTH)
-          }
-        }
-        END { if (!found) select_release() }
-      ')"
+      fallback="$(
+        github_api "$releases_api" |
+          compact_json |
+          sed 's/"tag_name":/\
+"tag_name":/g' |
+          while IFS= read -r release; do
+            if printf '%s' "$release" | release_has_assets "$asset" "$checksum"; then
+              printf '%s' "$release" |
+                sed -n 's/^"tag_name":"\([^"]*\)".*/\1/p'
+              break
+            fi
+          done
+      )"
       if [ -z "$fallback" ]; then
         echo "error: $tag is tagged but required assets $asset and $checksum are not both published yet, and no earlier compatible release was found" >&2
         echo "       install from source instead: cargo install rho-coding-agent" >&2
@@ -155,6 +132,75 @@ asset_url() {
   printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$tag" "$asset"
 }
 
+configure_credential_store() {
+  rho_bin="$1"
+
+  if [ -n "${RHO_CREDENTIAL_STORE:-}" ]; then
+    if [ "$RHO_CREDENTIAL_STORE" = "file" ] &&
+      ! "$rho_bin" credential-store probe file; then
+      echo "error: local file credential storage is unavailable" >&2
+      return 1
+    fi
+    if ! "$rho_bin" credential-store set "$RHO_CREDENTIAL_STORE"; then
+      echo "error: failed to set credential store to $RHO_CREDENTIAL_STORE" >&2
+      return 1
+    fi
+    return
+  fi
+
+  if "$rho_bin" credential-store configured >/dev/null 2>&1; then
+    echo "credential-store choice already configured; keeping it" >&2
+    return
+  fi
+
+  if ! (: </dev/tty) 2>/dev/null; then
+    echo "note: run '$rho_bin credential-store probe os' to check OS credential storage" >&2
+    echo "      use '$rho_bin credential-store set file' for owner-only local file storage" >&2
+    return
+  fi
+
+  if "$rho_bin" credential-store probe os >/dev/null 2>&1; then
+    default_backend="os"
+    prompt="OS credential store is available and recommended. Use it? [Y/n] "
+  else
+    default_backend="file"
+    echo "No usable OS credential store was found in this session." >/dev/tty
+    echo "File storage uses owner-only permissions but is not encrypted at rest." >/dev/tty
+    prompt="Use local file credential storage? [Y/n] "
+  fi
+
+  printf '%s' "$prompt" >/dev/tty
+  if ! IFS= read -r answer </dev/tty; then
+    echo "warning: could not read credential-store choice; leaving the OS-only default" >&2
+    return
+  fi
+  case "$answer" in
+    ""|y|Y|yes|YES) backend="$default_backend" ;;
+    n|N|no|NO)
+      if [ "$default_backend" = "os" ]; then backend="file"; else backend="os"; fi
+      ;;
+    *)
+      echo "warning: unrecognized choice; leaving credential storage set to auto (OS only)" >&2
+      return
+      ;;
+  esac
+  if [ "$backend" = "file" ]; then
+    if [ "$default_backend" = "os" ]; then
+      echo "File storage uses owner-only permissions but is not encrypted at rest." >/dev/tty
+    fi
+    if ! "$rho_bin" credential-store probe file; then
+      echo "warning: local file credential storage is unavailable; leaving the OS-only default" >&2
+      return
+    fi
+  elif [ "$backend" = "os" ] && [ "$default_backend" = "file" ]; then
+    echo "warning: keeping the OS-only default; configure the OS credential store before login" >&2
+    return
+  fi
+  if ! "$rho_bin" credential-store set "$backend"; then
+    echo "warning: failed to set credential store to $backend; keeping the OS-only default" >&2
+  fi
+}
+
 # Installer entry point. Function-only tests source the lines above this marker.
 need_cmd uname
 need_cmd mktemp
@@ -185,15 +231,16 @@ download "$url.sha256" "$checksum" || {
   echo "error: failed to download required checksum: $url.sha256" >&2
   exit 1
 }
-expected="$(awk '{print $1}' "$checksum")"
+read -r expected _ < "$checksum"
 if command -v sha256sum >/dev/null 2>&1; then
-  actual="$(sha256sum "$archive" | awk '{print $1}')"
+  actual_line="$(sha256sum "$archive")"
 elif command -v shasum >/dev/null 2>&1; then
-  actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  actual_line="$(shasum -a 256 "$archive")"
 else
   echo "error: sha256sum or shasum is required to verify the downloaded archive" >&2
   exit 1
 fi
+actual="${actual_line%% *}"
 if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
   echo "error: checksum verification failed for $url" >&2
   exit 1
@@ -211,6 +258,7 @@ else
 fi
 
 echo "rho installed to $install_path"
+configure_credential_store "$install_path"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) echo "note: add $INSTALL_DIR to your PATH to run rho from anywhere" ;;

@@ -35,6 +35,8 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
 | `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Add `--device-auth` for remote or headless sessions. |
+| `rho credential-store probe [auto|os|file]` | Test a credential backend with a temporary secret. |
+| `rho credential-store set <auto|os|file>` | Save the credential backend used by Rho. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 

@@ -88,8 +88,32 @@ pub enum Command {
         #[arg(long)]
         device_auth: bool,
     },
+    /// Configure or probe provider credential storage.
+    CredentialStore {
+        #[command(subcommand)]
+        command: CredentialStoreCommand,
+    },
     /// Update rho using the detected installation method.
     Update,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CredentialStoreCommand {
+    /// Test a credential backend by writing and deleting a temporary secret.
+    Probe {
+        /// Backend to test: auto, os, or file.
+        #[arg(value_name = "BACKEND", default_value = "auto")]
+        backend: String,
+    },
+    /// Return success when a credential-store policy has already been saved.
+    #[command(hide = true)]
+    Configured,
+    /// Save the credential backend used by future rho processes.
+    Set {
+        /// Backend to use: auto, os, or file.
+        #[arg(value_name = "BACKEND")]
+        backend: String,
+    },
 }
 
 #[cfg(test)]

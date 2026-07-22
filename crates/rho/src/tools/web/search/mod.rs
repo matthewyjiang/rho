@@ -3,8 +3,11 @@ mod exa;
 pub(super) mod openai;
 
 use {
-    crate::config::{Config, SearchProvider},
-    rho_providers::credentials::{load_web_search_api_key, OsCredentialStore, WebSearchCredential},
+    crate::{
+        config::{Config, SearchProvider},
+        credential_store::AppCredentialStore,
+    },
+    rho_providers::credentials::{load_web_search_api_key, WebSearchCredential},
     rho_tools::tool::ToolError,
 };
 
@@ -42,7 +45,7 @@ impl SearchBackendConfig {
     }
 
     pub(super) fn credential(&self, credential: WebSearchCredential) -> Option<String> {
-        let stored = load_web_search_api_key(&OsCredentialStore, credential)
+        let stored = load_web_search_api_key(&AppCredentialStore, credential)
             .ok()
             .flatten();
         stored.or_else(|| match credential {

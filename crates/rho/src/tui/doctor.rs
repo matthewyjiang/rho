@@ -44,7 +44,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
                 Ok(true) => (
                     true,
                     "authenticated",
-                    "Credentials are available in the OS credential store.",
+                    "Credentials are available in the configured credential store.",
                 ),
                 Ok(false) => (
                     false,
@@ -54,7 +54,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
                 Err(_) => (
                     false,
                     "error",
-                    "The OS credential store could not be read. No secret values were inspected or displayed.",
+                    "The configured credential store could not be read. No secret values were inspected or displayed.",
                 ),
             }
         };

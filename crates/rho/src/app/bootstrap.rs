@@ -4,11 +4,11 @@ use std::{
 };
 
 use {
-    crate::cli::{Cli, Command, OutputFormat},
+    crate::cli::{Cli, Command, CredentialStoreCommand, OutputFormat},
+    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
     crate::update,
-    rho_providers::credentials::OsCredentialStore,
     rho_providers::model::ModelError,
 };
 
@@ -58,6 +58,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
+    if let Some(Command::CredentialStore { command }) = &cli.command {
+        return run_credential_store_command(command);
+    }
     if let Some(Command::Attach { id }) = &cli.command {
         return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;
     }
@@ -69,6 +72,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         device_auth,
     }) = &cli.command
     {
+        crate::credential_store::initialize()?;
         return login::run(provider, *device_auth).await;
     }
 
@@ -91,7 +95,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     let selected_agent = cli.agent.as_deref().unwrap_or("default");
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
-    let store = OsCredentialStore;
+    let store = AppCredentialStore;
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let mut save_config = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
@@ -172,7 +176,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
 
     let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        Arc::new(OsCredentialStore),
+        Arc::new(AppCredentialStore),
     );
     let provider_result = rho_providers::providers::build_sdk_provider_with_source(
         sdk_options.provider,
@@ -201,6 +205,40 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     })
     .await;
     result
+}
+
+fn run_credential_store_command(command: &CredentialStoreCommand) -> anyhow::Result<()> {
+    use rho_providers::credentials::CredentialStoreBackend;
+
+    match command {
+        CredentialStoreCommand::Probe { backend } => {
+            let backend = CredentialStoreBackend::parse(backend)?;
+            let result = crate::credential_store::probe(backend);
+            if result.available {
+                println!("available: {}", result.detail);
+                Ok(())
+            } else {
+                anyhow::bail!(result.detail)
+            }
+        }
+        CredentialStoreCommand::Configured => {
+            if crate::credential_store::has_saved_policy() {
+                Ok(())
+            } else {
+                anyhow::bail!("no credential-store policy has been saved")
+            }
+        }
+        CredentialStoreCommand::Set { backend } => {
+            let backend = CredentialStoreBackend::parse(backend)?;
+            let path = crate::credential_store::set_backend(backend)?;
+            println!(
+                "credential store set to {} in {}",
+                backend.as_str(),
+                path.display()
+            );
+            Ok(())
+        }
+    }
 }
 
 fn host_capabilities(
