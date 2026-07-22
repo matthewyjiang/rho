@@ -32,9 +32,32 @@ const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
 ];
 
+/// Whether repository-provided skills are trusted. Project skills' descriptions
+/// are written into the system prompt, so an untrusted repository could inject
+/// instructions; this gates them the same way project agents are gated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectTrust {
+    Trusted,
+    Untrusted,
+}
+
+/// Reads the same signal that gates project agents, so one flag governs whether
+/// a project's agents and skills are trusted.
+pub fn project_trust() -> ProjectTrust {
+    if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        ProjectTrust::Trusted
+    } else {
+        ProjectTrust::Untrusted
+    }
+}
+
+/// Discovers every skill, including project-provided ones. Used when a skill is
+/// invoked by explicit name; the system prompt uses
+/// [`discover_with_home_and_trust`] so untrusted project skills are not
+/// advertised to the model.
 pub fn discover(cwd: &Path) -> Vec<Skill> {
     let home = crate::paths::home_dir();
-    discover_with_home(cwd, home.as_deref())
+    discover_with_home_and_trust(cwd, home.as_deref(), ProjectTrust::Trusted)
 }
 
 pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
@@ -43,18 +66,29 @@ pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
         .find(|skill| skill.name == name)
 }
 
+#[cfg(test)]
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
+    discover_with_home_and_trust(cwd, home, ProjectTrust::Trusted)
+}
+
+pub fn discover_with_home_and_trust(
+    cwd: &Path,
+    home: Option<&Path>,
+    project_trust: ProjectTrust,
+) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
         roots.push(home.join(".rho").join("skills"));
         roots.push(home.join(".agents").join("skills"));
     }
-    roots.extend(
-        crate::workspace::project_ancestor_dirs(cwd)
-            .into_iter()
-            .rev()
-            .map(|path| path.join(".agents").join("skills")),
-    );
+    if project_trust == ProjectTrust::Trusted {
+        roots.extend(
+            crate::workspace::project_ancestor_dirs(cwd)
+                .into_iter()
+                .rev()
+                .map(|path| path.join(".agents").join("skills")),
+        );
+    }
 
     let mut seen = HashSet::new();
     let mut discovered = builtin_skills();
@@ -344,6 +378,41 @@ mod tests {
                 "agent-skill",
                 "project-skill"
             ]
+        );
+    }
+
+    #[test]
+    fn untrusted_project_skills_are_withheld_but_home_and_builtin_remain() {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        write_skill(
+            home.path(),
+            ".agents/skills/home-skill",
+            "home-skill",
+            "home desc",
+        );
+        write_skill(
+            project.path(),
+            ".agents/skills/project-skill",
+            "project-skill",
+            "project desc",
+        );
+
+        let skills = discover_with_home_and_trust(
+            project.path(),
+            Some(home.path()),
+            ProjectTrust::Untrusted,
+        );
+        let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+
+        assert!(names.contains(&"home-skill"), "home skills stay available");
+        assert!(
+            names.contains(&"rho-diagnostics"),
+            "builtin skills stay available"
+        );
+        assert!(
+            !names.contains(&"project-skill"),
+            "untrusted project skills must not be discovered"
         );
     }
 
