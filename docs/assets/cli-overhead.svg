@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="236" viewBox="0 0 1000 236" role="img" aria-labelledby="title desc">
+  <title id="title">CLI startup and memory comparison</title>
+  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>
+  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>
+  <text x="20" y="24" fill="#f0f3f6" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="18" font-weight="700">CLI process overhead</text>
+  <text x="20" y="44" fill="#8b949e" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12">Median of 50 help-startup runs on Linux x86_64. Not TUI cost or model latency.</text>
+  <text x="168" y="56" fill="#8b949e" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="11">STARTUP</text>
+  <text x="582.0" y="56" fill="#8b949e" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="11">PEAK RSS</text>
+  <text x="158" y="88.0" fill="#39c5cf" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" text-anchor="end" font-weight="700">rho</text>
+  <rect x="168" y="78.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="168" y="78.5" width="3.0" height="11" rx="3" fill="#39c5cf"/>
+  <text x="558.0" y="88.0" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end" font-weight="700">3.41 ms</text>
+  <rect x="582.0" y="78.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="582.0" y="78.5" width="15.0" height="11" rx="3" fill="#39c5cf"/>
+  <text x="972.0" y="88.0" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end" font-weight="700">14.3 MiB</text>
+  <text x="158" y="116.0" fill="#c9d1d9" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" text-anchor="end">Codex</text>
+  <rect x="168" y="106.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="168" y="106.5" width="4.1" height="11" rx="3" fill="#30363d"/>
+  <text x="558.0" y="116.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">7.44 ms</text>
+  <rect x="582.0" y="106.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="582.0" y="106.5" width="20.6" height="11" rx="3" fill="#30363d"/>
+  <text x="972.0" y="116.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">19.6 MiB</text>
+  <text x="158" y="144.0" fill="#c9d1d9" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" text-anchor="end">Claude Code</text>
+  <rect x="168" y="134.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="168" y="134.5" width="101.3" height="11" rx="3" fill="#30363d"/>
+  <text x="558.0" y="144.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">185 ms</text>
+  <rect x="582.0" y="134.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="582.0" y="134.5" width="299.0" height="11" rx="3" fill="#30363d"/>
+  <text x="972.0" y="144.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">285 MiB</text>
+  <text x="158" y="172.0" fill="#c9d1d9" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" text-anchor="end">OpenCode</text>
+  <rect x="168" y="162.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="168" y="162.5" width="225.1" height="11" rx="3" fill="#30363d"/>
+  <text x="558.0" y="172.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">411 ms</text>
+  <rect x="582.0" y="162.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="582.0" y="162.5" width="211.1" height="11" rx="3" fill="#30363d"/>
+  <text x="972.0" y="172.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">201 MiB</text>
+  <text x="158" y="200.0" fill="#c9d1d9" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" text-anchor="end">Pi (no extensions)</text>
+  <rect x="168" y="190.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="168" y="190.5" width="299.0" height="11" rx="3" fill="#30363d"/>
+  <text x="558.0" y="200.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">546 ms</text>
+  <rect x="582.0" y="190.5" width="314.0" height="11" rx="3" fill="#161b22"/>
+  <rect x="582.0" y="190.5" width="156.4" height="11" rx="3" fill="#30363d"/>
+  <text x="972.0" y="200.0" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="12" text-anchor="end">149 MiB</text>
+  <text x="20" y="226" fill="#6e7681" font-family="DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif" font-size="11">Native: rho, Codex. JS runtimes: Claude Code, Pi, OpenCode. Pi uses --no-extensions.</text>
+</svg>

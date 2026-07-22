@@ -217,7 +217,8 @@ def print_table(results: list[dict[str, Any]]) -> None:
 
 
 def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
-    # Compact side-by-side panels with fixed value columns so labels never collide.
+    # Compact side-by-side panels with fixed value columns.
+    # Use inline presentation attributes only: GitHub README SVG sanitizing drops <style>.
     width = 1000
     pad_x = 20
     label_w = 148
@@ -248,84 +249,134 @@ def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
     ms_scale_max = max(max_ms * 1.05, 1.0)
     mib_scale_max = max(max_mib * 1.05, 1.0)
 
+    sans = "DejaVu Sans, Segoe UI, Helvetica, Arial, sans-serif"
+    mono = "DejaVu Sans Mono, Liberation Mono, Consolas, monospace"
+
     def bar_width(value: float, scale_max: float) -> float:
         return max(3.0, (value / scale_max) * plot_w)
 
     def row_center_y(index: int) -> float:
         return rows_top + index * row_h + (row_h / 2)
 
+    def text(
+        x: float,
+        y: float,
+        content: str,
+        *,
+        fill: str,
+        size: int,
+        font: str,
+        anchor: str | None = None,
+        weight: str | None = None,
+    ) -> str:
+        attrs = [
+            f'x="{x}"',
+            f'y="{y}"',
+            f'fill="{fill}"',
+            f'font-family="{font}"',
+            f'font-size="{size}"',
+        ]
+        if anchor:
+            attrs.append(f'text-anchor="{anchor}"')
+        if weight:
+            attrs.append(f'font-weight="{weight}"')
+        return f'  <text {" ".join(attrs)}>{content}</text>'
+
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
         '  <title id="title">CLI startup and memory comparison</title>',
         '  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>',
-        "  <defs>",
-        "    <style>",
-        '      .sans { font-family: "DejaVu Sans", "Segoe UI", Helvetica, Arial, sans-serif; }',
-        '      .mono { font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace; }',
-        "      .title { fill: #f0f3f6; font-size: 18px; font-weight: 700; }",
-        "      .subtitle { fill: #8b949e; font-size: 12px; }",
-        "      .panel { fill: #8b949e; font-size: 11px; letter-spacing: 0.05em; }",
-        "      .label { fill: #c9d1d9; font-size: 12px; }",
-        "      .label-hi { fill: #39c5cf; font-size: 12px; font-weight: 700; }",
-        "      .value { fill: #c9d1d9; font-size: 12px; }",
-        "      .value-hi { fill: #3fb950; font-size: 12px; font-weight: 700; }",
-        "      .foot { fill: #6e7681; font-size: 11px; }",
-        "      .bar { fill: #30363d; }",
-        "      .bar-hi { fill: #39c5cf; }",
-        "      .track { fill: #161b22; }",
-        "    </style>",
-        "  </defs>",
-        '  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
-        f'  <text x="{pad_x}" y="24" class="sans title">CLI process overhead</text>',
-        f'  <text x="{pad_x}" y="44" class="sans subtitle">Median of {samples} help-startup runs on Linux x86_64. Not TUI cost or model latency.</text>',
-        f'  <text x="{left_plot_x}" y="{header_h + 2}" class="sans panel">STARTUP</text>',
-        f'  <text x="{right_plot_x}" y="{header_h + 2}" class="sans panel">PEAK RSS</text>',
+        f'  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
+        text(pad_x, 24, "CLI process overhead", fill="#f0f3f6", size=18, font=sans, weight="700"),
+        text(
+            pad_x,
+            44,
+            f"Median of {samples} help-startup runs on Linux x86_64. Not TUI cost or model latency.",
+            fill="#8b949e",
+            size=12,
+            font=sans,
+        ),
+        text(left_plot_x, header_h + 2, "STARTUP", fill="#8b949e", size=11, font=sans),
+        text(right_plot_x, header_h + 2, "PEAK RSS", fill="#8b949e", size=11, font=sans),
     ]
 
     for index, item in enumerate(results):
         cy = row_center_y(index)
         bar_y = cy - (bar_h / 2)
         text_y = cy + 4
-        label_class = "label-hi" if item["highlight"] else "label"
-        bar_class = "bar-hi" if item["highlight"] else "bar"
-        value_class = "value-hi" if item["highlight"] else "value"
+        highlight = bool(item["highlight"])
+        label_fill = "#39c5cf" if highlight else "#c9d1d9"
+        value_fill = "#3fb950" if highlight else "#c9d1d9"
+        bar_fill = "#39c5cf" if highlight else "#30363d"
         label = html.escape(item["label"])
+        label_weight = "700" if highlight else None
+        value_weight = "700" if highlight else None
 
         ms = item["time_ms"]["median"]
         mib = item["rss_kib"]["median"] / 1024
         ms_w = bar_width(ms, ms_scale_max)
         mib_w = bar_width(mib, mib_scale_max)
 
-        # Shared labels once on the left.
         parts.append(
-            f'  <text x="{left_plot_x - 10}" y="{text_y:.1f}" text-anchor="end" class="sans {label_class}">{label}</text>'
+            text(
+                left_plot_x - 10,
+                text_y,
+                label,
+                fill=label_fill,
+                size=12,
+                font=sans,
+                anchor="end",
+                weight=label_weight,
+            )
         )
 
-        # Startup track + bar + fixed value column.
         parts.append(
-            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" class="track"/>'
+            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" fill="#161b22"/>'
         )
         parts.append(
-            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{ms_w:.1f}" height="{bar_h}" rx="3" class="{bar_class}"/>'
+            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{ms_w:.1f}" height="{bar_h}" rx="3" fill="{bar_fill}"/>'
         )
         parts.append(
-            f'  <text x="{left_value_x + value_w}" y="{text_y:.1f}" text-anchor="end" class="mono {value_class}">{fmt_ms(ms)}</text>'
-        )
-
-        # Memory track + bar + fixed value column.
-        parts.append(
-            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" class="track"/>'
-        )
-        parts.append(
-            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{mib_w:.1f}" height="{bar_h}" rx="3" class="{bar_class}"/>'
-        )
-        parts.append(
-            f'  <text x="{right_value_x + value_w}" y="{text_y:.1f}" text-anchor="end" class="mono {value_class}">{fmt_mib(item["rss_kib"]["median"])}</text>'
+            text(
+                left_value_x + value_w,
+                text_y,
+                fmt_ms(ms),
+                fill=value_fill,
+                size=12,
+                font=mono,
+                anchor="end",
+                weight=value_weight,
+            )
         )
 
-    foot_y = height - 10
+        parts.append(
+            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" fill="#161b22"/>'
+        )
+        parts.append(
+            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{mib_w:.1f}" height="{bar_h}" rx="3" fill="{bar_fill}"/>'
+        )
+        parts.append(
+            text(
+                right_value_x + value_w,
+                text_y,
+                fmt_mib(item["rss_kib"]["median"]),
+                fill=value_fill,
+                size=12,
+                font=mono,
+                anchor="end",
+                weight=value_weight,
+            )
+        )
+
     parts.append(
-        f'  <text x="{pad_x}" y="{foot_y}" class="sans foot">Native: rho, Codex. JS runtimes: Claude Code, Pi, OpenCode. Pi uses --no-extensions.</text>'
+        text(
+            pad_x,
+            height - 10,
+            "Native: rho, Codex. JS runtimes: Claude Code, Pi, OpenCode. Pi uses --no-extensions.",
+            fill="#6e7681",
+            size=11,
+            font=sans,
+        )
     )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
@@ -354,7 +405,7 @@ def main() -> int:
     parser.add_argument(
         "--svg",
         type=Path,
-        default=repo_root() / "docs" / "assets" / "cli-startup.svg",
+        default=repo_root() / "docs" / "assets" / "cli-overhead.svg",
         help="path to write the comparison chart SVG",
     )
     parser.add_argument("--no-svg", action="store_true", help="skip SVG output")
