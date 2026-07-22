@@ -10,8 +10,7 @@ use rho_providers::model::{Message, ModelIdentity};
 pub(super) struct SnapshotDeltaBase {
     session_id: SessionId,
     revision: Revision,
-    history_len: usize,
-    history_tail: Option<Message>,
+    history: Vec<Message>,
     compaction: CompactionState,
 }
 
@@ -20,8 +19,7 @@ impl SnapshotDeltaBase {
         Self {
             session_id: snapshot.session_id().clone(),
             revision: snapshot.revision(),
-            history_len: snapshot.history().len(),
-            history_tail: snapshot.history().last().cloned(),
+            history: snapshot.history().to_vec(),
             compaction: snapshot.compaction().clone(),
         }
     }
@@ -29,7 +27,7 @@ impl SnapshotDeltaBase {
 
 /// The changing snapshot fields plus only the history appended since a base snapshot.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct StoredSnapshotDelta {
+pub(crate) struct StoredSnapshotDelta {
     base_revision: Revision,
     session_id: SessionId,
     revision: Revision,
@@ -46,16 +44,12 @@ impl StoredSnapshotDelta {
         if &base.session_id != current.session_id()
             || base.revision > current.revision()
             || base.compaction != *current.compaction()
-            || base.history_len > current.history().len()
-            || base.history_tail.as_ref()
-                != base
-                    .history_len
-                    .checked_sub(1)
-                    .and_then(|index| current.history().get(index))
+            || base.history.len() > current.history().len()
+            || current.history().get(..base.history.len()) != Some(base.history.as_slice())
         {
             return None;
         }
-        let appended_history = current.history()[base.history_len..].to_vec();
+        let appended_history = current.history()[base.history.len()..].to_vec();
         Some(Self {
             base_revision: base.revision,
             session_id: current.session_id().clone(),

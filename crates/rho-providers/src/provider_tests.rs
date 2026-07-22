@@ -29,6 +29,10 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).catalog_reasoning,
+        CatalogReasoningPolicy::OffAsNone
+    );
+    assert_eq!(
         super::provider_descriptor_by_id(ProviderId::GithubCopilot).catalog_reasoning,
         CatalogReasoningPolicy::NotConfigurable
     );
@@ -46,6 +50,24 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
             CatalogReasoningPolicy::OffByAdvertisedToggle
         );
     }
+}
+
+#[test]
+fn openrouter_profiles_share_runtime_policy_and_resolve_by_auth() {
+    use super::{ProviderId, RuntimeProviderId};
+
+    let api_key = super::provider_descriptor_by_id(ProviderId::OpenRouter);
+    let oauth = super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth);
+    assert_eq!(api_key.runtime_id, RuntimeProviderId::OpenRouter);
+    assert_eq!(oauth.runtime_id, api_key.runtime_id);
+    assert_eq!(
+        super::resolve_profile("openrouter", "openrouter-oauth").unwrap(),
+        oauth
+    );
+    assert_eq!(
+        super::resolve_profile("openrouter-oauth", "openrouter-api-key").unwrap(),
+        api_key
+    );
 }
 
 #[test]
@@ -107,6 +129,24 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         openrouter.auth_kind.account(),
         Some(super::OPENROUTER_API_KEY_ACCOUNT)
     );
+
+    let openrouter_oauth = super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth);
+    assert_eq!(openrouter_oauth.auth, "openrouter-oauth");
+    assert_eq!(
+        openrouter_oauth.auth_kind.env_var(),
+        Some("OPENROUTER_API_KEY")
+    );
+    assert_eq!(
+        openrouter_oauth.auth_kind.account(),
+        Some(super::OPENROUTER_OAUTH_KEY_ACCOUNT)
+    );
+    assert!(matches!(
+        openrouter_oauth.auth_kind,
+        ProviderAuthKind::BearerCredential {
+            account: super::OPENROUTER_OAUTH_KEY_ACCOUNT,
+            ..
+        }
+    ));
 
     let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode);
     assert_eq!(kimi.auth, "kimi-oauth");

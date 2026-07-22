@@ -9,6 +9,9 @@ pub(crate) enum ReplacementSessionSource {
         history: Vec<Message>,
         id: Option<String>,
     },
+    DurableSnapshot {
+        snapshot: rho_sdk::SessionSnapshot,
+    },
     Snapshot {
         storage: StoredSession,
         id: String,
@@ -20,6 +23,7 @@ pub(crate) struct InteractiveSessionController {
     storage: Option<StoredSession>,
     pending_session_id: Option<SessionId>,
     pending_notices: Vec<String>,
+    persisted_pending_user: bool,
 }
 
 impl InteractiveSessionController {
@@ -29,6 +33,7 @@ impl InteractiveSessionController {
             storage,
             pending_session_id: None,
             pending_notices: Vec::new(),
+            persisted_pending_user: false,
         }
     }
 
@@ -43,6 +48,7 @@ impl InteractiveSessionController {
     pub(crate) fn replace_session(&mut self, session: Session, notice: Option<String>) {
         self.session = session;
         self.pending_session_id = None;
+        self.persisted_pending_user = false;
         if let Some(notice) = notice {
             self.pending_notices.push(notice);
         }
@@ -68,6 +74,11 @@ impl InteractiveSessionController {
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
+        self.persisted_pending_user = false;
+    }
+
+    pub(crate) fn storage(&self) -> Option<&StoredSession> {
+        self.storage.as_ref()
     }
 
     pub(crate) fn take_notices(&mut self) -> Vec<String> {
@@ -91,6 +102,7 @@ impl InteractiveSessionController {
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
         self.storage = None;
+        self.persisted_pending_user = false;
         let session_id = SessionId::new();
         self.pending_session_id = Some(session_id.clone());
         Ok(session_id)
@@ -98,10 +110,11 @@ impl InteractiveSessionController {
 
     pub(crate) fn set_resumed_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
+        self.persisted_pending_user = false;
     }
 
     pub(crate) fn sync_finished_turn(
-        &self,
+        &mut self,
         pending_turn: Option<&PendingTurn>,
         outcome: Option<&RunOutcome>,
     ) -> anyhow::Result<()> {
@@ -130,7 +143,41 @@ impl InteractiveSessionController {
         ) {
             *first = display.clone();
         }
-        storage.save_snapshot(&self.session.snapshot(), &display_tail)
+        if self.persisted_pending_user && !display_tail.is_empty() {
+            display_tail.remove(0);
+        }
+        storage.save_snapshot(&self.session.snapshot(), &display_tail)?;
+        self.persisted_pending_user = false;
+        Ok(())
+    }
+
+    pub(crate) fn save_automatic_compaction(
+        &mut self,
+        snapshot: &rho_sdk::SessionSnapshot,
+        display_user: Option<&Message>,
+        outcome: &rho_sdk::CompactionOutcome,
+    ) -> anyhow::Result<()> {
+        if let Some(storage) = &self.storage {
+            let display_tail = if self.persisted_pending_user {
+                &[][..]
+            } else {
+                display_user.map(std::slice::from_ref).unwrap_or_default()
+            };
+            storage.save_compaction_snapshot(snapshot, display_tail, outcome)?;
+            self.persisted_pending_user |= display_user.is_some();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn save_compaction_snapshot(
+        &self,
+        display_tail: &[Message],
+        outcome: &rho_sdk::CompactionOutcome,
+    ) -> anyhow::Result<()> {
+        if let Some(storage) = &self.storage {
+            storage.save_compaction_snapshot(&self.session.snapshot(), display_tail, outcome)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn save_snapshot(&self, display_tail: &[Message]) -> anyhow::Result<()> {

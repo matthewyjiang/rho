@@ -58,6 +58,20 @@ impl ProviderConfigs {
 }
 
 impl Config {
+    pub(crate) fn normalize_provider_profiles(&mut self) -> anyhow::Result<()> {
+        let profile = rho_providers::provider::resolve_profile(&self.provider, &self.auth)?;
+        self.provider = profile.name.into();
+        self.auth = profile.auth.into();
+        for (id, selection) in &mut self.internal_agents {
+            let profile =
+                rho_providers::provider::resolve_profile(&selection.provider, &selection.auth)
+                    .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
+            selection.provider = profile.name.into();
+            selection.auth = profile.auth.into();
+        }
+        Ok(())
+    }
+
     /// Resolves the one API base shared by runtime requests, model discovery, and diagnostics.
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
         self.providers.endpoint(provider).cloned().or_else(|| {
@@ -104,3 +118,7 @@ pub(super) struct PartialProviderConfigs {
 pub(super) struct PartialOllamaProviderConfig {
     pub(super) base_url: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "provider_config_tests.rs"]
+mod tests;

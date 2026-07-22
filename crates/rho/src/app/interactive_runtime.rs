@@ -73,6 +73,8 @@ pub(crate) struct InteractiveRuntime {
     approval_receiver: Option<ApprovalRequestReceiver>,
     agent_id: String,
     agent_fingerprint: String,
+    pending_persistence_error: Option<anyhow::Error>,
+    pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
 }
 
 enum TurnPrelude {
@@ -232,6 +234,8 @@ impl InteractiveRuntime {
             approval_receiver,
             agent_id,
             agent_fingerprint,
+            pending_persistence_error: None,
+            pending_persistence_checkpoint: None,
         })
     }
 
@@ -379,7 +383,34 @@ impl InteractiveRuntime {
     }
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
-        self.runs.next_event(self.context_window).await
+        let event = self.runs.next_event(self.context_window).await;
+        if let Some(RunEvent::CompactionCompleted { outcome, .. }) = &event {
+            let snapshot = outcome.committed_snapshot().ok_or_else(|| {
+                anyhow::anyhow!("automatic compaction event is missing its committed snapshot")
+            });
+            let checkpoint = self.capture_durable_session();
+            let display_user = self
+                .runs
+                .pending_turn()
+                .map(|turn| turn.display_user().unwrap_or_else(|| turn.model_user()));
+            match (checkpoint, snapshot) {
+                (Ok(checkpoint), Ok(snapshot)) => {
+                    if let Err(error) =
+                        self.sessions
+                            .save_automatic_compaction(snapshot, display_user, outcome)
+                    {
+                        self.runs.cancel();
+                        self.pending_persistence_error = Some(error);
+                        self.pending_persistence_checkpoint = checkpoint;
+                    }
+                }
+                (Err(error), _) | (_, Err(error)) => {
+                    self.runs.cancel();
+                    self.pending_persistence_error = Some(error);
+                }
+            }
+        }
+        event
     }
 
     pub(crate) fn cancel(&mut self) {
@@ -409,11 +440,43 @@ impl InteractiveRuntime {
     }
 
     pub(crate) async fn finish_run(&mut self) -> anyhow::Result<RunOutcome> {
-        let finished = self.runs.finish().await?;
-        self.sessions.sync_finished_turn(
+        let finished = self.runs.finish().await;
+        if let Some(error) = self.pending_persistence_error.take() {
+            let checkpoint = self.pending_persistence_checkpoint.take();
+            let rollback = self.restore_durable_session(checkpoint).await;
+            return match rollback {
+                Ok(()) => Err(anyhow::anyhow!(
+                    "could not persist automatic compaction: {error}"
+                )),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "could not persist automatic compaction: {error}; could not restore durable state: {rollback_error}"
+                )),
+            };
+        }
+        let finished = finished?;
+        let checkpoint = self.capture_durable_session();
+        if let Err(error) = self.sessions.sync_finished_turn(
             finished.pending_turn.as_ref(),
             finished.outcome.as_ref().ok(),
-        )?;
+        ) {
+            let (checkpoint, capture_error) = match checkpoint {
+                Ok(checkpoint) => (checkpoint, None),
+                Err(capture_error) => (None, Some(capture_error)),
+            };
+            let rollback = self.restore_durable_session(checkpoint).await;
+            return match (capture_error, rollback) {
+                (None, Ok(())) => Err(error),
+                (Some(capture_error), Ok(())) => Err(anyhow::anyhow!(
+                    "{error}; could not capture rollback checkpoint: {capture_error}"
+                )),
+                (None, Err(rollback_error)) => Err(anyhow::anyhow!(
+                    "{error}; could not restore durable state: {rollback_error}"
+                )),
+                (Some(capture_error), Err(rollback_error)) => Err(anyhow::anyhow!(
+                    "{error}; could not capture rollback checkpoint: {capture_error}; could not restore durable state: {rollback_error}"
+                )),
+            };
+        }
         self.refresh_context_usage();
         Ok(finished.outcome?)
     }
@@ -422,8 +485,17 @@ impl InteractiveRuntime {
         if self.runs.is_active() {
             anyhow::bail!("session is busy");
         }
+        let checkpoint = self.capture_durable_session()?;
         let outcome = self.sessions.session().compact().await?;
-        self.sessions.save_snapshot(&[])?;
+        if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
+            let rollback = self.restore_durable_session(checkpoint).await;
+            return match rollback {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "{error}; could not restore durable state: {rollback_error}"
+                )),
+            };
+        }
         if outcome.current_messages() < outcome.previous_messages() {
             self.runs.note_manual_compaction(self.context_window);
         }
@@ -463,6 +535,55 @@ impl InteractiveRuntime {
             manager.set_session(self.sessions.session().id().to_string());
         }
         self.sessions.set_resumed_storage(storage);
+        Ok(())
+    }
+
+    pub(crate) fn stored_session(&self) -> Option<StoredSession> {
+        self.sessions.storage().cloned()
+    }
+
+    pub(crate) async fn select_tree_node(
+        &mut self,
+        storage: StoredSession,
+        target_id: &crate::session::tree::NodeId,
+    ) -> anyhow::Result<()> {
+        if self.runs.is_active() {
+            anyhow::bail!("cannot navigate the session tree while a run is active");
+        }
+        let identity = self.provider.provider().identity();
+        let id = storage.id().to_string();
+        let snapshot =
+            storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
+        let resume_notice = resume_omissions_notice(&snapshot, &identity);
+        let replacement_runtime = build_runtime(RuntimeBuildOptions {
+            provider: Arc::clone(self.provider.provider()),
+            tools: self.tools.tools(),
+            workspace: self.workspace.clone(),
+            workspace_policy: AppPolicy::for_mode(self.permission_mode),
+            approval_handler: self.approval_handler.clone(),
+            system_prompt: self.system_prompt.clone(),
+            reasoning: self.provider.reasoning(),
+            compaction: self.compaction.clone(),
+            context_window: self.context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: self.usage_recording.clone(),
+        })?;
+        let replacement_session = replacement_runtime
+            .session(SessionOptions::from_snapshot(snapshot))
+            .await?;
+
+        // Do not change the live runtime until the selected leaf is durable.
+        if let Err(error) = storage.set_leaf(target_id) {
+            replacement_runtime.shutdown();
+            return Err(error);
+        }
+        let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
+        self.sessions
+            .replace_session(replacement_session, resume_notice);
+        self.sessions.set_resumed_storage(storage);
+        previous_runtime.shutdown();
+        self.refresh_context_usage();
         Ok(())
     }
 
@@ -566,9 +687,50 @@ impl InteractiveRuntime {
         self.runs.observe_event(event, self.context_window);
     }
 
+    fn capture_durable_session(
+        &self,
+    ) -> anyhow::Result<Option<(StoredSession, rho_sdk::SessionSnapshot)>> {
+        let Some(storage) = self.sessions.storage().cloned() else {
+            return Ok(None);
+        };
+        let id = storage.id().to_string();
+        let snapshot = storage
+            .snapshot_for_resume(self.provider.provider().identity(), prompt_cache_key(&id))?;
+        Ok(Some((storage, snapshot)))
+    }
+
+    async fn restore_durable_session(
+        &mut self,
+        checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
+    ) -> anyhow::Result<()> {
+        if let Some((storage, snapshot)) = checkpoint {
+            self.rebuild_session(ReplacementSessionSource::DurableSnapshot { snapshot })
+                .await?;
+            self.sessions.set_resumed_storage(storage);
+            return Ok(());
+        }
+        let storage = self
+            .sessions
+            .storage()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("durable session storage is unavailable"))?;
+        let id = storage.id().to_string();
+        self.rebuild_session(ReplacementSessionSource::Snapshot {
+            storage: storage.clone(),
+            id,
+        })
+        .await?;
+        self.sessions.set_resumed_storage(storage);
+        Ok(())
+    }
+
     async fn rebuild_session(&mut self, source: ReplacementSessionSource) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
         let (options, resume_notice) = match source {
+            ReplacementSessionSource::DurableSnapshot { snapshot } => {
+                let notice = resume_omissions_notice(&snapshot, &identity);
+                (SessionOptions::from_snapshot(snapshot), notice)
+            }
             ReplacementSessionSource::Snapshot { storage, id } => {
                 let snapshot =
                     storage.snapshot_for_resume(identity.clone(), prompt_cache_key(&id))?;

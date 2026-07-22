@@ -1,12 +1,12 @@
 use std::{future::Future, pin::Pin};
 
 use crate::{
-    auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
+    auth::{codex_oauth, github_copilot_device, kimi_oauth, openrouter_oauth, xai_oauth},
     credentials::{
         self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
         XaiTokens,
     },
-    provider::{self, ProviderAuthKind},
+    provider::{self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind},
 };
 
 pub type AuthenticationFuture = Pin<
@@ -75,6 +75,9 @@ impl CompletedAuthentication {
                 credentials::save_github_copilot_tokens(store, &tokens)
             }
             OAuthCredentials::Kimi(tokens) => credentials::save_kimi_tokens(store, &tokens),
+            OAuthCredentials::OpenRouter(key) => {
+                credentials::save_openrouter_oauth_key(store, &key)
+            }
             OAuthCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
         }
     }
@@ -90,6 +93,7 @@ enum OAuthCredentials {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
     Kimi(KimiTokens),
+    OpenRouter(String),
     Xai(XaiTokens),
 }
 
@@ -117,6 +121,23 @@ impl ProviderAuthentication {
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::OAuth {
                 provider_label: "xAI",
             },
+            ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
+                BearerCredentialAcquisition::BrowserOAuth(flow) => AuthenticationMethod::OAuth {
+                    provider_label: flow.provider_label(),
+                },
+            },
+        })
+    }
+
+    pub fn supports_device_login(provider_name: &str) -> bool {
+        provider::provider_descriptor(provider_name).is_some_and(|descriptor| {
+            matches!(
+                descriptor.auth_kind,
+                ProviderAuthKind::CodexOAuth { .. }
+                    | ProviderAuthKind::GithubCopilotDevice { .. }
+                    | ProviderAuthKind::KimiOAuth { .. }
+                    | ProviderAuthKind::XaiOAuth { .. }
+            )
         })
     }
 
@@ -134,6 +155,11 @@ impl ProviderAuthentication {
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await,
+            ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
+                BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
+                    start_openrouter(mode).await
+                }
+            },
         }
     }
 
@@ -249,6 +275,26 @@ async fn start_kimi() -> Result<OAuthLogin, AuthenticationError> {
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: OAuthCredentials::Kimi(tokens),
+                })
+                .map_err(flow_error)
+        }),
+    })
+}
+
+async fn start_openrouter(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
+    if mode == OAuthMode::Device {
+        return Err(AuthenticationError::Flow(
+            "OpenRouter does not support device login; use browser login or an API key".into(),
+        ));
+    }
+    Ok(OAuthLogin {
+        provider_label: "OpenRouter",
+        user_action: OAuthUserAction::BrowserOpened,
+        completion: Box::pin(async {
+            openrouter_oauth::run_openrouter_oauth_flow()
+                .await
+                .map(|key| CompletedAuthentication {
+                    credentials: OAuthCredentials::OpenRouter(key),
                 })
                 .map_err(flow_error)
         }),

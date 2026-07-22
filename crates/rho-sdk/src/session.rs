@@ -189,14 +189,6 @@ impl SessionCore {
         Arc::clone(&self.approvals)
     }
 
-    pub(crate) fn metadata(&self) -> BTreeMap<String, String> {
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .metadata
-            .clone()
-    }
-
     pub(crate) fn prompt_cache_key(&self) -> Option<String> {
         self.data
             .lock()
@@ -213,6 +205,36 @@ impl SessionCore {
         (data.history.clone(), data.revision)
     }
 
+    pub(crate) fn persistence_snapshot(&self) -> crate::SessionSnapshot {
+        let (history, revision, compaction, metadata, prompt_cache_key) = {
+            let data = self
+                .data
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (
+                data.history.clone(),
+                data.revision,
+                data.compaction.clone(),
+                data.metadata.clone(),
+                data.prompt_cache_key.clone(),
+            )
+        };
+        let mut snapshot = crate::SessionSnapshot::new(
+            self.id.clone(),
+            revision,
+            history,
+            self.runtime().provider.identity(),
+            compaction,
+        );
+        for (key, value) in metadata {
+            snapshot = snapshot.with_metadata(key, value);
+        }
+        if let Some(prompt_cache_key) = prompt_cache_key {
+            snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
+        }
+        snapshot
+    }
+
     pub(crate) fn commit(&self, history: Vec<Message>) -> Result<Revision, Error> {
         let mut data = self
             .data
@@ -227,14 +249,6 @@ impl SessionCore {
         data.history = history;
         data.revision = revision;
         Ok(revision)
-    }
-
-    pub(crate) fn compaction_state(&self) -> crate::CompactionState {
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .compaction
-            .clone()
     }
 
     pub(crate) fn commit_compaction(
@@ -377,21 +391,7 @@ impl Session {
     }
 
     pub fn snapshot(&self) -> crate::SessionSnapshot {
-        let (history, revision) = self.core.snapshot();
-        let mut snapshot = crate::SessionSnapshot::new(
-            self.id().clone(),
-            revision,
-            history,
-            self.core.runtime().provider.identity(),
-            self.core.compaction_state(),
-        );
-        for (key, value) in self.core.metadata() {
-            snapshot = snapshot.with_metadata(key, value);
-        }
-        if let Some(prompt_cache_key) = self.core.prompt_cache_key() {
-            snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
-        }
-        snapshot
+        self.core.persistence_snapshot()
     }
 
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {

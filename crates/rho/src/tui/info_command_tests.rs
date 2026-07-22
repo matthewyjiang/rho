@@ -26,6 +26,8 @@ fn test_info() -> RuntimeInfo {
         }),
         context_usage: Some(ContextUsage::estimated(25_000, Some(100_000))),
         model_metadata: None,
+        tree: None,
+        tree_error: None,
     }
 }
 

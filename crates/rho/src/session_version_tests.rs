@@ -1,3 +1,4 @@
+use super::tree::{SessionNode, StoredStateTransition};
 use super::*;
 use rho_providers::model::{AssistantMessage, ProviderContextBlock};
 use serde_json::json;
@@ -17,7 +18,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             1,
             "rho:migrated-v1",
-            3,
+            4,
         ),
         (
             2,
@@ -27,7 +28,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             3,
             "rho:fixture-session",
-            2,
+            3,
         ),
         (
             3,
@@ -87,12 +88,11 @@ fn v1_session_migrates_on_atomic_snapshot_save_without_losing_display_history() 
 
     let entries = read_entries(session.path()).unwrap();
     let saved = entries.last().unwrap();
-    assert!(
-        matches!(saved, SessionEntry::Snapshot { snapshot: stored, display_messages, .. }
-        if stored.schema_version() == rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION
-            && stored.compaction() == snapshot.compaction()
-            && display_messages.is_empty())
-    );
+    assert!(matches!(saved, SessionEntry::Node { node }
+        if matches!(node.transition, StoredStateTransition::Snapshot { snapshot: ref stored }
+            if stored.schema_version() == rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION
+                && stored.compaction() == snapshot.compaction())
+            && node.display_messages.is_empty()));
 }
 
 #[test]
@@ -175,8 +175,24 @@ fn consecutive_snapshot_saves_append_only_new_history() {
         .unwrap();
 
     let entries = read_entries(session.path()).unwrap();
-    assert!(matches!(entries[1], SessionEntry::Snapshot { .. }));
-    assert!(matches!(entries[2], SessionEntry::SnapshotDelta { .. }));
+    assert!(matches!(
+        entries[1],
+        SessionEntry::Node {
+            node: SessionNode {
+                transition: StoredStateTransition::Snapshot { .. },
+                ..
+            }
+        }
+    ));
+    assert!(matches!(
+        entries[2],
+        SessionEntry::Node {
+            node: SessionNode {
+                transition: StoredStateTransition::SnapshotDelta { .. },
+                ..
+            }
+        }
+    ));
     let last_record = fs::read_to_string(session.path())
         .unwrap()
         .lines()
@@ -228,7 +244,12 @@ fn history_replacement_writes_a_new_complete_snapshot_base() {
 
     assert!(matches!(
         read_entries(session.path()).unwrap().last(),
-        Some(SessionEntry::Snapshot { .. })
+        Some(SessionEntry::Node {
+            node: SessionNode {
+                transition: StoredStateTransition::Snapshot { .. },
+                ..
+            }
+        })
     ));
     assert_eq!(
         session

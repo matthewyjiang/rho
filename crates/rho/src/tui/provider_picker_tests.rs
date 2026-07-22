@@ -20,6 +20,32 @@ fn refresh_picker_lists_all_and_available_refreshable_providers() {
 }
 
 #[test]
+fn refresh_picker_distinguishes_openrouter_auth_modes() {
+    let picker =
+        refresh_model_list_picker(&["openrouter-api-key".into(), "openrouter-oauth".into()]);
+    let openrouter = picker
+        .items
+        .iter()
+        .filter(|item| item.label == "OpenRouter")
+        .map(|item| (item.value.as_str(), item.detail.as_deref()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        openrouter,
+        vec![
+            (
+                "openrouter",
+                Some("Refresh cached OpenRouter models with OpenRouter API key."),
+            ),
+            (
+                "openrouter-oauth",
+                Some("Refresh cached OpenRouter models with OpenRouter OAuth."),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn refresh_picker_always_offers_all_configured_providers() {
     let picker = refresh_model_list_picker(&[]);
 

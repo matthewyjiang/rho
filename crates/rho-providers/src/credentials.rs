@@ -563,6 +563,15 @@ pub fn save_provider_api_key(
     )
 }
 
+pub fn save_openrouter_oauth_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
+    if key.trim().is_empty() {
+        return Err(CredentialError::InvalidData(
+            "OpenRouter OAuth key cannot be empty".into(),
+        ));
+    }
+    store.set_secret(provider::OPENROUTER_OAUTH_KEY_ACCOUNT, key)
+}
+
 pub fn delete_provider_credentials(
     store: &dyn CredentialStore,
     provider: &str,
@@ -699,6 +708,9 @@ pub fn provider_has_credentials(
             Ok(load_github_copilot_tokens(store)?.is_some())
         }
         Some(ProviderAuthKind::XaiOAuth { .. }) => Ok(load_xai_tokens(store)?.is_some()),
+        Some(ProviderAuthKind::BearerCredential { account, .. }) => Ok(store
+            .get_secret(account)?
+            .is_some_and(|key| !key.trim().is_empty())),
         Some(ProviderAuthKind::KimiOAuth { .. }) => Ok(load_kimi_tokens(store)?.is_some()),
         None => Ok(false),
     }
@@ -711,6 +723,10 @@ pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
         .map(|provider| provider.auth.to_string())
         .collect()
 }
+
+#[cfg(test)]
+#[path = "credentials_openrouter_tests.rs"]
+mod openrouter_tests;
 
 #[cfg(test)]
 mod tests {

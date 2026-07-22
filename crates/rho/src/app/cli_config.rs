@@ -37,14 +37,19 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
+    let auth_profile = cli_auth_profile(cli)?;
     let model_override = cli
         .model
         .as_deref()
         .map(|reference| effective_model_override(config, reference, cli.provider.as_deref()))
         .transpose()?;
-    let provider = model_override
-        .as_ref()
-        .and_then(|selection| selection.provider.as_deref())
+    let provider = auth_profile
+        .map(|profile| profile.name)
+        .or_else(|| {
+            model_override
+                .as_ref()
+                .and_then(|selection| selection.provider.as_deref())
+        })
         .or(cli.provider.as_deref())
         .or_else(|| {
             model_override
@@ -54,6 +59,7 @@ pub(super) async fn refresh_model_cache(
         .unwrap_or(&config.provider);
     if cli.provider.is_none()
         && cli.model.is_none()
+        && cli.auth.is_none()
         && (provider != "kimi-code"
             || !provider_model_capabilities_need_refresh(provider, &config.model))
     {
@@ -78,7 +84,8 @@ pub(super) async fn refresh_model_cache(
     let attempted = refresh_model_list_for_provider(
         provider,
         selected_model.as_deref(),
-        /*explicit_selection*/ cli.provider.is_some() || cli.model.is_some(),
+        /*explicit_selection*/
+        cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some(),
         store,
         model_endpoint,
     )
@@ -102,15 +109,33 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         apply_model_override(config, model, cli.provider.as_deref())?;
         save_config = true;
     }
-    if let Some(auth) = &cli.auth {
-        config.auth = auth.clone();
+    if let Some(profile) = cli_auth_profile(cli)? {
+        let current_runtime =
+            provider::provider_descriptor(&config.provider).map(|descriptor| descriptor.runtime_id);
+        if cli.model.is_none() && current_runtime == Some(profile.runtime_id) {
+            config.provider = profile.name.into();
+            config.auth = profile.auth.into();
+        } else {
+            apply_provider_override(config, profile.name, cli.model.is_some())?;
+        }
         save_config = true;
     }
     if let Some(reasoning) = cli.reasoning {
         config.reasoning = reasoning;
         save_config = true;
     }
+    config.normalize_provider_profiles()?;
     Ok(save_config)
+}
+
+fn cli_auth_profile(cli: &Cli) -> anyhow::Result<Option<&'static provider::ProviderDescriptor>> {
+    cli.auth
+        .as_deref()
+        .map(|auth| {
+            provider::provider_descriptor_for_auth(auth)
+                .ok_or_else(|| anyhow::anyhow!("unknown auth profile '{auth}'"))
+        })
+        .transpose()
 }
 
 pub(super) fn normalize_reasoning_for_cli(
@@ -345,3 +370,7 @@ fn explicit_model_provider(model: &str) -> Option<&str> {
 #[cfg(test)]
 #[path = "cli_config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cli_config_refresh_tests.rs"]
+mod refresh_tests;

@@ -398,6 +398,7 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
                 | ModelError::MissingGithubCopilotAuth
                 | ModelError::MissingMoonshotApiKey
                 | ModelError::MissingOpenRouterApiKey
+                | ModelError::MissingCredentialProfile(_)
                 | ModelError::MissingKimiAuth
                 | ModelError::MissingXaiApiKey
                 | ModelError::MissingXaiAuth

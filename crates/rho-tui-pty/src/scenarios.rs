@@ -1,11 +1,14 @@
 //! Built-in Rho TUI PTY scenarios.
 
 mod config;
+mod conversation_tree;
 mod goal;
+mod id;
 mod pickers;
 mod runtime_info;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
+use conversation_tree::CONVERSATION_TREE_STEPS;
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_STEPS,
@@ -23,92 +26,7 @@ use crate::{
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
 };
 
-/// Stable scenario identifiers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScenarioId {
-    StartupStreamExit,
-    CancelAndResubmit,
-    InlineShellDuringTurn,
-    TypeDuringStream,
-    ResizeDuringStream,
-    ScrollDuringStream,
-    TerminalRestoration,
-    PasteMultiline,
-    Questionnaire,
-    SupervisedApproval,
-    ProgressTool,
-    ConcurrentProgress,
-    RetractSteeringDuringTool,
-    MarkdownHeadings,
-    RuntimeInfo,
-    OpenModelPicker,
-    OpenConfigPicker,
-    OpenAgentsPicker,
-    LoginProviderGroups,
-    GoalBlockedAndResumed,
-    GoalWaitsForSubagents,
-    GoalWaitsForSubagentsDuringRetry,
-    BackgroundAgentAutoDelivery,
-}
-
-impl ScenarioId {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::StartupStreamExit => "startup_stream_exit",
-            Self::CancelAndResubmit => "cancel_and_resubmit",
-            Self::InlineShellDuringTurn => "inline_shell_during_turn",
-            Self::TypeDuringStream => "type_during_stream",
-            Self::ResizeDuringStream => "resize_during_stream",
-            Self::ScrollDuringStream => "scroll_during_stream",
-            Self::TerminalRestoration => "terminal_restoration",
-            Self::PasteMultiline => "paste_multiline",
-            Self::Questionnaire => "questionnaire",
-            Self::SupervisedApproval => "supervised_approval",
-            Self::ProgressTool => "progress_tool",
-            Self::ConcurrentProgress => "concurrent_progress",
-            Self::RetractSteeringDuringTool => "retract_steering_during_tool",
-            Self::MarkdownHeadings => "markdown_headings",
-            Self::RuntimeInfo => "runtime_info",
-            Self::OpenModelPicker => "open_model_picker",
-            Self::OpenConfigPicker => "open_config_picker",
-            Self::OpenAgentsPicker => "open_agents_picker",
-            Self::LoginProviderGroups => "login_provider_groups",
-            Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
-            Self::GoalWaitsForSubagents => "goal_waits_for_subagents",
-            Self::GoalWaitsForSubagentsDuringRetry => "goal_waits_for_subagents_during_retry",
-            Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "startup_stream_exit" => Some(Self::StartupStreamExit),
-            "cancel_and_resubmit" => Some(Self::CancelAndResubmit),
-            "inline_shell_during_turn" => Some(Self::InlineShellDuringTurn),
-            "type_during_stream" => Some(Self::TypeDuringStream),
-            "resize_during_stream" => Some(Self::ResizeDuringStream),
-            "scroll_during_stream" => Some(Self::ScrollDuringStream),
-            "terminal_restoration" => Some(Self::TerminalRestoration),
-            "paste_multiline" => Some(Self::PasteMultiline),
-            "questionnaire" => Some(Self::Questionnaire),
-            "supervised_approval" => Some(Self::SupervisedApproval),
-            "progress_tool" => Some(Self::ProgressTool),
-            "concurrent_progress" => Some(Self::ConcurrentProgress),
-            "retract_steering_during_tool" => Some(Self::RetractSteeringDuringTool),
-            "markdown_headings" => Some(Self::MarkdownHeadings),
-            "runtime_info" => Some(Self::RuntimeInfo),
-            "open_model_picker" => Some(Self::OpenModelPicker),
-            "open_config_picker" => Some(Self::OpenConfigPicker),
-            "open_agents_picker" => Some(Self::OpenAgentsPicker),
-            "login_provider_groups" => Some(Self::LoginProviderGroups),
-            "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
-            "goal_waits_for_subagents" => Some(Self::GoalWaitsForSubagents),
-            "goal_waits_for_subagents_during_retry" => Some(Self::GoalWaitsForSubagentsDuringRetry),
-            "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
-            _ => None,
-        }
-    }
-}
+pub use id::ScenarioId;
 
 const DEFAULT_SIZE: PtySize = PtySize {
     rows: 28,
@@ -816,6 +734,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
                 "Show grouped runtime details and keep them readable after a narrow resize",
             size: DEFAULT_SIZE,
             steps: RUNTIME_INFO_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "conversation_tree",
+            description: "Restore an earlier turn and continue on a new branch",
+            size: DEFAULT_SIZE,
+            steps: CONVERSATION_TREE_STEPS,
             smoke: false,
         },
         Scenario {

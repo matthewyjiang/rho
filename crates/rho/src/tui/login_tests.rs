@@ -12,7 +12,7 @@ use rho_providers::{
 use crate::{config::Config, tui::tests::test_app};
 
 #[test]
-fn login_state_save_persists_the_effective_reasoning_level_without_changing_user_config() {
+fn login_state_save_persists_reasoning_and_normalizes_auth_profile() {
     let mut app = test_app();
     assert_ne!(
         app.info
@@ -32,7 +32,7 @@ fn login_state_save_persists_the_effective_reasoning_level_without_changing_user
     let saved = app.info.services.config_repository.load().unwrap();
     assert_eq!(saved.provider, "kimi-code");
     assert_eq!(saved.model, "login-k3-test");
-    assert_eq!(saved.auth, "api-key");
+    assert_eq!(saved.auth, "kimi-oauth");
     assert_eq!(saved.reasoning, ReasoningLevel::High);
 }
 

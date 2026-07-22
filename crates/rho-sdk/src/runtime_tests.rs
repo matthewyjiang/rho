@@ -530,14 +530,29 @@ async fn automatic_compaction_counts_in_flight_history() {
         .await
         .unwrap();
     let mut previous_messages = None;
+    let mut compaction_snapshot = None;
     while let Some(event) = run.next_event().await {
         if let RunEvent::CompactionCompleted { outcome, .. } = event {
             previous_messages = Some(outcome.previous_messages());
+            let snapshot = outcome
+                .committed_snapshot()
+                .expect("automatic compaction snapshot");
+            assert_eq!(snapshot.revision(), outcome.revision());
+            compaction_snapshot = Some(snapshot.clone());
         }
     }
     run.outcome().await.unwrap();
 
     assert_eq!(previous_messages, Some(3));
+    let compaction_snapshot = compaction_snapshot.expect("compaction snapshot event");
+    assert_eq!(
+        compaction_snapshot.history(),
+        [
+            Message::System("automatic summary".into()),
+            Message::user_text("current"),
+        ]
+    );
+    assert!(automatic_session.revision() > compaction_snapshot.revision());
     assert_eq!(
         automatic_session.snapshot().compaction().removed_messages(),
         1

@@ -10,14 +10,19 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use rho_providers::model::ModelIdentity;
 use rho_providers::model::{ContentBlock, Message};
+#[cfg(test)]
+use rho_sdk::SessionId;
 use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
+use super::tree::{NodeId, SessionNode};
 use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary};
 
 const MIN_SESSION_VERSION: u32 = 1;
-pub(super) const SESSION_VERSION: u32 = 3;
+pub(super) const SESSION_VERSION: u32 = 4;
 
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedSession {
@@ -92,11 +97,14 @@ impl ResolvedSession {
     pub(super) fn histories(&self) -> anyhow::Result<SessionHistories> {
         read_histories(&self.path)
     }
-    pub(super) fn state(&self) -> anyhow::Result<PersistedSessionState> {
-        read_session_state(&self.path)
+    pub(super) fn tree(&self) -> anyhow::Result<super::tree::SessionTree> {
+        super::tree::SessionTree::load(&self.path)
     }
-    pub(super) fn summary(&self, cwd: &Path) -> anyhow::Result<SessionIndexRecord> {
-        summarize_session_file(&self.path, cwd)
+    pub(super) fn summary_with_tree(
+        &self,
+        cwd: &Path,
+    ) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
+        summarize_session_file_with_tree(&self.path, cwd)
     }
 }
 
@@ -114,9 +122,9 @@ pub(super) struct AppendCursor {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct StoredDisplayMessage {
-    pub(super) timestamp: String,
-    pub(super) message: Message,
+pub(crate) struct StoredDisplayMessage {
+    pub(crate) timestamp: String,
+    pub(crate) message: Message,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,6 +159,18 @@ pub(super) enum SessionEntry {
         timestamp: String,
         delta: Box<StoredSnapshotDelta>,
         display_messages: Vec<StoredDisplayMessage>,
+    },
+    Node {
+        #[serde(flatten)]
+        node: SessionNode,
+    },
+    SetLeaf {
+        timestamp: String,
+        target_id: NodeId,
+    },
+    Upgrade {
+        timestamp: String,
+        active_leaf_id: NodeId,
     },
 }
 
@@ -203,10 +223,14 @@ impl Session {
         if needs_separator {
             serialized.insert(0, b'\n');
         }
-        if let Err(error) = file.write_all(&serialized).and_then(|()| file.sync_data()) {
+        if let Err(write_error) = file.write_all(&serialized).and_then(|()| file.sync_data()) {
             drop(file);
-            let _ = restore_file_len(&self.path, previous_len);
-            return Err(error.into());
+            return match restore_file_len(&self.path, previous_len) {
+                Ok(()) => Err(write_error.into()),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "session append failed: {write_error}; could not roll back file length: {rollback_error}"
+                )),
+            };
         }
         cursor.valid_len = Some(previous_len + serialized.len() as u64);
         Ok(())
@@ -236,23 +260,40 @@ impl Session {
         message: &Message,
         display_message: Option<&Message>,
     ) -> anyhow::Result<()> {
-        self.append_entry(&SessionEntry::Message {
-            timestamp: timestamp(),
-            message: message.clone(),
-            display_message: display_message.cloned().map(Box::new),
-        })?;
-        let _ = index::record_message(self, display_message.unwrap_or(message));
-        Ok(())
+        let state = read_session_state(&self.path)?;
+        let revision = next_revision(state.revision)?;
+        let mut history = state.model;
+        history.push(message.clone());
+        let provider = state.snapshot.as_ref().map_or_else(
+            || ModelIdentity::new("test", "test", "test"),
+            |snapshot| snapshot.provider().clone(),
+        );
+        let snapshot = SessionSnapshot::new(
+            SessionId::from_string(self.id.clone())?,
+            revision,
+            history,
+            provider,
+            state.compaction,
+        );
+        self.save_snapshot(&snapshot, &[display_message.unwrap_or(message).clone()])
     }
 
     #[cfg(test)]
     pub(super) fn append_replaced_history(&self, messages: &[Message]) -> anyhow::Result<()> {
-        self.append_entry(&SessionEntry::ReplaceHistory {
-            timestamp: timestamp(),
-            messages: messages.to_vec(),
-        })?;
-        let _ = index::record_replaced(self);
-        Ok(())
+        let mut state = read_session_state(&self.path)?;
+        apply_legacy_history_replacement(&mut state, messages.to_vec())?;
+        let provider = state.snapshot.as_ref().map_or_else(
+            || ModelIdentity::new("test", "test", "test"),
+            |snapshot| snapshot.provider().clone(),
+        );
+        let snapshot = SessionSnapshot::new(
+            SessionId::from_string(self.id.clone())?,
+            state.revision,
+            state.model,
+            provider,
+            state.compaction,
+        );
+        self.save_snapshot(&snapshot, &[])
     }
 }
 
@@ -274,13 +315,13 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
     }
 }
 
-#[derive(Default)]
-pub(super) struct PersistedSessionState {
-    pub(super) model: Vec<Message>,
-    pub(super) display: Vec<StoredDisplayMessage>,
-    pub(super) snapshot: Option<SessionSnapshot>,
-    pub(super) revision: Revision,
-    pub(super) compaction: CompactionState,
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PersistedSessionState {
+    pub(crate) model: Vec<Message>,
+    pub(crate) display: Vec<StoredDisplayMessage>,
+    pub(crate) snapshot: Option<SessionSnapshot>,
+    pub(crate) revision: Revision,
+    pub(crate) compaction: CompactionState,
 }
 
 fn restore_file_len(path: &Path, len: u64) -> std::io::Result<()> {
@@ -308,12 +349,18 @@ fn recoverable_jsonl_end(path: &Path) -> anyhow::Result<(u64, bool)> {
 }
 
 pub(super) fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
-    let state = read_session_state(path)?;
+    let tree = super::tree::SessionTree::load(path)?;
+    let Some(active_leaf_id) = tree.active_leaf_id() else {
+        return Ok(SessionHistories {
+            model: Vec::new(),
+            display: Vec::new(),
+        });
+    };
+    let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(state.model),
+        model: drop_incomplete_tool_turn_tail(state.model.clone()),
         display: drop_incomplete_tool_turn_tail(
-            state
-                .display
+            tree.projected_display(active_leaf_id)?
                 .into_iter()
                 .map(|entry| entry.message)
                 .collect(),
@@ -322,78 +369,40 @@ pub(super) fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
 }
 
 pub(super) fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
-    let mut state = PersistedSessionState::default();
-    visit_entries(path, |entry| {
-        match entry {
-            SessionEntry::Session { .. } => {}
-            SessionEntry::Message {
-                timestamp,
-                message,
-                display_message,
-            } => {
-                state.display.push(StoredDisplayMessage {
-                    timestamp,
-                    message: display_message.map_or_else(|| message.clone(), |message| *message),
-                });
-                state.model.push(message);
-                state.revision = next_revision(state.revision)?;
-            }
-            SessionEntry::ReplaceHistory { messages, .. } => {
-                let previous_messages = state.model.len();
-                let previous_tokens =
-                    rho_sdk::model::context::estimate_messages_tokens(&state.model);
-                let current_tokens = rho_sdk::model::context::estimate_messages_tokens(&messages);
-                state.model = messages;
-                state.revision = next_revision(state.revision)?;
-                state.compaction = CompactionState::from_accounting(
-                    state.compaction.completed_compactions().saturating_add(1),
-                    state
-                        .compaction
-                        .removed_messages()
-                        .saturating_add(previous_messages.saturating_sub(state.model.len()) as u64),
-                    state
-                        .compaction
-                        .removed_tokens()
-                        .saturating_add(previous_tokens.saturating_sub(current_tokens)),
-                    state.compaction.removed_cost_usd_micros(),
-                    Some(previous_tokens),
-                    Some(current_tokens),
-                    Some(state.revision),
-                );
-            }
-            SessionEntry::Snapshot {
-                snapshot,
-                display_messages,
-                ..
-            } => {
-                state.model = snapshot.history().to_vec();
-                state.display.extend(display_messages);
-                state.revision = snapshot.revision();
-                state.compaction = snapshot.compaction().clone();
-                state.snapshot = Some(*snapshot);
-            }
-            SessionEntry::SnapshotDelta {
-                delta,
-                display_messages,
-                ..
-            } => {
-                let previous = state.snapshot.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("snapshot delta does not have a complete base snapshot")
-                })?;
-                let snapshot = delta.restore(previous)?;
-                state.model = snapshot.history().to_vec();
-                state.display.extend(display_messages);
-                state.revision = snapshot.revision();
-                state.compaction = snapshot.compaction().clone();
-                state.snapshot = Some(snapshot);
-            }
-        }
-        Ok(())
-    })?;
-    Ok(state)
+    Ok(super::tree::SessionTree::load(path)?
+        .active_state()
+        .cloned()
+        .unwrap_or_default())
 }
 
-fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
+pub(super) fn apply_legacy_history_replacement(
+    state: &mut PersistedSessionState,
+    messages: Vec<Message>,
+) -> anyhow::Result<()> {
+    let previous_messages = state.model.len();
+    let previous_tokens = rho_sdk::model::context::estimate_messages_tokens(&state.model);
+    let current_tokens = rho_sdk::model::context::estimate_messages_tokens(&messages);
+    state.model = messages;
+    state.revision = next_revision(state.revision)?;
+    state.compaction = CompactionState::from_accounting(
+        state.compaction.completed_compactions().saturating_add(1),
+        state
+            .compaction
+            .removed_messages()
+            .saturating_add(previous_messages.saturating_sub(state.model.len()) as u64),
+        state
+            .compaction
+            .removed_tokens()
+            .saturating_add(previous_tokens.saturating_sub(current_tokens)),
+        state.compaction.removed_cost_usd_micros(),
+        Some(previous_tokens),
+        Some(current_tokens),
+        Some(state.revision),
+    );
+    Ok(())
+}
+
+pub(super) fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
     revision
         .checked_next()
         .ok_or_else(|| anyhow::anyhow!("session revision is exhausted"))
@@ -428,7 +437,7 @@ fn visit_entries(
     }
 }
 
-fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
+pub(super) fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
     match version {
         MIN_SESSION_VERSION..=SESSION_VERSION => Ok(()),
         _ => {
@@ -455,12 +464,20 @@ pub(super) fn summarize_session_file(
     path: &Path,
     fallback_cwd: &Path,
 ) -> anyhow::Result<SessionIndexRecord> {
+    summarize_session_file_with_tree(path, fallback_cwd).map(|(record, _)| record)
+}
+
+fn summarize_session_file_with_tree(
+    path: &Path,
+    fallback_cwd: &Path,
+) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
     let id = session_id_from_path(path)
         .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
     let mut cwd = fallback_cwd.to_path_buf();
     let mut created_at = timestamp_from_filename(path).unwrap_or_default();
     let mut updated_at = created_at;
     let mut messages = Vec::new();
+    let mut has_tree_records = false;
 
     visit_entries(path, |entry| {
         match entry {
@@ -509,10 +526,36 @@ pub(super) fn summarize_session_file(
                 }
                 messages.extend(display_messages.into_iter().map(|entry| entry.message));
             }
+            SessionEntry::Node { node } => {
+                has_tree_records = true;
+                if let Some(timestamp) = parse_timestamp(&node.timestamp) {
+                    updated_at = updated_at.max(timestamp);
+                }
+                messages.extend(node.display_messages.into_iter().map(|entry| entry.message));
+            }
+            SessionEntry::SetLeaf { timestamp, .. } | SessionEntry::Upgrade { timestamp, .. } => {
+                has_tree_records = true;
+                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                    updated_at = updated_at.max(timestamp);
+                }
+            }
         }
         Ok(())
     })?;
 
+    let tree = super::tree::SessionTree::load(path)?;
+    if has_tree_records {
+        messages = tree
+            .active_state()
+            .map(|state| {
+                state
+                    .display
+                    .iter()
+                    .map(|entry| entry.message.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
     let messages = drop_incomplete_tool_turn_tail(messages);
     let (file_size, file_mtime) = session_file_stats(path);
     if updated_at == 0 {
@@ -522,7 +565,8 @@ pub(super) fn summarize_session_file(
         created_at = updated_at;
     }
 
-    Ok(SessionIndexRecord {
+    let facts = tree.facts();
+    let record = SessionIndexRecord {
         summary: SessionSummary {
             id,
             path: path.to_path_buf(),
@@ -536,7 +580,12 @@ pub(super) fn summarize_session_file(
         },
         file_size,
         file_mtime,
-    })
+        node_count: facts.node_count as u64,
+        branch_count: facts.branch_count as u64,
+        active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
+        effective_format_version: tree.effective_format_version(),
+    };
+    Ok((record, tree))
 }
 
 fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
