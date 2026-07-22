@@ -505,3 +505,202 @@ async fn no_approval_handler_returns_typed_host_denial() {
     assert_eq!(error.kind(), super::AuthorizationDenialKind::Host);
     assert_eq!(error.capability(), CapabilityKind::Process);
 }
+
+#[derive(Debug)]
+struct HoldingApproval {
+    prompts: Mutex<u32>,
+    release: tokio::sync::Notify,
+}
+
+impl ApprovalHandler for HoldingApproval {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            {
+                let mut prompts = self
+                    .prompts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                *prompts += 1;
+            }
+            // Park until the test releases this prompt so concurrent callers can
+            // hit the session gate or the remembered fast path while it is open.
+            self.release.notified().await;
+            ApprovalDecision::AllowForSession
+        })
+    }
+}
+
+fn prompt_count(approvals: &HoldingApproval) -> u32 {
+    *approvals
+        .prompts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+async fn wait_until_prompts(approvals: &HoldingApproval, count: u32) {
+    while prompt_count(approvals) < count {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn concurrent_identical_requests_prompt_the_host_once() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals = Arc::new(HoldingApproval {
+        prompts: Mutex::new(0),
+        release: tokio::sync::Notify::new(),
+    });
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+    let request = process_request("cargo test");
+
+    let (first, second, ()) = tokio::join!(
+        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
+        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
+        async {
+            wait_until_prompts(&approvals, 1).await;
+            // First caller is parked in the host prompt and holds the session
+            // gate; release so the waiter can re-check remembered approvals.
+            approvals.release.notify_one();
+        },
+    );
+
+    let outcomes = [first.unwrap(), second.unwrap()];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| { **outcome == super::AuthorizationOutcome::AllowedForSession })
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| {
+                **outcome == super::AuthorizationOutcome::AllowedByRememberedApproval
+            })
+            .count(),
+        1
+    );
+    assert_eq!(prompt_count(&approvals), 1);
+}
+
+#[tokio::test]
+async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals = Arc::new(HoldingApproval {
+        prompts: Mutex::new(0),
+        release: tokio::sync::Notify::new(),
+    });
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+    let approved = process_request("cargo test");
+    let unrelated = process_request("cargo clippy");
+
+    let (seeded, ()) = tokio::join!(
+        authorize_for_call(
+            &policy,
+            &erased,
+            &remembered,
+            &audit,
+            approved.clone(),
+            None,
+        ),
+        async {
+            wait_until_prompts(&approvals, 1).await;
+            approvals.release.notify_one();
+        },
+    );
+    assert_eq!(
+        seeded.unwrap(),
+        super::AuthorizationOutcome::AllowedForSession
+    );
+    assert_eq!(prompt_count(&approvals), 1);
+
+    // If the remembered hit took the session gate, this join would deadlock:
+    // the unrelated miss holds the gate while parked on the prompt, and the
+    // release only runs after the remembered hit completes.
+    let (held, remembered_hit) = tokio::join!(
+        authorize_for_call(&policy, &erased, &remembered, &audit, unrelated, None),
+        async {
+            wait_until_prompts(&approvals, 2).await;
+            let remembered_hit =
+                authorize_for_call(&policy, &erased, &remembered, &audit, approved, None).await;
+            approvals.release.notify_one();
+            remembered_hit
+        },
+    );
+
+    assert_eq!(
+        remembered_hit.unwrap(),
+        super::AuthorizationOutcome::AllowedByRememberedApproval
+    );
+    assert_eq!(
+        held.unwrap(),
+        super::AuthorizationOutcome::AllowedForSession
+    );
+    assert_eq!(prompt_count(&approvals), 2);
+}
+
+#[tokio::test]
+async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals = Arc::new(HoldingApproval {
+        prompts: Mutex::new(0),
+        release: tokio::sync::Notify::new(),
+    });
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+
+    let (first, second, ()) = tokio::join!(
+        authorize_for_call(
+            &policy,
+            &erased,
+            &remembered,
+            &audit,
+            process_request("cargo test"),
+            None
+        ),
+        authorize_for_call(
+            &policy,
+            &erased,
+            &remembered,
+            &audit,
+            process_request("cargo clippy"),
+            None
+        ),
+        async {
+            wait_until_prompts(&approvals, 1).await;
+            // Distinct misses still each prompt; the session gate only orders
+            // them. Release the first so the second can enter the miss path.
+            approvals.release.notify_one();
+            wait_until_prompts(&approvals, 2).await;
+            approvals.release.notify_one();
+        },
+    );
+
+    assert_eq!(
+        first.unwrap(),
+        super::AuthorizationOutcome::AllowedForSession
+    );
+    assert_eq!(
+        second.unwrap(),
+        super::AuthorizationOutcome::AllowedForSession
+    );
+    assert_eq!(prompt_count(&approvals), 2);
+}

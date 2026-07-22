@@ -3,6 +3,7 @@ use std::{
     fmt,
     future::Future,
     num::NonZeroUsize,
+    panic::AssertUnwindSafe,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -327,9 +328,32 @@ impl ApprovalAuditLog {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SessionApprovals {
     exact_requests: Mutex<Vec<CapabilityRequest>>,
+    /// Serializes the miss path of approval evaluation: check remembered, prompt
+    /// the host if needed, then record `AllowForSession`. Waiters re-check under
+    /// the gate so an identical concurrent request observes the first decision
+    /// instead of prompting again.
+    ///
+    /// This is a session-wide prompt gate, not identical-only singleflight. A
+    /// slow host approval orders unrelated `RequireApproval` misses behind it.
+    /// Remembered hits stay outside the gate. Key by request if a host needs
+    /// distinct misses to prompt concurrently.
+    ///
+    /// Wrapped in `AssertUnwindSafe` so embedding `tokio::sync::Mutex` does not
+    /// strip `UnwindSafe` / `RefUnwindSafe` from public types that hold session
+    /// state (`Session`). The gate only orders cooperative approval work.
+    approval_gate: AssertUnwindSafe<tokio::sync::Mutex<()>>,
+}
+
+impl Default for SessionApprovals {
+    fn default() -> Self {
+        Self {
+            exact_requests: Mutex::new(Vec::new()),
+            approval_gate: AssertUnwindSafe(tokio::sync::Mutex::new(())),
+        }
+    }
 }
 
 impl SessionApprovals {
@@ -382,6 +406,19 @@ pub(crate) async fn authorize_for_call(
             ))
         }
         PolicyDecision::RequireApproval { reason } => {
+            if remembered.contains(&request) {
+                audit.record(
+                    capability,
+                    ApprovalAuditDecision::AllowedByRememberedApproval,
+                );
+                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
+            }
+
+            // Serialize only the miss path so a concurrent identical waiter
+            // observes AllowForSession recorded by the first prompt. Remembered
+            // hits above stay concurrent. AllowOnce/Deny still re-prompt after
+            // the holder finishes because nothing is remembered for them.
+            let _gate = remembered.approval_gate.lock().await;
             if remembered.contains(&request) {
                 audit.record(
                     capability,
