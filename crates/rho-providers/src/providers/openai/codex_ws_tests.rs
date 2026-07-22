@@ -97,6 +97,38 @@ async fn ws_server_connections(
     (format!("ws://{addr}/responses"), frames)
 }
 
+async fn ws_server_empty_completion(emit_delta: bool) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let _request = socket.next().await.unwrap().unwrap();
+        if emit_delta {
+            socket
+                .send(Message::Text(
+                    json!({"type":"response.output_text.delta","delta":"partial"})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        }
+        socket
+            .send(Message::Text(
+                json!({
+                    "type":"response.completed",
+                    "response":{"id":"resp_empty","output":[]}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+    format!("ws://{addr}/responses")
+}
+
 async fn ws_server_waits_for_delta_callback() -> (String, Arc<tokio::sync::Notify>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -453,11 +485,14 @@ fn terminal_failure_uses_error_type_when_code_is_null() {
     ] {
         assert!(matches!(
             codex_ws_terminal_failure(&event, /*events_emitted*/ false),
-            Some(CodexWsFailure::Model(ModelError::ProviderReported {
-                kind,
-                error_type,
-                ..
-            })) if kind == expected_kind && error_type == expected_type
+            Some(CodexWsFailure::Model {
+                error: ModelError::ProviderReported {
+                    kind,
+                    error_type,
+                    ..
+                },
+                events_emitted: false,
+            }) if kind == expected_kind && error_type == expected_type
         ));
     }
 }
@@ -649,6 +684,53 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 2);
     assert!(frames[1].get("previous_response_id").is_none());
+}
+
+#[tokio::test]
+async fn empty_websocket_completion_before_output_falls_back_to_sse() {
+    let transport = CodexWsTransport::new_with_url(ws_server_empty_completion(false).await);
+    let mut on_event = None;
+
+    let outcome = transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::FullSseFallback {
+            request_submitted: true
+        }
+    ));
+}
+
+#[tokio::test]
+async fn empty_websocket_completion_after_output_uses_streamed_output() {
+    let transport = CodexWsTransport::new_with_url(ws_server_empty_completion(true).await);
+    let mut collect_event = |_event| Ok(());
+    let mut on_event =
+        Some(&mut collect_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send));
+
+    let outcome = transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            CodexRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        CodexWsTurn::Completed(ModelResponse::Assistant(blocks))
+            if blocks == vec![ContentBlock::Text("partial".into())]
+    ));
 }
 
 #[tokio::test]

@@ -65,7 +65,10 @@ enum CodexWsFailure {
         message: String,
         events_emitted: bool,
     },
-    Model(ModelError),
+    Model {
+        error: ModelError,
+        events_emitted: bool,
+    },
 }
 
 impl CodexWsTransport {
@@ -145,10 +148,20 @@ impl CodexWsTransport {
                 state.continuation.reset();
                 Err(ModelError::StreamFailedAfterOutput { message })
             }
-            Err(CodexWsFailure::Model(err)) => {
+            Err(CodexWsFailure::Model {
+                error: ModelError::InvalidResponse(_),
+                events_emitted: false,
+            }) => {
                 state.connection = None;
                 state.continuation.reset();
-                Err(err)
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: true,
+                })
+            }
+            Err(CodexWsFailure::Model { error, .. }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Err(error)
             }
         }
     }
@@ -213,10 +226,20 @@ impl CodexWsTransport {
                 state.continuation.reset();
                 Err(ModelError::StreamFailedAfterOutput { message })
             }
-            Err(CodexWsFailure::Model(err)) => {
+            Err(CodexWsFailure::Model {
+                error: ModelError::InvalidResponse(_),
+                ..
+            }) => {
                 state.connection = None;
                 state.continuation.reset();
-                Err(err)
+                Ok(CodexWsTurn::FullSseFallback {
+                    request_submitted: true,
+                })
+            }
+            Err(CodexWsFailure::Model { error, .. }) => {
+                state.connection = None;
+                state.continuation.reset();
+                Err(error)
             }
         }
     }
@@ -394,7 +417,12 @@ async fn collect_codex_ws_response(
         let (completed, activity) =
             handle_codex_ws_value(&payload, &mut state, on_event, &mut events_emitted)?;
         if completed {
-            let response = state.into_response().map_err(CodexWsFailure::Model)?;
+            let response = state
+                .into_response()
+                .map_err(|error| CodexWsFailure::Model {
+                    error,
+                    events_emitted,
+                })?;
             return Ok(CodexWsCompleted {
                 response,
                 server_output_items,
@@ -456,7 +484,12 @@ async fn collect_codex_ws_response_silent(
         collect_server_output_item(&payload, &mut server_output_items);
         let (completed, activity) = handle_codex_ws_value_silent(&payload, &mut state)?;
         if completed {
-            let response = state.into_response().map_err(CodexWsFailure::Model)?;
+            let response = state
+                .into_response()
+                .map_err(|error| CodexWsFailure::Model {
+                    error,
+                    events_emitted: false,
+                })?;
             return Ok(CodexWsCompleted {
                 response,
                 server_output_items,
@@ -493,7 +526,10 @@ fn handle_codex_ws_value(
         state,
         &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
     )
-    .map_err(CodexWsFailure::Model)?;
+    .map_err(|error| CodexWsFailure::Model {
+        error,
+        events_emitted: *events_emitted,
+    })?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),
@@ -509,7 +545,10 @@ fn handle_codex_ws_value_silent(
         return Err(failure);
     }
     let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
-    handle_codex_sse_value(value, state, &mut on_event).map_err(CodexWsFailure::Model)?;
+    handle_codex_sse_value(value, state, &mut on_event).map_err(|error| CodexWsFailure::Model {
+        error,
+        events_emitted: false,
+    })?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),
@@ -604,11 +643,14 @@ fn protocol_terminal_failure(
         "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
         _ => ProviderReportedErrorKind::InvalidResponse,
     };
-    CodexWsFailure::Model(ModelError::ProviderReported {
-        kind,
-        error_type: error_type.to_string(),
-        message,
-    })
+    CodexWsFailure::Model {
+        error: ModelError::ProviderReported {
+            kind,
+            error_type: error_type.to_string(),
+            message,
+        },
+        events_emitted,
+    }
 }
 
 fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
