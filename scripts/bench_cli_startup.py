@@ -217,88 +217,115 @@ def print_table(results: list[dict[str, Any]]) -> None:
 
 
 def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
-    width = 960
-    margin_left = 168
-    margin_right = 110
-    margin_top = 72
-    row_h = 54
-    panel_gap = 28
-    chart_h = len(results) * row_h
-    height = margin_top + chart_h + panel_gap + chart_h + 58
-    plot_w = width - margin_left - margin_right
+    # Compact side-by-side panels with fixed value columns so labels never collide.
+    width = 1000
+    pad_x = 20
+    label_w = 148
+    value_w = 68
+    gutter = 24
+    header_h = 54
+    footer_h = 26
+    row_h = 28
+    bar_h = 11
+    panel_title_h = 16
 
+    n = len(results)
+    chart_h = n * row_h
+    height = header_h + panel_title_h + chart_h + footer_h
+
+    usable = width - (pad_x * 2) - label_w - gutter
+    panel_w = usable / 2
+    plot_w = panel_w - value_w - 12
+
+    left_plot_x = pad_x + label_w
+    left_value_x = left_plot_x + plot_w + 8
+    right_plot_x = left_value_x + value_w + gutter
+    right_value_x = right_plot_x + plot_w + 8
+
+    rows_top = header_h + panel_title_h
     max_ms = max(item["time_ms"]["median"] for item in results)
     max_mib = max(item["rss_kib"]["median"] / 1024 for item in results)
-    # Keep tiny rho bars visible without flattening the long tail.
-    ms_scale_max = max(max_ms * 1.08, 1.0)
-    mib_scale_max = max(max_mib * 1.08, 1.0)
+    ms_scale_max = max(max_ms * 1.05, 1.0)
+    mib_scale_max = max(max_mib * 1.05, 1.0)
 
     def bar_width(value: float, scale_max: float) -> float:
-        return max(2.0, (value / scale_max) * plot_w)
+        return max(3.0, (value / scale_max) * plot_w)
 
-    def row_y(panel_top: float, index: int) -> float:
-        return panel_top + index * row_h + 14
-
-    startup_top = margin_top
-    memory_top = margin_top + chart_h + panel_gap
+    def row_center_y(index: int) -> float:
+        return rows_top + index * row_h + (row_h / 2)
 
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
         '  <title id="title">CLI startup and memory comparison</title>',
-        '  <desc id="desc">Horizontal bar chart of median --help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>',
+        '  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>',
         "  <defs>",
         "    <style>",
         '      .sans { font-family: "DejaVu Sans", "Segoe UI", Helvetica, Arial, sans-serif; }',
         '      .mono { font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace; }',
-        "      .title { fill: #f0f3f6; font-size: 22px; font-weight: 700; }",
-        "      .subtitle { fill: #8b949e; font-size: 13px; }",
-        "      .panel { fill: #8b949e; font-size: 12px; letter-spacing: 0.04em; }",
-        "      .label { fill: #c9d1d9; font-size: 14px; }",
-        "      .label-hi { fill: #39c5cf; font-size: 14px; font-weight: 700; }",
-        "      .value { fill: #f0f3f6; font-size: 13px; }",
-        "      .value-hi { fill: #3fb950; font-size: 13px; font-weight: 700; }",
-        "      .foot { fill: #6e7681; font-size: 12px; }",
+        "      .title { fill: #f0f3f6; font-size: 18px; font-weight: 700; }",
+        "      .subtitle { fill: #8b949e; font-size: 12px; }",
+        "      .panel { fill: #8b949e; font-size: 11px; letter-spacing: 0.05em; }",
+        "      .label { fill: #c9d1d9; font-size: 12px; }",
+        "      .label-hi { fill: #39c5cf; font-size: 12px; font-weight: 700; }",
+        "      .value { fill: #c9d1d9; font-size: 12px; }",
+        "      .value-hi { fill: #3fb950; font-size: 12px; font-weight: 700; }",
+        "      .foot { fill: #6e7681; font-size: 11px; }",
         "      .bar { fill: #30363d; }",
         "      .bar-hi { fill: #39c5cf; }",
-        "      .axis { stroke: #21262d; stroke-width: 1; }",
+        "      .track { fill: #161b22; }",
         "    </style>",
         "  </defs>",
-        '  <rect width="100%" height="100%" rx="16" fill="#0d1117"/>',
-        '  <text x="28" y="34" class="sans title">CLI process overhead</text>',
-        f'  <text x="28" y="56" class="sans subtitle">Median of {samples} runs of help startup on Linux x86_64. Not TUI session cost or model latency.</text>',
-        f'  <text x="28" y="{startup_top - 8}" class="sans panel">STARTUP TIME</text>',
-        f'  <text x="28" y="{memory_top - 8}" class="sans panel">PEAK RSS</text>',
-        f'  <line x1="{margin_left}" y1="{startup_top - 2}" x2="{margin_left}" y2="{startup_top + chart_h - 8}" class="axis"/>',
-        f'  <line x1="{margin_left}" y1="{memory_top - 2}" x2="{margin_left}" y2="{memory_top + chart_h - 8}" class="axis"/>',
+        '  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
+        f'  <text x="{pad_x}" y="24" class="sans title">CLI process overhead</text>',
+        f'  <text x="{pad_x}" y="44" class="sans subtitle">Median of {samples} help-startup runs on Linux x86_64. Not TUI cost or model latency.</text>',
+        f'  <text x="{left_plot_x}" y="{header_h + 2}" class="sans panel">STARTUP</text>',
+        f'  <text x="{right_plot_x}" y="{header_h + 2}" class="sans panel">PEAK RSS</text>',
     ]
 
     for index, item in enumerate(results):
-        y = row_y(startup_top, index)
+        cy = row_center_y(index)
+        bar_y = cy - (bar_h / 2)
+        text_y = cy + 4
+        label_class = "label-hi" if item["highlight"] else "label"
+        bar_class = "bar-hi" if item["highlight"] else "bar"
+        value_class = "value-hi" if item["highlight"] else "value"
+        label = html.escape(item["label"])
+
         ms = item["time_ms"]["median"]
-        w = bar_width(ms, ms_scale_max)
-        label_class = "label-hi" if item["highlight"] else "label"
-        bar_class = "bar-hi" if item["highlight"] else "bar"
-        value_class = "value-hi" if item["highlight"] else "value"
-        label = html.escape(item["label"])
-        parts.append(f'  <text x="{margin_left - 12}" y="{y + 14}" text-anchor="end" class="sans {label_class}">{label}</text>')
-        parts.append(f'  <rect x="{margin_left}" y="{y}" width="{w:.1f}" height="20" rx="4" class="{bar_class}"/>')
-        parts.append(f'  <text x="{margin_left + w + 10:.1f}" y="{y + 14}" class="mono {value_class}">{fmt_ms(ms)}</text>')
-
-    for index, item in enumerate(results):
-        y = row_y(memory_top, index)
         mib = item["rss_kib"]["median"] / 1024
-        w = bar_width(mib, mib_scale_max)
-        label_class = "label-hi" if item["highlight"] else "label"
-        bar_class = "bar-hi" if item["highlight"] else "bar"
-        value_class = "value-hi" if item["highlight"] else "value"
-        label = html.escape(item["label"])
-        parts.append(f'  <text x="{margin_left - 12}" y="{y + 14}" text-anchor="end" class="sans {label_class}">{label}</text>')
-        parts.append(f'  <rect x="{margin_left}" y="{y}" width="{w:.1f}" height="20" rx="4" class="{bar_class}"/>')
-        parts.append(f'  <text x="{margin_left + w + 10:.1f}" y="{y + 14}" class="mono {value_class}">{fmt_mib(item["rss_kib"]["median"])}</text>')
+        ms_w = bar_width(ms, ms_scale_max)
+        mib_w = bar_width(mib, mib_scale_max)
 
-    foot_y = height - 18
+        # Shared labels once on the left.
+        parts.append(
+            f'  <text x="{left_plot_x - 10}" y="{text_y:.1f}" text-anchor="end" class="sans {label_class}">{label}</text>'
+        )
+
+        # Startup track + bar + fixed value column.
+        parts.append(
+            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" class="track"/>'
+        )
+        parts.append(
+            f'  <rect x="{left_plot_x}" y="{bar_y:.1f}" width="{ms_w:.1f}" height="{bar_h}" rx="3" class="{bar_class}"/>'
+        )
+        parts.append(
+            f'  <text x="{left_value_x + value_w}" y="{text_y:.1f}" text-anchor="end" class="mono {value_class}">{fmt_ms(ms)}</text>'
+        )
+
+        # Memory track + bar + fixed value column.
+        parts.append(
+            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{plot_w:.1f}" height="{bar_h}" rx="3" class="track"/>'
+        )
+        parts.append(
+            f'  <rect x="{right_plot_x}" y="{bar_y:.1f}" width="{mib_w:.1f}" height="{bar_h}" rx="3" class="{bar_class}"/>'
+        )
+        parts.append(
+            f'  <text x="{right_value_x + value_w}" y="{text_y:.1f}" text-anchor="end" class="mono {value_class}">{fmt_mib(item["rss_kib"]["median"])}</text>'
+        )
+
+    foot_y = height - 10
     parts.append(
-        f'  <text x="28" y="{foot_y}" class="sans foot">rho and Codex are native binaries. Claude Code, Pi, and OpenCode use JS runtimes. Pi measured with --no-extensions.</text>'
+        f'  <text x="{pad_x}" y="{foot_y}" class="sans foot">Native: rho, Codex. JS runtimes: Claude Code, Pi, OpenCode. Pi uses --no-extensions.</text>'
     )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
