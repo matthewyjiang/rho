@@ -4,9 +4,17 @@ use std::{collections::HashMap, sync::Mutex};
 
 use super::{CredentialResult, CredentialStore};
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MemoryCredentialStore {
     secrets: Mutex<HashMap<String, String>>,
+}
+
+impl std::fmt::Debug for MemoryCredentialStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryCredentialStore")
+            .field("secrets", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl CredentialStore for MemoryCredentialStore {

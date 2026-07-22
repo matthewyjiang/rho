@@ -142,9 +142,14 @@ impl OsCredentialStore {
         let Some(manifest) = Self::get_entry_secret(&manifest_account)? else {
             return Ok(false);
         };
-        let mut deleted = delete_chunks_for_manifest(account, &manifest)?;
-        deleted |= Self::delete_entry_secret(&manifest_account)?;
-        Ok(deleted)
+        // Drop the manifest first so readers fall through to the plain entry.
+        // Orphan chunk bodies are harmless without a manifest.
+        let deleted = Self::delete_entry_secret(&manifest_account)?;
+        match delete_chunks_for_manifest(account, &manifest) {
+            Ok(chunks_deleted) => Ok(deleted | chunks_deleted),
+            Err(_) if deleted => Ok(true),
+            Err(err) => Err(err),
+        }
     }
 }
 
