@@ -4,12 +4,18 @@ use ratatui::{layout::Rect, text::Line};
 
 use super::{
     activity, render::display_width, scrollbar::HistoryScrollbar, visible_composer_start, App,
+    HistoryScroll,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ScreenLayout {
+    /// Full history panel, including any bottom activity overlay band.
     pub(super) history: Rect,
+    /// Region that may hold transcript lines. Excludes the bottom-follow activity band.
+    pub(super) history_content: Rect,
     pub(super) history_scrollbar: Option<HistoryScrollbar>,
+    /// Blank breathing room above the rail while bottom-following with activity.
+    pub(super) activity_gap: Option<Rect>,
     pub(super) activity_rail: Option<Rect>,
     pub(super) activity: Option<Rect>,
     pub(super) jump_to_bottom: Option<Rect>,
@@ -53,9 +59,10 @@ impl App {
         let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
         let history_height_without_jump =
             self.history_height_from_line_counts(height, composer_lines.len(), command_line_count);
-        let show_jump_to_bottom = history_height_without_jump > 0
-            && self.visible_history_start(history_len, history_height_without_jump)
-                < history_len.saturating_sub(history_height_without_jump);
+        let content_height_without_jump = self.history_content_height(history_height_without_jump);
+        let show_jump_to_bottom = content_height_without_jump > 0
+            && self.visible_history_start(history_len, content_height_without_jump)
+                < history_len.saturating_sub(content_height_without_jump);
         let reserved_above_composer = usize::from(show_top_divider);
         let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
         let desired_pending_input_height = self.pending_input_height();
@@ -86,7 +93,27 @@ impl App {
         let mut y = area.y;
         let history = Rect::new(area.x, y, area.width, history_height as u16);
         y = y.saturating_add(history.height);
+
+        let activity_status = self.activity_status();
+        let activity_active = activity_status.is_some() && history.height > 0;
+        let bottom_follow = matches!(self.history_scroll, HistoryScroll::Bottom);
+        let content_inset = activity::bottom_follow_activity_inset(activity_active, bottom_follow)
+            .min(history_height);
+        let content_height = history_height.saturating_sub(content_inset);
+        let history_content = Rect::new(history.x, history.y, history.width, content_height as u16);
+
         let activity_y = history.bottom().saturating_sub(1);
+        let activity_gap = (content_inset
+            >= activity::ACTIVITY_RAIL_ROWS + activity::ACTIVITY_CONTENT_GAP_ROWS)
+            .then(|| {
+                Rect::new(
+                    history.x,
+                    activity_y.saturating_sub(activity::ACTIVITY_CONTENT_GAP_ROWS as u16),
+                    history.width,
+                    activity::ACTIVITY_CONTENT_GAP_ROWS as u16,
+                )
+            });
+
         let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
         let jump_width = jump_text.as_deref().map_or(0, display_width).min(width) as u16;
         let jump_to_bottom = jump_text.map(|_| {
@@ -104,7 +131,6 @@ impl App {
         } else {
             width
         };
-        let activity_status = self.activity_status();
         let activity_width = activity_status
             .map(|status| activity::activity_width(activity_available, status))
             .unwrap_or(0) as u16;
@@ -132,11 +158,13 @@ impl App {
 
         ScreenLayout {
             history,
+            history_content,
             history_scrollbar: HistoryScrollbar::new(
-                history,
+                history_content,
                 history_len,
-                self.visible_history_start(history_len, history_height),
+                self.visible_history_start(history_len, content_height),
             ),
+            activity_gap,
             activity_rail,
             activity,
             jump_to_bottom,
@@ -152,6 +180,17 @@ impl App {
         }
     }
 
+    pub(super) fn history_content_inset(&self) -> usize {
+        activity::bottom_follow_activity_inset(
+            self.activity_status().is_some(),
+            matches!(self.history_scroll, HistoryScroll::Bottom),
+        )
+    }
+
+    pub(super) fn history_content_height(&self, panel_height: usize) -> usize {
+        panel_height.saturating_sub(self.history_content_inset().min(panel_height))
+    }
+
     pub(super) fn history_height_for_screen(
         &self,
         width: usize,
@@ -163,6 +202,15 @@ impl App {
             self.composer_lines(width).len(),
             self.command_suggestion_lines(width).len(),
         )
+    }
+
+    pub(super) fn history_content_height_for_screen(
+        &self,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) -> usize {
+        self.history_content_height(self.history_height_for_screen(width, height, now))
     }
 
     pub(super) fn history_height_from_line_counts(

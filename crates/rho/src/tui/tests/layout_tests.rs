@@ -163,20 +163,61 @@ fn spinner_overlays_last_history_row_without_reducing_layout_height() {
 
     assert_eq!(idle.history, loading.history);
     assert_eq!(idle.activity, None);
+    assert_eq!(idle.history_content, idle.history);
+    assert_eq!(idle.activity_gap, None);
     let activity = loading.activity.unwrap();
     assert_eq!(activity.y, loading.history.bottom().saturating_sub(1));
     assert!(activity.width < loading.history.width);
+    assert_eq!(
+        loading.history_content.height as usize,
+        loading
+            .history
+            .height
+            .saturating_sub(super::super::activity::bottom_follow_activity_inset(true, true) as u16)
+            as usize
+    );
+    assert_eq!(
+        loading.activity_gap.unwrap(),
+        Rect::new(
+            loading.history.x,
+            activity
+                .y
+                .saturating_sub(super::super::activity::ACTIVITY_CONTENT_GAP_ROWS as u16),
+            loading.history.width,
+            super::super::activity::ACTIVITY_CONTENT_GAP_ROWS as u16,
+        )
+    );
 }
 
 #[test]
 fn spinner_offsets_bottom_following_but_not_manual_scroll() {
     let mut app = test_app();
     app.running = true;
+    let area = Rect::new(0, 0, 40, 12);
 
-    assert_eq!(app.visible_history_window(20, 10), (11, 9));
+    let bottom = app.screen_layout(area, Instant::now());
+    let inset = super::super::activity::bottom_follow_activity_inset(true, true);
+    assert_eq!(
+        bottom.history_content.height as usize,
+        (bottom.history.height as usize).saturating_sub(inset)
+    );
+    assert!(bottom.activity_gap.is_some());
+    assert_eq!(
+        app.visible_history_window(20, bottom.history_content.height as usize),
+        (
+            20usize.saturating_sub(bottom.history_content.height as usize),
+            bottom.history_content.height as usize,
+        )
+    );
 
     app.history_scroll = HistoryScroll::Manual { top_line: 3 };
-    assert_eq!(app.visible_history_window(20, 10), (3, 10));
+    let manual = app.screen_layout(area, Instant::now());
+    assert_eq!(manual.history_content, manual.history);
+    assert_eq!(manual.activity_gap, None);
+    assert_eq!(
+        app.visible_history_window(20, manual.history_content.height as usize),
+        (3, manual.history_content.height as usize)
+    );
 }
 
 #[test]
@@ -212,11 +253,12 @@ fn bottom_following_renders_last_message_above_spinner_overlay() {
 
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
     let activity = layout.activity.unwrap();
+    let gap = layout.activity_gap.expect("bottom-follow activity gap");
     let rows = (0..height)
         .map(|row| buffer_row_text(terminal.backend().buffer(), row))
         .collect::<Vec<_>>();
     assert!(
-        rows[..activity.y as usize]
+        rows[..layout.history_content.bottom() as usize]
             .iter()
             .any(|row| row.contains("message 19")),
         "{rows:#?}"
@@ -225,6 +267,12 @@ fn bottom_following_renders_last_message_above_spinner_overlay() {
         !rows[activity.y as usize].contains("message 19"),
         "{rows:#?}"
     );
+    assert!(
+        rows[gap.y as usize].trim().is_empty(),
+        "expected a blank spacer row above the spinner, got {rows:#?}"
+    );
+    assert_eq!(gap.bottom(), activity.y);
+    assert_eq!(layout.history_content.bottom(), gap.y);
 }
 
 #[test]
@@ -304,6 +352,8 @@ fn activity_rail_has_a_solid_full_width_background() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     assert_eq!(rail, Rect::new(0, rail.y, width, 1));
+    assert_eq!(scrollbar.rect.bottom(), layout.history_content.bottom());
+    assert!(scrollbar.rect.bottom() <= rail.y);
     let buffer = terminal.backend().buffer();
     let rail_background = Theme::activity_rail().bg.unwrap();
     assert_ne!(
@@ -313,15 +363,18 @@ fn activity_rail_has_a_solid_full_width_background() {
     for column in rail.x..rail.right() {
         assert_eq!(buffer[(column, rail.y)].bg, rail_background);
     }
+    for column in activity.right()..rail.right() {
+        assert_eq!(buffer[(column, rail.y)].symbol(), " ");
+    }
     for row in rail.bottom()..height {
         for column in rail.x..rail.right() {
             assert_ne!(buffer[(column, row)].bg, rail_background);
         }
     }
-    for column in activity.right()..scrollbar.rect.x {
-        assert_eq!(buffer[(column, rail.y)].symbol(), " ");
-    }
-    assert_eq!(buffer[(scrollbar.rect.x, rail.y)].symbol(), "█");
+    assert_eq!(
+        buffer[(scrollbar.rect.x, scrollbar.rect.bottom().saturating_sub(1))].symbol(),
+        "█"
+    );
 }
 
 #[test]
@@ -340,11 +393,18 @@ fn activity_rail_clears_inherited_text_modifiers() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
     let buffer = terminal.backend().buffer();
-    assert!(buffer[(rail.x, rail.y.saturating_sub(1))]
+    let content_bottom = layout.history_content.bottom().saturating_sub(1);
+    assert!(buffer[(layout.history_content.x, content_bottom)]
         .modifier
         .contains(Modifier::ITALIC));
     for column in rail.x..rail.right() {
         assert!(!buffer[(column, rail.y)].modifier.contains(Modifier::ITALIC));
+    }
+    if let Some(gap) = layout.activity_gap {
+        for column in gap.x..gap.right() {
+            assert!(!buffer[(column, gap.y)].modifier.contains(Modifier::ITALIC));
+            assert_eq!(buffer[(column, gap.y)].symbol(), " ");
+        }
     }
 }
 

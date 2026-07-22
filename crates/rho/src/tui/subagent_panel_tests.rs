@@ -130,13 +130,21 @@ fn text_selection_uses_rendered_history_window_with_active_subagents() {
     let now = std::time::Instant::now();
     let layout = app.screen_layout(Rect::new(0, 0, 60, 16), now);
     let (history_start, history_count) =
-        app.visible_history_window(layout.history_len, layout.history.height as usize);
-    assert_eq!(history_count + 1, layout.history.height as usize);
+        app.visible_history_window(layout.history_len, layout.history_content.height as usize);
+    assert_eq!(history_count, layout.history_content.height as usize);
+    assert_eq!(
+        history_count
+            + super::super::activity::bottom_follow_activity_inset(
+                /*activity_active*/ true, /*bottom_follow*/ true
+            ),
+        layout.history.height as usize
+    );
+    assert!(layout.activity_gap.is_some());
     let lines = app.history_lines(60, now);
     let target_line = (history_start..history_start + history_count)
         .find(|&line| lines[line].to_string().contains("message"))
         .unwrap();
-    let row = layout.history.y + (target_line - history_start) as u16;
+    let row = layout.history_content.y + (target_line - history_start) as u16;
 
     app.handle_mouse_event(
         MouseEventKind::Down(MouseButton::Left),
@@ -150,6 +158,30 @@ fn text_selection_uses_rendered_history_window_with_active_subagents() {
         app.text_selection.unwrap().selected_line_range(),
         target_line..target_line + 1
     );
+}
+
+#[test]
+fn subagent_only_activity_reserves_bottom_follow_inset() {
+    use ratatui::layout::Rect;
+
+    let mut app = crate::tui::tests::test_app();
+    app.running = false;
+    app.subagent_panel = SubagentPanel {
+        agents: vec![agent("a1b2c3", "explorer", RunState::Running, None, 3)],
+    };
+    app.loading_spinner.start();
+
+    let layout = app.screen_layout(Rect::new(0, 0, 40, 12), std::time::Instant::now());
+    assert!(layout.activity.is_some());
+    assert_eq!(
+        layout.history_content.height as usize,
+        (layout.history.height as usize).saturating_sub(
+            super::super::activity::bottom_follow_activity_inset(
+                /*activity_active*/ true, /*bottom_follow*/ true,
+            )
+        )
+    );
+    assert!(layout.activity_gap.is_some());
 }
 
 #[test]
