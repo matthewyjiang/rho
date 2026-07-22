@@ -16,6 +16,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -37,13 +38,26 @@ def default_rho_bin() -> Path | None:
     return Path(path) if path else None
 
 
-def rho_version(_rho_bin: Path) -> str:
-    cargo_toml = repo_root() / "crates" / "rho" / "Cargo.toml"
-    if cargo_toml.exists():
-        match = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml.read_text(), re.M)
-        if match:
-            return f"rho {match.group(1)}"
-    return "rho"
+def rho_version(rho_bin: Path) -> str:
+    """Describe the measured rho binary.
+
+    Trust the workspace Cargo.toml only when the binary lives under this repo.
+    Otherwise report the resolved path so --rho overrides are not mislabeled.
+    """
+    resolved = rho_bin.resolve()
+    repo = repo_root()
+    try:
+        under_repo = resolved.is_relative_to(repo)
+    except (AttributeError, TypeError, ValueError):
+        under_repo = str(resolved).startswith(str(repo) + os.sep)
+
+    if under_repo:
+        cargo_toml = repo / "crates" / "rho" / "Cargo.toml"
+        if cargo_toml.exists():
+            match = re.search(r'^version\s*=\s*"([^"]+)"', cargo_toml.read_text(), re.M)
+            if match:
+                return f"rho {match.group(1)}"
+    return f"rho ({resolved})"
 
 
 def capture_version(cmd: list[str]) -> str:
@@ -86,32 +100,62 @@ def summarize(values: list[float]) -> dict[str, float]:
     }
 
 
-def run_once(cmd: list[str]) -> tuple[float, int, int]:
+def run_once(cmd: list[str], *, timeout_s: float = 30.0) -> tuple[float, int, int]:
+    """Run cmd once; return (elapsed_ms, max_rss_kib, exit_code)."""
     start = time.perf_counter()
     pid = os.fork()
     if pid == 0:
+        # Child: never return into the parent benchmark loop.
         try:
             devnull = os.open(os.devnull, os.O_RDWR)
             os.dup2(devnull, 0)
             os.dup2(devnull, 1)
             os.dup2(devnull, 2)
+            if devnull > 2:
+                os.close(devnull)
             os.execvp(cmd[0], cmd)
-        except OSError:
+        except BaseException:
             os._exit(127)
-    _pid, status, rusage = os.wait4(pid, 0)
-    elapsed_ms = (time.perf_counter() - start) * 1000.0
-    return elapsed_ms, int(rusage.ru_maxrss), os.waitstatus_to_exitcode(status)
+        os._exit(127)
+
+    deadline = start + timeout_s
+    while True:
+        wpid, status, rusage = os.wait4(pid, os.WNOHANG)
+        if wpid == pid:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            return elapsed_ms, int(rusage.ru_maxrss), os.waitstatus_to_exitcode(status)
+        if time.perf_counter() >= deadline:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.wait4(pid, 0)
+            raise TimeoutError(f"timed out after {timeout_s:g}s: {' '.join(cmd)}")
+        time.sleep(0.001)
 
 
-def measure(cmd: list[str], *, warmup: int, samples: int) -> dict[str, Any]:
-    for _ in range(warmup):
-        run_once(cmd)
+def measure(
+    cmd: list[str],
+    *,
+    warmup: int,
+    samples: int,
+    timeout_s: float = 30.0,
+) -> dict[str, Any]:
+    def one(label: str) -> tuple[float, float]:
+        elapsed_ms, max_rss_kib, rc = run_once(cmd, timeout_s=timeout_s)
+        if rc != 0:
+            raise RuntimeError(f"{label} exited {rc}: {' '.join(cmd)}")
+        return elapsed_ms, float(max_rss_kib)
+
+    for index in range(warmup):
+        one(f"warmup {index + 1}/{warmup}")
+
     times_ms: list[float] = []
     rss_kib: list[float] = []
-    for _ in range(samples):
-        elapsed_ms, max_rss_kib, _rc = run_once(cmd)
+    for index in range(samples):
+        elapsed_ms, max_rss_kib = one(f"sample {index + 1}/{samples}")
         times_ms.append(elapsed_ms)
-        rss_kib.append(float(max_rss_kib))
+        rss_kib.append(max_rss_kib)
     return {
         "samples": samples,
         "time_ms": summarize(times_ms),
@@ -287,7 +331,7 @@ def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
         '  <title id="title">CLI startup and memory comparison</title>',
         '  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>',
-        f'  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
+        '  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
         text(pad_x, 24, "CLI process overhead", fill="#f0f3f6", size=18, font=sans, weight="700"),
         text(
             pad_x,
@@ -428,7 +472,11 @@ def main() -> int:
             print(f"skip {candidate.name}: not found", file=sys.stderr)
             continue
         print(f"bench {resolved['label']} ...", file=sys.stderr)
-        measured = measure(resolved["cmd"], warmup=args.warmup, samples=args.samples)
+        try:
+            measured = measure(resolved["cmd"], warmup=args.warmup, samples=args.samples)
+        except (RuntimeError, TimeoutError) as exc:
+            print(f"skip {resolved['label']}: {exc}", file=sys.stderr)
+            continue
         results.append({**resolved, **measured})
 
     if not results:
