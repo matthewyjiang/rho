@@ -42,6 +42,11 @@ impl LineFill {
     }
 }
 
+const SESSION_HEADER_HINTS: &[&str] = &[
+    " shift+tab    Cycle reasoning level",
+    " /            Show available commands",
+];
+
 pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     width: usize,
@@ -66,7 +71,18 @@ pub(super) fn session_header_lines(
         ]));
     }
     lines.push(Line::raw(""));
+    push_session_header_hints(&mut lines, width);
+    lines.push(Line::raw(""));
     lines
+}
+
+fn push_session_header_hints(lines: &mut Vec<Line<'static>>, width: usize) {
+    for hint in SESSION_HEADER_HINTS {
+        lines.push(Line::from(Span::styled(
+            truncate_one_line(hint, width),
+            Theme::dim(),
+        )));
+    }
 }
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
