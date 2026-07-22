@@ -42,6 +42,12 @@ impl LineFill {
     }
 }
 
+const SESSION_HEADER_HINTS: &[(&str, &str)] = &[
+    ("shift+tab", "Cycle reasoning level"),
+    ("/", "Show available commands"),
+];
+const SESSION_HEADER_HINT_GAP: usize = 4;
+
 pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     width: usize,
@@ -66,7 +72,25 @@ pub(super) fn session_header_lines(
         ]));
     }
     lines.push(Line::raw(""));
+    push_session_header_hints(&mut lines, width);
+    lines.push(Line::raw(""));
     lines
+}
+
+fn push_session_header_hints(lines: &mut Vec<Line<'static>>, width: usize) {
+    let control_width = SESSION_HEADER_HINTS
+        .iter()
+        .map(|(control, _)| display_width(control))
+        .max()
+        .unwrap_or(0);
+    for (control, action) in SESSION_HEADER_HINTS {
+        let pad = control_width.saturating_sub(display_width(control)) + SESSION_HEADER_HINT_GAP;
+        let text = format!(" {control}{}{action}", " ".repeat(pad));
+        lines.push(Line::from(Span::styled(
+            truncate_one_line(&text, width),
+            Theme::dim(),
+        )));
+    }
 }
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
