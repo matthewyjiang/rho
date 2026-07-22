@@ -20,8 +20,8 @@ use super::{
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
     display_width, highlight_selection, input_cursor_position, input_lines_with_images,
-    is_tool_entry, navigable_picker_lines, oauth_pending_lines, pad_display_line,
-    padded_content_width, picker_lines, questionnaire_cursor_position, questionnaire_lines,
+    is_tool_entry, oauth_pending_lines, pad_display_line, padded_content_width, picker_lines,
+    picker_overlay::picker_overlay_frame, questionnaire_cursor_position, questionnaire_lines,
     recovered_history_tail, render_copy_notice, scroll_state_for_top_line, secret_input_lines,
     session_header_lines, styled_line, tool_entry_lines, transcript_entries_from_messages,
     truncate_one_line,
@@ -191,23 +191,14 @@ impl App {
         }
 
         let popup_cursor = if let ComposerMode::Picker(picker) = &self.composer {
-            if picker.uses_navigable_popup() {
-                let (outer, lines) = navigable_picker_lines(picker, area);
-                frame.render_widget(Clear, outer);
-                frame.render_widget(Paragraph::new(lines).style(Style::default()), outer);
-                let layout = super::navigable_popup::navigable_popup_layout(outer);
-                Some(Position {
-                    x: outer.x.saturating_add(1).saturating_add(
-                        super::navigable_popup::navigable_popup_filter_cursor_x(
-                            &picker.filter,
-                            layout.inner_width,
-                        ),
-                    ),
-                    y: outer.y.saturating_add(1),
-                })
-            } else {
-                None
-            }
+            picker_overlay_frame(picker, area).map(|overlay| {
+                frame.render_widget(Clear, overlay.outer);
+                frame.render_widget(
+                    Paragraph::new(overlay.lines).style(Style::default()),
+                    overlay.outer,
+                );
+                overlay.cursor
+            })
         } else {
             None
         };
@@ -671,7 +662,7 @@ impl App {
     ) -> Result<bool, B::Error> {
         if matches!(
             &self.composer,
-            ComposerMode::Picker(picker) if picker.uses_navigable_popup()
+            ComposerMode::Picker(picker) if picker.is_overlay()
         ) {
             return Ok(false);
         }
@@ -729,7 +720,7 @@ impl App {
                 }
                 lines
             }
-            ComposerMode::Picker(picker) if picker.uses_navigable_popup() => Vec::new(),
+            ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),

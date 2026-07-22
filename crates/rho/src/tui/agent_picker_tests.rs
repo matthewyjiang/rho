@@ -23,8 +23,12 @@ fn formats_agent_metadata_with_prompt_extension() {
         .unwrap();
     let detail = item.detail.as_deref().unwrap();
 
-    assert_eq!(picker.layout, PickerLayout::NavigablePopup);
-    assert!(picker.uses_navigable_popup());
+    assert_eq!(picker.layout, PickerLayout::Overlay);
+    assert!(picker.is_overlay());
+    let chrome = picker.overlay_chrome.as_ref().unwrap();
+    assert_eq!(chrome.nav_label, " AGENTS");
+    assert_eq!(chrome.detail_label, " DETAILS");
+    assert_eq!(chrome.nav_keys_hint, "↑↓ agents");
     assert!(detail.contains("Reviews releases before deployment."));
     assert!(detail.contains("~/.rho/agents"));
     assert!(detail.contains("require anthropic/claude-sonnet"));

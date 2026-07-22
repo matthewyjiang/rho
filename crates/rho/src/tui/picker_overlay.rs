@@ -1,16 +1,19 @@
-//! Generic navigable popup geometry and line rendering.
+//! Generic picker overlay geometry and line rendering.
 //!
-//! Feature policy (what items mean, confirm verbs, filters) stays at call sites.
-//! This module only lays out a bordered overlay with a navigation list and an
-//! independently scrollable detail pane.
+//! Feature policy (what items mean, confirm verbs, filters, chrome labels)
+//! stays at call sites. This module only lays out a bordered overlay with a
+//! navigation list and an independently scrollable detail pane.
 
 use ratatui::{
-    layout::Rect,
+    layout::{Position, Rect},
     text::{Line, Span},
 };
 
 use super::render::wrap_line_at_whitespace;
-use super::{display_width, styled_line, truncate_one_line, LineFill, PickerBadgeTone, Theme};
+use super::{
+    display_width, styled_line, truncate_one_line, LineFill, PickerBadgeTone, PickerItem, Theme,
+    UiPicker,
+};
 
 const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
@@ -19,26 +22,29 @@ const SEPARATOR: &str = " │ ";
 /// Rows consumed inside the border: search, divider, pane header, status divider, footer.
 const INNER_CHROME_ROWS: usize = 5;
 const FILTER_PREFIX: &str = " Search  > ";
+const DEFAULT_NAV_LABEL: &str = " NAV";
+const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
+const DEFAULT_NAV_KEYS_HINT: &str = "↑↓ items";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct OverlayChrome {
+    pub(super) nav_label: String,
+    pub(super) detail_label: String,
+    pub(super) nav_keys_hint: String,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NavigablePopupOrientation {
+pub(super) enum OverlayOrientation {
     SideBySide,
     Stacked,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct NavigablePopupItem {
-    pub(super) label: String,
-    pub(super) badge: Option<(String, PickerBadgeTone)>,
-    pub(super) selected: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct NavigablePopupLayout {
+pub(super) struct OverlayLayout {
     pub(super) outer: Rect,
     pub(super) inner_width: usize,
     pub(super) inner_height: usize,
-    pub(super) orientation: NavigablePopupOrientation,
+    pub(super) orientation: OverlayOrientation,
     pub(super) body_rows: usize,
     pub(super) nav_width: usize,
     pub(super) detail_width: usize,
@@ -46,19 +52,119 @@ pub(super) struct NavigablePopupLayout {
     pub(super) nav_viewport_rows: usize,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct NavigablePopupContent<'a> {
-    pub(super) title: &'a str,
-    pub(super) filter: &'a str,
-    pub(super) items: &'a [NavigablePopupItem],
-    pub(super) selected_position: usize,
-    pub(super) match_count: usize,
-    pub(super) detail: &'a [String],
-    pub(super) detail_scroll: usize,
-    pub(super) footer: &'a str,
+impl OverlayLayout {
+    pub(super) fn detail_viewport(self) -> DetailViewport {
+        DetailViewport {
+            width: self.detail_width,
+            rows: self.detail_viewport_rows,
+        }
+    }
 }
 
-pub(super) fn navigable_popup_outer_rect(area: Rect) -> Rect {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DetailViewport {
+    pub(super) width: usize,
+    pub(super) rows: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct OverlayFrame {
+    pub(super) outer: Rect,
+    pub(super) lines: Vec<Line<'static>>,
+    pub(super) cursor: Position,
+}
+
+struct OverlayChromeView<'a> {
+    nav_label: &'a str,
+    detail_label: &'a str,
+    nav_keys_hint: &'a str,
+}
+
+struct OverlayContent<'a> {
+    title: &'a str,
+    filter: &'a str,
+    items: &'a [PickerItem],
+    matching: &'a [usize],
+    selected: usize,
+    selected_position: usize,
+    match_count: usize,
+    detail: &'a [String],
+    detail_scroll: usize,
+    footer: &'a str,
+    chrome: OverlayChromeView<'a>,
+}
+
+pub(super) fn picker_overlay_layout(area: Rect) -> OverlayLayout {
+    layout_for_outer(outer_rect(area))
+}
+
+pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
+    picker
+        .is_overlay()
+        .then(|| render_picker_overlay(picker, area))
+}
+
+pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
+    let layout = picker_overlay_layout(area);
+    // Own footer and wrap detail before matching indices so temporary match
+    // cache borrows from footer/detail helpers do not overlap.
+    let detail = picker.wrapped_detail_lines(layout.detail_width);
+    let footer = picker.action_footer();
+    let matching = picker.matching_indices();
+    let selected_position = matching
+        .iter()
+        .position(|index| *index == picker.selected)
+        .unwrap_or(0);
+    let chrome = chrome_view(picker.overlay_chrome.as_ref());
+    let content = OverlayContent {
+        title: &picker.title,
+        filter: &picker.filter,
+        items: &picker.items,
+        matching: &matching,
+        selected: picker.selected,
+        selected_position,
+        match_count: matching.len(),
+        detail: &detail,
+        detail_scroll: picker.detail_scroll_top(),
+        footer: &footer,
+        chrome,
+    };
+    let lines = overlay_lines(layout, content);
+    let cursor = Position {
+        x: layout
+            .outer
+            .x
+            .saturating_add(1)
+            .saturating_add(filter_cursor_x(picker.filter.as_str(), layout.inner_width)),
+        y: layout.outer.y.saturating_add(1),
+    };
+    OverlayFrame {
+        outer: layout.outer,
+        lines,
+        cursor,
+    }
+}
+
+pub(super) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
+    detail_wrapped_lines(detail, detail_width.max(1))
+}
+
+pub(super) fn clamp_detail_scroll(
+    detail_scroll: usize,
+    detail_line_count: usize,
+    viewport_rows: usize,
+) -> usize {
+    let max_scroll = detail_line_count.saturating_sub(viewport_rows.max(1));
+    detail_scroll.min(max_scroll)
+}
+
+pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
+    display_width(FILTER_PREFIX)
+        .saturating_add(display_width(filter))
+        .min(inner_width.saturating_sub(1)) as u16
+}
+
+fn outer_rect(area: Rect) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
     }
@@ -80,20 +186,20 @@ pub(super) fn navigable_popup_outer_rect(area: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-pub(super) fn navigable_popup_layout(outer: Rect) -> NavigablePopupLayout {
+fn layout_for_outer(outer: Rect) -> OverlayLayout {
     let outer_width = outer.width as usize;
     let outer_height = outer.height as usize;
     let inner_width = outer_width.saturating_sub(2).max(1);
     let inner_height = outer_height.saturating_sub(2).max(1);
     let body_rows = inner_height.saturating_sub(INNER_CHROME_ROWS).max(1);
     let orientation = if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        NavigablePopupOrientation::Stacked
+        OverlayOrientation::Stacked
     } else {
-        NavigablePopupOrientation::SideBySide
+        OverlayOrientation::SideBySide
     };
 
     let (nav_width, detail_width, detail_viewport_rows, nav_viewport_rows) = match orientation {
-        NavigablePopupOrientation::SideBySide => {
+        OverlayOrientation::SideBySide => {
             let nav_width = ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH);
             let separator_width = display_width(SEPARATOR);
             let detail_width = inner_width
@@ -102,7 +208,7 @@ pub(super) fn navigable_popup_layout(outer: Rect) -> NavigablePopupLayout {
                 .max(1);
             (nav_width, detail_width, body_rows, body_rows)
         }
-        NavigablePopupOrientation::Stacked => {
+        OverlayOrientation::Stacked => {
             let detail_viewport_rows = (body_rows.saturating_mul(3) / 5)
                 .max(2)
                 .min(body_rows.saturating_sub(1));
@@ -116,7 +222,7 @@ pub(super) fn navigable_popup_layout(outer: Rect) -> NavigablePopupLayout {
         }
     };
 
-    NavigablePopupLayout {
+    OverlayLayout {
         outer,
         inner_width,
         inner_height,
@@ -129,23 +235,22 @@ pub(super) fn navigable_popup_layout(outer: Rect) -> NavigablePopupLayout {
     }
 }
 
-pub(super) fn navigable_popup_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
-    detail_wrapped_lines(detail, detail_width.max(1))
+fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
+    match chrome {
+        Some(chrome) => OverlayChromeView {
+            nav_label: chrome.nav_label.as_str(),
+            detail_label: chrome.detail_label.as_str(),
+            nav_keys_hint: chrome.nav_keys_hint.as_str(),
+        },
+        None => OverlayChromeView {
+            nav_label: DEFAULT_NAV_LABEL,
+            detail_label: DEFAULT_DETAIL_LABEL,
+            nav_keys_hint: DEFAULT_NAV_KEYS_HINT,
+        },
+    }
 }
 
-pub(super) fn clamp_detail_scroll(
-    detail_scroll: usize,
-    detail_line_count: usize,
-    viewport_rows: usize,
-) -> usize {
-    let max_scroll = detail_line_count.saturating_sub(viewport_rows.max(1));
-    detail_scroll.min(max_scroll)
-}
-
-pub(super) fn navigable_popup_lines(
-    layout: NavigablePopupLayout,
-    content: NavigablePopupContent<'_>,
-) -> Vec<Line<'static>> {
+fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
     lines.push(border_line(
         layout.outer.width as usize,
@@ -158,11 +263,14 @@ pub(super) fn navigable_popup_lines(
         filter_line(content.filter, layout.inner_width),
     ));
     lines.push(horizontal_rule(layout.outer.width as usize));
-    lines.push(content_row(layout.inner_width, pane_header_line(layout)));
+    lines.push(content_row(
+        layout.inner_width,
+        pane_header_line(layout, &content.chrome),
+    ));
 
     let body = match layout.orientation {
-        NavigablePopupOrientation::SideBySide => side_by_side_body(layout, &content),
-        NavigablePopupOrientation::Stacked => stacked_body(layout, &content),
+        OverlayOrientation::SideBySide => side_by_side_body(layout, &content),
+        OverlayOrientation::Stacked => stacked_body(layout, &content),
     };
     for row in body {
         lines.push(content_row(layout.inner_width, row));
@@ -185,18 +293,11 @@ pub(super) fn navigable_popup_lines(
     lines
 }
 
-pub(super) fn navigable_popup_filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
-    display_width(FILTER_PREFIX)
-        .saturating_add(display_width(filter))
-        .min(inner_width.saturating_sub(1)) as u16
-}
-
-fn side_by_side_body(
-    layout: NavigablePopupLayout,
-    content: &NavigablePopupContent<'_>,
-) -> Vec<Line<'static>> {
+fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
     let nav_rows = nav_item_rows(
         content.items,
+        content.matching,
+        content.selected,
         content.selected_position,
         layout.nav_width,
         layout.nav_viewport_rows,
@@ -222,10 +323,7 @@ fn side_by_side_body(
     rows
 }
 
-fn stacked_body(
-    layout: NavigablePopupLayout,
-    content: &NavigablePopupContent<'_>,
-) -> Vec<Line<'static>> {
+fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut rows = Vec::with_capacity(layout.body_rows);
     rows.extend(detail_viewport_rows(
         content.detail,
@@ -235,6 +333,8 @@ fn stacked_body(
     ));
     rows.extend(nav_item_rows(
         content.items,
+        content.matching,
+        content.selected,
         content.selected_position,
         layout.nav_width,
         layout.nav_viewport_rows,
@@ -247,34 +347,38 @@ fn stacked_body(
 }
 
 fn nav_item_rows(
-    items: &[NavigablePopupItem],
+    items: &[PickerItem],
+    matching: &[usize],
+    selected: usize,
     selected_position: usize,
     width: usize,
     viewport_rows: usize,
 ) -> Vec<Line<'static>> {
-    if items.is_empty() || viewport_rows == 0 {
+    if matching.is_empty() || viewport_rows == 0 {
         return (0..viewport_rows).map(|_| Line::raw("")).collect();
     }
 
     let start = selected_position
         .saturating_add(1)
         .saturating_sub(viewport_rows);
-    let mut rows = items
+    let mut rows = matching
         .iter()
+        .copied()
         .skip(start)
         .take(viewport_rows)
-        .map(|item| nav_item_line(item, width))
+        .filter_map(|index| items.get(index).map(|item| (index, item)))
+        .map(|(index, item)| nav_item_line(item, index == selected, width))
         .collect::<Vec<_>>();
     rows.resize_with(viewport_rows, || padded_plain("", width));
     rows
 }
 
-fn nav_item_line(item: &NavigablePopupItem, width: usize) -> Line<'static> {
+fn nav_item_line(item: &PickerItem, selected: bool, width: usize) -> Line<'static> {
     if width == 0 {
         return Line::raw("");
     }
-    let marker = if item.selected { "→" } else { " " };
-    let style = if item.selected {
+    let marker = if selected { "→" } else { " " };
+    let style = if selected {
         Theme::accent()
     } else {
         Theme::text()
@@ -284,9 +388,11 @@ fn nav_item_line(item: &NavigablePopupItem, width: usize) -> Line<'static> {
     }
 
     let available = width.saturating_sub(2);
-    let badge = item.badge.as_ref().and_then(|(text, tone)| {
-        let budget = display_width(text).min(16).min(available.saturating_sub(2));
-        (budget > 0).then(|| (truncate_one_line(text, budget), *tone))
+    let badge = item.badge.as_ref().and_then(|badge| {
+        let budget = display_width(&badge.text)
+            .min(16)
+            .min(available.saturating_sub(2));
+        (budget > 0).then(|| (truncate_one_line(&badge.text, budget), badge.tone))
     });
     let badge_width = badge
         .as_ref()
@@ -346,7 +452,7 @@ fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-fn footer_line(layout: NavigablePopupLayout, content: &NavigablePopupContent<'_>) -> Line<'static> {
+fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'static> {
     let detail_lines = content.detail.len();
     let scroll = clamp_detail_scroll(
         content.detail_scroll,
@@ -386,8 +492,8 @@ fn footer_line(layout: NavigablePopupLayout, content: &NavigablePopupContent<'_>
     let detail_position =
         format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
     let text = format!(
-        " ↑↓ agents · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
-        content.footer
+        " {} · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
+        content.chrome.nav_keys_hint, content.footer
     );
     styled_line(
         truncate_one_line(&text, layout.inner_width),
@@ -397,19 +503,19 @@ fn footer_line(layout: NavigablePopupLayout, content: &NavigablePopupContent<'_>
     )
 }
 
-fn pane_header_line(layout: NavigablePopupLayout) -> Line<'static> {
+fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {
     match layout.orientation {
-        NavigablePopupOrientation::SideBySide => {
-            let left = pad_text(" AGENTS", layout.nav_width);
-            let right = pad_text(" DETAILS", layout.detail_width);
+        OverlayOrientation::SideBySide => {
+            let left = pad_text(chrome.nav_label, layout.nav_width);
+            let right = pad_text(chrome.detail_label, layout.detail_width);
             Line::from(vec![
                 Span::styled(left, Theme::text_strong()),
                 Span::styled(SEPARATOR, Theme::dim()),
                 Span::styled(right, Theme::text_strong()),
             ])
         }
-        NavigablePopupOrientation::Stacked => styled_line(
-            pad_text(" DETAILS", layout.inner_width),
+        OverlayOrientation::Stacked => styled_line(
+            pad_text(chrome.detail_label, layout.inner_width),
             layout.inner_width,
             Theme::text_strong(),
             LineFill::PadToWidth,
@@ -500,5 +606,5 @@ fn badge_style(tone: PickerBadgeTone) -> ratatui::style::Style {
 }
 
 #[cfg(test)]
-#[path = "navigable_popup_tests.rs"]
+#[path = "picker_overlay_tests.rs"]
 mod tests;

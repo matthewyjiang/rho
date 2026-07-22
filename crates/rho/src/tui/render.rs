@@ -74,61 +74,6 @@ pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>
     list_picker_lines(picker, width)
 }
 
-pub(super) fn navigable_picker_lines(
-    picker: &UiPicker,
-    area: ratatui::layout::Rect,
-) -> (ratatui::layout::Rect, Vec<Line<'static>>) {
-    use super::navigable_popup::{
-        navigable_popup_layout, navigable_popup_lines, navigable_popup_outer_rect,
-        NavigablePopupContent, NavigablePopupItem,
-    };
-
-    let outer = navigable_popup_outer_rect(area);
-    let layout = navigable_popup_layout(outer);
-    let matching = picker.matching_indices();
-    let selected_position = matching
-        .iter()
-        .position(|index| *index == picker.selected)
-        .unwrap_or(0);
-    let items = matching
-        .iter()
-        .copied()
-        .map(|index| {
-            let item = &picker.items[index];
-            NavigablePopupItem {
-                label: item.label.clone(),
-                badge: item
-                    .badge
-                    .as_ref()
-                    .map(|badge| (badge.text.clone(), badge.tone)),
-                selected: index == picker.selected,
-            }
-        })
-        .collect::<Vec<_>>();
-    let detail = super::navigable_popup::navigable_popup_detail_lines(
-        picker.selected_detail(),
-        layout.detail_width,
-    );
-    let footer = picker.navigable_popup_action_footer();
-    let content = NavigablePopupContent {
-        title: &picker.title,
-        filter: &picker.filter,
-        items: &items,
-        selected_position,
-        match_count: matching.len(),
-        detail: &detail,
-        detail_scroll: picker.detail_scroll,
-        footer: &footer,
-    };
-    (outer, navigable_popup_lines(layout, content))
-}
-
-pub(super) fn navigable_picker_layout_metrics(area: ratatui::layout::Rect) -> (usize, usize) {
-    use super::navigable_popup::{navigable_popup_layout, navigable_popup_outer_rect};
-    let layout = navigable_popup_layout(navigable_popup_outer_rect(area));
-    (layout.detail_viewport_rows, layout.detail_width)
-}
-
 fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(MAX_PICKER_ITEMS + 7);
@@ -296,29 +241,7 @@ fn picker_item_line(
 }
 
 fn picker_footer_text(picker: &UiPicker) -> String {
-    let default_action = match picker.action {
-        super::PickerAction::Config => "change",
-        super::PickerAction::Doctor => "close",
-        super::PickerAction::ViewAgent
-            if picker
-                .selected_item()
-                .and_then(|item| item.badge.as_ref())
-                .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
-        {
-            "configure"
-        }
-        super::PickerAction::ViewAgent => "close",
-        super::PickerAction::SelectModel
-        | super::PickerAction::SelectInternalAgentModel
-        | super::PickerAction::LoginGroup
-        | super::PickerAction::LoginProvider
-        | super::PickerAction::LogoutProvider
-        | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ResumeSession
-        | super::PickerAction::SelectTreeNode => "select",
-        super::PickerAction::RefreshModelList => "refresh",
-    };
-    let action = picker.confirm_verb.as_deref().unwrap_or(default_action);
+    let action = picker.confirm_action_label();
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
     } else {

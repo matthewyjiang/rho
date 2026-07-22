@@ -29,6 +29,26 @@ struct PickerMatchCache {
     indices: Vec<usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DetailScroll {
+    Manual { top_line: usize },
+}
+
+impl Default for DetailScroll {
+    fn default() -> Self {
+        Self::Manual { top_line: 0 }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct DetailWrapCache {
+    selected: usize,
+    width: usize,
+    detail_len: usize,
+    detail_ptr: usize,
+    lines: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct UiPicker {
     pub(super) title: String,
@@ -38,10 +58,12 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
-    pub(super) detail_scroll: usize,
+    pub(super) detail_scroll: DetailScroll,
     pub(super) confirm_verb: Option<String>,
+    pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
+    detail_wrap_cache: RefCell<DetailWrapCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +94,13 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerLayout {
     #[default]
     List,
-    NavigablePopup,
+    Overlay,
+}
+
+impl PickerLayout {
+    pub(super) fn is_overlay(self) -> bool {
+        matches!(self, Self::Overlay)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,10 +152,12 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
-            detail_scroll: 0,
+            detail_scroll: DetailScroll::default(),
             confirm_verb: None,
+            overlay_chrome: None,
             parent: None,
             matches: RefCell::default(),
+            detail_wrap_cache: RefCell::default(),
         }
     }
 
@@ -136,39 +166,119 @@ impl UiPicker {
         self
     }
 
-    pub(super) fn uses_navigable_popup(&self) -> bool {
-        matches!(self.layout, PickerLayout::NavigablePopup)
+    pub(super) fn with_overlay_chrome(
+        mut self,
+        chrome: super::picker_overlay::OverlayChrome,
+    ) -> Self {
+        self.overlay_chrome = Some(chrome);
+        self
+    }
+
+    pub(super) fn is_overlay(&self) -> bool {
+        self.layout.is_overlay()
+    }
+
+    pub(super) fn has_scrollable_detail(&self) -> bool {
+        self.is_overlay()
     }
 
     pub(super) fn reset_detail_scroll(&mut self) {
-        self.detail_scroll = 0;
+        self.detail_scroll = DetailScroll::Manual { top_line: 0 };
     }
 
-    pub(super) fn scroll_detail_by(&mut self, delta: isize) {
-        if delta < 0 {
-            self.detail_scroll = self.detail_scroll.saturating_sub(delta.unsigned_abs());
-        } else {
-            self.detail_scroll = self.detail_scroll.saturating_add(delta as usize);
+    pub(super) fn detail_scroll_top(&self) -> usize {
+        match self.detail_scroll {
+            DetailScroll::Manual { top_line } => top_line,
         }
     }
 
+    pub(super) fn scroll_detail_by(
+        &mut self,
+        delta: isize,
+        viewport: super::picker_overlay::DetailViewport,
+    ) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let top = self.detail_scroll_top();
+        let next = if delta < 0 {
+            top.saturating_sub(delta.unsigned_abs())
+        } else {
+            top.saturating_add(delta as usize)
+        };
+        self.detail_scroll = DetailScroll::Manual { top_line: next };
+        self.clamp_detail_scroll(viewport);
+    }
+
     pub(super) fn scroll_detail_home(&mut self) {
-        self.detail_scroll = 0;
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        self.reset_detail_scroll();
     }
 
-    pub(super) fn scroll_detail_end(&mut self) {
-        self.detail_scroll = usize::MAX;
+    pub(super) fn scroll_detail_end(&mut self, viewport: super::picker_overlay::DetailViewport) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let line_count = self.detail_line_count(viewport.width);
+        let top = line_count.saturating_sub(viewport.rows.max(1));
+        self.detail_scroll = DetailScroll::Manual { top_line: top };
     }
 
-    pub(super) fn clamp_detail_scroll_for(&mut self, detail_width: usize, viewport_rows: usize) {
-        let detail = self.selected_detail();
-        let line_count =
-            super::navigable_popup::navigable_popup_detail_lines(detail, detail_width).len();
-        self.detail_scroll = super::navigable_popup::clamp_detail_scroll(
-            self.detail_scroll,
+    pub(super) fn scroll_detail_page(
+        &mut self,
+        delta_pages: isize,
+        viewport: super::picker_overlay::DetailViewport,
+    ) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let rows = viewport.rows.max(1) as isize;
+        self.scroll_detail_by(delta_pages.saturating_mul(rows), viewport);
+    }
+
+    pub(super) fn clamp_detail_scroll(&mut self, viewport: super::picker_overlay::DetailViewport) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let line_count = self.detail_line_count(viewport.width);
+        let top = super::picker_overlay::clamp_detail_scroll(
+            self.detail_scroll_top(),
             line_count,
-            viewport_rows,
+            viewport.rows,
         );
+        self.detail_scroll = DetailScroll::Manual { top_line: top };
+    }
+
+    pub(super) fn detail_line_count(&self, detail_width: usize) -> usize {
+        self.wrapped_detail_lines(detail_width).len()
+    }
+
+    pub(super) fn wrapped_detail_lines(&self, detail_width: usize) -> Ref<'_, Vec<String>> {
+        let detail = self.selected_detail();
+        let detail_len = detail.len();
+        let detail_ptr = detail.as_ptr() as usize;
+        let width = detail_width.max(1);
+        let stale = {
+            let cache = self.detail_wrap_cache.borrow();
+            cache.selected != self.selected
+                || cache.width != width
+                || cache.detail_len != detail_len
+                || cache.detail_ptr != detail_ptr
+                || cache.lines.is_empty() && !detail.is_empty()
+        };
+        if stale {
+            let lines = super::picker_overlay::overlay_detail_lines(detail, width);
+            *self.detail_wrap_cache.borrow_mut() = DetailWrapCache {
+                selected: self.selected,
+                width,
+                detail_len,
+                detail_ptr,
+                lines,
+            };
+        }
+        Ref::map(self.detail_wrap_cache.borrow(), |cache| &cache.lines)
     }
 
     pub(super) fn selected_detail(&self) -> &str {
@@ -177,20 +287,37 @@ impl UiPicker {
             .unwrap_or_default()
     }
 
-    pub(super) fn navigable_popup_action_footer(&self) -> String {
-        let action = match self.action {
+    pub(super) fn confirm_action_label(&self) -> &str {
+        if let Some(verb) = self.confirm_verb.as_deref() {
+            return verb;
+        }
+        match self.action {
+            PickerAction::Config => "change",
+            PickerAction::Doctor => "close",
             PickerAction::ViewAgent
                 if self
                     .selected_item()
                     .and_then(|item| item.badge.as_ref())
                     .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
             {
-                "Enter configure"
+                "configure"
             }
-            PickerAction::ViewAgent => "Enter close",
-            _ => "Enter select",
-        };
-        format!("{action} · Esc close")
+            PickerAction::ViewAgent => "close",
+            PickerAction::SelectModel
+            | PickerAction::SelectInternalAgentModel
+            | PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode => "select",
+            PickerAction::RefreshModelList => "refresh",
+        }
+    }
+
+    pub(super) fn action_footer(&self) -> String {
+        let escape = if self.has_parent() { "back" } else { "close" };
+        format!("Enter {} · Esc {escape}", self.confirm_action_label())
     }
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
@@ -447,12 +574,23 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
 }
 
 impl super::App {
-    pub(super) fn reset_navigable_popup_detail_scroll(&mut self) {
-        if let super::ComposerMode::Picker(picker) = &mut self.composer {
-            if picker.uses_navigable_popup() {
-                picker.reset_detail_scroll();
-            }
+    pub(super) fn clamp_overlay_detail_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
+        let Ok(size) = terminal.size() else {
+            return;
+        };
+        let super::ComposerMode::Picker(picker) = &mut self.composer else {
+            return;
+        };
+        if !picker.is_overlay() {
+            return;
         }
+        let layout = super::picker_overlay::picker_overlay_layout(ratatui::layout::Rect::new(
+            0,
+            0,
+            size.width,
+            size.height,
+        ));
+        picker.clamp_detail_scroll(layout.detail_viewport());
     }
 
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {

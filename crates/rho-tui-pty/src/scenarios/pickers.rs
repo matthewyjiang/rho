@@ -86,11 +86,39 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     if !screen.contains("goal-judge") {
         anyhow::bail!("narrow agents popup missing navigation list:\n{screen}");
     }
-    if !screen.contains("Internal agent that evaluates") {
-        anyhow::bail!("narrow agents popup missing stacked detail:\n{screen}");
-    }
     if screen.contains(" │ ") {
         anyhow::bail!("narrow agents popup still used a side-by-side separator:\n{screen}");
+    }
+    Ok(())
+}
+
+fn assert_narrow_agents_popup_keeps_scrolled_detail(harness: &mut PtyHarness) -> Result<()> {
+    assert_narrow_agents_popup(harness)?;
+    let screen = harness.screen().contents();
+    // Resize must clamp, not jump back to the detail top. After rewrap the exact
+    // marker line may leave the viewport, but the opening description should stay
+    // hidden while lower prompt body text remains visible.
+    if screen.contains("Internal agent that evaluates goal completion") {
+        anyhow::bail!(
+            "narrow resize reset detail scroll to the top instead of clamping it:\n{screen}"
+        );
+    }
+    if !screen.contains("agent-actionable work")
+        && !screen.contains("completion condition")
+        && !screen.contains(HIDDEN_DETAIL_MARKER)
+    {
+        anyhow::bail!(
+            "narrow resize lost scrolled detail content instead of clamping it:\n{screen}"
+        );
+    }
+    Ok(())
+}
+
+fn assert_narrow_agents_popup_shows_detail_top(harness: &mut PtyHarness) -> Result<()> {
+    assert_narrow_agents_popup(harness)?;
+    let screen = harness.screen().contents();
+    if !screen.contains("Internal agent that evaluates") {
+        anyhow::bail!("narrow agents popup missing stacked detail after Home:\n{screen}");
     }
     Ok(())
 }
@@ -131,11 +159,13 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,
     },
+    Step::Custom(assert_narrow_agents_popup_keeps_scrolled_detail),
+    Step::Key(Key::Home),
     Step::WaitText {
         text: "Internal agent that evaluates",
         timeout: SETTLE,
     },
-    Step::Custom(assert_narrow_agents_popup),
+    Step::Custom(assert_narrow_agents_popup_shows_detail_top),
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];

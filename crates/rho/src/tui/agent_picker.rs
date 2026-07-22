@@ -7,8 +7,8 @@ use crate::{
 };
 
 use super::{
-    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView,
-    UiPicker,
+    picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, RuntimeModelView, UiPicker,
 };
 
 pub(super) struct AgentModelView<'a> {
@@ -49,7 +49,12 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         items,
         PickerAction::ViewAgent,
     )
-    .with_layout(PickerLayout::NavigablePopup)
+    .with_layout(PickerLayout::Overlay)
+    .with_overlay_chrome(OverlayChrome {
+        nav_label: " AGENTS".into(),
+        detail_label: " DETAILS".into(),
+        nav_keys_hint: "↑↓ agents".into(),
+    })
 }
 
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {

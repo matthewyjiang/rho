@@ -73,12 +73,12 @@ mod model_actions;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
-mod navigable_popup;
 mod paste_burst;
 mod pending_input;
 mod permission_mode;
 mod picker;
 mod picker_input;
+mod picker_overlay;
 mod prompt_turn;
 mod provider_attempt;
 mod provider_picker;
@@ -141,8 +141,8 @@ use questionnaire::{
 };
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
-    input_cursor_position, input_lines_with_images, input_visual_lines, navigable_picker_lines,
-    picker_lines, session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
+    input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
+    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
@@ -890,7 +890,7 @@ impl App {
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
-                self.reset_navigable_popup_detail_scroll();
+                self.clamp_overlay_detail_scroll(terminal);
                 self.text_selection = None;
                 self.hovered_code_block_copy = None;
                 self.hide_history_scrollbar();
@@ -2647,7 +2647,7 @@ impl App {
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
-                    self.reset_navigable_popup_detail_scroll();
+                    self.clamp_overlay_detail_scroll(terminal);
                     self.text_selection = None;
                     self.hovered_code_block_copy = None;
                     self.hide_history_scrollbar();
