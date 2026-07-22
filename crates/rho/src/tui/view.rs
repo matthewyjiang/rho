@@ -19,8 +19,8 @@ use super::{
 };
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
-    credential_store_choice_lines, display_width, highlight_selection, input_cursor_position,
-    input_lines_with_images, is_tool_entry, oauth_pending_lines, pad_display_line,
+    display_width, highlight_selection, input_cursor_position, input_lines_with_images,
+    is_tool_entry, login::credential_store_choice_lines, oauth_pending_lines, pad_display_line,
     padded_content_width, picker_lines, picker_overlay::picker_overlay_frame,
     questionnaire_cursor_position, questionnaire_lines, recovered_history_tail, render_copy_notice,
     scroll_state_for_top_line, secret_input_lines, session_header_lines, styled_line,

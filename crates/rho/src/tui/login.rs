@@ -257,13 +257,12 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Char(key @ ('1' | '2' | 'o' | 'O' | 'f' | 'F'))) => {
-                let selected = if let ComposerMode::CredentialStoreChoice(choice) =
-                    &mut self.composer
-                {
-                    choice.select_shortcut(key)
-                } else {
-                    None
-                };
+                let selected =
+                    if let ComposerMode::CredentialStoreChoice(choice) = &mut self.composer {
+                        choice.select_shortcut(key)
+                    } else {
+                        None
+                    };
                 if selected.is_some() {
                     self.submit_credential_store_choice(terminal, agent).await?;
                 }
@@ -845,6 +844,99 @@ impl App {
         self.status = "no providers configured; run /login".into();
         true
     }
+}
+
+pub(super) fn credential_store_choice_lines(
+    choice: &CredentialStoreChoice,
+    width: usize,
+) -> Vec<Line<'static>> {
+    use rho_providers::credentials::CredentialStoreBackend;
+
+    let width = width.max(1);
+    let mut lines = vec![
+        styled_line(
+            truncate_one_line("Where should Rho store provider credentials?", width),
+            width,
+            Theme::input_prompt(),
+            LineFill::Natural,
+        ),
+        styled_line(
+            truncate_one_line(
+                "This is saved to config and used for future logins on this machine.",
+                width,
+            ),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ),
+    ];
+
+    for (index, option) in choice.request.options().into_iter().enumerate() {
+        let selected = index == choice.active && option.available;
+        let (number, label, detail) = match option.backend {
+            CredentialStoreBackend::Os => (
+                "1",
+                "OS credential store",
+                if option.available {
+                    "Recommended · system keychain / secret service".to_string()
+                } else {
+                    format!(
+                        "Unavailable · {}",
+                        choice.request.detail_for(option.backend)
+                    )
+                },
+            ),
+            CredentialStoreBackend::File => (
+                "2",
+                "Local file",
+                if option.available {
+                    "Owner-only under ~/.rho/credentials · not encrypted at rest".to_string()
+                } else {
+                    format!(
+                        "Unavailable · {}",
+                        choice.request.detail_for(option.backend)
+                    )
+                },
+            ),
+        };
+        let marker = if selected {
+            ">"
+        } else if option.available {
+            " "
+        } else {
+            "·"
+        };
+        let style = if selected {
+            Theme::input_prompt()
+        } else if option.available {
+            Theme::text()
+        } else {
+            Theme::dim()
+        };
+        lines.push(styled_line(
+            truncate_one_line(&format!("{marker} [{number}] {label}"), width),
+            width,
+            style,
+            LineFill::Natural,
+        ));
+        lines.push(styled_line(
+            truncate_one_line(&format!("      {detail}"), width),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ));
+    }
+
+    lines.push(styled_line(
+        truncate_one_line(
+            "enter/space choose · 1/2 or o/f jump · arrows move · esc cancel",
+            width,
+        ),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    ));
+    lines
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windo
 
 After installing the binary, Rho leaves the credential backend unset and uses the OS store by default. The first interactive `/login` asks which backend to use. The OS store is recommended when available. You can also opt into a local file protected by filesystem permissions but not encrypted at rest.
 
-Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set`, to make this choice without the login picker:
+Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set os` or `rho credential-store set file`, to make this choice without the login picker:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_CREDENTIAL_STORE=file sh
