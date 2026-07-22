@@ -84,6 +84,7 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerLayout {
     #[default]
     List,
+    /// Large popup shell. Detail pane appears when items carry detail text.
     Overlay,
 }
 
@@ -168,8 +169,38 @@ impl UiPicker {
         self.layout.is_overlay()
     }
 
+    /// Whether any item carries detail text. Shared by inline and overlay pickers.
+    pub(super) fn has_item_details(&self) -> bool {
+        self.items.iter().any(|item| item.detail.is_some())
+    }
+
     pub(super) fn has_scrollable_detail(&self) -> bool {
-        self.is_overlay()
+        self.is_overlay() && self.has_item_details()
+    }
+
+    pub(super) fn select_by_offset(&mut self, delta: isize) {
+        let next = {
+            let matches = self.matching_indices();
+            if matches.is_empty() || delta == 0 {
+                return;
+            }
+            let position = matches
+                .iter()
+                .position(|index| *index == self.selected)
+                .unwrap_or(0);
+            let next_position = if delta < 0 {
+                position.saturating_sub(delta.unsigned_abs())
+            } else {
+                position
+                    .saturating_add(delta as usize)
+                    .min(matches.len().saturating_sub(1))
+            };
+            matches[next_position]
+        };
+        if next != self.selected {
+            self.selected = next;
+            self.reset_detail_scroll();
+        }
     }
 
     pub(super) fn reset_detail_scroll(&mut self) {
@@ -357,13 +388,11 @@ impl UiPicker {
     pub(super) fn push_filter_char(&mut self, ch: char) {
         self.filter.push(ch);
         self.select_first_match();
-        self.reset_detail_scroll();
     }
 
     pub(super) fn pop_filter_char(&mut self) {
         self.filter.pop();
         self.select_first_match();
-        self.reset_detail_scroll();
     }
 
     pub(super) fn complete_filter(&mut self) {
@@ -390,6 +419,15 @@ impl UiPicker {
         let first = self.matching_indices().first().copied();
         if let Some(index) = first {
             self.selected = index;
+            self.reset_detail_scroll();
+        }
+    }
+
+    pub(super) fn select_last_match(&mut self) {
+        let last = self.matching_indices().last().copied();
+        if let Some(index) = last {
+            self.selected = index;
+            self.reset_detail_scroll();
         }
     }
 
@@ -561,16 +599,16 @@ impl super::App {
         let super::ComposerMode::Picker(picker) = &mut self.composer else {
             return;
         };
-        if !picker.is_overlay() {
+        if !picker.has_scrollable_detail() {
             return;
         }
-        let layout = super::picker_overlay::picker_overlay_layout(ratatui::layout::Rect::new(
-            0,
-            0,
-            size.width,
-            size.height,
-        ));
-        picker.clamp_detail_scroll(layout.detail_viewport());
+        let layout = super::picker_overlay::picker_overlay_layout(
+            ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            /*has_details*/ true,
+        );
+        if let Some(viewport) = layout.detail_viewport() {
+            picker.clamp_detail_scroll(viewport);
+        }
     }
 
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {

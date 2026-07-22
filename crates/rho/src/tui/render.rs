@@ -124,7 +124,7 @@ fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
         LineFill::Natural,
     ));
     lines.push(Line::raw(""));
-    if picker.items.iter().any(|item| item.detail.is_some()) {
+    if picker.has_item_details() {
         let detail = picker
             .selected_item()
             .and_then(|item| item.detail.as_deref())

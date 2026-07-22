@@ -27,7 +27,7 @@ fn formats_agent_metadata_with_prompt_extension() {
     assert!(picker.is_overlay());
     let chrome = picker.overlay_chrome.as_ref().unwrap();
     assert_eq!(chrome.nav_label, " AGENTS");
-    assert_eq!(chrome.detail_label, " DETAILS");
+    assert_eq!(chrome.detail_label.as_deref(), Some(" DETAILS"));
     assert_eq!(chrome.nav_keys_hint, "↑↓ agents");
     assert!(detail.contains("Reviews releases before deployment."));
     assert!(detail.contains("~/.rho/agents"));

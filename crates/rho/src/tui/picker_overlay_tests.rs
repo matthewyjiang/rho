@@ -41,8 +41,41 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
     .with_layout(PickerLayout::Overlay)
     .with_overlay_chrome(OverlayChrome {
         nav_label: " AGENTS".into(),
-        detail_label: " DETAILS".into(),
+        detail_label: Some(" DETAILS".into()),
         nav_keys_hint: "↑↓ agents".into(),
+    })
+}
+
+fn tree_like_picker() -> UiPicker {
+    UiPicker::new(
+        "Conversation tree",
+        "help",
+        vec![
+            PickerItem {
+                label: "◆ root turn".into(),
+                detail: None,
+                preview: None,
+                badge: None,
+                value: "root".into(),
+            },
+            PickerItem {
+                label: "└─ ◆ branch turn".into(),
+                detail: None,
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: "active".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: "branch".into(),
+            },
+        ],
+        PickerAction::SelectTreeNode,
+    )
+    .with_layout(PickerLayout::Overlay)
+    .with_overlay_chrome(OverlayChrome {
+        nav_label: " TREE".into(),
+        detail_label: None,
+        nav_keys_hint: "↑↓ turns".into(),
     })
 }
 
@@ -53,19 +86,35 @@ fn long_detail() -> String {
         .join("\n")
 }
 
+fn nav_and_detail_panes(layout: &OverlayLayout) -> OverlayPanes {
+    match layout.panes {
+        panes @ OverlayPanes::NavAndDetail { .. } => panes,
+        OverlayPanes::NavOnly { .. } => panic!("expected nav+detail panes, got nav-only"),
+    }
+}
+
 #[test]
 fn tiny_stacked_layout_keeps_viewports_within_the_body() {
-    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1));
+    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1), /*has_details*/ true);
+    let OverlayPanes::NavAndDetail {
+        orientation,
+        detail_viewport_rows,
+        nav_viewport_rows,
+        ..
+    } = nav_and_detail_panes(&layout)
+    else {
+        unreachable!()
+    };
 
-    assert_eq!(layout.orientation, OverlayOrientation::Stacked);
-    assert!(layout.detail_viewport_rows + layout.nav_viewport_rows <= layout.body_rows);
-    assert_eq!(layout.nav_viewport_rows, 1);
+    assert_eq!(orientation, OverlayOrientation::Stacked);
+    assert!(detail_viewport_rows + nav_viewport_rows <= layout.body_rows);
+    assert_eq!(nav_viewport_rows, 1);
 }
 
 #[test]
 fn popup_uses_most_of_the_terminal_and_stays_centered() {
     let area = Rect::new(0, 0, 100, 40);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let outer = layout.outer;
 
     assert!(outer.width >= 90);
@@ -77,7 +126,7 @@ fn popup_uses_most_of_the_terminal_and_stays_centered() {
 #[test]
 fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
     let area = Rect::new(0, 0, 80, 24);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let mut picker = sample_picker(
         "Description\nread-only investigation\n\nTools\nlist_dir, read_file",
         "Description\nimplementation work",
@@ -100,6 +149,9 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
         .collect::<Vec<_>>()
         .join("\n");
 
+    let OverlayPanes::NavAndDetail { orientation, .. } = nav_and_detail_panes(&layout) else {
+        unreachable!()
+    };
     let divider_columns = first_text
         .lines()
         .skip(3)
@@ -112,7 +164,7 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(layout.orientation, OverlayOrientation::SideBySide);
+    assert_eq!(orientation, OverlayOrientation::SideBySide);
     assert!(divider_columns
         .iter()
         .all(|column| *column == divider_columns[0]));
@@ -143,7 +195,7 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
 #[test]
 fn stacked_layout_places_detail_above_navigation() {
     let area = Rect::new(0, 0, 48, 24);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let picker = sample_picker(
         "Description\nread-only investigation across many files",
         "Description\nimplementation work",
@@ -159,20 +211,62 @@ fn stacked_layout_places_detail_above_navigation() {
         .position(|line| line.contains("explorer"))
         .unwrap();
 
-    assert_eq!(layout.orientation, OverlayOrientation::Stacked);
+    let OverlayPanes::NavAndDetail { orientation, .. } = nav_and_detail_panes(&layout) else {
+        unreachable!()
+    };
+    assert_eq!(orientation, OverlayOrientation::Stacked);
     assert!(!text_lines.iter().any(|line| line.contains(" │ ")));
     assert!(detail_row < selected_row, "{text_lines:#?}");
 }
 
 #[test]
+fn missing_item_details_uses_full_width_navigation() {
+    let area = Rect::new(0, 0, 80, 24);
+    let layout = picker_overlay_layout(area, /*has_details*/ false);
+    let picker = tree_like_picker();
+    let frame = render_picker_overlay(&picker, area);
+    let text = frame
+        .lines
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!picker.has_item_details());
+    assert!(!picker.has_scrollable_detail());
+    assert_eq!(
+        layout.panes,
+        OverlayPanes::NavOnly {
+            nav_width: layout.inner_width,
+            nav_viewport_rows: layout.body_rows,
+        }
+    );
+    assert_eq!(
+        layout.page_target(),
+        OverlayPageTarget::Nav {
+            rows: layout.body_rows.max(1)
+        }
+    );
+    assert!(text.contains(" TREE"));
+    assert!(text.contains("root turn"));
+    assert!(text.contains("branch turn"));
+    assert!(!text.contains(" DETAILS"));
+    assert!(!text.contains(" │ "));
+    assert!(!text.contains("PgUp/PgDn details"));
+    assert!(text.contains("PgUp/PgDn"));
+    assert!(text.contains("↑↓ turns"));
+}
+
+#[test]
 fn detail_scroll_reveals_content_below_the_viewport() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let mut picker = sample_picker(&long_detail(), "other");
-    let hidden_index = layout.detail_viewport_rows.saturating_add(5);
+    let viewport = layout.detail_viewport().expect("detail viewport");
+    let hidden_index = viewport.rows.saturating_add(5);
     let hidden_marker = format!("detail line {hidden_index:02}");
     let unscroll = render_picker_overlay(&picker, area);
-    picker.scroll_detail_by(hidden_index as isize, layout.detail_viewport());
+    picker.scroll_detail_by(hidden_index as isize, viewport);
     let scrolled = render_picker_overlay(&picker, area);
     let unscroll_text = unscroll
         .lines
@@ -204,10 +298,11 @@ fn clamp_detail_scroll_respects_viewport() {
 #[test]
 fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area);
+    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let mut picker = sample_picker(&long_detail(), "other");
-    picker.scroll_detail_end(layout.detail_viewport());
-    let line_count = overlay_detail_lines(picker.selected_detail(), layout.detail_width).len();
-    let expected = line_count.saturating_sub(layout.detail_viewport_rows.max(1));
+    let viewport = layout.detail_viewport().expect("detail viewport");
+    picker.scroll_detail_end(viewport);
+    let line_count = overlay_detail_lines(picker.selected_detail(), viewport.width).len();
+    let expected = line_count.saturating_sub(viewport.rows.max(1));
     assert_eq!(picker.detail_scroll, expected);
 }
