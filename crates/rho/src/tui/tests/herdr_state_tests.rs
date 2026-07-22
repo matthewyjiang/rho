@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -19,7 +21,6 @@ use super::super::{
 };
 use super::*;
 
-#[cfg(unix)]
 #[tokio::test]
 async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
     let socket_dir = tempfile::tempdir().unwrap();
@@ -68,7 +69,6 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
     assert!(working["params"].get("message").is_none());
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn resolving_approval_reports_blocked_then_signals_resume() {
     let socket_dir = tempfile::tempdir().unwrap();
@@ -101,7 +101,6 @@ async fn resolving_approval_reports_blocked_then_signals_resume() {
     assert!(working["params"].get("message").is_none());
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn esc_approval_resolves_without_requiring_working_resume() {
     let mut app = test_app();
@@ -123,7 +122,6 @@ async fn esc_approval_resolves_without_requiring_working_resume() {
     // herdr stays blocked until report_resting_herdr_state at turn end.
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn resting_herdr_state_stays_blocked_when_auth_is_unavailable() {
     let socket_dir = tempfile::tempdir().unwrap();
@@ -141,7 +139,6 @@ async fn resting_herdr_state_stays_blocked_when_auth_is_unavailable() {
     assert_eq!(request["params"]["message"], "login required");
 }
 
-#[cfg(unix)]
 fn test_pending_approval() -> (
     PendingApproval,
     tokio::sync::oneshot::Receiver<ApprovalDecision>,

@@ -1,4 +1,6 @@
-use super::{HerdrReporter, HerdrState};
+use super::HerdrReporter;
+#[cfg(unix)]
+use super::HerdrState;
 use std::collections::HashMap;
 
 #[test]
