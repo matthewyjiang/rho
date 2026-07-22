@@ -463,7 +463,9 @@ fn model_metadata_from_api_with_policy(
 fn reasoning_metadata_complete(model: &Value, policy: CatalogReasoningPolicy) -> bool {
     if matches!(
         policy,
-        CatalogReasoningPolicy::Unknown | CatalogReasoningPolicy::NotConfigurable
+        CatalogReasoningPolicy::Unknown
+            | CatalogReasoningPolicy::NotConfigurable
+            | CatalogReasoningPolicy::OffOrMax
     ) {
         return true;
     }
@@ -479,12 +481,15 @@ fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -
     if policy == CatalogReasoningPolicy::NotConfigurable {
         return true;
     }
+    if policy == CatalogReasoningPolicy::OffOrMax {
+        return true;
+    }
     let Some(supports_reasoning) = model.get("reasoning").and_then(Value::as_bool) else {
         // Missing capability signal: keep the row incomplete so a fresher
         // models.dev snapshot can still be fetched.
         return false;
     };
-    if !supports_reasoning || policy == CatalogReasoningPolicy::OffOrMax {
+    if !supports_reasoning {
         return true;
     }
     let Some(options) = model.get("reasoning_options").and_then(Value::as_array) else {
@@ -540,12 +545,12 @@ fn supported_reasoning_levels(
     ) {
         return None;
     }
+    if policy == CatalogReasoningPolicy::OffOrMax {
+        return Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]);
+    }
     let supports_reasoning = model.get("reasoning")?.as_bool()?;
     if !supports_reasoning {
         return None;
-    }
-    if policy == CatalogReasoningPolicy::OffOrMax {
-        return Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]);
     }
     let reasoning_options = model.get("reasoning_options").and_then(Value::as_array);
     if reasoning_options.is_some_and(Vec::is_empty) {
