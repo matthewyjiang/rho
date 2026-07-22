@@ -128,6 +128,17 @@ impl PickerAction {
     }
 }
 
+pub(super) fn cmp_ascii_ignore_case(left: &str, right: &str) -> std::cmp::Ordering {
+    left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase())
+}
+
+/// Sort picker rows by label (case-insensitive), breaking ties on value.
+pub(super) fn sort_items_by_ascii_label(items: &mut [PickerItem]) {
+    items.sort_by(|left, right| {
+        cmp_ascii_ignore_case(&left.label, &right.label).then_with(|| left.value.cmp(&right.value))
+    });
+}
+
 impl UiPicker {
     pub(super) fn new(
         title: impl Into<String>,

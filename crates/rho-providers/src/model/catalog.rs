@@ -84,30 +84,31 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 }
 
 pub fn login_groups() -> Vec<LoginGroup> {
+    // Keep alphabetical by display `prompt` so login pickers stay sorted as groups are added.
     [
-        (
-            "openai",
-            "OpenAI",
-            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
-        ),
         ("anthropic", "Anthropic", &[("API Key", "anthropic")][..]),
-        ("google", "Google Gemini", &[("API Key", "google")][..]),
         (
             "github-copilot",
             "GitHub Copilot",
             &[("OAuth", "github-copilot")][..],
         ),
+        ("google", "Google Gemini", &[("API Key", "google")][..]),
         (
             "moonshot",
             "Moonshot AI",
             &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
         ),
-        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
+        (
+            "openai",
+            "OpenAI",
+            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
+        ),
         (
             "openrouter",
             "OpenRouter",
             &[("API Key", "openrouter"), ("OAuth", "openrouter-oauth")][..],
         ),
+        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
         (
             "xai",
             "xAI",
@@ -600,6 +601,17 @@ mod tests {
         let models = available_models_for_auths(&["api-key".into(), "codex".into()]);
 
         assert!(models.iter().any(|entry| entry.provider == "openai-codex"));
+    }
+
+    #[test]
+    fn login_groups_are_alphabetical_by_prompt() {
+        let prompts = login_groups()
+            .into_iter()
+            .map(|group| group.prompt)
+            .collect::<Vec<_>>();
+        assert!(prompts
+            .windows(2)
+            .all(|pair| { pair[0].to_ascii_lowercase() <= pair[1].to_ascii_lowercase() }));
     }
 
     #[test]

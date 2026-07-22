@@ -27,8 +27,21 @@ fn refresh_picker_lists_all_and_available_refreshable_providers() {
 
     assert_eq!(
         values,
-        vec![ALL_REFRESHABLE_PROVIDERS, "openai", "anthropic"]
+        vec![ALL_REFRESHABLE_PROVIDERS, "anthropic", "openai"]
     );
+}
+
+#[test]
+fn login_picker_lists_providers_alphabetically_by_label() {
+    let picker = login_group_picker();
+    let labels = picker
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels
+        .windows(2)
+        .all(|pair| { pair[0].to_ascii_lowercase() <= pair[1].to_ascii_lowercase() }));
 }
 
 #[test]

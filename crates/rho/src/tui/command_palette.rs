@@ -56,6 +56,7 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
+        // prompt_templates is a BTreeMap, so iteration is already name-ordered.
         if let Some(index) = template_matches.iter().position(|choice| {
             choice
                 .name
@@ -66,6 +67,7 @@ impl App {
             matches.insert(0, exact);
         }
         matches.extend(template_matches);
+        // discovered skills are sorted by name; filtering preserves that order.
         matches.extend(
             self.discovered_skills()
                 .iter()

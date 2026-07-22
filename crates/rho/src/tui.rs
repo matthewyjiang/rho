@@ -133,7 +133,10 @@ use login::{CredentialStoreChoice, PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
-use picker::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker};
+use picker::{
+    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
+};
 use prompt_turn::FailedTurn;
 use provider_attempt::ProviderAttempt;
 use questionnaire::{
@@ -4880,7 +4883,7 @@ mod tests {
             .map(|item| item.value.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, vec!["openai", "anthropic"]);
+        assert_eq!(values, vec!["anthropic", "openai"]);
     }
 
     #[test]

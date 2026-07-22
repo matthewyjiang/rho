@@ -92,7 +92,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
     };
     if !skills.is_empty() {
         let start = text.len();
-        text.push_str("\nAvailable skills from skill files, in discovery order:\n");
+        text.push_str("\nAvailable skills from skill files, in alphabetical order:\n");
         text.push_str("Use the skill tool to load a skill when the task matches its description. If a skill references relative paths, resolve them against the skill directory.\n");
         text.push_str("<available_skills>\n");
         for skill in skills {
