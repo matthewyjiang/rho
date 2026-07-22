@@ -97,6 +97,7 @@ impl GitHubCopilotProvider {
             reasoning: None,
             reasoning_effort: None,
             thinking: None,
+            chat_template_kwargs: None,
         })
     }
 

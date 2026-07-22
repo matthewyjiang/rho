@@ -17,6 +17,13 @@ pub(crate) struct ChatRequest {
     pub(crate) reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) thinking: Option<OpenAiThinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) chat_template_kwargs: Option<ChatTemplateKwargs>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ChatTemplateKwargs {
+    pub(crate) enable_thinking: bool,
 }
 
 #[derive(Serialize)]

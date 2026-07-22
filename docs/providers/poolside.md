@@ -52,6 +52,11 @@ Rho sends the key as a Bearer token. Do not put the key in `config.toml` or comm
 
 ## Models and reasoning
 
-Use `/config` and choose **Refresh model lists** to fetch the current models for your Poolside account. Poolside models can use provider-owned thinking behavior, but Rho does not send a Poolside-specific reasoning control. The selected Rho reasoning level therefore does not change the Poolside request.
+Use `/config` and choose **Refresh model lists** to fetch the current models for your Poolside account. Poolside reasoning models expose a binary thinking control. Rho shows `Off` and `Max` as the available reasoning levels:
 
-See [Poolside's API guide](https://docs.poolside.ai/api/overview) for API and model access details.
+- `Off` sends `chat_template_kwargs.enable_thinking` as `false`.
+- `Max` leaves `chat_template_kwargs` unset, which uses Poolside's default thinking mode.
+
+The models.dev catalog marks Poolside reasoning models with `reasoning: true` but does not advertise effort levels. Rho maps that Poolside-specific capability to `Off` and `Max`; it does not send OpenRouter's `reasoning.effort` field to the direct Poolside API.
+
+See [Poolside's API examples](https://docs.poolside.ai/api/openai-api-examples#send-a-chat-prompt) for request details.

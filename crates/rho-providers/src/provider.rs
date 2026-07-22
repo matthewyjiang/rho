@@ -82,6 +82,8 @@ pub enum CatalogReasoningPolicy {
     ExactAdvertised,
     /// A catalog toggle is a supported way to select `Off` for this protocol.
     OffByAdvertisedToggle,
+    /// A reasoning model exposes a binary provider control as `Off` or `Max`.
+    OffOrMax,
     /// The provider serializes `Off` as a provider-owned `none` control.
     OffAsNone,
 }
@@ -406,7 +408,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::ProviderPrefixed,
         metadata_upstream: "poolside",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        catalog_reasoning: CatalogReasoningPolicy::OffOrMax,
     },
     ProviderDescriptor {
         id: ProviderId::OpenRouter,

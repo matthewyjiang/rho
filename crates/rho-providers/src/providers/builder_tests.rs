@@ -141,11 +141,11 @@ fn public_provider_objects_are_send_sync() {
 }
 
 #[test]
-fn poolside_runtime_uses_standard_dialect_and_platform_default() {
+fn poolside_runtime_uses_poolside_dialect_and_platform_default() {
     assert_eq!(
         crate::model::registry::provider_runtime("poolside"),
         Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
+            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Poolside,
             default_api_base: "https://inference.poolside.ai/v1",
         })
     );

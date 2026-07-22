@@ -65,7 +65,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             default_api_base: "https://api.moonshot.ai/v1",
         },
         RuntimeProviderId::Poolside => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
+            dialect: OpenAiCompatibleDialect::Poolside,
             default_api_base: "https://inference.poolside.ai/v1",
         },
         RuntimeProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {

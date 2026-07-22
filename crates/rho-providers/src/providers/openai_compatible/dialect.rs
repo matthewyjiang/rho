@@ -5,6 +5,7 @@ use crate::protocol::openai_chat::OpenAiTool;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenAiCompatibleDialect {
     Standard,
+    Poolside,
     OpenRouter,
     Moonshot,
     KimiCode,
@@ -13,7 +14,7 @@ pub enum OpenAiCompatibleDialect {
 impl OpenAiCompatibleDialect {
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         match self {
-            Self::Standard | Self::OpenRouter => tool,
+            Self::Standard | Self::Poolside | Self::OpenRouter => tool,
             Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(&mut tool.function.parameters);
                 tool

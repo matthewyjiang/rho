@@ -32,12 +32,14 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).catalog_reasoning,
         CatalogReasoningPolicy::OffAsNone
     );
-    for provider in [ProviderId::GithubCopilot, ProviderId::Poolside] {
-        assert_eq!(
-            super::provider_descriptor_by_id(provider).catalog_reasoning,
-            CatalogReasoningPolicy::NotConfigurable
-        );
-    }
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::Poolside).catalog_reasoning,
+        CatalogReasoningPolicy::OffOrMax
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::GithubCopilot).catalog_reasoning,
+        CatalogReasoningPolicy::NotConfigurable
+    );
     assert_eq!(
         super::provider_descriptor_by_id(ProviderId::Anthropic).catalog_reasoning,
         CatalogReasoningPolicy::Unknown

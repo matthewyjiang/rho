@@ -92,8 +92,8 @@ pub fn current_model_metadata(provider: &str, model: &str) -> Option<ModelMetada
 }
 
 pub fn current_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
-    if provider_reasoning_is_not_configurable(provider) {
-        return ReasoningCapabilities::NotConfigurable;
+    if let Some(capabilities) = provider_fixed_reasoning_capabilities(provider) {
+        return capabilities;
     }
     current_model_metadata(provider, model)
         .map(|metadata| metadata.reasoning_capabilities())
@@ -101,12 +101,26 @@ pub fn current_reasoning_capabilities(provider: &str, model: &str) -> ReasoningC
 }
 
 pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
-    if provider_reasoning_is_not_configurable(provider) {
-        return ReasoningCapabilities::NotConfigurable;
+    if let Some(capabilities) = provider_fixed_reasoning_capabilities(provider) {
+        return capabilities;
     }
     cached_model_metadata(provider, model)
         .map(|metadata| metadata.reasoning_capabilities())
         .unwrap_or_default()
+}
+
+fn provider_fixed_reasoning_capabilities(provider: &str) -> Option<ReasoningCapabilities> {
+    let policy = crate::provider::provider_descriptor(provider)?.catalog_reasoning;
+    match policy {
+        CatalogReasoningPolicy::NotConfigurable => Some(ReasoningCapabilities::NotConfigurable),
+        CatalogReasoningPolicy::OffOrMax => Some(ReasoningCapabilities::Levels(
+            crate::model::ReasoningLevelSet::new(vec![ReasoningLevel::Off, ReasoningLevel::Max]),
+        )),
+        CatalogReasoningPolicy::Unknown
+        | CatalogReasoningPolicy::ExactAdvertised
+        | CatalogReasoningPolicy::OffByAdvertisedToggle
+        | CatalogReasoningPolicy::OffAsNone => None,
+    }
 }
 
 fn provider_reasoning_is_not_configurable(provider: &str) -> bool {
@@ -255,7 +269,7 @@ async fn fetch_models_dev_api() -> Option<Value> {
 /// Bump when the models.dev parser gains fields that older cache rows omit.
 /// Older or incomplete rows remain available as stale offline fallback, while
 /// explicit fetch paths rehydrate and write them from a catalog snapshot.
-const MODEL_METADATA_CACHE_VERSION: i64 = 5;
+const MODEL_METADATA_CACHE_VERSION: i64 = 6;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -413,11 +427,11 @@ fn model_metadata_from_api_with_policy(
     model: &str,
     reasoning_policy: CatalogReasoningPolicy,
 ) -> Option<ModelMetadata> {
-    let model = api.get(provider)?.get("models")?.get(model).or_else(|| {
-        api.get(provider)?
-            .get("models")?
-            .get(model.strip_prefix("openai/")?)
-    })?;
+    let models = api.get(provider)?.get("models")?;
+    let model = models
+        .get(model)
+        .or_else(|| models.get(model.strip_prefix("openai/")?))
+        .or_else(|| models.get(format!("{provider}/{model}")))?;
     let limit = model.get("limit");
     let cost = model.get("cost");
     let (long_context_threshold, cost_long_context) = long_context_cost_from_api(cost);
@@ -470,7 +484,7 @@ fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -
         // models.dev snapshot can still be fetched.
         return false;
     };
-    if !supports_reasoning {
+    if !supports_reasoning || policy == CatalogReasoningPolicy::OffOrMax {
         return true;
     }
     let Some(options) = model.get("reasoning_options").and_then(Value::as_array) else {
@@ -529,6 +543,9 @@ fn supported_reasoning_levels(
     let supports_reasoning = model.get("reasoning")?.as_bool()?;
     if !supports_reasoning {
         return None;
+    }
+    if policy == CatalogReasoningPolicy::OffOrMax {
+        return Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]);
     }
     let reasoning_options = model.get("reasoning_options").and_then(Value::as_array);
     if reasoning_options.is_some_and(Vec::is_empty) {

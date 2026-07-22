@@ -420,7 +420,7 @@ impl App {
             Err(requested) => {
                 self.insert_entry(&Entry::Error(format!(
                     "stored credentials, but reasoning level '{requested}' is not supported by {}",
-                    rho_providers::provider::model_reference(&provider, &model)
+                    rho_providers::provider::model_reference(provider, model)
                 )));
                 self.status = "login saved".into();
                 None

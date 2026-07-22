@@ -178,6 +178,7 @@ impl OpenAiCompatibleProvider {
             reasoning: reasoning_fields.reasoning,
             reasoning_effort: reasoning_fields.reasoning_effort,
             thinking: reasoning_fields.thinking,
+            chat_template_kwargs: reasoning_fields.chat_template_kwargs,
         })
     }
 
