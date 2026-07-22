@@ -51,6 +51,38 @@ fn reasoning_entry_renders_inline_markdown_and_remains_dim() {
 }
 
 #[test]
+fn reasoning_entry_renders_thought_duration_footer() {
+    let rendered = render_entry(
+        &Entry::Reasoning(super::super::ReasoningEntry {
+            text: "because reasons".into(),
+            thought_for: Some(std::time::Duration::from_millis(3_200)),
+        }),
+        80,
+        10,
+    );
+    let footer = rendered
+        .lines
+        .iter()
+        .find(|line| line_text(line).contains("Thought for 3.2s"))
+        .expect("thought footer");
+    assert!(footer.spans.iter().any(|span| {
+        span.style.add_modifier.contains(Modifier::DIM) && span.content.contains("Thought for 3.2s")
+    }));
+
+    let summary_only = render_entry(
+        &Entry::Reasoning(super::super::ReasoningEntry::summary_only(
+            std::time::Duration::from_secs(65),
+        )),
+        80,
+        10,
+    );
+    assert!(summary_only
+        .lines
+        .iter()
+        .any(|line| line_text(line).contains("Thought for 1m 5s")));
+}
+
+#[test]
 fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\tright"), 9);
     assert_eq!(display_width("left\rright"), 9);

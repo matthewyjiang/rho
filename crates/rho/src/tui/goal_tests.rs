@@ -133,4 +133,18 @@ fn formats_elapsed_time() {
     assert_eq!(format_elapsed(Duration::from_secs(9)), "9s");
     assert_eq!(format_elapsed(Duration::from_secs(125)), "2m 5s");
     assert_eq!(format_elapsed(Duration::from_secs(3_720)), "1h 2m");
+    assert_eq!(
+        format_elapsed_with(
+            Duration::from_millis(3_200),
+            ElapsedPrecision::TenthsUnderMinute
+        ),
+        "3.2s"
+    );
+    assert_eq!(
+        format_elapsed_with(
+            Duration::from_secs(125),
+            ElapsedPrecision::TenthsUnderMinute
+        ),
+        "2m 5s"
+    );
 }

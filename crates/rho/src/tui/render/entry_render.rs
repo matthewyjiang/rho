@@ -25,14 +25,28 @@ pub(in crate::tui) fn render_entry(
                 rendered.image_rows,
             )
         }
-        Entry::Reasoning(text) => {
-            let rendered = render_reasoning_content(text, width);
-            (
-                rendered.lines,
-                rendered.code_blocks,
-                rendered.image_sources,
-                rendered.image_rows,
-            )
+        Entry::Reasoning(reasoning) => {
+            let mut lines = Vec::new();
+            let mut code_blocks = Vec::new();
+            let mut image_sources = Vec::new();
+            let mut image_rows = Vec::new();
+            if !reasoning.text.is_empty() {
+                let rendered = render_reasoning_content(&reasoning.text, width);
+                lines = rendered.lines;
+                code_blocks = rendered.code_blocks;
+                image_sources = rendered.image_sources;
+                image_rows = rendered.image_rows;
+            }
+            if let Some(elapsed) = reasoning.thought_for {
+                push_wrapped_text(
+                    &mut lines,
+                    &crate::tui::reasoning_phase::thought_summary(elapsed),
+                    inner_width,
+                    Theme::dim().add_modifier(Modifier::DIM),
+                    LineFill::Natural,
+                );
+            }
+            (lines, code_blocks, image_sources, image_rows)
         }
         _ => {
             let mut lines = Vec::new();

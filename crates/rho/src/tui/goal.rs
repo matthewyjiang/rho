@@ -314,11 +314,29 @@ fn nonempty_field(value: String, name: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ElapsedPrecision {
+    /// Whole seconds under one minute (`9s`).
+    WholeSeconds,
+    /// Tenths under one minute (`9.0s`), used by thought summaries.
+    TenthsUnderMinute,
+}
+
 pub(super) fn format_elapsed(elapsed: Duration) -> String {
+    format_elapsed_with(elapsed, ElapsedPrecision::WholeSeconds)
+}
+
+pub(super) fn format_elapsed_with(elapsed: Duration, precision: ElapsedPrecision) -> String {
     let seconds = elapsed.as_secs();
     if seconds < 60 {
-        format!("{seconds}s")
-    } else if seconds < 3_600 {
+        return match precision {
+            ElapsedPrecision::WholeSeconds => format!("{seconds}s"),
+            ElapsedPrecision::TenthsUnderMinute => {
+                format!("{:.1}s", elapsed.as_secs_f64())
+            }
+        };
+    }
+    if seconds < 3_600 {
         format!("{}m {}s", seconds / 60, seconds % 60)
     } else {
         format!("{}h {}m", seconds / 3_600, seconds % 3_600 / 60)

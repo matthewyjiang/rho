@@ -665,7 +665,7 @@ fn hidden_reasoning_shows_thinking_placeholder() {
     assert_eq!(thinking.spans[1].style, StreamKind::Reasoning.style());
 
     app.reset_streams();
-    assert!(!app.hidden_reasoning_active);
+    assert!(!app.reasoning_phase.hidden_placeholder());
 }
 
 #[test]
@@ -680,7 +680,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
         &mut terminal,
     )
     .unwrap();
-    assert!(app.hidden_reasoning_active);
+    assert!(app.reasoning_phase.hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -690,14 +690,22 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
         .unwrap();
     app.finish_streams();
 
-    assert!(!app.hidden_reasoning_active);
+    assert!(!app.reasoning_phase.hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
         .all(|line| !line_text(line).contains("Thinking...")));
     assert!(
-        matches!(app.transcript.as_slice(), [Entry::Thought(text), Entry::Assistant(answer)]
-            if text.starts_with("Thought for ") && answer == "answer"),
+        matches!(
+            app.transcript.as_slice(),
+            [
+                Entry::Reasoning(ReasoningEntry {
+                    text,
+                    thought_for: Some(_),
+                }),
+                Entry::Assistant(answer)
+            ] if text.is_empty() && answer == "answer"
+        ),
         "{:?}",
         app.transcript
     );
@@ -723,12 +731,12 @@ fn shown_reasoning_appends_thought_summary_after_reasoning() {
         matches!(
             app.transcript.as_slice(),
             [
-                Entry::Reasoning(reasoning),
-                Entry::Thought(thought),
+                Entry::Reasoning(ReasoningEntry {
+                    text: reasoning,
+                    thought_for: Some(_),
+                }),
                 Entry::Assistant(answer)
-            ] if reasoning == "because reasons"
-                && thought.starts_with("Thought for ")
-                && answer == "answer"
+            ] if reasoning == "because reasons" && answer == "answer"
         ),
         "{:?}",
         app.transcript
@@ -768,14 +776,18 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
     )
     .unwrap();
     assert!(
-        matches!(app.transcript.as_slice(), [Entry::Reasoning(text)] if text.contains("visible first")),
+        matches!(
+            app.transcript.as_slice(),
+            [Entry::Reasoning(ReasoningEntry { text, thought_for: None })]
+                if text.contains("visible first")
+        ),
         "{:?}",
         app.transcript
     );
 
     app.info.runtime.show_reasoning_output = false;
     app.apply_reasoning_output_visibility();
-    assert!(app.hidden_reasoning_active);
+    assert!(app.reasoning_phase.hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -794,12 +806,13 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
         matches!(
             app.transcript.as_slice(),
             [
-                Entry::Reasoning(reasoning),
-                Entry::Thought(thought),
+                Entry::Reasoning(ReasoningEntry {
+                    text: reasoning,
+                    thought_for: Some(_),
+                }),
                 Entry::Assistant(answer)
             ] if reasoning.contains("visible first")
                 && !reasoning.contains("hidden later")
-                && thought.starts_with("Thought for ")
                 && answer == "answer"
         ),
         "{:?}",
@@ -820,11 +833,11 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
         &mut terminal,
     )
     .unwrap();
-    assert!(app.hidden_reasoning_active);
+    assert!(app.reasoning_phase.hidden_placeholder());
 
     app.info.runtime.show_reasoning_output = true;
     app.apply_reasoning_output_visibility();
-    assert!(!app.hidden_reasoning_active);
+    assert!(!app.reasoning_phase.hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -843,12 +856,12 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
         matches!(
             app.transcript.as_slice(),
             [
-                Entry::Reasoning(reasoning),
-                Entry::Thought(thought),
+                Entry::Reasoning(ReasoningEntry {
+                    text: reasoning,
+                    thought_for: Some(_),
+                }),
                 Entry::Assistant(answer)
-            ] if reasoning == "visible later"
-                && thought.starts_with("Thought for ")
-                && answer == "answer"
+            ] if reasoning == "visible later" && answer == "answer"
         ),
         "{:?}",
         app.transcript

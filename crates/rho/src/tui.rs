@@ -94,6 +94,7 @@ mod session_actions;
 mod session_picker;
 mod session_title;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
+mod reasoning_phase;
 mod skill_actions;
 mod skill_picker;
 #[cfg(debug_assertions)]
@@ -105,7 +106,6 @@ mod subagent_panel;
 mod terminal_events;
 mod text_selection;
 mod theme;
-mod thought;
 mod tool_call_batch;
 mod tool_diff;
 mod tree_actions;
@@ -324,8 +324,7 @@ struct App {
     live_stream_preview: Option<LiveStreamPreview>,
     current_turn_start: Option<usize>,
     provider_attempt: ProviderAttempt,
-    hidden_reasoning_active: bool,
-    reasoning_started_at: Option<Instant>,
+    reasoning_phase: reasoning_phase::ReasoningPhase,
     running: bool,
     activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
@@ -544,14 +543,53 @@ enum ToolEntryState {
 enum Entry {
     User(String),
     Assistant(String),
-    Reasoning(String),
-    /// Post-reasoning summary such as `Thought for 3.2s`.
-    Thought(String),
+    Reasoning(ReasoningEntry),
     Tool(ToolEntry),
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
     UsageLimits(crate::usage_limits::ProviderLimits),
     Error(String),
+}
+
+/// Streamed reasoning text plus optional post-phase thought duration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReasoningEntry {
+    text: String,
+    thought_for: Option<Duration>,
+}
+
+impl ReasoningEntry {
+    fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            thought_for: None,
+        }
+    }
+
+    fn summary_only(thought_for: Duration) -> Self {
+        Self {
+            text: String::new(),
+            thought_for: Some(thought_for),
+        }
+    }
+}
+
+impl From<&str> for ReasoningEntry {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<String> for ReasoningEntry {
+    fn from(text: String) -> Self {
+        Self::new(text)
+    }
+}
+
+impl Entry {
+    fn is_provider_replaceable(&self) -> bool {
+        matches!(self, Self::Assistant(_) | Self::Reasoning(_))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -619,7 +657,7 @@ impl StreamKind {
     fn entry(self, text: String) -> Entry {
         match self {
             Self::Assistant => Entry::Assistant(text),
-            Self::Reasoning => Entry::Reasoning(text),
+            Self::Reasoning => Entry::Reasoning(ReasoningEntry::new(text)),
         }
     }
 }
@@ -671,8 +709,7 @@ impl App {
             live_stream_preview: None,
             current_turn_start: None,
             provider_attempt: ProviderAttempt::default(),
-            hidden_reasoning_active: false,
-            reasoning_started_at: None,
+            reasoning_phase: reasoning_phase::ReasoningPhase::default(),
             running: false,
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
@@ -2516,16 +2553,15 @@ impl App {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
-        self.hidden_reasoning_active = false;
-        // Discard an unfinished timer. Callers that should keep a summary must
-        // finalize before reset (for example `finish_streams`).
-        self.reasoning_started_at = None;
+        // Discard an unfinished reasoning phase. Callers that should keep a
+        // summary must finalize before reset (for example `finish_streams`).
+        self.reasoning_phase.reset();
     }
 
     /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
     pub(super) fn apply_reasoning_output_visibility(&mut self) {
         if self.info.runtime.show_reasoning_output {
-            self.hidden_reasoning_active = false;
+            self.reasoning_phase.set_hidden_placeholder(false);
             return;
         }
 
@@ -2533,15 +2569,17 @@ impl App {
 
         // Keep the Thinking... placeholder while this step is still waiting for
         // or streaming reasoning. Later phases (response, tools) stay clear.
-        self.hidden_reasoning_active = self.running
-            && (self.reasoning_started_at.is_some()
-                || matches!(
-                    self.activity_phase,
-                    ActivityPhase::Starting
-                        | ActivityPhase::WaitingForProvider
-                        | ActivityPhase::Thinking
-                        | ActivityPhase::RetryingProvider
-                ));
+        self.reasoning_phase.set_hidden_placeholder(
+            self.running
+                && (self.reasoning_phase.has_started()
+                    || matches!(
+                        self.activity_phase,
+                        ActivityPhase::Starting
+                            | ActivityPhase::WaitingForProvider
+                            | ActivityPhase::Thinking
+                            | ActivityPhase::RetryingProvider
+                    )),
+        );
     }
 
     fn discard_live_reasoning_output(&mut self) {
@@ -2747,18 +2785,16 @@ impl App {
                 Ok(true)
             }
             ViewModelEvent::OutputDelta(text) => {
-                // Finish any visible reasoning text first so the summary lands after it.
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
-                let thought = self.finalize_thought_if_needed();
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
-                Ok(switched || thought || drained)
+                Ok(switched || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
-                self.mark_reasoning_started();
-                if !self.info.runtime.show_reasoning_output {
-                    self.hidden_reasoning_active = true;
+                let show_reasoning = self.info.runtime.show_reasoning_output;
+                self.reasoning_phase.on_reasoning_delta(show_reasoning);
+                if !show_reasoning {
                     return Ok(true);
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
@@ -2795,9 +2831,18 @@ impl App {
         } else {
             false
         };
+        // Closing into assistant ends the reasoning phase so the thought
+        // footer lands after any finished reasoning text.
+        let thought = if kind == StreamKind::Assistant
+            && self.current_stream_kind != Some(StreamKind::Assistant)
+        {
+            self.close_reasoning_phase()
+        } else {
+            false
+        };
         self.current_stream_kind = Some(kind);
         self.update_stream_preview_deadline(kind);
-        inserted
+        inserted || thought
     }
 
     fn drain_streams<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool, B::Error> {
@@ -2836,25 +2881,27 @@ impl App {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
-        let thought = self.finalize_thought_if_needed();
+        let thought = self.close_reasoning_phase();
         reasoning_finished || assistant_finished || thought
     }
 
-    fn mark_reasoning_started(&mut self) {
-        if self.reasoning_started_at.is_none() {
-            self.reasoning_started_at = Some(Instant::now());
-        }
-    }
-
-    /// Emits `Thought for …` once a reasoning stretch ends, if one was timed.
-    fn finalize_thought_if_needed(&mut self) -> bool {
-        let Some(started_at) = self.reasoning_started_at.take() else {
-            self.hidden_reasoning_active = false;
+    /// Ends the current reasoning stretch, attaching or inserting a thought duration.
+    fn close_reasoning_phase(&mut self) -> bool {
+        let Some(elapsed) = self.reasoning_phase.finalize() else {
             return false;
         };
-        self.hidden_reasoning_active = false;
-        self.insert_entry(&Entry::Thought(thought::summary(started_at.elapsed())));
-        true
+        match self.transcript.last_mut() {
+            Some(Entry::Reasoning(reasoning)) if reasoning.thought_for.is_none() => {
+                reasoning.thought_for = Some(elapsed);
+                self.history_lines
+                    .invalidate_from(self.transcript.len().saturating_sub(1));
+                true
+            }
+            _ => {
+                self.insert_entry(&Entry::Reasoning(ReasoningEntry::summary_only(elapsed)));
+                true
+            }
+        }
     }
 
     fn finish_current_stream(&mut self) -> bool {
@@ -3077,7 +3124,8 @@ impl App {
                 self.usage_before_current_attempt = None;
                 self.reset_streams();
                 self.provider_attempt.begin(self.transcript.len());
-                self.hidden_reasoning_active = !self.info.runtime.show_reasoning_output;
+                self.reasoning_phase
+                    .begin_step(self.info.runtime.show_reasoning_output);
                 self.running = true;
                 self.tool_calls.clear();
                 self.loading_spinner.start_if_needed();
@@ -3228,7 +3276,6 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
-            | Entry::Thought(_)
             | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
@@ -3258,15 +3305,18 @@ impl App {
                 }
                 self.mark_markdown_images_dirty_from(index);
             }
-            Entry::Reasoning(text) => match self.transcript.last_mut() {
-                Some(Entry::Reasoning(previous)) => {
-                    previous.push_str(&text);
+            Entry::Reasoning(reasoning) => match self.transcript.last_mut() {
+                Some(Entry::Reasoning(previous)) if previous.thought_for.is_none() => {
+                    previous.text.push_str(&reasoning.text);
+                    if reasoning.thought_for.is_some() {
+                        previous.thought_for = reasoning.thought_for;
+                    }
                     self.history_lines
                         .invalidate_from(self.transcript.len().saturating_sub(1));
                 }
                 _ => {
                     self.history_lines.invalidate_from(self.transcript.len());
-                    self.transcript.push(Entry::Reasoning(text));
+                    self.transcript.push(Entry::Reasoning(reasoning));
                 }
             },
             other => {

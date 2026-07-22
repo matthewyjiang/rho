@@ -494,7 +494,7 @@ impl App {
         if let Some(preview) = &self.live_stream_preview {
             lines.extend(self.render_stream_preview_lines(preview, width));
         }
-        if self.hidden_reasoning_active {
+        if self.reasoning_phase.hidden_placeholder() {
             lines.push(Line::raw(""));
             lines.push(pad_display_line(styled_line(
                 "Thinking...".into(),
@@ -931,7 +931,6 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
-            | Entry::Thought(_)
             | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
