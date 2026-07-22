@@ -12,16 +12,10 @@ use super::{
 };
 
 impl App {
-    fn mouse_history_view(&self, history: Rect, history_len: usize) -> (Rect, usize) {
-        let (history_start, history_count) =
-            self.visible_history_window(history_len, history.height as usize);
-        (
-            Rect {
-                height: history_count as u16,
-                ..history
-            },
-            history_start,
-        )
+    fn mouse_history_view(&self, history_content: Rect, history_len: usize) -> (Rect, usize) {
+        let (history_start, _) =
+            self.visible_history_window(history_len, history_content.height as usize);
+        (history_content, history_start)
     }
 
     pub(super) fn handle_mouse_event<B: Backend>(
@@ -51,7 +45,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 let (history, history_start) =
-                    self.mouse_history_view(layout.history, layout.history_len);
+                    self.mouse_history_view(layout.history_content, layout.history_len);
                 let targets = self.code_block_copy_targets(width);
                 let code_target =
                     code_block_copy_target_at(&targets, history, history_start, column, row);
@@ -96,7 +90,7 @@ impl App {
                     }
                 } else {
                     let (history, history_start) =
-                        self.mouse_history_view(layout.history, layout.history_len);
+                        self.mouse_history_view(layout.history_content, layout.history_len);
                     let targets = self.code_block_copy_targets(width);
                     self.hovered_code_block_copy =
                         code_block_copy_target_at(&targets, history, history_start, column, row)
@@ -114,7 +108,7 @@ impl App {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
-                    self.mouse_history_view(layout.history, layout.history_len);
+                    self.mouse_history_view(layout.history_content, layout.history_len);
                 let targets = self.code_block_copy_targets(width);
                 self.hovered_code_block_copy =
                     code_block_copy_target_at(&targets, history, history_start, column, row)
@@ -152,7 +146,7 @@ impl App {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
-                    self.mouse_history_view(layout.history, layout.history_len);
+                    self.mouse_history_view(layout.history_content, layout.history_len);
                 self.hovered_code_block_copy =
                     if history.contains(ratatui::layout::Position { x: column, y: row }) {
                         let targets = self.code_block_copy_targets(width);

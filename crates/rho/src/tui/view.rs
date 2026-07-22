@@ -47,7 +47,7 @@ impl App {
             command_lines.len(),
         );
         let (history_start, history_count) =
-            self.visible_history_window(history_len, layout.history.height as usize);
+            self.visible_history_window(history_len, layout.history_content.height as usize);
         let history_visible = self.visible_history_lines_with_live(
             width,
             history_start,
@@ -58,10 +58,15 @@ impl App {
             self.visible_history_image_placements(width, history_start, history_count);
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
-            layout.history,
+            layout.history_content,
         );
         if let Some(selection) = self.text_selection {
-            highlight_selection(frame.buffer_mut(), layout.history, history_start, selection);
+            highlight_selection(
+                frame.buffer_mut(),
+                layout.history_content,
+                history_start,
+                selection,
+            );
         }
         if let Some(hovered_line) = self.hovered_code_block_copy {
             let code_block_copy_targets = self.code_block_copy_targets(width);
@@ -69,21 +74,28 @@ impl App {
                 .iter()
                 .find(|target| target.line == hovered_line)
                 .filter(|target| {
-                    (history_start..history_start + layout.history.height as usize)
-                        .contains(&target.line)
+                    (history_start..history_start + history_count).contains(&target.line)
                 })
             {
                 let row = layout
-                    .history
+                    .history_content
                     .y
                     .saturating_add(target.line.saturating_sub(history_start) as u16);
-                for column in target.columns.clone().take(layout.history.width as usize) {
-                    frame.buffer_mut()[(layout.history.x.saturating_add(column as u16), row)]
+                for column in target
+                    .columns
+                    .clone()
+                    .take(layout.history_content.width as usize)
+                {
+                    frame.buffer_mut()
+                        [(layout.history_content.x.saturating_add(column as u16), row)]
                         .set_style(Theme::markdown_code_copy_button(/*hovered*/ true));
                 }
             }
         }
-        self.render_feed_images(frame, layout.history, &visible_images);
+        self.render_feed_images(frame, layout.history_content, &visible_images);
+        if let Some(activity_gap) = layout.activity_gap {
+            frame.render_widget(Clear, activity_gap);
+        }
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
             frame.render_widget(
@@ -267,7 +279,7 @@ impl App {
             command_lines.len(),
         );
         let (history_start, history_count) =
-            self.visible_history_window(history_len, layout.history.height as usize);
+            self.visible_history_window(history_len, layout.history_content.height as usize);
         let mut lines = self.visible_history_lines(width, now, history_start, history_count);
         lines.resize(layout.history.height as usize, Line::default());
         if let Some(activity) = layout.activity {
@@ -509,15 +521,12 @@ impl App {
     pub(super) fn visible_history_window(
         &self,
         history_len: usize,
-        height: usize,
+        content_height: usize,
     ) -> (usize, usize) {
-        let count = if self.loading_active() && matches!(self.history_scroll, HistoryScroll::Bottom)
-        {
-            height.saturating_sub(1)
-        } else {
-            height
-        };
-        (self.visible_history_start(history_len, count), count)
+        (
+            self.visible_history_start(history_len, content_height),
+            content_height,
+        )
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
@@ -536,10 +545,10 @@ impl App {
         now: Instant,
     ) -> bool {
         let history_len = self.history_len(width, now);
-        let history_height = self.history_height_for_screen(width, height, now);
-        history_height > 0
-            && self.visible_history_start(history_len, history_height)
-                < history_len.saturating_sub(history_height)
+        let content_height = self.history_content_height_for_screen(width, height, now);
+        content_height > 0
+            && self.visible_history_start(history_len, content_height)
+                < history_len.saturating_sub(content_height)
     }
 
     pub(super) fn scroll_history_to_bottom(&mut self) {
@@ -548,12 +557,16 @@ impl App {
     }
 
     pub(super) fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self.history_height_for_screen(width, height, now).max(1);
+        let page = self
+            .history_content_height_for_screen(width, height, now)
+            .max(1);
         self.scroll_history_lines(width, height, now, -(page as isize));
     }
 
     fn scroll_history_page_down(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self.history_height_for_screen(width, height, now).max(1);
+        let page = self
+            .history_content_height_for_screen(width, height, now)
+            .max(1);
         self.scroll_history_lines(width, height, now, page as isize);
     }
 
@@ -567,12 +580,15 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_line_count = self.composer_lines(width).len();
         let command_line_count = self.command_suggestion_lines(width).len();
-        let history_height =
-            self.history_height_from_line_counts(height, composer_line_count, command_line_count);
-        let max_start = history_len.saturating_sub(history_height);
-        let current = self.visible_history_start(history_len, history_height);
+        let content_height = self.history_content_height(self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+        ));
+        let max_start = history_len.saturating_sub(content_height);
+        let current = self.visible_history_start(history_len, content_height);
         let next = current.saturating_add_signed(delta).min(max_start);
-        self.history_scroll = scroll_state_for_top_line(history_len, history_height, next);
+        self.history_scroll = scroll_state_for_top_line(history_len, content_height, next);
         if matches!(self.history_scroll, HistoryScroll::Bottom) {
             self.hide_history_scrollbar();
         }
@@ -614,12 +630,15 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_line_count = self.composer_lines(width).len();
         let command_line_count = self.command_suggestion_lines(width).len();
-        let history_height =
-            self.history_height_from_line_counts(height, composer_line_count, command_line_count);
-        let max_start = history_len.saturating_sub(history_height);
+        let content_height = self.history_content_height(self.history_height_from_line_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+        ));
+        let max_start = history_len.saturating_sub(content_height);
         if let HistoryScroll::Manual { top_line } = self.history_scroll {
             self.history_scroll =
-                scroll_state_for_top_line(history_len, history_height, top_line.min(max_start));
+                scroll_state_for_top_line(history_len, content_height, top_line.min(max_start));
             if matches!(self.history_scroll, HistoryScroll::Bottom) {
                 self.hide_history_scrollbar();
             }

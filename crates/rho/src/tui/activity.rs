@@ -4,6 +4,22 @@ use ratatui::text::{Line, Span};
 
 use super::{render::display_width, theme::Theme};
 
+/// Rows occupied by the spinner/jump activity rail.
+pub(super) const ACTIVITY_RAIL_ROWS: usize = 1;
+/// Blank breathing room kept above the rail while bottom-following.
+pub(super) const ACTIVITY_CONTENT_GAP_ROWS: usize = 1;
+
+/// Transcript rows reserved under the history panel while bottom-following with
+/// activity chrome. Manual scroll keeps the full panel so content can sit under
+/// the overlay.
+pub(super) fn bottom_follow_activity_inset(activity_active: bool, bottom_follow: bool) -> usize {
+    if activity_active && bottom_follow {
+        ACTIVITY_RAIL_ROWS + ACTIVITY_CONTENT_GAP_ROWS
+    } else {
+        0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum ActivityPhase {
     #[default]
