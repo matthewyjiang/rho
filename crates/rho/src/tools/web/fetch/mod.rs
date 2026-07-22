@@ -41,6 +41,9 @@ pub(super) async fn fetch_http_url(
     })
 }
 
+/// Content-fetch choke point: SSRF allow-ranges are resolved here, not in tool
+/// plan types. Callers must use a client with redirects disabled (see
+/// [`super::util::http_client`]).
 pub(super) async fn fetch_url_text(
     client: &reqwest::Client,
     url: &str,
@@ -53,11 +56,11 @@ async fn fetch_url_text_with_auth(
     url: &str,
     bearer_token: Option<&str>,
 ) -> Result<String, ToolError> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(ToolError::Message(
-            "only http and https URLs are supported".into(),
-        ));
-    }
+    // Resolve and reject private/loopback targets before connecting. Redirects
+    // are disabled on the shared web clients, so this single check is the full
+    // guard; 3xx responses are refused below as defense in depth.
+    let allow_ranges = super::ssrf::configured_allow_ranges()?;
+    super::ssrf::ensure_public_url(url, &allow_ranges).await?;
     let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);
@@ -65,7 +68,13 @@ async fn fetch_url_text_with_auth(
     let response = request
         .send()
         .await
-        .map_err(|err| ToolError::Message(format!("request failed: {err}")))?
+        .map_err(|err| ToolError::Message(format!("request failed: {err}")))?;
+    if response.status().is_redirection() {
+        return Err(ToolError::Message(format!(
+            "refusing to follow redirect from {url}"
+        )));
+    }
+    let response = response
         .error_for_status()
         .map_err(|err| ToolError::Message(format!("request failed: {err}")))?;
     let mut stream = response.bytes_stream();

@@ -198,9 +198,13 @@ async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
         let _ = stream.write_all(body.as_bytes());
     });
 
-    let client = reqwest::Client::new();
+    let client = super::util::http_client();
     let url = format!("http://{address}/big");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_text(&client, &url).await
+    })
+    .await;
     server.join().unwrap();
 
     let content = result.expect("truncated fetch of valid UTF-8 must not fail");
@@ -237,9 +241,13 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
         let _ = stream.write_all(body);
     });
 
-    let client = reqwest::Client::new();
+    let client = super::util::http_client();
     let url = format!("http://{address}/small");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_text(&client, &url).await
+    })
+    .await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
@@ -275,10 +283,66 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
         let _ = stream.write_all(&body);
     });
 
-    let client = reqwest::Client::new();
+    let client = super::util::http_client();
     let url = format!("http://{address}/exact-cap");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let result = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_text(&client, &url).await
+    })
+    .await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
+}
+
+#[tokio::test]
+async fn fetch_url_text_blocks_loopback_by_default() {
+    let client = super::util::http_client();
+    let error = super::fetch::fetch_url_text(&client, "http://127.0.0.1:9/")
+        .await
+        .expect_err("loopback must be refused");
+    assert!(
+        error.to_string().contains("blocked"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn fetch_url_text_refuses_redirect_responses() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let response = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/private\r\nContent-Length: 0\r\n\r\n";
+        let _ = stream.write_all(response.as_bytes());
+    });
+
+    let client = super::util::http_client();
+    let url = format!("http://{address}/public");
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let error = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_text(&client, &url).await
+    })
+    .await
+    .expect_err("redirect responses must be refused");
+    server.join().unwrap();
+
+    assert!(
+        error.to_string().contains("refusing to follow redirect"),
+        "unexpected error: {error}"
+    );
 }

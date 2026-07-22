@@ -28,6 +28,10 @@ const FETCH_CONTENT_TOOL: &str = "fetch_content";
 pub(in crate::tools) struct SdkFetchContent {
     client: reqwest::Client,
     max_output_bytes: usize,
+    /// Test-only override installed around the tool future so the fetch choke
+    /// point can allow loopback without threading policy through plan types.
+    #[cfg(test)]
+    allow_ranges_override: Option<Vec<super::ssrf::Cidr>>,
 }
 
 impl SdkFetchContent {
@@ -35,6 +39,20 @@ impl SdkFetchContent {
         Self {
             client: util::fetch_http_client(),
             max_output_bytes,
+            #[cfg(test)]
+            allow_ranges_override: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_allow_ranges(
+        max_output_bytes: usize,
+        allow_ranges: Vec<super::ssrf::Cidr>,
+    ) -> Self {
+        Self {
+            client: util::fetch_http_client(),
+            max_output_bytes,
+            allow_ranges_override: Some(allow_ranges),
         }
     }
 }
@@ -395,8 +413,12 @@ impl Tool for SdkFetchContent {
             let plan =
                 FetchPlan::parse(invocation.into_arguments(), &context, self.max_output_bytes)?;
             plan.authorize(&context).await?;
-            plan.execute(&self.client, &context, self.max_output_bytes)
-                .await
+            let execute = plan.execute(&self.client, &context, self.max_output_bytes);
+            #[cfg(test)]
+            if let Some(ranges) = self.allow_ranges_override.clone() {
+                return super::ssrf::with_allow_ranges(ranges, execute).await;
+            }
+            execute.await
         })
     }
 }

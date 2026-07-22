@@ -7,6 +7,7 @@ mod fetch;
 mod sdk_fetch_content;
 pub(super) mod sdk_get_search_content;
 mod search;
+mod ssrf;
 mod storage;
 mod util;
 
