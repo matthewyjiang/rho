@@ -61,8 +61,9 @@ fn needs_choice_only_when_unset_and_no_env() {
 
 #[test]
 fn set_backend_persists_in_config() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("config.toml");
+    let _guard = env_lock();
+    let rho_dir = tempfile::tempdir().unwrap();
+    let path = rho_dir.path().join("config.toml");
     fs::write(
         &path,
         r#"
@@ -74,13 +75,26 @@ auth = "api-key"
     )
     .unwrap();
 
-    let saved = set_backend(CredentialStoreBackend::Os, Some(path.clone())).unwrap();
-    assert_eq!(saved, path);
+    let previous = std::env::var_os("RHO_HOME");
+    std::env::set_var("RHO_HOME", rho_dir.path());
 
-    let config = Config::load_settings_only(path).unwrap();
-    assert_eq!(config.credential_store, Some(CredentialStoreBackend::Os));
-    let text = fs::read_to_string(saved).unwrap();
-    assert!(text.contains("credential_store = \"os\""));
+    // Use the file backend so CI hosts without an OS keyring still exercise
+    // persistence + activation.
+    let result = std::panic::catch_unwind(|| {
+        let saved = set_backend(CredentialStoreBackend::File, Some(path.clone())).unwrap();
+        assert_eq!(saved, path);
+
+        let config = Config::load_settings_only(path.clone()).unwrap();
+        assert_eq!(config.credential_store, Some(CredentialStoreBackend::File));
+        let text = fs::read_to_string(saved).unwrap();
+        assert!(text.contains("credential_store = \"file\""));
+    });
+
+    match previous {
+        Some(value) => std::env::set_var("RHO_HOME", value),
+        None => std::env::remove_var("RHO_HOME"),
+    }
+    result.unwrap();
 }
 
 #[test]
