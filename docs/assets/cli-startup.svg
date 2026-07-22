@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="698" viewBox="0 0 960 698" role="img" aria-labelledby="title desc">
+  <title id="title">CLI startup and memory comparison</title>
+  <desc id="desc">Horizontal bar chart of median --help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>
+  <defs>
+    <style>
+      .sans { font-family: "DejaVu Sans", "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace; }
+      .title { fill: #f0f3f6; font-size: 22px; font-weight: 700; }
+      .subtitle { fill: #8b949e; font-size: 13px; }
+      .panel { fill: #8b949e; font-size: 12px; letter-spacing: 0.04em; }
+      .label { fill: #c9d1d9; font-size: 14px; }
+      .label-hi { fill: #39c5cf; font-size: 14px; font-weight: 700; }
+      .value { fill: #f0f3f6; font-size: 13px; }
+      .value-hi { fill: #3fb950; font-size: 13px; font-weight: 700; }
+      .foot { fill: #6e7681; font-size: 12px; }
+      .bar { fill: #30363d; }
+      .bar-hi { fill: #39c5cf; }
+      .axis { stroke: #21262d; stroke-width: 1; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" rx="16" fill="#0d1117"/>
+  <text x="28" y="34" class="sans title">CLI process overhead</text>
+  <text x="28" y="56" class="sans subtitle">Median of 50 runs of help startup on Linux x86_64. Not TUI session cost or model latency.</text>
+  <text x="28" y="64" class="sans panel">STARTUP TIME</text>
+  <text x="28" y="362" class="sans panel">PEAK RSS</text>
+  <line x1="168" y1="70" x2="168" y2="334" class="axis"/>
+  <line x1="168" y1="368" x2="168" y2="632" class="axis"/>
+  <text x="156" y="100" text-anchor="end" class="sans label-hi">rho</text>
+  <rect x="168" y="86" width="3.9" height="20" rx="4" class="bar-hi"/>
+  <text x="181.9" y="100" class="mono value-hi">3.41 ms</text>
+  <text x="156" y="154" text-anchor="end" class="sans label">Codex</text>
+  <rect x="168" y="140" width="8.6" height="20" rx="4" class="bar"/>
+  <text x="186.6" y="154" class="mono value">7.44 ms</text>
+  <text x="156" y="208" text-anchor="end" class="sans label">Claude Code</text>
+  <rect x="168" y="194" width="213.9" height="20" rx="4" class="bar"/>
+  <text x="391.9" y="208" class="mono value">185 ms</text>
+  <text x="156" y="262" text-anchor="end" class="sans label">OpenCode</text>
+  <rect x="168" y="248" width="475.3" height="20" rx="4" class="bar"/>
+  <text x="653.3" y="262" class="mono value">411 ms</text>
+  <text x="156" y="316" text-anchor="end" class="sans label">Pi (no extensions)</text>
+  <rect x="168" y="302" width="631.5" height="20" rx="4" class="bar"/>
+  <text x="809.5" y="316" class="mono value">546 ms</text>
+  <text x="156" y="398" text-anchor="end" class="sans label-hi">rho</text>
+  <rect x="168" y="384" width="31.7" height="20" rx="4" class="bar-hi"/>
+  <text x="209.7" y="398" class="mono value-hi">14.3 MiB</text>
+  <text x="156" y="452" text-anchor="end" class="sans label">Codex</text>
+  <rect x="168" y="438" width="43.6" height="20" rx="4" class="bar"/>
+  <text x="221.6" y="452" class="mono value">19.6 MiB</text>
+  <text x="156" y="506" text-anchor="end" class="sans label">Claude Code</text>
+  <rect x="168" y="492" width="631.5" height="20" rx="4" class="bar"/>
+  <text x="809.5" y="506" class="mono value">285 MiB</text>
+  <text x="156" y="560" text-anchor="end" class="sans label">OpenCode</text>
+  <rect x="168" y="546" width="445.8" height="20" rx="4" class="bar"/>
+  <text x="623.8" y="560" class="mono value">201 MiB</text>
+  <text x="156" y="614" text-anchor="end" class="sans label">Pi (no extensions)</text>
+  <rect x="168" y="600" width="330.2" height="20" rx="4" class="bar"/>
+  <text x="508.2" y="614" class="mono value">149 MiB</text>
+  <text x="28" y="680" class="sans foot">rho and Codex are native binaries. Claude Code, Pi, and OpenCode use JS runtimes. Pi measured with --no-extensions.</text>
+</svg>
