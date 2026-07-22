@@ -931,6 +931,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::Thought(_)
             | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)

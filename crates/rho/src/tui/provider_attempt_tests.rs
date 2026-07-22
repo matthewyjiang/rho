@@ -16,6 +16,7 @@ fn retry_removes_only_replaceable_provider_output() {
             image: None,
         }),
         Entry::Reasoning("discard reasoning".into()),
+        Entry::Thought("Thought for 1.2s".into()),
     ]);
 
     assert_eq!(attempt.reset_output(&mut transcript), Some(1));

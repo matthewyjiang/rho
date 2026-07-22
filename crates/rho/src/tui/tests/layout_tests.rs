@@ -669,6 +669,91 @@ fn hidden_reasoning_shows_thinking_placeholder() {
 }
 
 #[test]
+fn hidden_reasoning_replaces_thinking_with_thought_summary() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.active_turn_show_reasoning_output = false;
+    app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
+        .unwrap();
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("secret".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    assert!(app.hidden_reasoning_active);
+    assert!(app
+        .history_live_lines(60, Instant::now())
+        .iter()
+        .any(|line| line_text(line).contains("Thinking...")));
+
+    app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
+        .unwrap();
+    app.finish_streams();
+
+    assert!(!app.hidden_reasoning_active);
+    assert!(app
+        .history_live_lines(60, Instant::now())
+        .iter()
+        .all(|line| !line_text(line).contains("Thinking...")));
+    assert!(
+        matches!(app.transcript.as_slice(), [Entry::Thought(text), Entry::Assistant(answer)]
+            if text.starts_with("Thought for ") && answer == "answer"),
+        "{:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn shown_reasoning_appends_thought_summary_after_reasoning() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.active_turn_show_reasoning_output = true;
+    app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
+        .unwrap();
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("because reasons".into()),
+        &mut terminal,
+    )
+    .unwrap();
+    app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
+        .unwrap();
+    app.finish_streams();
+
+    assert!(
+        matches!(
+            app.transcript.as_slice(),
+            [
+                Entry::Reasoning(reasoning),
+                Entry::Thought(thought),
+                Entry::Assistant(answer)
+            ] if reasoning == "because reasons"
+                && thought.starts_with("Thought for ")
+                && answer == "answer"
+        ),
+        "{:?}",
+        app.transcript
+    );
+}
+
+#[test]
+fn thinking_without_reasoning_deltas_skips_thought_summary() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.active_turn_show_reasoning_output = false;
+    app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
+        .unwrap();
+    app.handle_agent_event(ViewModelEvent::OutputDelta("answer".into()), &mut terminal)
+        .unwrap();
+    app.finish_streams();
+
+    assert!(
+        matches!(app.transcript.as_slice(), [Entry::Assistant(answer)] if answer == "answer"),
+        "{:?}",
+        app.transcript
+    );
+}
+
+#[test]
 fn started_tool_display_ignores_late_argument_previews() {
     let mut app = test_app();
 

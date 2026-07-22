@@ -561,6 +561,13 @@ fn render_non_assistant_entry(
             max_tool_output_lines,
             tool.expanded,
         ),
+        Entry::Thought(text) => push_wrapped_text(
+            lines,
+            text,
+            width,
+            Theme::dim().add_modifier(Modifier::DIM),
+            LineFill::Natural,
+        ),
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }

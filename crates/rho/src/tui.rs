@@ -105,6 +105,7 @@ mod subagent_panel;
 mod terminal_events;
 mod text_selection;
 mod theme;
+mod thought;
 mod tool_call_batch;
 mod tool_diff;
 mod tree_actions;
@@ -325,6 +326,7 @@ struct App {
     provider_attempt: ProviderAttempt,
     active_turn_show_reasoning_output: bool,
     hidden_reasoning_active: bool,
+    reasoning_started_at: Option<Instant>,
     running: bool,
     activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
@@ -544,6 +546,8 @@ enum Entry {
     User(String),
     Assistant(String),
     Reasoning(String),
+    /// Post-reasoning summary such as `Thought for 3.2s`.
+    Thought(String),
     Tool(ToolEntry),
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
@@ -671,6 +675,7 @@ impl App {
             provider_attempt: ProviderAttempt::default(),
             active_turn_show_reasoning_output,
             hidden_reasoning_active: false,
+            reasoning_started_at: None,
             running: false,
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
@@ -2515,6 +2520,9 @@ impl App {
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
         self.hidden_reasoning_active = false;
+        // Discard an unfinished timer. Callers that should keep a summary must
+        // finalize before reset (for example `finish_streams`).
+        self.reasoning_started_at = None;
     }
 
     fn reset_provider_attempt_stream(&mut self) {
@@ -2702,14 +2710,16 @@ impl App {
                 Ok(true)
             }
             ViewModelEvent::OutputDelta(text) => {
-                self.hidden_reasoning_active = false;
+                // Finish any visible reasoning text first so the summary lands after it.
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
+                let thought = self.finalize_thought_if_needed();
                 self.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
-                Ok(switched || drained)
+                Ok(switched || thought || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
+                self.mark_reasoning_started();
                 if !self.active_turn_show_reasoning_output {
                     self.hidden_reasoning_active = true;
                     return Ok(true);
@@ -2728,7 +2738,6 @@ impl App {
                         | ViewModelEvent::ToolStarted { .. }
                         | ViewModelEvent::ToolFinished { .. }
                 ) {
-                    self.hidden_reasoning_active = false;
                     self.finish_streams();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
@@ -2790,7 +2799,25 @@ impl App {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
-        reasoning_finished || assistant_finished
+        let thought = self.finalize_thought_if_needed();
+        reasoning_finished || assistant_finished || thought
+    }
+
+    fn mark_reasoning_started(&mut self) {
+        if self.reasoning_started_at.is_none() {
+            self.reasoning_started_at = Some(Instant::now());
+        }
+    }
+
+    /// Emits `Thought for …` once a reasoning stretch ends, if one was timed.
+    fn finalize_thought_if_needed(&mut self) -> bool {
+        let Some(started_at) = self.reasoning_started_at.take() else {
+            self.hidden_reasoning_active = false;
+            return false;
+        };
+        self.hidden_reasoning_active = false;
+        self.insert_entry(&Entry::Thought(thought::summary(started_at.elapsed())));
+        true
     }
 
     fn finish_current_stream(&mut self) -> bool {
@@ -3164,6 +3191,7 @@ impl App {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Reasoning(_)
+            | Entry::Thought(_)
             | Entry::RuntimeInfo(_)
             | Entry::UsageLimits(_)
             | Entry::Tool(_)

@@ -2,8 +2,8 @@ use super::Entry;
 
 /// Tracks the transcript boundary for the current provider attempt.
 ///
-/// Provider retries replace assistant and reasoning output from the failed
-/// attempt while preserving notices and completed tool entries.
+/// Provider retries replace assistant, reasoning, and thought-summary output
+/// from the failed attempt while preserving notices and completed tool entries.
 #[derive(Default)]
 pub(super) struct ProviderAttempt {
     start: Option<usize>,
@@ -27,7 +27,11 @@ impl ProviderAttempt {
         let original_len = transcript.len();
         let mut index = 0;
         transcript.retain(|entry| {
-            let keep = index < start || !matches!(entry, Entry::Assistant(_) | Entry::Reasoning(_));
+            let keep = index < start
+                || !matches!(
+                    entry,
+                    Entry::Assistant(_) | Entry::Reasoning(_) | Entry::Thought(_)
+                );
             index += 1;
             keep
         });
