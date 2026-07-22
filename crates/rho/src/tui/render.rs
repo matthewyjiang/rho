@@ -56,11 +56,11 @@ pub(super) fn session_header_lines(
         ]),
     ];
     if let Some(notice) = update_notice {
+        // Match the brand line's leading space so the notice lines up under "rho".
         lines.push(Line::from(vec![
-            Span::styled("update", Theme::warning()),
-            Span::raw("  "),
+            Span::raw(" "),
             Span::styled(
-                truncate_one_line(notice, width.saturating_sub(8)),
+                truncate_one_line(notice, width.saturating_sub(1)),
                 Theme::warning(),
             ),
         ]));
