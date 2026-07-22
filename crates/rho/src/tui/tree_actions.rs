@@ -18,10 +18,10 @@ pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
         picker_items,
         PickerAction::SelectTreeNode,
     )
-    .with_layout(PickerLayout::OverlayList)
+    .with_layout(PickerLayout::Overlay)
     .with_overlay_chrome(OverlayChrome {
         nav_label: " TREE".into(),
-        detail_label: String::new(),
+        detail_label: None,
         nav_keys_hint: "↑↓ turns".into(),
     })
     .with_confirm_verb("restore");

@@ -84,18 +84,12 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerLayout {
     #[default]
     List,
-    /// Large popup with a navigation list and detail pane.
+    /// Large popup shell. Detail pane appears when items carry detail text.
     Overlay,
-    /// Large popup with only a full-width navigation list.
-    OverlayList,
 }
 
 impl PickerLayout {
     pub(super) fn is_overlay(self) -> bool {
-        matches!(self, Self::Overlay | Self::OverlayList)
-    }
-
-    pub(super) fn shows_detail(self) -> bool {
         matches!(self, Self::Overlay)
     }
 }
@@ -175,12 +169,13 @@ impl UiPicker {
         self.layout.is_overlay()
     }
 
-    pub(super) fn shows_detail(&self) -> bool {
-        self.layout.shows_detail()
+    /// Whether any item carries detail text. Shared by inline and overlay pickers.
+    pub(super) fn has_item_details(&self) -> bool {
+        self.items.iter().any(|item| item.detail.is_some())
     }
 
     pub(super) fn has_scrollable_detail(&self) -> bool {
-        self.shows_detail()
+        self.is_overlay() && self.has_item_details()
     }
 
     pub(super) fn select_by_offset(&mut self, delta: isize) {
@@ -393,13 +388,11 @@ impl UiPicker {
     pub(super) fn push_filter_char(&mut self, ch: char) {
         self.filter.push(ch);
         self.select_first_match();
-        self.reset_detail_scroll();
     }
 
     pub(super) fn pop_filter_char(&mut self) {
         self.filter.pop();
         self.select_first_match();
-        self.reset_detail_scroll();
     }
 
     pub(super) fn complete_filter(&mut self) {
@@ -611,9 +604,11 @@ impl super::App {
         }
         let layout = super::picker_overlay::picker_overlay_layout(
             ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            super::picker_overlay::OverlayBody::NavAndDetail,
+            /*has_details*/ true,
         );
-        picker.clamp_detail_scroll(layout.detail_viewport());
+        if let Some(viewport) = layout.detail_viewport() {
+            picker.clamp_detail_scroll(viewport);
+        }
     }
 
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {

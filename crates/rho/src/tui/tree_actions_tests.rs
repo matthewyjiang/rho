@@ -2,25 +2,43 @@ use crate::session::tree::{NodeId, SessionTreeItem, SessionTreeItemKind, StoredC
 
 use super::{tree_picker, PickerBadgeTone, PickerLayout};
 
-fn item(
+fn turn(
     id: &str,
     depth: usize,
-    kind: SessionTreeItemKind,
-    preview: Option<&str>,
+    preview: &str,
     active: bool,
     on_active_path: bool,
     ancestor_has_next_sibling: Vec<bool>,
     is_last_sibling: bool,
-    compaction_facts: Option<StoredCompactionFacts>,
 ) -> SessionTreeItem {
     SessionTreeItem {
         id: NodeId::from_string(id).unwrap(),
         depth,
-        kind,
-        first_user_text: preview.map(str::to_string),
-        compaction_facts,
+        kind: SessionTreeItemKind::Turn,
+        first_user_text: Some(preview.to_string()),
+        compaction_facts: None,
         active,
         on_active_path,
+        ancestor_has_next_sibling,
+        is_last_sibling,
+    }
+}
+
+fn compaction(
+    id: &str,
+    depth: usize,
+    ancestor_has_next_sibling: Vec<bool>,
+    is_last_sibling: bool,
+    facts: StoredCompactionFacts,
+) -> SessionTreeItem {
+    SessionTreeItem {
+        id: NodeId::from_string(id).unwrap(),
+        depth,
+        kind: SessionTreeItemKind::Compaction,
+        first_user_text: None,
+        compaction_facts: Some(facts),
+        active: false,
+        on_active_path: false,
         ancestor_has_next_sibling,
         is_last_sibling,
     }
@@ -31,39 +49,36 @@ fn tree_picker_uses_list_only_overlay() {
     let root_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     let branch_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     let picker = tree_picker(vec![
-        item(
+        turn(
             root_id,
             0,
-            SessionTreeItemKind::Turn,
-            Some("root turn"),
-            false,
-            true,
+            "root turn",
+            /*active*/ false,
+            /*on_active_path*/ true,
             Vec::new(),
-            false,
-            None,
+            /*is_last_sibling*/ false,
         ),
-        item(
+        turn(
             branch_id,
             1,
-            SessionTreeItemKind::Turn,
-            Some("branch turn with a longer prompt"),
-            true,
-            true,
+            "branch turn with a longer prompt",
+            /*active*/ true,
+            /*on_active_path*/ true,
             // Depth-1 nodes keep an empty ancestor vector; the sibling glyph is
             // chosen only from is_last_sibling.
             Vec::new(),
-            true,
-            None,
+            /*is_last_sibling*/ true,
         ),
     ]);
 
-    assert_eq!(picker.layout, PickerLayout::OverlayList);
+    assert_eq!(picker.layout, PickerLayout::Overlay);
     assert!(picker.is_overlay());
-    assert!(!picker.shows_detail());
+    assert!(!picker.has_item_details());
     assert!(!picker.has_scrollable_detail());
     assert_eq!(picker.confirm_action_label(), "restore");
     let chrome = picker.overlay_chrome.as_ref().unwrap();
     assert_eq!(chrome.nav_label, " TREE");
+    assert!(chrome.detail_label.is_none());
     assert_eq!(chrome.nav_keys_hint, "↑↓ turns");
     assert_eq!(picker.selected, 1);
     assert_eq!(picker.items[0].label, "◆ root turn");
@@ -82,23 +97,19 @@ fn tree_picker_uses_list_only_overlay() {
 
 #[test]
 fn compaction_nodes_keep_facts_in_the_label() {
-    let picker = tree_picker(vec![item(
+    let picker = tree_picker(vec![compaction(
         "cccccccc-cccc-cccc-cccc-cccccccccccc",
         2,
-        SessionTreeItemKind::Compaction,
-        None,
-        false,
-        false,
         // Parent at depth 1 still has a later sibling, so draw the vertical guide.
         vec![true],
-        false,
-        Some(StoredCompactionFacts {
+        /*is_last_sibling*/ false,
+        StoredCompactionFacts {
             previous_messages: 12,
             current_messages: 4,
             previous_tokens: 1000,
             current_tokens: 250,
             cost_usd_micros: None,
-        }),
+        },
     )]);
 
     assert_eq!(

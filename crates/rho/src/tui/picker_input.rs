@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_body, picker_overlay_layout, DetailViewport, OverlayBody},
+    picker_overlay::{picker_overlay_layout, OverlayPageTarget},
     App, InteractiveRuntime, UiPicker,
 };
 
@@ -15,34 +15,54 @@ enum PickerKeyEffect {
     ToggleFavorite,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OverlayKeyViewport {
-    Detail(DetailViewport),
-    Nav { rows: usize },
-}
-
-fn overlay_key_viewport(
-    picker: &UiPicker,
-    terminal: &DefaultTerminal,
-) -> Option<OverlayKeyViewport> {
+fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<OverlayPageTarget> {
     if !picker.is_overlay() {
         return None;
     }
     let size = terminal.size().ok()?;
-    let body = picker_overlay_body(picker);
-    let layout = picker_overlay_layout(Rect::new(0, 0, size.width, size.height), body);
-    Some(match body {
-        OverlayBody::NavAndDetail => OverlayKeyViewport::Detail(layout.detail_viewport()),
-        OverlayBody::NavOnly => OverlayKeyViewport::Nav {
-            rows: layout.nav_viewport_rows.max(1),
-        },
-    })
+    Some(
+        picker_overlay_layout(
+            Rect::new(0, 0, size.width, size.height),
+            picker.has_item_details(),
+        )
+        .page_target(),
+    )
+}
+
+fn apply_page_key(picker: &mut UiPicker, target: OverlayPageTarget, direction: isize) {
+    match target {
+        OverlayPageTarget::Detail(viewport) => {
+            picker.scroll_detail_page(direction, viewport);
+        }
+        OverlayPageTarget::Nav { rows } => {
+            picker.select_by_offset(direction.saturating_mul(rows as isize));
+        }
+    }
+}
+
+fn apply_home_end_key(picker: &mut UiPicker, target: OverlayPageTarget, home: bool) {
+    match target {
+        OverlayPageTarget::Detail(viewport) => {
+            if home {
+                picker.scroll_detail_home();
+            } else {
+                picker.scroll_detail_end(viewport);
+            }
+        }
+        OverlayPageTarget::Nav { .. } => {
+            if home {
+                picker.select_first_match();
+            } else {
+                picker.select_last_match();
+            }
+        }
+    }
 }
 
 fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
-    viewport: Option<OverlayKeyViewport>,
+    page_target: Option<OverlayPageTarget>,
     model_picker_open: bool,
     space_confirms: bool,
 ) -> PickerKeyEffect {
@@ -56,44 +76,26 @@ fn apply_picker_key(
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageUp) => {
-            match viewport {
-                Some(OverlayKeyViewport::Detail(viewport)) => {
-                    picker.scroll_detail_page(-1, viewport);
-                }
-                Some(OverlayKeyViewport::Nav { rows }) => {
-                    picker.select_by_offset(-(rows as isize));
-                }
-                None => {}
+            if let Some(target) = page_target {
+                apply_page_key(picker, target, -1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageDown) => {
-            match viewport {
-                Some(OverlayKeyViewport::Detail(viewport)) => {
-                    picker.scroll_detail_page(1, viewport);
-                }
-                Some(OverlayKeyViewport::Nav { rows }) => {
-                    picker.select_by_offset(rows as isize);
-                }
-                None => {}
+            if let Some(target) = page_target {
+                apply_page_key(picker, target, 1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Home) => {
-            match viewport {
-                Some(OverlayKeyViewport::Detail(_)) => picker.scroll_detail_home(),
-                Some(OverlayKeyViewport::Nav { .. }) => picker.select_first_match(),
-                None => {}
+            if let Some(target) = page_target {
+                apply_home_end_key(picker, target, /*home*/ true);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::End) => {
-            match viewport {
-                Some(OverlayKeyViewport::Detail(viewport)) => {
-                    picker.scroll_detail_end(viewport);
-                }
-                Some(OverlayKeyViewport::Nav { .. }) => picker.select_last_match(),
-                None => {}
+            if let Some(target) = page_target {
+                apply_home_end_key(picker, target, /*home*/ false);
             }
             PickerKeyEffect::Handled
         }
@@ -132,17 +134,12 @@ impl App {
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
-        let viewport = {
-            let super::ComposerMode::Picker(picker) = &self.composer else {
-                return Ok(false);
-            };
-            overlay_key_viewport(picker, terminal)
-        };
         let effect = {
             let super::ComposerMode::Picker(picker) = &mut self.composer else {
                 return Ok(false);
             };
-            apply_picker_key(picker, key, viewport, model_picker_open, space_confirms)
+            let page_target = overlay_page_target(picker, terminal);
+            apply_picker_key(picker, key, page_target, model_picker_open, space_confirms)
         };
 
         match effect {
@@ -184,17 +181,12 @@ impl App {
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
-        let viewport = {
-            let super::ComposerMode::Picker(picker) = &self.composer else {
-                return Ok(false);
-            };
-            overlay_key_viewport(picker, terminal)
-        };
         let effect = {
             let super::ComposerMode::Picker(picker) = &mut self.composer else {
                 return Ok(false);
             };
-            apply_picker_key(picker, key, viewport, model_picker_open, space_confirms)
+            let page_target = overlay_page_target(picker, terminal);
+            apply_picker_key(picker, key, page_target, model_picker_open, space_confirms)
         };
 
         match effect {
