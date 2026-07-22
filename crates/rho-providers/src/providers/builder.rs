@@ -260,6 +260,10 @@ fn compatible_auth_matches_kind(auth: &CompatibleAuth, kind: ProviderAuthKind) -
         (CompatibleAuth::None, ProviderAuthKind::None)
             | (CompatibleAuth::ApiKey(_), ProviderAuthKind::ApiKey { .. })
             | (
+                CompatibleAuth::ApiKey(_),
+                ProviderAuthKind::BearerCredential { .. }
+            )
+            | (
                 CompatibleAuth::KimiOAuth(_),
                 ProviderAuthKind::KimiOAuth { .. }
             )

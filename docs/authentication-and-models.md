@@ -18,6 +18,7 @@ Rho's implemented providers are:
 | `xai` | `xai-api-key` | [xAI](/providers/xai) |
 | `xai-oauth` | `xai-oauth` | [xAI](/providers/xai) |
 | `openrouter` | `openrouter-api-key` | [OpenRouter](/providers/openrouter) |
+| `openrouter-oauth` | `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
 | `ollama` | None | [Ollama](/providers/ollama) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
@@ -53,6 +54,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model google/gemini-3.1-flash-lite
 /model github-copilot/gpt-4.1
 /model openrouter/anthropic/claude-sonnet-4
+/model openrouter-oauth/anthropic/claude-sonnet-4
 /model ollama/<installed-model>
 /model xai/grok-4.5
 /model xai-oauth/grok-4.5

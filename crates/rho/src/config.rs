@@ -633,6 +633,7 @@ impl Config {
                 .or_insert(selection);
         }
         cfg.resolve_internal_agent_model_aliases()?;
+        cfg.normalize_provider_profiles()?;
         if let Some(group) = file.web_search {
             if let Some(provider) = group.provider {
                 cfg.web_search_provider = SearchProvider::from_config_value(&provider);

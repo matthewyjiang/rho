@@ -84,6 +84,17 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     ProviderAuthKind::ApiKey { .. } => CompatibleAuth::ApiKey(
                         load_provider_api_key_auth(provider, self.store.as_ref())?,
                     ),
+                    ProviderAuthKind::BearerCredential {
+                        env_var,
+                        account,
+                        missing,
+                        ..
+                    } => CompatibleAuth::ApiKey(load_stored_bearer_key(
+                        env_var,
+                        account,
+                        missing,
+                        self.store.as_ref(),
+                    )?),
                     ProviderAuthKind::KimiOAuth { .. } => {
                         let env_var = descriptor
                             .auth_kind
@@ -162,6 +173,23 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             }
         }
     }
+}
+
+fn load_stored_bearer_key(
+    env_var: &str,
+    account: &str,
+    missing: provider::MissingCredential,
+    store: &dyn CredentialStore,
+) -> Result<String, ModelError> {
+    if let Ok(key) = std::env::var(env_var) {
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
+    }
+    store
+        .get_secret(account)?
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| missing_credential_error(missing))
 }
 
 fn load_provider_api_key_auth(

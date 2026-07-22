@@ -211,9 +211,11 @@ impl App {
             return Ok(());
         }
 
-        let mode = if std::env::var_os("SSH_CONNECTION").is_some()
+        let remote_or_nested = std::env::var_os("SSH_CONNECTION").is_some()
             || std::env::var_os("SSH_TTY").is_some()
-            || std::env::var_os("HERDR_ENV").is_some()
+            || std::env::var_os("HERDR_ENV").is_some();
+        let mode = if remote_or_nested
+            && ProviderAuthentication::supports_device_login(&target.provider)
         {
             OAuthMode::Device
         } else {

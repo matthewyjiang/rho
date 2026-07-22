@@ -85,6 +85,9 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,
         ModelError::MissingMoonshotApiKey => ModelError::MissingMoonshotApiKey,
         ModelError::MissingOpenRouterApiKey => ModelError::MissingOpenRouterApiKey,
+        ModelError::MissingCredentialProfile(message) => {
+            ModelError::MissingCredentialProfile(message)
+        }
         ModelError::MissingKimiAuth => ModelError::MissingKimiAuth,
         ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
         ModelError::UnsupportedReasoning {

@@ -12,6 +12,7 @@ pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
+pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,7 +27,39 @@ pub enum ProviderId {
     XaiOAuth,
     Moonshot,
     OpenRouter,
+    OpenRouterOAuth,
     KimiCode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RuntimeProviderId {
+    Ollama,
+    OpenAi,
+    Anthropic,
+    Google,
+    GithubCopilot,
+    Xai,
+    Moonshot,
+    OpenRouter,
+    KimiCode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserOAuthFlow {
+    OpenRouter,
+}
+
+impl BrowserOAuthFlow {
+    pub const fn provider_label(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "OpenRouter",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BearerCredentialAcquisition {
+    BrowserOAuth(BrowserOAuthFlow),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +113,12 @@ pub enum ProviderAuthKind {
         env_var: &'static str,
         account: &'static str,
     },
+    BearerCredential {
+        env_var: &'static str,
+        account: &'static str,
+        missing: MissingCredential,
+        acquisition: BearerCredentialAcquisition,
+    },
     KimiOAuth {
         env_var: &'static str,
         account: &'static str,
@@ -92,9 +131,9 @@ impl ProviderDescriptor {
     /// Provider model discovery remains authoritative. This only bridges model
     /// names when the provider API and metadata catalog use different IDs.
     pub fn metadata_model<'a>(&self, model: &'a str) -> &'a str {
-        match (self.id, model) {
-            (ProviderId::KimiCode, "k3") => "kimi-k3",
-            (ProviderId::OpenRouter, model) => model
+        match (self.runtime_id, model) {
+            (RuntimeProviderId::KimiCode, "k3") => "kimi-k3",
+            (RuntimeProviderId::OpenRouter, model) => model
                 .split_once('/')
                 .map(|(_, upstream_model)| upstream_model)
                 .unwrap_or(model),
@@ -104,8 +143,8 @@ impl ProviderDescriptor {
 
     /// Resolves an aggregator model ID to its models.dev provider.
     pub fn metadata_upstream_for_model<'a>(&self, model: &'a str) -> &'a str {
-        match self.id {
-            ProviderId::OpenRouter => model
+        match self.runtime_id {
+            RuntimeProviderId::OpenRouter => model
                 .split_once('/')
                 .map(|(upstream, _)| upstream)
                 .unwrap_or(self.metadata_upstream),
@@ -115,8 +154,8 @@ impl ProviderDescriptor {
 
     /// Returns a safe effective context when account-scoped model metadata is unavailable.
     pub fn effective_context_fallback(&self, model: &str) -> Option<u64> {
-        match (self.id, model) {
-            (ProviderId::KimiCode, "k3") => Some(262_144),
+        match (self.runtime_id, model) {
+            (RuntimeProviderId::KimiCode, "k3") => Some(262_144),
             _ => None,
         }
     }
@@ -130,6 +169,7 @@ impl ProviderAuthKind {
             | Self::CodexOAuth { env_var, .. }
             | Self::GithubCopilotDevice { env_var, .. }
             | Self::XaiOAuth { env_var, .. }
+            | Self::BearerCredential { env_var, .. }
             | Self::KimiOAuth { env_var, .. } => Some(env_var),
         }
     }
@@ -141,6 +181,7 @@ impl ProviderAuthKind {
             | Self::CodexOAuth { account, .. }
             | Self::GithubCopilotDevice { account, .. }
             | Self::XaiOAuth { account, .. }
+            | Self::BearerCredential { account, .. }
             | Self::KimiOAuth { account, .. } => Some(account),
         }
     }
@@ -153,12 +194,14 @@ pub enum MissingCredential {
     Google,
     Moonshot,
     OpenRouter,
+    Profile(&'static str),
     Xai,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProviderDescriptor {
     pub id: ProviderId,
+    pub runtime_id: RuntimeProviderId,
     pub name: &'static str,
     pub display_name: &'static str,
     pub auth: &'static str,
@@ -173,6 +216,7 @@ pub struct ProviderDescriptor {
 pub const PROVIDERS: &[ProviderDescriptor] = &[
     ProviderDescriptor {
         id: ProviderId::Ollama,
+        runtime_id: RuntimeProviderId::Ollama,
         name: "ollama",
         display_name: "Ollama",
         auth: "none",
@@ -185,6 +229,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::OpenAi,
+        runtime_id: RuntimeProviderId::OpenAi,
         name: "openai",
         display_name: "OpenAI",
         auth: "api-key",
@@ -202,6 +247,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::OpenAiCodex,
+        runtime_id: RuntimeProviderId::OpenAi,
         name: "openai-codex",
         display_name: "OpenAI Codex",
         auth: "codex",
@@ -217,6 +263,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::Anthropic,
+        runtime_id: RuntimeProviderId::Anthropic,
         name: "anthropic",
         display_name: "Anthropic",
         auth: "anthropic-api-key",
@@ -234,6 +281,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::Google,
+        runtime_id: RuntimeProviderId::Google,
         name: "google",
         display_name: "Google Gemini",
         auth: "google-api-key",
@@ -251,6 +299,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::GithubCopilot,
+        runtime_id: RuntimeProviderId::GithubCopilot,
         name: "github-copilot",
         display_name: "GitHub Copilot",
         auth: "github-copilot",
@@ -266,6 +315,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::Moonshot,
+        runtime_id: RuntimeProviderId::Moonshot,
         name: "moonshot",
         display_name: "Moonshot AI",
         auth: "moonshot-api-key",
@@ -283,6 +333,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::OpenRouter,
+        runtime_id: RuntimeProviderId::OpenRouter,
         name: "openrouter",
         display_name: "OpenRouter",
         auth: "openrouter-api-key",
@@ -299,7 +350,28 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
     ProviderDescriptor {
+        id: ProviderId::OpenRouterOAuth,
+        runtime_id: RuntimeProviderId::OpenRouter,
+        name: "openrouter-oauth",
+        display_name: "OpenRouter",
+        auth: "openrouter-oauth",
+        login_label: "OpenRouter OAuth",
+        auth_kind: ProviderAuthKind::BearerCredential {
+            env_var: "OPENROUTER_API_KEY",
+            account: OPENROUTER_OAUTH_KEY_ACCOUNT,
+            missing: MissingCredential::Profile(
+                "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
+            ),
+            acquisition: BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter),
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        metadata_upstream: "openrouter",
+        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+    },
+    ProviderDescriptor {
         id: ProviderId::KimiCode,
+        runtime_id: RuntimeProviderId::KimiCode,
         name: "kimi-code",
         display_name: "Kimi Code",
         auth: "kimi-oauth",
@@ -315,6 +387,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::Xai,
+        runtime_id: RuntimeProviderId::Xai,
         name: "xai",
         display_name: "xAI",
         auth: "xai-api-key",
@@ -332,6 +405,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
     },
     ProviderDescriptor {
         id: ProviderId::XaiOAuth,
+        runtime_id: RuntimeProviderId::Xai,
         name: "xai-oauth",
         display_name: "xAI",
         auth: "xai-oauth",
@@ -355,6 +429,45 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
     providers()
         .iter()
         .find(|descriptor| descriptor.name == provider)
+}
+
+pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
+    providers()
+        .iter()
+        .find(|descriptor| descriptor.auth == auth)
+}
+
+/// Resolves a provider/auth pair to one registered profile.
+///
+/// An auth profile may replace the named profile only when both use the same
+/// runtime provider. This keeps persisted and nested selections consistent
+/// without teaching config, CLI, or TUI code about individual providers.
+pub fn resolve_profile(
+    provider_name: &str,
+    auth: &str,
+) -> Result<&'static ProviderDescriptor, ProfileResolutionError> {
+    let provider = provider_descriptor(provider_name)
+        .ok_or_else(|| ProfileResolutionError::UnknownProvider(provider_name.into()))?;
+    if provider.auth == auth {
+        return Ok(provider);
+    }
+    let auth_profile = providers()
+        .iter()
+        .find(|descriptor| descriptor.auth == auth)
+        .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
+    if provider.runtime_id == auth_profile.runtime_id {
+        Ok(auth_profile)
+    } else {
+        Ok(provider)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ProfileResolutionError {
+    #[error("unknown provider '{0}'")]
+    UnknownProvider(String),
+    #[error("unknown auth profile '{0}'")]
+    UnknownAuth(String),
 }
 
 pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor {

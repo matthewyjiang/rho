@@ -25,7 +25,7 @@ pub struct Cli {
     pub model: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "google-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", "kimi-oauth"])]
+    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "google-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "openrouter-api-key", "openrouter-oauth", "kimi-oauth"])]
     pub auth: Option<String>,
     /// Do not send rho's system prompt, including AGENTS.md and skill context.
     #[arg(long)]

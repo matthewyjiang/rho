@@ -1,6 +1,6 @@
 use crate::{
     model::ModelError,
-    provider::{self, MissingCredential, ProviderAuthKind},
+    provider::{self, MissingCredential, ProviderAuthKind, RuntimeProviderId},
     providers::openai_compatible::OpenAiCompatibleDialect,
 };
 
@@ -37,37 +37,47 @@ pub enum ProviderRuntime {
 
 pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
     let descriptor = provider::provider_descriptor(provider)?;
-    Some(match descriptor.id {
-        provider::ProviderId::Ollama => ProviderRuntime::OpenAiCompatible {
+    Some(match descriptor.runtime_id {
+        RuntimeProviderId::Ollama => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OLLAMA_API_BASE,
         },
-        provider::ProviderId::OpenAi => ProviderRuntime::OpenAi {
-            auth_mode: AuthMode::ApiKey,
+        RuntimeProviderId::OpenAi => ProviderRuntime::OpenAi {
+            auth_mode: match descriptor.auth_kind {
+                ProviderAuthKind::ApiKey { .. } => AuthMode::ApiKey,
+                ProviderAuthKind::CodexOAuth { .. } => AuthMode::Codex,
+                ProviderAuthKind::None
+                | ProviderAuthKind::GithubCopilotDevice { .. }
+                | ProviderAuthKind::XaiOAuth { .. }
+                | ProviderAuthKind::BearerCredential { .. }
+                | ProviderAuthKind::KimiOAuth { .. } => return None,
+            },
         },
-        provider::ProviderId::OpenAiCodex => ProviderRuntime::OpenAi {
-            auth_mode: AuthMode::Codex,
-        },
-        provider::ProviderId::Anthropic => ProviderRuntime::Anthropic,
-        provider::ProviderId::Google => ProviderRuntime::Google,
-        provider::ProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
-        provider::ProviderId::KimiCode => ProviderRuntime::OpenAiCompatible {
+        RuntimeProviderId::Anthropic => ProviderRuntime::Anthropic,
+        RuntimeProviderId::Google => ProviderRuntime::Google,
+        RuntimeProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
+        RuntimeProviderId::KimiCode => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::KimiCode,
             default_api_base: "https://api.kimi.com/coding/v1",
         },
-        provider::ProviderId::Moonshot => ProviderRuntime::OpenAiCompatible {
+        RuntimeProviderId::Moonshot => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Moonshot,
             default_api_base: "https://api.moonshot.ai/v1",
         },
-        provider::ProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {
+        RuntimeProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::OpenRouter,
             default_api_base: "https://openrouter.ai/api/v1",
         },
-        provider::ProviderId::Xai => ProviderRuntime::Xai {
-            auth_mode: XaiAuthMode::ApiKey,
-        },
-        provider::ProviderId::XaiOAuth => ProviderRuntime::Xai {
-            auth_mode: XaiAuthMode::OAuth,
+        RuntimeProviderId::Xai => ProviderRuntime::Xai {
+            auth_mode: match descriptor.auth_kind {
+                ProviderAuthKind::ApiKey { .. } => XaiAuthMode::ApiKey,
+                ProviderAuthKind::XaiOAuth { .. } => XaiAuthMode::OAuth,
+                ProviderAuthKind::None
+                | ProviderAuthKind::CodexOAuth { .. }
+                | ProviderAuthKind::GithubCopilotDevice { .. }
+                | ProviderAuthKind::BearerCredential { .. }
+                | ProviderAuthKind::KimiOAuth { .. } => return None,
+            },
         },
     })
 }
@@ -79,6 +89,7 @@ pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
         MissingCredential::Google => ModelError::MissingGoogleApiKey,
         MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
         MissingCredential::OpenRouter => ModelError::MissingOpenRouterApiKey,
+        MissingCredential::Profile(message) => ModelError::MissingCredentialProfile(message),
         MissingCredential::Xai => ModelError::MissingXaiApiKey,
     }
 }
@@ -92,6 +103,9 @@ pub fn missing_credentials_error(provider_name: &str) -> ModelError {
         Some(ProviderAuthKind::CodexOAuth { .. }) => ModelError::MissingCodexAuth,
         Some(ProviderAuthKind::GithubCopilotDevice { .. }) => ModelError::MissingGithubCopilotAuth,
         Some(ProviderAuthKind::XaiOAuth { .. }) => ModelError::MissingXaiAuth,
+        Some(ProviderAuthKind::BearerCredential { missing, .. }) => {
+            missing_credential_error(missing)
+        }
         Some(ProviderAuthKind::KimiOAuth { .. }) => ModelError::MissingKimiAuth,
         None => ModelError::UnsupportedProvider(provider_name.to_string()),
     }

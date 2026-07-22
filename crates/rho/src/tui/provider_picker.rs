@@ -62,8 +62,8 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
             .map(|descriptor| PickerItem {
                 label: descriptor.display_name.into(),
                 detail: Some(format!(
-                    "Refresh cached {} models.",
-                    descriptor.display_name
+                    "Refresh cached {} models with {}.",
+                    descriptor.display_name, descriptor.login_label
                 )),
                 preview: None,
                 badge: None,

@@ -63,7 +63,7 @@ web_search_provider = "disabled"
     assert_success(&output);
     let inspection = inspection(&output);
 
-    assert_eq!(inspection["identity"]["provider"], "xai");
+    assert_eq!(inspection["identity"]["provider"], "xai-oauth");
     assert_eq!(inspection["identity"]["model"], "grok-fixture");
     assert_eq!(inspection["reasoning"], "low");
     let system = inspection["messages"][0]["System"].as_str().unwrap();
@@ -96,7 +96,7 @@ web_search_provider = "disabled"
     assert!(!names.contains(&"web_search"));
 
     let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
-    assert!(config.contains("provider = \"xai\""));
+    assert!(config.contains("provider = \"xai-oauth\""));
     assert!(config.contains("model = \"grok-fixture\""));
     assert!(config.contains("auth = \"xai-oauth\""));
     assert!(config.contains("reasoning = \"low\""));

@@ -102,7 +102,11 @@ pub fn login_groups() -> Vec<LoginGroup> {
             "Moonshot AI",
             &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
         ),
-        ("openrouter", "OpenRouter", &[("API Key", "openrouter")][..]),
+        (
+            "openrouter",
+            "OpenRouter",
+            &[("API Key", "openrouter"), ("OAuth", "openrouter-oauth")][..],
+        ),
         (
             "xai",
             "xAI",
@@ -585,6 +589,7 @@ mod tests {
         assert!(providers.contains(&("github-copilot", "github-copilot")));
         assert!(providers.contains(&("moonshot", "moonshot-api-key")));
         assert!(providers.contains(&("openrouter", "openrouter-api-key")));
+        assert!(providers.contains(&("openrouter-oauth", "openrouter-oauth")));
         assert!(providers.contains(&("kimi-code", "kimi-oauth")));
         assert!(providers.contains(&("xai", "xai-api-key")));
         assert!(providers.contains(&("xai-oauth", "xai-oauth")));

@@ -492,7 +492,7 @@ fn cli_auth_override_wins_after_model_provider_auth() {
 
     apply_overrides(&mut cfg, &cli).unwrap();
 
-    assert_eq!(cfg.provider, "openai-codex");
+    assert_eq!(cfg.provider, "openai");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "api-key");
 }
@@ -815,4 +815,59 @@ fn undefined_cli_model_alias_names_flag() {
         ),
         "{error:#}"
     );
+}
+
+#[test]
+fn cli_auth_only_selection_resolves_provider_profile() {
+    with_cached_provider_models(
+        "openrouter-oauth",
+        vec!["anthropic/claude-sonnet-4"],
+        || {
+            let mut cfg = Config::default();
+            let cli = Cli {
+                provider: None,
+                model: None,
+                config: None,
+                auth: Some("openrouter-oauth".into()),
+                no_system_prompt: false,
+                no_tools: false,
+                no_subagents: false,
+                agent: None,
+                reasoning: None,
+                resume: None,
+                command: None,
+            };
+
+            apply_overrides(&mut cfg, &cli).unwrap();
+
+            assert_eq!(cfg.provider, "openrouter-oauth");
+            assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
+            assert_eq!(cfg.auth, "openrouter-oauth");
+        },
+    );
+}
+
+#[test]
+fn cli_auth_profile_normalizes_compatible_provider() {
+    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("openrouter".into()),
+            model: Some("anthropic/claude-sonnet-4".into()),
+            config: None,
+            auth: Some("openrouter-oauth".into()),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
+
+        apply_overrides(&mut cfg, &cli).unwrap();
+
+        assert_eq!(cfg.provider, "openrouter-oauth");
+        assert_eq!(cfg.auth, "openrouter-oauth");
+    });
 }
