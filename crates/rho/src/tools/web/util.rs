@@ -24,19 +24,20 @@ pub(super) fn to_pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
+/// Shared HTTP client for web tools.
+///
+/// Redirects are disabled so the resolve-then-check SSRF guard in `ssrf` remains
+/// valid for every content fetch. Provider API calls do not need redirects.
 pub(super) fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("HTTP client configuration must be valid")
 }
 
 pub(super) fn fetch_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("fetch HTTP client configuration must be valid")
+    http_client()
 }
 
 pub(super) fn html_to_text(content: &str) -> String {

@@ -16,6 +16,7 @@ fn blocks_loopback_link_local_private_and_reserved() {
         "::",
         "fd00::1",
         "fe80::1",
+        "ff02::1",
         "::ffff:127.0.0.1",
     ] {
         let ip: IpAddr = literal.parse().unwrap();
@@ -71,6 +72,13 @@ async fn allow_range_exempts_matching_addresses() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("blocked"));
+}
+
+#[test]
+fn allow_range_matches_ipv4_mapped_forms() {
+    let range = Cidr::parse("127.0.0.0/8").unwrap();
+    let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+    assert!(range.contains(mapped));
 }
 
 #[test]

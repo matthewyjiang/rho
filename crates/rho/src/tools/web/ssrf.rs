@@ -4,9 +4,14 @@ use url::Url;
 
 use rho_tools::tool::ToolError;
 
+tokio::task_local! {
+    static ALLOW_RANGES_OVERRIDE: Vec<Cidr>;
+}
+
 /// Rejects remote fetch targets that resolve to private, loopback, link-local,
-/// or other non-global addresses. Call this before the HTTP request; redirects
-/// are already disabled on the fetch client, so one check per request is enough.
+/// or other non-global addresses. Call this before the HTTP request. Content
+/// fetches must also disable redirects (or re-check every hop); the shared web
+/// clients use `redirect::Policy::none()`.
 ///
 /// Same shape as pi-web-access: resolve the hostname, check every address, no
 /// custom DNS resolver on the client. Optional CIDR allow-ranges cover TUN /
@@ -56,11 +61,32 @@ pub(super) async fn ensure_public_url(
     Ok(())
 }
 
+/// Allow-ranges used by the content-fetch choke point.
+///
+/// Production reads `RHO_SSRF_ALLOW_RANGES`. Tests may override via
+/// [`with_allow_ranges`] without threading policy through tool plan types.
+pub(super) fn configured_allow_ranges() -> Result<Vec<Cidr>, ToolError> {
+    if let Ok(ranges) = ALLOW_RANGES_OVERRIDE.try_with(Clone::clone) {
+        return Ok(ranges);
+    }
+    allow_ranges_from_env()
+}
+
+/// Run `f` with an explicit allow-range list (tests only).
+#[cfg(test)]
+pub(super) async fn with_allow_ranges<F>(ranges: Vec<Cidr>, f: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    ALLOW_RANGES_OVERRIDE.scope(ranges, f).await
+}
+
 fn assert_public_address(
     ip: IpAddr,
     hostname: &str,
     allow_ranges: &[Cidr],
 ) -> Result<(), ToolError> {
+    let ip = normalize_ip(ip);
     if allow_ranges.iter().any(|range| range.contains(ip)) {
         return Ok(());
     }
@@ -80,13 +106,17 @@ fn normalize_hostname(hostname: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_blocked(ip: IpAddr) -> bool {
+fn normalize_ip(ip: IpAddr) -> IpAddr {
     match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+        IpAddr::V4(_) => ip,
+    }
+}
+
+fn is_blocked(ip: IpAddr) -> bool {
+    match normalize_ip(ip) {
         IpAddr::V4(v4) => is_blocked_v4(v4),
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(mapped) => is_blocked_v4(mapped),
-            None => is_blocked_v6(v6),
-        },
+        IpAddr::V6(v6) => is_blocked_v6(v6),
     }
 }
 
@@ -109,6 +139,7 @@ fn is_blocked_v6(ip: Ipv6Addr) -> bool {
         || ip.is_loopback()
         || (a & 0xfe) == 0xfc // fc00::/7 unique local
         || (a == 0xfe && (b & 0xc0) == 0x80) // fe80::/10 link-local
+        || a == 0xff // ff00::/8 multicast
 }
 
 /// IPv4 or IPv6 CIDR used to exempt addresses from the private-range block.
@@ -133,9 +164,11 @@ impl Cidr {
                 return Err(format!("invalid CIDR prefix in {raw:?}"));
             }
         }
-        let network: IpAddr = addr_part
-            .parse()
-            .map_err(|_| format!("invalid CIDR address in {raw:?}"))?;
+        let network = normalize_ip(
+            addr_part
+                .parse()
+                .map_err(|_| format!("invalid CIDR address in {raw:?}"))?,
+        );
         let max_prefix = match network {
             IpAddr::V4(_) => 32,
             IpAddr::V6(_) => 128,
@@ -154,6 +187,7 @@ impl Cidr {
     }
 
     fn contains(self, ip: IpAddr) -> bool {
+        let ip = normalize_ip(ip);
         match (self.network, ip) {
             (IpAddr::V4(network), IpAddr::V4(candidate)) => {
                 prefix_match(&network.octets(), &candidate.octets(), self.prefix)
@@ -180,13 +214,24 @@ fn prefix_match(network: &[u8], candidate: &[u8], prefix: u8) -> bool {
 }
 
 /// Comma-separated CIDRs from `RHO_SSRF_ALLOW_RANGES`, e.g. `198.18.0.0/15`.
-/// Invalid entries are skipped so a bad env value cannot panic tool setup.
-pub(super) fn allow_ranges_from_env() -> Vec<Cidr> {
+/// Invalid entries fail closed so a misconfigured escape hatch is never silent.
+pub(super) fn allow_ranges_from_env() -> Result<Vec<Cidr>, ToolError> {
     let Ok(raw) = std::env::var("RHO_SSRF_ALLOW_RANGES") else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     raw.split(',')
-        .filter_map(|part| Cidr::parse(part).ok())
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            Cidr::parse(part).map_err(|error| {
+                ToolError::Message(format!(
+                    "invalid RHO_SSRF_ALLOW_RANGES entry {part:?}: {error}"
+                ))
+            })
+        })
         .collect()
 }
 
