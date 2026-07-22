@@ -77,6 +77,11 @@ model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
 web_search_provider = "disabled"
+
+[behavior]
+# Keep matrix runs on the isolated file store so /login never prompts and
+# never touches the developer OS keyring.
+credential_store = "file"
 "#,
         )
         .context("failed to write isolated config.toml")?;

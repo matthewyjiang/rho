@@ -129,7 +129,7 @@ use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
-use login::{PendingLoginAfterCredentialStore, PendingOAuthLogin, SecretInput};
+use login::{CredentialStoreChoice, PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
@@ -363,7 +363,6 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
-    pending_login_after_credential_store: Option<PendingLoginAfterCredentialStore>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     usage_limits_client: reqwest::Client,
     cumulative_usage: Option<ModelUsage>,
@@ -412,6 +411,7 @@ enum ComposerMode {
     ConfigNumberInput(ConfigNumberInput),
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
+    CredentialStoreChoice(CredentialStoreChoice),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
 }
@@ -749,7 +749,6 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_oauth_login: None,
-            pending_login_after_credential_store: None,
             pending_usage_limits: None,
             usage_limits_client: reqwest::Client::new(),
             cumulative_usage: None,
@@ -1000,6 +999,13 @@ impl App {
         }
 
         if self.handle_oauth_pending_key(key)? {
+            return Ok(());
+        }
+
+        if self
+            .handle_credential_store_choice_key(key, terminal, agent)
+            .await?
+        {
             return Ok(());
         }
 
@@ -1949,7 +1955,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }
-            ComposerMode::Approval(_) | ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) => {
+            ComposerMode::Approval(_) | ComposerMode::Picker(_) | ComposerMode::OAuthPending(_) | ComposerMode::CredentialStoreChoice(_) => {
             }
         }
     }
@@ -2408,8 +2414,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
-            | PickerAction::RefreshModelList
-            | PickerAction::SelectCredentialStore => {
+            | PickerAction::RefreshModelList => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
                 ));
@@ -3420,6 +3425,93 @@ fn secret_input_lines(secret: &SecretInput, width: usize) -> Vec<Line<'static>> 
             LineFill::Natural,
         ),
     ]
+}
+
+fn credential_store_choice_lines(
+    choice: &CredentialStoreChoice,
+    width: usize,
+) -> Vec<Line<'static>> {
+    use rho_providers::credentials::CredentialStoreBackend;
+
+    let width = width.max(1);
+    let mut lines = vec![
+        styled_line(
+            truncate_one_line("Where should Rho store provider credentials?", width),
+            width,
+            Theme::input_prompt(),
+            LineFill::Natural,
+        ),
+        styled_line(
+            truncate_one_line(
+                "This is saved to config and used for future logins on this machine.",
+                width,
+            ),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ),
+    ];
+
+    for (index, option) in choice.request.options().into_iter().enumerate() {
+        let selected = index == choice.active && option.available;
+        let (number, label, detail) = match option.backend {
+            CredentialStoreBackend::Os => (
+                "1",
+                "OS credential store",
+                if option.available {
+                    "Recommended · system keychain / secret service".to_string()
+                } else {
+                    format!("Unavailable · {}", choice.request.detail_for(option.backend))
+                },
+            ),
+            CredentialStoreBackend::File => (
+                "2",
+                "Local file",
+                if option.available {
+                    "Owner-only under ~/.rho/credentials · not encrypted at rest".to_string()
+                } else {
+                    format!("Unavailable · {}", choice.request.detail_for(option.backend))
+                },
+            ),
+        };
+        let marker = if selected {
+            ">"
+        } else if option.available {
+            " "
+        } else {
+            "·"
+        };
+        let style = if selected {
+            Theme::input_prompt()
+        } else if option.available {
+            Theme::text()
+        } else {
+            Theme::dim()
+        };
+        lines.push(styled_line(
+            truncate_one_line(&format!("{marker} [{number}] {label}"), width),
+            width,
+            style,
+            LineFill::Natural,
+        ));
+        lines.push(styled_line(
+            truncate_one_line(&format!("      {detail}"), width),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ));
+    }
+
+    lines.push(styled_line(
+        truncate_one_line(
+            "enter/space choose · 1/2 or o/f jump · arrows move · esc cancel",
+            width,
+        ),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    ));
+    lines
 }
 
 fn usage_with_estimated_cost(

@@ -65,6 +65,112 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn login_prompts_for_credential_store_before_provider_picker() {
+    let home = IsolatedHome::new().unwrap();
+    // Deliberately leave behavior.credential_store unset so first /login must choose.
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+"#,
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    );
+    let mut harness =
+        PtyHarness::spawn_named(&plan, "login_credential_store_choice").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    // Cancel path: chooser appears, esc returns to the prompt.
+    harness.submit_text("/login").unwrap();
+    harness
+        .wait_for_text(
+            "Where should Rho store provider credentials?",
+            WaitTimeout::secs(10, "chooser open"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text("Local file", WaitTimeout::secs(5, "file option"))
+        .unwrap();
+    harness.inject_key(&Key::Esc).unwrap();
+    harness
+        .wait_for_quiet(Duration::from_millis(150), WaitTimeout::secs(5, "after cancel"))
+        .unwrap();
+
+    // Choose file via stable shortcut, then land on the provider picker.
+    harness.submit_text("/login").unwrap();
+    harness
+        .wait_for_text(
+            "Where should Rho store provider credentials?",
+            WaitTimeout::secs(10, "chooser reopen"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Char('2')).unwrap();
+    harness
+        .wait_for_text(
+            "credential store set to file",
+            WaitTimeout::secs(10, "store persisted"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "select provider to login",
+            WaitTimeout::secs(10, "provider picker"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Esc).unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    assert!(
+        config.contains("credential_store = \"file\""),
+        "chooser should persist file backend:\n{config}"
+    );
+
+    // Second /login must not re-prompt once config is set.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    );
+    let mut harness =
+        PtyHarness::spawn_named(&plan, "login_credential_store_choice_again").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup again"))
+        .unwrap();
+    harness.submit_text("/login").unwrap();
+    harness
+        .wait_for_text(
+            "select provider to login",
+            WaitTimeout::secs(10, "no second chooser"),
+        )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains("Where should Rho store provider credentials?"),
+        "chooser should not reappear after config is set:\n{screen}"
+    );
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+#[test]
 fn model_command_resolves_configured_alias() {
     let home = IsolatedHome::new().unwrap();
     std::fs::write(

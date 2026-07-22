@@ -277,9 +277,9 @@ impl Config {
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        let mut cfg = Self::load_settings_only(path.clone())?;
-        crate::credential_store::bootstrap_from_config(&mut cfg, &path)?;
-        Ok(cfg)
+        // Settings only. Open/migrate the credential store once at process
+        // startup via credential_store::initialize_from_config.
+        Self::load_settings_only(path)
     }
 
     /// Load config settings without opening the credential store.
