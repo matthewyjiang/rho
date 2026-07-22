@@ -19,14 +19,7 @@ use std::sync::Mutex;
 use tokio::sync::oneshot;
 use tool_call_batch::ToolCallBatch;
 
-use crossterm::{
-    event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
-    },
-    execute,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 #[cfg(test)]
 use ratatui::layout::Rect;
 use ratatui::{
@@ -61,6 +54,7 @@ mod history_cache;
 mod info_command;
 mod inline_shell;
 mod keybindings;
+mod keyboard_modes;
 mod limits_command;
 mod local_commands;
 mod local_diff;
@@ -239,10 +233,8 @@ pub(crate) use attachment::{run as run_attachment, AttachmentWriter};
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
-    let bracketed_paste_enabled = enable_bracketed_paste().is_ok();
+    let keyboard = keyboard_modes::Enabled::acquire();
     let mouse_capture_enabled = mouse_capture::enable().is_ok();
-    let modified_keys_enabled = enable_modified_keys().is_ok();
-    let keyboard_enhancements_enabled = enable_keyboard_enhancements().is_ok();
     let herdr = info.services.herdr.clone();
     let initial_state = if info.services.auth_unavailable.is_some() {
         HerdrState::Blocked
@@ -268,17 +260,9 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
         }
     };
     herdr.release().await;
-    if keyboard_enhancements_enabled {
-        let _ = disable_keyboard_enhancements();
-    }
-    if modified_keys_enabled {
-        let _ = disable_modified_keys();
-    }
+    keyboard.release();
     if mouse_capture_enabled {
         let _ = mouse_capture::disable();
-    }
-    if bracketed_paste_enabled {
-        let _ = disable_bracketed_paste();
     }
     ratatui::restore();
     if let Ok(result) = &result {
@@ -3577,48 +3561,6 @@ fn next_word_boundary(input: &str, cursor: usize) -> usize {
         index += 1;
     }
     index
-}
-
-fn enable_bracketed_paste() -> std::io::Result<()> {
-    execute!(std::io::stdout(), EnableBracketedPaste)
-}
-
-fn disable_bracketed_paste() -> std::io::Result<()> {
-    execute!(std::io::stdout(), DisableBracketedPaste)
-}
-
-fn enable_keyboard_enhancements() -> std::io::Result<()> {
-    // On Windows, Rho reads KEY_EVENT records from ConPTY. Kitty keyboard
-    // enhancements cause multiplexers such as Herdr to re-encode Shift+Tab as
-    // CSI u (`\x1b[9;2u`), which ConPTY does not reverse-translate. Legacy
-    // `\x1b[Z` is reverse-mapped to VK_TAB+SHIFT and reaches Rho as BackTab.
-    if cfg!(windows) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "keyboard enhancements are disabled on Windows so Shift+Tab remains representable under ConPTY",
-        ));
-    }
-    execute!(
-        std::io::stdout(),
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )
-}
-
-fn disable_keyboard_enhancements() -> std::io::Result<()> {
-    execute!(std::io::stdout(), PopKeyboardEnhancementFlags)
-}
-
-fn enable_modified_keys() -> std::io::Result<()> {
-    let mut stdout = std::io::stdout();
-    // xterm mode 2 preserves modified Enter without altering printable shifted characters.
-    stdout.write_all(b"\x1b[>4;2m")?;
-    stdout.flush()
-}
-
-fn disable_modified_keys() -> std::io::Result<()> {
-    let mut stdout = std::io::stdout();
-    stdout.write_all(b"\x1b[>4;0m")?;
-    stdout.flush()
 }
 
 fn normalize_paste(text: &str) -> String {
