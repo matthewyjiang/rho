@@ -175,14 +175,14 @@ mod tests {
     };
 
     #[test]
-    fn poolside_picker_uses_clean_reference_for_namespaced_wire_model() {
+    fn poolside_picker_joins_internal_model_into_provider_reference() {
         let cache = tempfile::tempdir().unwrap();
         with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
             replace_cached_provider_models_for_tests(
                 "poolside",
                 &[ProviderModel {
                     provider: "poolside".into(),
-                    model: "poolside/laguna-m.1".into(),
+                    model: "laguna-m.1".into(),
                     display_name: "Laguna M.1".into(),
                     context_window: None,
                     max_output_tokens: None,
@@ -195,7 +195,7 @@ mod tests {
             let auths = available_auth_modes(&store);
             let mut info = crate::tui::tests::test_bootstrap().runtime;
             info.provider = "poolside".into();
-            info.model = "poolside/laguna-m.1".into();
+            info.model = "laguna-m.1".into();
             info.auth = "poolside-api-key".into();
 
             let picker = model_picker(&info, &auths);

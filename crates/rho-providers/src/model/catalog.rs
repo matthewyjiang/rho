@@ -374,15 +374,15 @@ fn resolve_model_selection_for_provider_from(
     if provider_uses_cached_models(provider) {
         let model_id = provider::provider_descriptor(provider).map_or_else(
             || model.to_string(),
-            |descriptor| descriptor.model_id_from_reference(model),
+            |descriptor| descriptor.canonicalize_model_id(model),
         );
         if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
             return Ok(selection_from_provider_model(provider, &entry));
         }
-        if builtin_default_model(provider).as_deref() == Some(model) {
+        if builtin_default_model(provider).as_deref() == Some(model_id.as_str()) {
             return Ok(ModelSelection {
                 provider: provider.to_string(),
-                model: model.to_string(),
+                model: model_id,
                 auth: provider_default_auth(provider)
                     .unwrap_or("api-key")
                     .to_string(),
@@ -486,18 +486,24 @@ mod tests {
     }
 
     #[test]
-    fn resolves_clean_poolside_reference_to_namespaced_wire_model() {
+    fn resolves_poolside_references_to_internal_model_id() {
         with_cached_provider_models(
             "poolside",
-            vec![provider_model("poolside", "poolside/laguna-m.1")],
+            vec![provider_model("poolside", "laguna-m.1")],
             || {
                 let clean = resolve_model_selection_for_provider("poolside", "laguna-m.1").unwrap();
                 let legacy =
                     resolve_model_selection_for_provider("poolside", "poolside/laguna-m.1")
                         .unwrap();
+                let double = resolve_model_selection_for_provider(
+                    "poolside",
+                    "poolside/poolside/laguna-m.1",
+                )
+                .unwrap();
 
-                assert_eq!(clean.model, "poolside/laguna-m.1");
+                assert_eq!(clean.model, "laguna-m.1");
                 assert_eq!(legacy, clean);
+                assert_eq!(double, clean);
             },
         );
     }

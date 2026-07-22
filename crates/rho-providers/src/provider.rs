@@ -95,6 +95,20 @@ pub enum ProviderModelRefreshKind {
     OpenAiCompatible,
 }
 
+/// How a provider encodes model IDs on the wire versus in Rho cache/config.
+///
+/// Discovery, selection, and request construction should use this policy instead
+/// of hard-coding provider names at call sites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ModelIdCodec {
+    /// Cache, config, identity, and wire IDs all use the same model string.
+    #[default]
+    Plain,
+    /// Wire IDs are `{provider_name}/{internal_id}`; cache and config store the
+    /// internal id only. User-facing references remain `provider/internal_id`.
+    ProviderPrefixed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderAuthKind {
     None,
@@ -129,24 +143,35 @@ pub enum ProviderAuthKind {
 }
 
 impl ProviderDescriptor {
-    /// Formats a provider-qualified model reference for user input and display.
+    /// Normalizes a model id for cache, config, and identity storage.
     ///
-    /// Poolside's wire model IDs already carry the `poolside/` namespace, so
-    /// adding Rho's provider prefix again would produce a duplicate segment.
-    pub fn model_reference(&self, model: &str) -> String {
-        if self.runtime_id == RuntimeProviderId::Poolside && model.starts_with("poolside/") {
-            model.to_string()
-        } else {
-            format!("{}/{model}", self.name)
+    /// For [`ModelIdCodec::ProviderPrefixed`], strips leading `{name}/` segments
+    /// so legacy wire ids and double-prefixed favorites collapse to one internal id.
+    pub fn canonicalize_model_id(&self, model: &str) -> String {
+        match self.model_id_codec {
+            ModelIdCodec::Plain => model.to_string(),
+            ModelIdCodec::ProviderPrefixed => {
+                let prefix = format!("{}/", self.name);
+                let mut model = model;
+                while let Some(rest) = model.strip_prefix(prefix.as_str()) {
+                    if rest.is_empty() {
+                        break;
+                    }
+                    model = rest;
+                }
+                model.to_string()
+            }
         }
     }
 
-    /// Converts a model reference suffix into the wire ID used by this provider.
-    pub fn model_id_from_reference(&self, model: &str) -> String {
-        if self.runtime_id == RuntimeProviderId::Poolside && !model.starts_with("poolside/") {
-            format!("poolside/{model}")
-        } else {
-            model.to_string()
+    /// Expands an internal model id to the id sent on this provider's HTTP API.
+    pub fn wire_model_id(&self, model: &str) -> String {
+        match self.model_id_codec {
+            ModelIdCodec::Plain => model.to_string(),
+            ModelIdCodec::ProviderPrefixed => {
+                let internal = self.canonicalize_model_id(model);
+                format!("{}/{internal}", self.name)
+            }
         }
     }
 
@@ -234,6 +259,7 @@ pub struct ProviderDescriptor {
     pub auth_kind: ProviderAuthKind,
     pub model_source: ProviderModelSource,
     pub model_refresh: Option<ProviderModelRefreshKind>,
+    pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
 }
@@ -249,6 +275,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::None,
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "ollama",
         catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
     },
@@ -267,6 +294,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
@@ -283,6 +311,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
@@ -301,6 +330,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "anthropic",
         catalog_reasoning: CatalogReasoningPolicy::Unknown,
     },
@@ -319,6 +349,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Google),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "google",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
@@ -335,6 +366,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "github-copilot",
         catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
     },
@@ -353,6 +385,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
@@ -371,6 +404,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::ProviderPrefixed,
         metadata_upstream: "poolside",
         catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
     },
@@ -389,6 +423,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openrouter",
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
@@ -409,6 +444,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openrouter",
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
@@ -425,6 +461,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
@@ -443,6 +480,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "xai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
@@ -459,6 +497,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
+        model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "xai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
     },
@@ -476,10 +515,7 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
 
 /// Formats a provider-qualified model reference for user input and display.
 pub fn model_reference(provider: &str, model: &str) -> String {
-    provider_descriptor(provider).map_or_else(
-        || format!("{provider}/{model}"),
-        |descriptor| descriptor.model_reference(model),
-    )
+    format!("{provider}/{model}")
 }
 
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {

@@ -114,7 +114,7 @@ fn explicit_builder_constructs_poolside_provider() {
 
     assert_eq!(provider.identity().provider, "poolside");
     assert_eq!(provider.identity().api, "openai-chat-completions");
-    assert_eq!(provider.identity().model, "poolside/laguna-m.1");
+    assert_eq!(provider.identity().model, "laguna-m.1");
 }
 
 #[test]

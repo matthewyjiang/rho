@@ -55,21 +55,39 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
 }
 
 #[test]
-fn poolside_model_references_keep_one_namespace_and_restore_wire_ids() {
-    let poolside = super::provider_descriptor_by_id(super::ProviderId::Poolside);
+fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
+    use super::{ModelIdCodec, ProviderId};
 
+    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside);
+    assert_eq!(poolside.model_id_codec, ModelIdCodec::ProviderPrefixed);
+    assert_eq!(poolside.canonicalize_model_id("laguna-m.1"), "laguna-m.1");
     assert_eq!(
-        poolside.model_reference("poolside/laguna-m.1"),
+        poolside.canonicalize_model_id("poolside/laguna-m.1"),
+        "laguna-m.1"
+    );
+    assert_eq!(
+        poolside.canonicalize_model_id("poolside/poolside/laguna-m.1"),
+        "laguna-m.1"
+    );
+    assert_eq!(poolside.wire_model_id("laguna-m.1"), "poolside/laguna-m.1");
+    assert_eq!(
+        poolside.wire_model_id("poolside/laguna-m.1"),
         "poolside/laguna-m.1"
     );
     assert_eq!(
-        poolside.model_id_from_reference("laguna-m.1"),
+        super::model_reference("poolside", "laguna-m.1"),
         "poolside/laguna-m.1"
     );
-    assert_eq!(
-        poolside.model_id_from_reference("poolside/laguna-m.1"),
-        "poolside/laguna-m.1"
-    );
+}
+
+#[test]
+fn plain_model_id_codec_leaves_ids_unchanged() {
+    use super::{ModelIdCodec, ProviderId};
+
+    let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
+    assert_eq!(openai.model_id_codec, ModelIdCodec::Plain);
+    assert_eq!(openai.canonicalize_model_id("gpt-5.5"), "gpt-5.5");
+    assert_eq!(openai.wire_model_id("gpt-5.5"), "gpt-5.5");
 }
 
 #[test]

@@ -223,10 +223,11 @@ impl ProviderBuilder {
                 },
                 ProviderCredential::OpenAiCompatible(auth),
             ) if compatible_auth_matches_kind(&auth, auth_kind) => {
+                let model = descriptor.canonicalize_model_id(&self.options.model);
                 Ok(Arc::new(OpenAiCompatibleProvider::new(
                     client,
                     provider_name,
-                    self.options.model,
+                    model,
                     dialect,
                     auth,
                     endpoint.unwrap_or_else(|| default_api_base.into()),

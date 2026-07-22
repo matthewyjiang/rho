@@ -126,11 +126,12 @@ pub(super) async fn fetch(
             } else {
                 ReasoningCapabilities::Unknown
             };
+            let model_id = descriptor.canonicalize_model_id(&model.id);
             ProviderModel {
                 provider: descriptor.name.into(),
-                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                display_name: model.display_name.unwrap_or_else(|| model_id.clone()),
                 context_window: model.context_length.filter(|window| *window > 0),
-                model: model.id,
+                model: model_id,
                 max_output_tokens: None,
                 reasoning_capabilities,
             }

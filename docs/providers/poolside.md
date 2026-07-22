@@ -28,7 +28,7 @@ Paste your Poolside API key when prompted. Rho stores it in the configured crede
 /model poolside/laguna-m.1
 ```
 
-Rho recognizes that Poolside model IDs already include the `poolside/` namespace and does not show a duplicate provider prefix. It still sends the full `poolside/laguna-m.1` model ID to the API.
+Rho stores the unprefixed model id (`laguna-m.1`) in cache and config. User-facing selection still uses `poolside/laguna-m.1`, and Rho sends the namespaced wire id `poolside/laguna-m.1` to the Poolside API.
 
 Remove the stored key with:
 

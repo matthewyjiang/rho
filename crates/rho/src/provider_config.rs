@@ -62,12 +62,16 @@ impl Config {
         let profile = rho_providers::provider::resolve_profile(&self.provider, &self.auth)?;
         self.provider = profile.name.into();
         self.auth = profile.auth.into();
+        // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
+        // internal model id used by cache, config, and display joins.
+        self.model = profile.canonicalize_model_id(&self.model);
         for (id, selection) in &mut self.internal_agents {
             let profile =
                 rho_providers::provider::resolve_profile(&selection.provider, &selection.auth)
                     .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
             selection.provider = profile.name.into();
             selection.auth = profile.auth.into();
+            selection.model = profile.canonicalize_model_id(&selection.model);
         }
         Ok(())
     }

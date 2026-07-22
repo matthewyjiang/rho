@@ -8,20 +8,26 @@ pub struct FavoriteModel {
 
 impl FavoriteModel {
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            provider: provider.into(),
-            model: model.into(),
-        }
+        let provider = provider.into();
+        let model = model.into();
+        let model = crate::provider::provider_descriptor(&provider)
+            .map(|descriptor| descriptor.canonicalize_model_id(&model))
+            .unwrap_or(model);
+        Self { provider, model }
     }
 
     pub fn value(&self) -> String {
-        crate::provider::model_reference(&self.provider, &self.model)
+        format!("{}/{}", self.provider, self.model)
     }
 
     pub fn matches(&self, provider: &str, model: &str) -> bool {
-        self.provider == provider
-            && crate::provider::model_reference(provider, &self.model)
-                == crate::provider::model_reference(provider, model)
+        if self.provider != provider {
+            return false;
+        }
+        let model = crate::provider::provider_descriptor(provider)
+            .map(|descriptor| descriptor.canonicalize_model_id(model))
+            .unwrap_or_else(|| model.to_string());
+        self.model == model
     }
 }
 
@@ -126,15 +132,18 @@ mod tests {
     }
 
     #[test]
-    fn poolside_favorites_normalize_to_clean_reference_and_match_wire_id() {
+    fn poolside_favorites_normalize_to_internal_model_and_match_legacy_forms() {
         let favorites = normalized_favorite_models(&[
             "poolside/poolside/laguna-m.1".into(),
             "poolside/laguna-m.1".into(),
         ]);
 
         assert_eq!(favorites.len(), 1);
+        assert_eq!(favorites[0].model, "laguna-m.1");
         assert_eq!(favorites[0].value(), "poolside/laguna-m.1");
+        assert!(favorites[0].matches("poolside", "laguna-m.1"));
         assert!(favorites[0].matches("poolside", "poolside/laguna-m.1"));
+        assert!(favorites[0].matches("poolside", "poolside/poolside/laguna-m.1"));
     }
 
     #[test]

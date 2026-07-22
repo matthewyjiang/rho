@@ -103,14 +103,14 @@ fn validate_cli_rejects_resume_with_update() {
 }
 
 #[test]
-fn clean_poolside_model_override_persists_namespaced_wire_id() {
-    with_cached_provider_models("poolside", vec!["poolside/laguna-m.1"], || {
+fn poolside_model_override_persists_internal_model_id() {
+    with_cached_provider_models("poolside", vec!["laguna-m.1"], || {
         let mut config = Config::default();
         let cli = Cli::try_parse_from(["rho", "--model", "poolside/laguna-m.1"]).unwrap();
 
         assert!(apply_overrides(&mut config, &cli).unwrap());
         assert_eq!(config.provider, "poolside");
-        assert_eq!(config.model, "poolside/laguna-m.1");
+        assert_eq!(config.model, "laguna-m.1");
         assert_eq!(config.auth, "poolside-api-key");
     });
 }

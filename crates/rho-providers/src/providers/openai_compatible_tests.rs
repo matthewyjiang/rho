@@ -418,6 +418,34 @@ fn identities_keep_custom_provider_names() {
     );
 }
 
+#[test]
+fn poolside_request_body_uses_namespaced_wire_model_id() {
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "poolside",
+        "laguna-m.1".into(),
+        OpenAiCompatibleDialect::Standard,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://inference.poolside.ai/v1".into(),
+    );
+    let messages = [Message::user_text("hello")];
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Medium,
+                prompt_cache_key: None,
+            },
+            /*stream*/ false,
+        )
+        .unwrap();
+
+    assert_eq!(provider.model_identity().model, "laguna-m.1");
+    assert_eq!(body.model, "poolside/laguna-m.1");
+}
+
 #[tokio::test]
 async fn standard_dialect_streams_without_auth_or_usage() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
