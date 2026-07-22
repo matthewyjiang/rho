@@ -54,6 +54,11 @@ fn non_image_path_paste_stays_text() {
 fn unreadable_image_path_paste_reports_error_without_inserting_text() {
     use std::os::unix::fs::PermissionsExt;
 
+    // SAFETY: `geteuid` takes no pointers and has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("secret.png");
     let png = base64::Engine::decode(
@@ -63,6 +68,11 @@ fn unreadable_image_path_paste_reports_error_without_inserting_text() {
     .unwrap();
     std::fs::write(&path, png).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root or CAP_DAC_OVERRIDE can still open 0o000 files; skip if this process can.
+    if std::fs::File::open(&path).is_ok() {
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        return;
+    }
 
     let mut app = test_app();
     app.info.runtime.cwd = dir.path().to_path_buf();
