@@ -116,12 +116,6 @@ pub(super) async fn execute_process(
             "bash received an unsupported process plan".into(),
         ));
     };
-    if execution.environment() != &ProcessEnvironment::InheritAll {
-        return Err(ToolError::Message(
-            "bash received an unsupported process environment".into(),
-        ));
-    }
-
     let mut command = Command::new(executable);
     command
         .args(arguments)
@@ -132,6 +126,8 @@ pub(super) async fn execute_process(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
+    super::process_env::apply_process_environment(&mut command, execution.environment())
+        .map_err(ToolError::Message)?;
     let mut child = command.spawn()?;
     let mut process_group = ProcessGroupGuard::new(child.id());
 
@@ -552,6 +548,43 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         assert!(!marker.exists(), "background process survived the timeout");
+    }
+
+    #[tokio::test]
+    async fn inherit_except_scrubs_named_credentials_from_child_env() {
+        const CREDENTIAL_VAR: &str = "RHO_TEST_PROVIDER_API_KEY";
+        const MARKER_VAR: &str = "RHO_TEST_SAFE_ENV_MARKER";
+
+        // Child-only overrides: do not mutate the test process environment.
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .args([
+                "-lc",
+                &format!(
+                    "printf 'credential=%s;marker=%s' \"${{{CREDENTIAL_VAR}-}}\" \"${{{MARKER_VAR}-}}\""
+                ),
+            ])
+            .env(CREDENTIAL_VAR, "secret-should-not-leak")
+            .env(MARKER_VAR, "keep-me")
+            .kill_on_drop(true);
+        crate::apply_process_environment(
+            &mut command,
+            &ProcessEnvironment::inherit_except([CREDENTIAL_VAR]),
+        )
+        .expect("inherit_except must apply");
+
+        let output = command.output().await.expect("scrubbed command should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "command should succeed: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            stdout, "credential=;marker=keep-me",
+            "credential must be absent while non-sensitive vars remain"
+        );
     }
 }
 

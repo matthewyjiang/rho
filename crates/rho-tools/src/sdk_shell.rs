@@ -12,9 +12,42 @@ use serde_json::Value;
 use crate::{
     cancellation::RunCancellation,
     tool::{Tool as AppTool, ToolError as AppToolError, ToolResult as AppToolResult},
+    DEFAULT_MAX_OUTPUT_BYTES,
 };
 
 use super::{sdk_security::authorize_request, sdk_support::check_cancelled};
+
+/// Options for the host-facing shell tool adapter.
+#[derive(Clone, Debug)]
+pub struct ShellToolOptions {
+    max_output_bytes: usize,
+    environment: ProcessEnvironment,
+}
+
+impl Default for ShellToolOptions {
+    fn default() -> Self {
+        Self {
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            environment: ProcessEnvironment::InheritAll,
+        }
+    }
+}
+
+impl ShellToolOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes.max(1);
+        self
+    }
+
+    pub fn environment(mut self, environment: ProcessEnvironment) -> Self {
+        self.environment = environment;
+        self
+    }
+}
 
 #[derive(Clone, Copy)]
 enum ShellKind {
@@ -27,22 +60,25 @@ enum ShellKind {
 struct SdkShellTool {
     kind: ShellKind,
     max_output_bytes: usize,
+    environment: ProcessEnvironment,
 }
 
 impl SdkShellTool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub(crate) const fn bash(max_output_bytes: usize) -> Self {
+    fn bash(options: ShellToolOptions) -> Self {
         Self {
             kind: ShellKind::Bash,
-            max_output_bytes,
+            max_output_bytes: options.max_output_bytes,
+            environment: options.environment,
         }
     }
 
     #[cfg(windows)]
-    pub(crate) const fn powershell(max_output_bytes: usize) -> Self {
+    fn powershell(options: ShellToolOptions) -> Self {
         Self {
             kind: ShellKind::PowerShell,
-            max_output_bytes,
+            max_output_bytes: options.max_output_bytes,
+            environment: options.environment,
         }
     }
 }
@@ -64,6 +100,7 @@ impl ShellPlan {
         arguments: Value,
         context: &ToolContext,
         max_output_bytes: usize,
+        environment: ProcessEnvironment,
     ) -> Result<Self, ToolError> {
         let arguments: ShellArgs = serde_json::from_value(arguments).map_err(|error| {
             ToolError::new(
@@ -96,7 +133,7 @@ impl ShellPlan {
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
             kind.invocation(arguments.command),
-            ProcessEnvironment::InheritAll,
+            environment,
             ProcessOutputLimits::new(max_output_bytes, timeout),
         );
         Ok(Self {
@@ -223,6 +260,7 @@ impl Tool for SdkShellTool {
                 invocation.into_arguments(),
                 &context,
                 self.max_output_bytes,
+                self.environment.clone(),
             )?;
             plan.authorize(self.kind, &context).await?;
             plan.execute(self.kind, invocation_id, &context).await
@@ -289,14 +327,24 @@ fn map_app_error(error: AppToolError) -> ToolError {
 #[path = "sdk_shell_tests.rs"]
 mod tests;
 
-/// Returns the workspace shell tool (`bash` on Linux/macOS, PowerShell on
-/// Windows) as an SDK tool trait object.
+/// Builds the platform default shell invocation for a command string.
 ///
-/// The tool does not grant capabilities by itself. Hosts must attach a
-/// workspace and a non-default policy on the runtime before commands run.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn shell_tool(max_output_bytes: usize) -> std::sync::Arc<dyn Tool> {
-    std::sync::Arc::new(SdkShellTool::bash(max_output_bytes))
+/// Linux/macOS use `bash -lc`. Windows uses PowerShell with the shared
+/// [`crate::powershell::wrapped_command`] wrapper.
+pub fn shell_invocation(command: impl Into<String>) -> ProcessInvocation {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        ShellKind::Bash.invocation(command.into())
+    }
+    #[cfg(windows)]
+    {
+        ShellKind::PowerShell.invocation(command.into())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = command;
+        compile_error!("shell_invocation requires linux, macos, or windows");
+    }
 }
 
 /// Returns the workspace shell tool (`bash` on Linux/macOS, PowerShell on
@@ -304,7 +352,23 @@ pub fn shell_tool(max_output_bytes: usize) -> std::sync::Arc<dyn Tool> {
 ///
 /// The tool does not grant capabilities by itself. Hosts must attach a
 /// workspace and a non-default policy on the runtime before commands run.
+/// Default environment inheritance is [`ProcessEnvironment::InheritAll`];
+/// security-sensitive hosts should pass a stricter policy through
+/// [`ShellToolOptions::environment`].
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn shell_tool(options: ShellToolOptions) -> std::sync::Arc<dyn Tool> {
+    std::sync::Arc::new(SdkShellTool::bash(options))
+}
+
+/// Returns the workspace shell tool (`bash` on Linux/macOS, PowerShell on
+/// Windows) as an SDK tool trait object.
+///
+/// The tool does not grant capabilities by itself. Hosts must attach a
+/// workspace and a non-default policy on the runtime before commands run.
+/// Default environment inheritance is [`ProcessEnvironment::InheritAll`];
+/// security-sensitive hosts should pass a stricter policy through
+/// [`ShellToolOptions::environment`].
 #[cfg(windows)]
-pub fn shell_tool(max_output_bytes: usize) -> std::sync::Arc<dyn Tool> {
-    std::sync::Arc::new(SdkShellTool::powershell(max_output_bytes))
+pub fn shell_tool(options: ShellToolOptions) -> std::sync::Arc<dyn Tool> {
+    std::sync::Arc::new(SdkShellTool::powershell(options))
 }

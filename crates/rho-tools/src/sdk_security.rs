@@ -32,7 +32,7 @@ pub(crate) async fn authorize_legacy(
             let command = required_string(arguments, "command")?;
             authorize_process(
                 context,
-                process_invocation(command),
+                crate::shell_invocation(command),
                 optional_timeout(arguments)?,
                 max_output_bytes,
                 source,
@@ -108,24 +108,6 @@ fn optional_timeout(
                 })
         })
         .transpose()
-}
-
-#[cfg(unix)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command.to_string())
-}
-
-#[cfg(windows)]
-fn process_invocation(command: &str) -> ProcessInvocation {
-    ProcessInvocation::shell_from_path(
-        "powershell.exe",
-        vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-        ],
-        crate::powershell::wrapped_command(command),
-    )
 }
 
 #[cfg(test)]

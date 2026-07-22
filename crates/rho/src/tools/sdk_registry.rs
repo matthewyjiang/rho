@@ -107,13 +107,23 @@ impl AppToolSet {
             delegation,
         } = options;
         let mut tool_set = Self::disabled();
+        // Compose one child-process environment policy for every process tool.
+        // Provider credential env vars are excluded so agent commands cannot
+        // read host API keys from the ambient environment.
+        let process_environment = rho_sdk::ProcessEnvironment::inherit_except(
+            rho_providers::credential_env_vars().iter().copied(),
+        );
 
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
+            process_environment.clone(),
         ));
         if capabilities.contains(&ToolCapability::Process) {
-            tool_set.add_bundle(super::process::sdk_bundle(config.max_output_bytes));
+            tool_set.add_bundle(super::process::sdk_bundle(
+                config.max_output_bytes,
+                process_environment.clone(),
+            ));
         }
         if capabilities.contains(&ToolCapability::Skill) {
             tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
@@ -130,7 +140,11 @@ impl AppToolSet {
                 tool_set.add_bundle(bundle);
             }
         }
-        tool_set.add_bundle(super::web::sdk_bundle(config, &capabilities));
+        tool_set.add_bundle(super::web::sdk_bundle(
+            config,
+            &capabilities,
+            process_environment,
+        ));
 
         let delegation_tools = DelegationToolSelection::from_capabilities(&capabilities);
         if let (Some(selection), Some(delegation)) = (delegation_tools, delegation) {

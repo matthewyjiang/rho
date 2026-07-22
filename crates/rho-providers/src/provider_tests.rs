@@ -254,3 +254,22 @@ fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
         Some(ProviderModelRefreshKind::OpenAiCompatible)
     );
 }
+
+#[test]
+fn credential_env_vars_track_provider_auth_kinds() {
+    let mut expected: Vec<&str> = super::providers()
+        .iter()
+        .filter_map(|descriptor| descriptor.auth_kind.env_var())
+        .collect();
+    expected.sort_unstable();
+    expected.dedup();
+
+    assert_eq!(super::credential_env_vars(), expected.as_slice());
+    assert!(expected.contains(&"OPENAI_API_KEY"));
+    assert!(expected.contains(&"ANTHROPIC_API_KEY"));
+    assert!(expected.contains(&"GEMINI_API_KEY"));
+    assert!(expected.contains(&"POOLSIDE_API_KEY"));
+    assert!(expected.contains(&"XAI_ACCESS_TOKEN"));
+    // Keyless providers must not invent env vars.
+    assert!(!expected.iter().any(|name| name.is_empty()));
+}

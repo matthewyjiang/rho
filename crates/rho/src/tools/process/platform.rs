@@ -1,23 +1,5 @@
 use std::time::Duration;
-use tokio::process::{Child, Command};
-
-#[cfg(unix)]
-pub(super) fn shell_command(command: &str) -> Command {
-    let mut command_line = Command::new("bash");
-    command_line.arg("-lc").arg(command).process_group(0);
-    command_line
-}
-#[cfg(windows)]
-pub(super) fn shell_command(command: &str) -> Command {
-    let mut command_line = Command::new("powershell.exe");
-    command_line.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        &rho_tools::powershell::wrapped_command(command),
-    ]);
-    command_line
-}
+use tokio::process::Child;
 
 #[cfg(unix)]
 pub(super) struct ProcessTree(i32);

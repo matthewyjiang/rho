@@ -1,9 +1,10 @@
 use super::{
-    platform::{shell_command, ProcessTree},
+    platform::ProcessTree,
     supervisor::supervise,
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
+use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -38,27 +39,66 @@ struct Inner {
     limits: ProcessLimits,
 }
 #[derive(Clone)]
-pub struct ProcessManager(Arc<Mutex<Inner>>);
+pub struct ProcessManager {
+    inner: Arc<Mutex<Inner>>,
+    environment: ProcessEnvironment,
+}
 
 impl ProcessManager {
+    /// Creates a manager that inherits the full ambient environment.
+    ///
+    /// Prefer [`Self::with_environment`] at composition roots that need a
+    /// stricter child-process policy.
+    #[cfg(test)]
     pub fn new(limits: ProcessLimits) -> Self {
-        Self(Arc::new(Mutex::new(Inner {
-            records: HashMap::new(),
-            limits,
-        })))
+        Self::with_environment(limits, ProcessEnvironment::InheritAll)
     }
+
+    pub fn with_environment(limits: ProcessLimits, environment: ProcessEnvironment) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Inner {
+                records: HashMap::new(),
+                limits,
+            })),
+            environment,
+        }
+    }
+
     pub async fn start(
         &self,
         command: String,
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
+        let execution = ProcessExecution::new(
+            cwd,
+            rho_tools::shell_invocation(command),
+            self.environment.clone(),
+            ProcessOutputLimits::new(1, timeout),
+        );
+        self.start_execution(execution).await
+    }
+
+    /// Starts a process from an already authorized execution plan.
+    pub async fn start_execution(&self, execution: ProcessExecution) -> Result<Snapshot, String> {
         self.prune();
+        // Build the spawn plan before registering a live record so setup failures
+        // cannot leave a Starting entry with no completion.
+        let command = record_command(execution.invocation())?;
+        let mut cmd = command_from_execution(&execution)?;
+        cmd.current_dir(execution.working_directory())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
+        let timeout = execution.output_limits().timeout();
+
         let id = Uuid::new_v4().to_string();
         let notify = Arc::new(Notify::new());
         let rec = Arc::new(Mutex::new(Record {
             id: id.clone(),
-            command: command.clone(),
+            command,
             state: State::Starting,
             started: Instant::now(),
             completed: None,
@@ -72,7 +112,7 @@ impl ProcessManager {
             notify,
         }));
         {
-            let mut inner = self.0.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
             let live = inner
                 .records
                 .values()
@@ -83,12 +123,6 @@ impl ProcessManager {
             }
             inner.records.insert(id.clone(), rec.clone());
         }
-        let mut cmd = shell_command(&command);
-        cmd.current_dir(cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
         match cmd.spawn() {
             Ok(mut child) => {
                 let tree = match ProcessTree::attach(&child) {
@@ -113,7 +147,7 @@ impl ProcessManager {
                     r.tree = Some(tree.clone());
                     r.notify.notify_waiters();
                 }
-                let limits = self.0.lock().unwrap().limits.clone();
+                let limits = self.inner.lock().unwrap().limits.clone();
                 tokio::spawn(supervise(
                     rec.clone(),
                     child,
@@ -186,7 +220,7 @@ impl ProcessManager {
     }
     pub async fn shutdown(&self) {
         let records = self
-            .0
+            .inner
             .lock()
             .unwrap()
             .records
@@ -215,7 +249,7 @@ impl ProcessManager {
     }
 
     fn get(&self, id: &str) -> Result<SharedRecord, String> {
-        self.0
+        self.inner
             .lock()
             .unwrap()
             .records
@@ -224,7 +258,7 @@ impl ProcessManager {
             .ok_or_else(|| "unknown process_id".into())
     }
     fn prune(&self) {
-        let mut i = self.0.lock().unwrap();
+        let mut i = self.inner.lock().unwrap();
         let retention = i.limits.retention;
         i.records.retain(|_, r| {
             r.lock()
@@ -248,6 +282,57 @@ impl ProcessManager {
         }
     }
 }
+
+fn record_command(invocation: &ProcessInvocation) -> Result<String, String> {
+    if let Some(command) = invocation.shell_command() {
+        return Ok(command.to_string());
+    }
+    match invocation {
+        ProcessInvocation::Executable {
+            executable,
+            arguments,
+            ..
+        } => {
+            let mut label = executable.display().to_string();
+            for argument in arguments {
+                label.push(' ');
+                label.push_str(argument);
+            }
+            Ok(label)
+        }
+        _ => Err("unsupported process invocation".into()),
+    }
+}
+
+fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process::Command, String> {
+    match execution.invocation() {
+        ProcessInvocation::Shell {
+            executable,
+            arguments,
+            command,
+            ..
+        } => {
+            let mut cmd = tokio::process::Command::new(executable);
+            cmd.args(arguments).arg(command);
+            #[cfg(unix)]
+            cmd.process_group(0);
+            Ok(cmd)
+        }
+        ProcessInvocation::Executable {
+            executable,
+            arguments,
+            ..
+        } => {
+            let mut cmd = tokio::process::Command::new(executable);
+            cmd.args(arguments);
+            #[cfg(unix)]
+            cmd.process_group(0);
+            Ok(cmd)
+        }
+        _ => Err("unsupported process invocation".into()),
+    }
+}
+
 fn snapshot(rec: &SharedRecord, cursor: u64) -> Snapshot {
     snapshot_bounded(rec, cursor, usize::MAX)
 }

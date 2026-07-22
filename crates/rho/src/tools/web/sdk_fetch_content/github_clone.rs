@@ -19,6 +19,7 @@ pub(super) struct GitHubClonePlan {
     local_path: PathBuf,
     working_directory: PathBuf,
     max_output_bytes: usize,
+    process_environment: ProcessEnvironment,
     processes: Vec<ProcessExecution>,
 }
 
@@ -30,6 +31,7 @@ impl GitHubClonePlan {
         target_index: usize,
         working_directory: &std::path::Path,
         max_output_bytes: usize,
+        process_environment: ProcessEnvironment,
     ) -> Self {
         let network_url = github::clone_url(&target);
         // Keep each force-cloned target under its own directory so multi-URL
@@ -45,6 +47,7 @@ impl GitHubClonePlan {
             &local_path,
             target.ref_name.as_deref(),
             max_output_bytes,
+            process_environment.clone(),
         );
         Self {
             requested,
@@ -53,6 +56,7 @@ impl GitHubClonePlan {
             local_path,
             working_directory: working_directory.to_path_buf(),
             max_output_bytes,
+            process_environment,
             processes,
         }
     }
@@ -94,6 +98,7 @@ impl GitHubClonePlan {
             &self.local_path,
             self.target.ref_name.as_deref(),
             self.max_output_bytes,
+            self.process_environment,
         );
         for process in &processes {
             run_process(process).await?;
@@ -110,6 +115,7 @@ fn process_plan(
     local_path: &std::path::Path,
     ref_name: Option<&str>,
     max_output_bytes: usize,
+    process_environment: ProcessEnvironment,
 ) -> Vec<ProcessExecution> {
     let mut commands = vec![vec![
         "clone".into(),
@@ -142,7 +148,7 @@ fn process_plan(
             ProcessExecution::new(
                 working_directory,
                 ProcessInvocation::executable_from_path("git", arguments),
-                ProcessEnvironment::InheritAll,
+                process_environment.clone(),
                 ProcessOutputLimits::new(max_output_bytes, Some(GIT_TIMEOUT)),
             )
         })
@@ -161,12 +167,6 @@ async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
             "fetch_content received an unsupported process plan",
         ));
     };
-    if execution.environment() != &ProcessEnvironment::InheritAll {
-        return Err(ToolError::new(
-            ToolErrorKind::Execution,
-            "fetch_content received an unsupported process environment",
-        ));
-    }
     let mut command = Command::new(executable);
     command
         .args(arguments)
@@ -175,6 +175,8 @@ async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    rho_tools::apply_process_environment(&mut command, execution.environment())
+        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
     let timeout = execution.output_limits().timeout().unwrap_or(GIT_TIMEOUT);
     let status = tokio::time::timeout(timeout, command.status())
         .await

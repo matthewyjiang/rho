@@ -1,8 +1,10 @@
 use crate::agent::{AgentCapabilities, ToolCapability};
+use rho_sdk::ProcessEnvironment;
 
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
+    process_environment: ProcessEnvironment,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
@@ -27,7 +29,11 @@ pub(super) fn sdk_bundle(
     if shell_enabled {
         // RTK stays disabled here. Authorization and execution must use the same
         // immutable process description.
-        tools.push(rho_tools::shell_tool(max_output_bytes));
+        tools.push(rho_tools::shell_tool(
+            rho_tools::ShellToolOptions::new()
+                .max_output_bytes(max_output_bytes)
+                .environment(process_environment),
+        ));
     }
     super::sdk_registry::StaticToolBundle::new(tools)
 }

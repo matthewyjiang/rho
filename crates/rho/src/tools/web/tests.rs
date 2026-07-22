@@ -153,7 +153,8 @@ fn tool_specs_and_fetch_security_preserve_public_contract() {
         super::access_tools(&Config::default()).spec().name,
         "web_search"
     );
-    let fetch_content = super::SdkFetchContent::new(12_000);
+    let fetch_content =
+        super::SdkFetchContent::new(12_000, rho_sdk::ProcessEnvironment::InheritAll);
     assert_eq!(
         rho_sdk::tool::Tool::spec(&fetch_content).name,
         "fetch_content"

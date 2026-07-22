@@ -13,7 +13,7 @@ mod unix {
     };
     use serde_json::json;
 
-    use super::super::SdkShellTool;
+    use super::super::{SdkShellTool, ShellToolOptions};
 
     #[derive(Debug)]
     struct ApproveAndRecord {
@@ -63,7 +63,9 @@ mod unix {
                     .require_process_approval(),
             )
             .approval_handler_shared(approvals.clone())
-            .tool(SdkShellTool::bash(777))
+            .tool(SdkShellTool::bash(
+                ShellToolOptions::new().max_output_bytes(777),
+            ))
             .build()
             .unwrap();
         let session = runtime.session(SessionOptions::default()).await.unwrap();

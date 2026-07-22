@@ -6,11 +6,15 @@ use crate::{
 fn tool_names(capability: ToolCapability) -> Vec<String> {
     let mut capabilities = AgentCapabilities::default();
     capabilities.insert(capability);
-    super::sdk_bundle(&capabilities, 1_000)
-        .tools()
-        .iter()
-        .map(|tool| tool.spec().name)
-        .collect()
+    super::sdk_bundle(
+        &capabilities,
+        1_000,
+        rho_sdk::ProcessEnvironment::InheritAll,
+    )
+    .tools()
+    .iter()
+    .map(|tool| tool.spec().name)
+    .collect()
 }
 
 #[cfg(unix)]

@@ -7,7 +7,7 @@ use rho_sdk::{
 
 use crate::legacy_sdk_adapter::LegacyToolProfile;
 
-use super::{authorize_legacy, process_invocation};
+use super::authorize_legacy;
 
 fn denying_context() -> ToolContext {
     let (progress, _receiver) = tool_progress_channel(NonZeroUsize::new(1).unwrap());
@@ -51,7 +51,7 @@ async fn web_search_profile_requests_network_authorization() {
 fn process_authorization_uses_the_unix_execution_plan() {
     let command = "printf '%s' hello";
 
-    let invocation = process_invocation(command);
+    let invocation = crate::shell_invocation(command);
 
     assert_eq!(
         invocation,
@@ -69,7 +69,7 @@ fn process_authorization_uses_the_unix_execution_plan() {
 fn process_authorization_uses_the_wrapped_windows_execution_plan() {
     let command = "Write-Output hello";
 
-    let invocation = process_invocation(command);
+    let invocation = crate::shell_invocation(command);
 
     assert_eq!(
         invocation,

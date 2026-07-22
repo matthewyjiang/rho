@@ -13,6 +13,7 @@
 
 pub mod cancellation;
 mod paths;
+mod process_env;
 pub mod tool;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -33,8 +34,9 @@ pub mod sdk_support;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;
+pub use process_env::apply_process_environment;
 pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
-pub use sdk_shell::shell_tool;
+pub use sdk_shell::{shell_invocation, shell_tool, ShellToolOptions};
 pub use tool::{
     compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolDisplayStyle, ToolError,
 };

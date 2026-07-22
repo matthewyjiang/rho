@@ -48,8 +48,8 @@ pub struct PtyController {
 impl PtyController {
     /// Spawn `binary` with `args` inside a PTY.
     ///
-    /// `env` pairs are applied after host-terminal hygiene stripping. The child
-    /// inherits a cleaned environment rather than the raw host process env.
+    /// `env` is the complete child environment after clearing the host process
+    /// environment. Callers should pass every variable the child needs.
     pub fn spawn(
         binary: &Path,
         size: PtySize,
@@ -205,37 +205,10 @@ fn spawn_unix(
 }
 
 fn apply_child_env(cmd: &mut CommandBuilder, env: &[(impl AsRef<str>, impl AsRef<str>)]) {
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    for color_var in ["NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE"] {
-        cmd.env_remove(color_var);
-    }
-    for ssh_var in ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"] {
-        cmd.env_remove(ssh_var);
-    }
-    for marker in crate::env::HOST_TERMINAL_MARKERS {
-        cmd.env_remove(marker);
-    }
-    // Keep provider credentials out of isolated runs unless a launch plan
-    // explicitly injects them below.
-    for credential_var in [
-        "OPENAI_API_KEY",
-        "CODEX_ACCESS_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "GITHUB_COPILOT_TOKEN",
-        "XAI_ACCESS_TOKEN",
-    ] {
-        cmd.env_remove(credential_var);
-    }
-    // Avoid accidental Herdr coupling during automated PTY runs.
-    for herdr_var in ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"] {
-        cmd.env_remove(herdr_var);
-    }
-    // Drop leftover debug-injection vars from the parent shell so matrix
-    // scenarios cannot abort at startup with an injected error/panic.
-    for test_var in ["RHO_TUI_TEST_TERMINATION", "RHO_TUI_TEST_MODE"] {
-        cmd.env_remove(test_var);
-    }
+    // Isolated runs get only the launch-plan environment. Clearing first keeps
+    // host terminal markers and provider credentials out without maintaining a
+    // separate deny list that drifts as new secrets are added.
+    cmd.env_clear();
     for (key, value) in env {
         cmd.env(key.as_ref(), value.as_ref());
     }

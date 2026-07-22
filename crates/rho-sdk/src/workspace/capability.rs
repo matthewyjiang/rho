@@ -178,7 +178,28 @@ impl fmt::Debug for ProcessInvocation {
 pub enum ProcessEnvironment {
     Empty,
     InheritAll,
-    InheritListed { variable_names: Vec<String> },
+    InheritListed {
+        variable_names: Vec<String>,
+    },
+    /// Inherit the ambient environment after removing these variable names.
+    ///
+    /// Appended after existing variants so published discriminants stay stable.
+    InheritExcept {
+        variable_names: Vec<String>,
+    },
+}
+
+impl ProcessEnvironment {
+    /// Inherit ambient variables except the provided names.
+    pub fn inherit_except(variable_names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let mut variable_names: Vec<String> = variable_names.into_iter().map(Into::into).collect();
+        variable_names.sort_unstable();
+        variable_names.dedup();
+        if variable_names.is_empty() {
+            return Self::InheritAll;
+        }
+        Self::InheritExcept { variable_names }
+    }
 }
 
 /// Explicit bounds on process runtime and captured output.

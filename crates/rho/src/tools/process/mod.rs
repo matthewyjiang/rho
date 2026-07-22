@@ -32,14 +32,21 @@ impl ToolBundle for SdkProcessBundle {
     }
 }
 
-pub(super) fn sdk_bundle(max_output_bytes: usize) -> SdkProcessBundle {
-    let manager = ProcessManager::new(ProcessLimits {
-        max_bytes: max_output_bytes,
-        ..ProcessLimits::default()
-    });
+pub(super) fn sdk_bundle(
+    max_output_bytes: usize,
+    environment: rho_sdk::ProcessEnvironment,
+) -> SdkProcessBundle {
+    let manager = ProcessManager::with_environment(
+        ProcessLimits {
+            max_bytes: max_output_bytes,
+            ..ProcessLimits::default()
+        },
+        environment.clone(),
+    );
     let tools = vec![sdk_process::tool(
         Process::new(manager.clone()),
         max_output_bytes,
+        environment,
     )];
     SdkProcessBundle { tools, manager }
 }

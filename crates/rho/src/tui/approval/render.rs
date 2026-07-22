@@ -235,6 +235,10 @@ fn format_environment(environment: &ProcessEnvironment) -> String {
     match environment {
         ProcessEnvironment::Empty => "environment: empty".into(),
         ProcessEnvironment::InheritAll => "environment: inherit all variables".into(),
+        ProcessEnvironment::InheritExcept { variable_names } => format!(
+            "environment: inherit all except {}",
+            format_json_strings(variable_names.iter().map(String::as_str))
+        ),
         ProcessEnvironment::InheritListed { variable_names } => format!(
             "environment: inherit listed variable names {}",
             format_json_strings(variable_names.iter().map(String::as_str))

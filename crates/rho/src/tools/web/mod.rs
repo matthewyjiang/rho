@@ -21,6 +21,7 @@ pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
 pub(super) fn sdk_bundle(
     config: &crate::config::Config,
     capabilities: &crate::agent::AgentCapabilities,
+    process_environment: rho_sdk::ProcessEnvironment,
 ) -> super::sdk_registry::StaticToolBundle {
     use crate::agent::ToolCapability;
 
@@ -35,7 +36,10 @@ pub(super) fn sdk_bundle(
         );
     }
     if capabilities.contains(&ToolCapability::FetchContent) {
-        tools.push(Arc::new(SdkFetchContent::new(config.max_output_bytes)));
+        tools.push(Arc::new(SdkFetchContent::new(
+            config.max_output_bytes,
+            process_environment,
+        )));
     }
     if capabilities.contains(&ToolCapability::GetSearchContent) {
         tools.push(Arc::new(sdk_get_search_content::SdkGetSearchContent::new(
