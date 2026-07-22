@@ -46,26 +46,25 @@ pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let divider = "─".repeat(width.max(1));
     let mut lines = vec![
-        Line::styled(divider.clone(), Theme::dim()),
+        Line::raw(""),
         Line::from(vec![
+            Span::raw(" "),
             Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
             Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
         ]),
     ];
     if let Some(notice) = update_notice {
+        // Match the brand line's leading space so the notice lines up under "rho".
         lines.push(Line::from(vec![
-            Span::styled("update", Theme::warning()),
-            Span::raw("  "),
+            Span::raw(" "),
             Span::styled(
-                truncate_one_line(notice, width.saturating_sub(8)),
+                truncate_one_line(notice, width.saturating_sub(1)),
                 Theme::warning(),
             ),
         ]));
     }
-    lines.push(Line::styled(divider, Theme::dim()));
     lines.push(Line::raw(""));
     lines
 }

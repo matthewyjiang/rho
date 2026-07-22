@@ -401,3 +401,20 @@ fn visual_cursor_movement_preserves_ascii_wrapped_column() {
 
     assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 2);
 }
+
+#[test]
+fn session_header_update_notice_aligns_under_brand_without_label() {
+    let notice = "update available: v1.11.0 (current v1.10.0)";
+    let lines = session_header_lines(Some(notice), 80);
+    let version = env!("CARGO_PKG_VERSION");
+
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        vec![
+            String::new(),
+            format!(" rho  v{version}"),
+            format!(" {notice}"),
+            String::new(),
+        ]
+    );
+}
