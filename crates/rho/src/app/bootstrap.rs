@@ -254,10 +254,7 @@ or RHO_CREDENTIAL_STORE=os|file"
     if request.file.available {
         eprintln!("  [2] Local file under ~/.rho/credentials (not encrypted at rest)");
     } else {
-        eprintln!(
-            "  [2] Local file (unavailable: {})",
-            request.file.detail
-        );
+        eprintln!("  [2] Local file (unavailable: {})", request.file.detail);
     }
     let default_backend = request
         .default_backend()
@@ -276,9 +273,7 @@ or RHO_CREDENTIAL_STORE=os|file"
         "1" | "os" | "OS" => CredentialStoreBackend::Os,
         "2" | "file" | "FILE" => CredentialStoreBackend::File,
         other => {
-            anyhow::bail!(
-                "unrecognized credential store choice '{other}'; expected 1/os or 2/file"
-            )
+            anyhow::bail!("unrecognized credential store choice '{other}'; expected 1/os or 2/file")
         }
     };
     if !backends.contains(&backend) {

@@ -330,7 +330,10 @@ fn resolve_backend_from(
 }
 
 #[cfg(test)]
-fn needs_explicit_choice_from(env_set: bool, config_backend: Option<CredentialStoreBackend>) -> bool {
+fn needs_explicit_choice_from(
+    env_set: bool,
+    config_backend: Option<CredentialStoreBackend>,
+) -> bool {
     !env_set && config_backend.is_none()
 }
 

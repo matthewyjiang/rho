@@ -167,9 +167,7 @@ impl App {
         let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(
             action,
-            PickerAction::Config
-                | PickerAction::LoginGroup
-                | PickerAction::ViewAgent
+            PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
         ) {
             self.composer = ComposerMode::Input;
         }

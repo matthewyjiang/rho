@@ -87,8 +87,7 @@ web_search_provider = "disabled"
             cols: 100,
         },
     );
-    let mut harness =
-        PtyHarness::spawn_named(&plan, "login_credential_store_choice").unwrap();
+    let mut harness = PtyHarness::spawn_named(&plan, "login_credential_store_choice").unwrap();
 
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -107,7 +106,10 @@ web_search_provider = "disabled"
         .unwrap();
     harness.inject_key(&Key::Esc).unwrap();
     harness
-        .wait_for_quiet(Duration::from_millis(150), WaitTimeout::secs(5, "after cancel"))
+        .wait_for_quiet(
+            Duration::from_millis(150),
+            WaitTimeout::secs(5, "after cancel"),
+        )
         .unwrap();
 
     // Choose file via stable shortcut, then land on the provider picker.

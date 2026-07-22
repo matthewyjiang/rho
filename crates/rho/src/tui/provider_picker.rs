@@ -94,7 +94,6 @@ pub(super) fn logout_provider_picker(
     ))
 }
 
-
 fn provider_picker_for_targets(
     verb: &str,
     action: PickerAction,
