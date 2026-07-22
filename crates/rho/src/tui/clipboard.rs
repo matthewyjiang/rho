@@ -1,6 +1,11 @@
 use std::io;
 
+use rho_providers::model::{image_summary, ImageContent};
+
+use crate::clipboard::{image_from_paste_text, read_clipboard_image};
 pub(super) use crate::clipboard::{CopyOutcome, SystemClipboard};
+
+use super::{App, ComposerMode};
 
 /// Writes transcript text to the user's clipboard synchronously.
 ///
@@ -15,3 +20,46 @@ impl ClipboardWriter for SystemClipboard {
         self.copy_text(text)
     }
 }
+
+impl App {
+    pub(super) fn paste_clipboard_image(&mut self) {
+        if self.running {
+            self.notify_status("image paste is unavailable while a model turn is running");
+            return;
+        }
+        if !matches!(self.composer, ComposerMode::Input) {
+            self.notify_status("image paste is only available in the message box");
+            return;
+        }
+        match read_clipboard_image() {
+            Ok(image) => self.attach_pending_image(image),
+            Err(err) => {
+                self.notify_status(format!("image paste failed: {err}"));
+            }
+        }
+    }
+
+    pub(super) fn try_attach_pasted_image_path(&mut self, text: &str) -> bool {
+        if self.running || !matches!(self.composer, ComposerMode::Input) {
+            return false;
+        }
+        let Some(image) = image_from_paste_text(text, &self.info.runtime.cwd) else {
+            return false;
+        };
+        self.attach_pending_image(image);
+        true
+    }
+
+    fn attach_pending_image(&mut self, image: ImageContent) {
+        let summary = image_summary(&image);
+        self.pending_images.push(image);
+        self.notify_status(format!(
+            "attached image {} ({summary})",
+            self.pending_images.len()
+        ));
+    }
+}
+
+#[cfg(test)]
+#[path = "clipboard_tests.rs"]
+mod tests;

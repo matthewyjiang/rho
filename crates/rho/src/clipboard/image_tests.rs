@@ -1,10 +1,26 @@
+use std::{fs, path::PathBuf};
+
 use pretty_assertions::assert_eq;
 
 use super::{
-    available_image_helpers_with, platform_image_helpers, read_clipboard_image_for_session,
+    available_image_helpers_with, image_content_from_bytes, paste_text_as_image_path,
+    platform_image_helpers, read_clipboard_image_for_session, read_image_file,
     select_preferred_image_mime_type, ClipboardImageError,
 };
 use crate::clipboard::SessionKind;
+
+fn write_temp_png() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shot.png");
+    // 1x1 transparent PNG
+    let png = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    )
+    .unwrap();
+    fs::write(&path, png).unwrap();
+    (dir, path)
+}
 
 #[test]
 fn selects_only_supported_image_mime_types() {
@@ -38,5 +54,48 @@ fn local_sessions_report_platform_helpers() {
 #[test]
 fn remote_sessions_do_not_read_host_image_clipboards() {
     let error = read_clipboard_image_for_session(SessionKind::Remote).unwrap_err();
+    assert!(matches!(error, ClipboardImageError::NoImage));
+}
+
+#[test]
+fn paste_text_recognizes_absolute_and_relative_image_paths() {
+    let (_dir, path) = write_temp_png();
+    let cwd = path.parent().unwrap();
+
+    assert_eq!(
+        paste_text_as_image_path(&path.to_string_lossy(), cwd),
+        Some(path.canonicalize().unwrap())
+    );
+    assert_eq!(
+        paste_text_as_image_path("shot.png", cwd),
+        Some(path.canonicalize().unwrap())
+    );
+    assert_eq!(
+        paste_text_as_image_path(&format!("\"{}\"", path.display()), cwd),
+        Some(path.canonicalize().unwrap())
+    );
+    assert_eq!(paste_text_as_image_path("shot.png\nextra", cwd), None);
+
+    let text_path = cwd.join("notes.txt");
+    fs::write(&text_path, "hello").unwrap();
+    assert_eq!(
+        paste_text_as_image_path("notes.txt", cwd),
+        Some(text_path.canonicalize().unwrap())
+    );
+    assert!(super::image_from_paste_text("notes.txt", cwd).is_none());
+    assert!(super::image_from_paste_text("shot.png", cwd).is_some());
+}
+
+#[test]
+fn read_image_file_loads_supported_bytes() {
+    let (_dir, path) = write_temp_png();
+    let image = read_image_file(&path).unwrap();
+    assert_eq!(image.mime_type, "image/png");
+    assert!(!image.data.is_empty());
+}
+
+#[test]
+fn image_content_rejects_non_image_bytes() {
+    let error = image_content_from_bytes(b"hello".to_vec()).unwrap_err();
     assert!(matches!(error, ClipboardImageError::NoImage));
 }

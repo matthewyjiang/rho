@@ -1,11 +1,12 @@
 use serde_json::json;
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
+const GRAPHICS_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
 const SOURCE: &str = "herdr:rho";
 const AGENT: &str = "rho";
 
@@ -142,6 +143,49 @@ impl HerdrReporter {
     }
 }
 
+/// Returns whether the active Herdr client can paint Kitty placements.
+///
+/// Herdr intercepts Kitty graphics from pane PTYs. Painting needs host cell
+/// metrics; when those are missing, Rho should keep image previews in the
+/// character grid (halfblocks) instead of reserving blank Kitty rows.
+pub fn can_paint_kitty_graphics() -> bool {
+    can_paint_kitty_graphics_from_env(|key| env::var(key).ok())
+}
+
+pub(crate) fn can_paint_kitty_graphics_from_env(
+    mut get_var: impl FnMut(&str) -> Option<String>,
+) -> bool {
+    if !platform_supported() || get_var("HERDR_ENV").as_deref() != Some("1") {
+        return false;
+    }
+    let Some(socket_path) = get_var("HERDR_SOCKET_PATH").filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let Some(pane_id) = get_var("HERDR_PANE_ID").filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    probe_kitty_graphics(Path::new(&socket_path), &pane_id)
+}
+
+fn probe_kitty_graphics(socket_path: &Path, pane_id: &str) -> bool {
+    let request = json_rpc_request("pane.graphics.info", json!({ "pane_id": pane_id }));
+    let Ok(mut payload) = serde_json::to_vec(&request) else {
+        return false;
+    };
+    payload.push(b'\n');
+    let Ok(response) = send_payload_sync(socket_path, &payload, GRAPHICS_PROBE_TIMEOUT) else {
+        return false;
+    };
+    herdr_graphics_info_reports_paintable(&response)
+}
+
+pub(crate) fn herdr_graphics_info_reports_paintable(response: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(response) else {
+        return false;
+    };
+    value.get("error").is_none() && value.get("result").is_some()
+}
+
 #[cfg(unix)]
 fn socket_is_reachable(path: &std::path::Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
@@ -187,6 +231,37 @@ async fn send_payload(socket_path: PathBuf, payload: Vec<u8>) -> std::io::Result
 #[cfg(not(unix))]
 async fn send_payload(_socket_path: PathBuf, _payload: Vec<u8>) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(unix)]
+fn send_payload_sync(
+    socket_path: &Path,
+    payload: &[u8],
+    timeout: Duration,
+) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut stream = UnixStream::connect(socket_path)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    stream.write_all(payload)?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    Ok(response)
+}
+
+#[cfg(not(unix))]
+fn send_payload_sync(
+    _socket_path: &Path,
+    _payload: &[u8],
+    _timeout: Duration,
+) -> std::io::Result<Vec<u8>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "herdr graphics probe is unix-only",
+    ))
 }
 
 #[cfg(all(test, unix))]

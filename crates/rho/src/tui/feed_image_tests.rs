@@ -5,7 +5,7 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
 use rho_tools::tool::ToolDisplayStyle;
 
-use super::{kitty_graphics_environment, FeedImage, IMAGE_HEIGHT};
+use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice},
     Entry, ToolEntry, ToolEntryState,
@@ -89,6 +89,36 @@ fn terminal_hints_enable_direct_kitty_and_ghostty_but_not_tmux() {
         Some("Apple_Terminal"),
         Some("xterm-256color")
     ));
+}
+
+#[test]
+fn herdr_without_paintable_kitty_uses_halfblocks() {
+    let picker = picker_for_environment(
+        /*host_supports_kitty*/ true, /*in_herdr*/ true,
+        /*herdr_can_paint_kitty*/ false,
+    )
+    .unwrap();
+    assert_eq!(picker.protocol_type(), ProtocolType::Halfblocks);
+}
+
+#[test]
+fn herdr_with_paintable_kitty_keeps_kitty_protocol() {
+    let picker = picker_for_environment(
+        /*host_supports_kitty*/ true, /*in_herdr*/ true,
+        /*herdr_can_paint_kitty*/ true,
+    )
+    .unwrap();
+    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
+}
+
+#[test]
+fn direct_kitty_host_keeps_kitty_protocol() {
+    let picker = picker_for_environment(
+        /*host_supports_kitty*/ true, /*in_herdr*/ false,
+        /*herdr_can_paint_kitty*/ false,
+    )
+    .unwrap();
+    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
 }
 
 #[test]

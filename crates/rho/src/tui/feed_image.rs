@@ -287,21 +287,43 @@ impl super::App {
 /// Uses conservative environment hints without probing stdin. Persistent tmux
 /// sessions are kept on the text fallback because terminal-specific variables
 /// can describe a previous client rather than the active attachment.
+///
+/// Under Herdr, Ghostty/Kitty environment variables describe the outer host
+/// terminal. Herdr intercepts Kitty sequences and only paints them when the
+/// active client reports cell metrics. When that path is unavailable, Rho keeps
+/// previews on halfblocks so reserved feed rows are not left blank.
 pub(super) fn picker_from_environment() -> Option<Picker> {
     let in_tmux = std::env::var_os("TMUX").is_some()
         || std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("tmux"));
-    kitty_graphics_environment(
+    let in_herdr = std::env::var("HERDR_ENV").is_ok_and(|value| value == "1");
+    let host_supports_kitty = kitty_graphics_environment(
         in_tmux,
         std::env::var_os("KITTY_WINDOW_ID").is_some(),
         std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some(),
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),
+    );
+    picker_for_environment(
+        host_supports_kitty,
+        in_herdr,
+        in_herdr && crate::herdr::can_paint_kitty_graphics(),
     )
-    .then(|| {
-        let mut picker = Picker::halfblocks();
-        picker.set_protocol_type(ProtocolType::Kitty);
-        picker
-    })
+}
+
+pub(super) fn picker_for_environment(
+    host_supports_kitty: bool,
+    in_herdr: bool,
+    herdr_can_paint_kitty: bool,
+) -> Option<Picker> {
+    if !host_supports_kitty {
+        return None;
+    }
+    if in_herdr && !herdr_can_paint_kitty {
+        return Some(Picker::halfblocks());
+    }
+    let mut picker = Picker::halfblocks();
+    picker.set_protocol_type(ProtocolType::Kitty);
+    Some(picker)
 }
 
 fn kitty_graphics_environment(

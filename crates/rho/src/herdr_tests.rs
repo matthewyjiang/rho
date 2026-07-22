@@ -121,3 +121,22 @@ async fn release_sends_release_request() {
     assert_eq!(request["params"]["agent"], "rho");
     assert!(request["params"].get("seq").is_none());
 }
+
+#[test]
+fn graphics_info_without_error_is_paintable() {
+    assert!(super::herdr_graphics_info_reports_paintable(
+        br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14}}"#
+    ));
+}
+
+#[test]
+fn graphics_info_cell_size_error_is_not_paintable() {
+    assert!(!super::herdr_graphics_info_reports_paintable(
+        br#"{"id":"1","error":{"code":"cell_size_unavailable","message":"host cell size is unavailable"}}"#
+    ));
+}
+
+#[test]
+fn graphics_probe_is_disabled_outside_herdr() {
+    assert!(!super::can_paint_kitty_graphics_from_env(|_| None));
+}

@@ -114,7 +114,6 @@ mod usage_cost;
 mod view;
 mod workspace;
 
-use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer, ApprovalKeyOutcome};
 use clipboard::{ClipboardWriter, SystemClipboard};
@@ -1938,31 +1937,10 @@ impl App {
         self.report_herdr_state(state, message).await;
     }
 
-    fn paste_clipboard_image(&mut self) {
-        if self.running {
-            self.notify_status("image paste is unavailable while a model turn is running");
-            return;
-        }
-        if !matches!(self.composer, ComposerMode::Input) {
-            self.notify_status("image paste is only available in the message box");
-            return;
-        }
-        match read_clipboard_image() {
-            Ok(image) => {
-                let summary = image_summary(&image);
-                self.pending_images.push(image);
-                self.notify_status(format!(
-                    "attached image {} ({summary})",
-                    self.pending_images.len()
-                ));
-            }
-            Err(err) => {
-                self.notify_status(format!("image paste failed: {err}"));
-            }
-        }
-    }
-
     fn insert_paste(&mut self, text: &str) {
+        if self.try_attach_pasted_image_path(text) {
+            return;
+        }
         match &mut self.composer {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
@@ -5363,20 +5341,6 @@ mod tests {
                 .filter(|entry| matches!(entry, Entry::Notice(text) if text == "input cleared; press ctrl-c again to quit"))
                 .count(),
             1
-        );
-    }
-
-    #[test]
-    fn image_paste_is_unavailable_while_running() {
-        let mut app = test_app();
-        app.running = true;
-
-        app.paste_clipboard_image();
-
-        assert!(app.pending_images.is_empty());
-        assert_eq!(
-            app.status,
-            "image paste is unavailable while a model turn is running"
         );
     }
 
