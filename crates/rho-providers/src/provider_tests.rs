@@ -33,6 +33,10 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::Poolside).catalog_reasoning,
+        CatalogReasoningPolicy::OffOrMax
+    );
+    assert_eq!(
         super::provider_descriptor_by_id(ProviderId::GithubCopilot).catalog_reasoning,
         CatalogReasoningPolicy::NotConfigurable
     );
@@ -50,6 +54,42 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
             CatalogReasoningPolicy::OffByAdvertisedToggle
         );
     }
+}
+
+#[test]
+fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
+    use super::{ModelIdCodec, ProviderId};
+
+    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside);
+    assert_eq!(poolside.model_id_codec, ModelIdCodec::ProviderPrefixed);
+    assert_eq!(poolside.canonicalize_model_id("laguna-m.1"), "laguna-m.1");
+    assert_eq!(
+        poolside.canonicalize_model_id("poolside/laguna-m.1"),
+        "laguna-m.1"
+    );
+    assert_eq!(
+        poolside.canonicalize_model_id("poolside/poolside/laguna-m.1"),
+        "laguna-m.1"
+    );
+    assert_eq!(poolside.wire_model_id("laguna-m.1"), "poolside/laguna-m.1");
+    assert_eq!(
+        poolside.wire_model_id("poolside/laguna-m.1"),
+        "poolside/laguna-m.1"
+    );
+    assert_eq!(
+        super::model_reference("poolside", "laguna-m.1"),
+        "poolside/laguna-m.1"
+    );
+}
+
+#[test]
+fn plain_model_id_codec_leaves_ids_unchanged() {
+    use super::{ModelIdCodec, ProviderId};
+
+    let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
+    assert_eq!(openai.model_id_codec, ModelIdCodec::Plain);
+    assert_eq!(openai.canonicalize_model_id("gpt-5.5"), "gpt-5.5");
+    assert_eq!(openai.wire_model_id("gpt-5.5"), "gpt-5.5");
 }
 
 #[test]
@@ -120,6 +160,14 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     assert_eq!(
         moonshot.auth_kind.account(),
         Some(super::MOONSHOT_API_KEY_ACCOUNT)
+    );
+
+    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside);
+    assert_eq!(poolside.auth, "poolside-api-key");
+    assert_eq!(poolside.auth_kind.env_var(), Some("POOLSIDE_API_KEY"));
+    assert_eq!(
+        poolside.auth_kind.account(),
+        Some(super::POOLSIDE_API_KEY_ACCOUNT)
     );
 
     let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);

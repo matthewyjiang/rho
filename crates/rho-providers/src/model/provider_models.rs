@@ -68,6 +68,9 @@ pub struct ProviderModelRefresh {
 }
 
 pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderModel> {
+    let model = provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.canonicalize_model_id(model))
+        .unwrap_or_else(|| model.to_string());
     cached_provider_models(provider)
         .into_iter()
         .find(|entry| entry.model == model)
@@ -91,6 +94,9 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
             .get::<_, Option<String>>(4)?
             .and_then(|value| serde_json::from_str(&value).ok())
             .unwrap_or_default();
+        let model = provider::provider_descriptor(provider)
+            .map(|descriptor| descriptor.canonicalize_model_id(&model))
+            .unwrap_or(model);
         Ok(ProviderModel {
             provider: provider.to_string(),
             model,

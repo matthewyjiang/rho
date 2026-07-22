@@ -114,7 +114,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     }
 
     let model_available = catalog::resolve_model_selection_for_auths(
-        &format!("{}/{}", context.provider, context.model),
+        &rho_providers::provider::model_reference(context.provider, context.model),
         context.provider,
         context.auth,
         context.available_auths,
@@ -129,8 +129,9 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         },
         model_available,
         format!(
-            "{}/{} using {} authentication",
-            context.provider, context.model, context.auth
+            "{} using {} authentication",
+            rho_providers::provider::model_reference(context.provider, context.model),
+            context.auth
         ),
     ));
 

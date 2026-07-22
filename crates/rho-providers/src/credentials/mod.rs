@@ -128,7 +128,7 @@ redacted_token_debug!(XaiTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("credential store is unavailable: {0}. Configure your OS keychain, explicitly select the file backend, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, MOONSHOT_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, KIMI_ACCESS_TOKEN, or XAI_ACCESS_TOKEN.")]
+    #[error("credential store is unavailable: {0}. Configure your OS keychain, explicitly select the file backend, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, MOONSHOT_API_KEY, POOLSIDE_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, KIMI_ACCESS_TOKEN, or XAI_ACCESS_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),

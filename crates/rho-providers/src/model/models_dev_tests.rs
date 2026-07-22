@@ -162,6 +162,67 @@ fn stale_rows_remain_available_as_offline_fallback() {
 }
 
 #[test]
+fn poolside_version_five_metadata_is_stale_after_reasoning_policy_change() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let old_metadata = ModelMetadata {
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("poolside", "laguna-s-2.1", &old_metadata);
+        open_models_dev_cache()
+            .unwrap()
+            .execute(
+                "update model_metadata set cache_version = 5
+                 where provider = 'poolside' and model = 'laguna-s-2.1'",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            current_cached_upstream_model_metadata("poolside", "laguna-s-2.1"),
+            None
+        );
+        assert_eq!(
+            cached_upstream_model_metadata("poolside", "laguna-s-2.1"),
+            Some(old_metadata)
+        );
+    });
+}
+
+#[test]
+fn poolside_maps_reasoning_without_effort_options_to_off_or_max() {
+    let api = json!({
+        "poolside": {
+            "models": {
+                "poolside/laguna-s-2.1": {
+                    "reasoning": true,
+                    "reasoning_options": [],
+                    "limit": {"context": 262_144, "output": 32_768}
+                }
+            }
+        }
+    });
+
+    let metadata = upstream_metadata_from_api(&api, "poolside", "laguna-s-2.1").unwrap();
+
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+    );
+    assert!(metadata.reasoning_capabilities_known);
+    assert!(metadata.reasoning_metadata_complete);
+    assert_eq!(
+        current_reasoning_capabilities("poolside", "laguna-s-2.1"),
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::Max,
+        ]))
+    );
+}
+
+#[test]
 fn kimi_code_resolves_k3_models_dev_identity() {
     let api = json!({
         "moonshotai": {

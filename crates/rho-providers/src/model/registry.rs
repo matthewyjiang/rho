@@ -64,6 +64,10 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             dialect: OpenAiCompatibleDialect::Moonshot,
             default_api_base: "https://api.moonshot.ai/v1",
         },
+        RuntimeProviderId::Poolside => ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Poolside,
+            default_api_base: "https://inference.poolside.ai/v1",
+        },
         RuntimeProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::OpenRouter,
             default_api_base: "https://openrouter.ai/api/v1",
@@ -88,6 +92,7 @@ pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
         MissingCredential::Anthropic => ModelError::MissingAnthropicApiKey,
         MissingCredential::Google => ModelError::MissingGoogleApiKey,
         MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
+        MissingCredential::Poolside => ModelError::MissingPoolsideApiKey,
         MissingCredential::OpenRouter => ModelError::MissingOpenRouterApiKey,
         MissingCredential::Profile(message) => ModelError::MissingCredentialProfile(message),
         MissingCredential::Xai => ModelError::MissingXaiApiKey,

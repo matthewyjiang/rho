@@ -1,6 +1,6 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
-    protocol::openai_chat::{OpenAiReasoning, OpenAiThinking},
+    protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
     reasoning::ReasoningLevel,
 };
 
@@ -11,6 +11,7 @@ pub(super) struct ReasoningFields {
     pub(super) reasoning: Option<OpenAiReasoning>,
     pub(super) reasoning_effort: Option<String>,
     pub(super) thinking: Option<OpenAiThinking>,
+    pub(super) chat_template_kwargs: Option<ChatTemplateKwargs>,
 }
 
 pub(super) struct OpenRouterReasoningProfile {
@@ -123,6 +124,14 @@ impl OpenAiCompatibleDialect {
     ) -> ReasoningFields {
         match self {
             Self::Standard => ReasoningFields::default(),
+            Self::Poolside => ReasoningFields {
+                chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
+                    ChatTemplateKwargs {
+                        enable_thinking: false,
+                    },
+                ),
+                ..Default::default()
+            },
             Self::OpenRouter => ReasoningFields {
                 reasoning: openrouter
                     .and_then(|profile| profile.effort(reasoning))

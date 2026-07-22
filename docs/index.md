@@ -43,6 +43,7 @@ features:
   - [GitHub Copilot](/providers/github-copilot)
   - [Ollama](/providers/ollama)
   - [OpenRouter](/providers/openrouter)
+  - [Poolside](/providers/poolside)
   - [Moonshot and Kimi Code](/providers/moonshot-kimi)
   - [xAI](/providers/xai)
 - [Interactive TUI](/interactive-tui)

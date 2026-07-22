@@ -8,10 +8,12 @@ pub struct FavoriteModel {
 
 impl FavoriteModel {
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            provider: provider.into(),
-            model: model.into(),
-        }
+        let provider = provider.into();
+        let model = model.into();
+        let model = crate::provider::provider_descriptor(&provider)
+            .map(|descriptor| descriptor.canonicalize_model_id(&model))
+            .unwrap_or(model);
+        Self { provider, model }
     }
 
     pub fn value(&self) -> String {
@@ -19,7 +21,13 @@ impl FavoriteModel {
     }
 
     pub fn matches(&self, provider: &str, model: &str) -> bool {
-        self.provider == provider && self.model == model
+        if self.provider != provider {
+            return false;
+        }
+        let model = crate::provider::provider_descriptor(provider)
+            .map(|descriptor| descriptor.canonicalize_model_id(model))
+            .unwrap_or_else(|| model.to_string());
+        self.model == model
     }
 }
 
@@ -93,72 +101,5 @@ fn parse_favorite_model(value: &str) -> Option<FavoriteModel> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(provider: &str, model: &str) -> ModelCatalogEntry {
-        ModelCatalogEntry {
-            provider: provider.into(),
-            model: model.into(),
-            display_name: model.into(),
-            auth_modes: vec!["auth".into()],
-        }
-    }
-
-    #[test]
-    fn normalizes_favorites() {
-        let favorites = vec![
-            " openai/gpt-5.5 ".into(),
-            "missing-separator".into(),
-            "openai/gpt-5.5".into(),
-            "anthropic/claude".into(),
-        ];
-
-        assert_eq!(
-            normalized_favorite_models(&favorites),
-            vec![
-                FavoriteModel::new("openai", "gpt-5.5"),
-                FavoriteModel::new("anthropic", "claude"),
-            ]
-        );
-    }
-
-    #[test]
-    fn reorders_available_models_by_favorites() {
-        let models = vec![
-            entry("anthropic", "claude"),
-            entry("openai", "gpt-5.5"),
-            entry("github-copilot", "gpt-4.1"),
-        ];
-        let favorites = normalized_favorite_models(&[
-            "openai/gpt-5.5".into(),
-            "unavailable/model".into(),
-            "anthropic/claude".into(),
-        ]);
-
-        let ordered = reorder_models_by_favorites(models, &favorites);
-
-        assert_eq!(
-            ordered
-                .iter()
-                .map(|entry| format!("{}/{}", entry.provider, entry.model))
-                .collect::<Vec<_>>(),
-            vec![
-                "openai/gpt-5.5",
-                "anthropic/claude",
-                "github-copilot/gpt-4.1",
-            ]
-        );
-    }
-
-    #[test]
-    fn toggles_favorites() {
-        let mut favorites = vec!["openai/gpt-5.5".into()];
-
-        assert!(!toggle_favorite(&mut favorites, "openai", "gpt-5.5"));
-        assert!(favorites.is_empty());
-
-        assert!(toggle_favorite(&mut favorites, "anthropic", "claude"));
-        assert_eq!(favorites, vec!["anthropic/claude"]);
-    }
-}
+#[path = "favorites_tests.rs"]
+mod tests;

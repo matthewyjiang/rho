@@ -207,6 +207,7 @@ impl OpenAiProvider {
             reasoning: None,
             reasoning_effort: reasoning.effort,
             thinking: None,
+            chat_template_kwargs: None,
         })
     }
 

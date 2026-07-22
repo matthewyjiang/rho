@@ -32,6 +32,7 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
         | ModelError::MissingGoogleApiKey
         | ModelError::MissingGithubCopilotAuth
         | ModelError::MissingMoonshotApiKey
+        | ModelError::MissingPoolsideApiKey
         | ModelError::MissingOpenRouterApiKey
         | ModelError::MissingCredentialProfile(_)
         | ModelError::MissingKimiAuth

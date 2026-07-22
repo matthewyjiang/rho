@@ -67,7 +67,7 @@ fn on_off(value: bool) -> String {
 /// Badge for the conversation model, shown as `alias → provider/model` when
 /// the selection came from a user-defined alias so the mapping is never hidden.
 fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> String {
-    let current = format!("{}/{}", info.provider, info.model);
+    let current = rho_providers::provider::model_reference(&info.provider, &info.model);
     match config.current_model_alias() {
         Some(alias) if config.provider == info.provider && config.model == info.model => {
             format!("{alias} → {current}")

@@ -6,6 +6,7 @@ use super::*;
 fn parses_new_provider_auth_modes() {
     for auth in [
         "moonshot-api-key",
+        "poolside-api-key",
         "openrouter-api-key",
         "openrouter-oauth",
         "kimi-oauth",

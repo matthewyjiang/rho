@@ -292,6 +292,7 @@ fn chat_completions_request_does_not_serialize_prompt_cache_key() {
         reasoning: None,
         reasoning_effort: Some("high".into()),
         thinking: None,
+        chat_template_kwargs: None,
     })
     .unwrap();
 

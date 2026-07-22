@@ -163,8 +163,11 @@ impl OpenAiCompatibleProvider {
             &self.model,
             request.reasoning_level,
         );
+        let wire_model = crate::provider::provider_descriptor(self.provider)
+            .map(|descriptor| descriptor.wire_model_id(&self.model))
+            .unwrap_or_else(|| self.model.clone());
         Ok(ChatRequest {
-            model: self.model.clone(),
+            model: wire_model,
             messages,
             tools: has_tools.then_some(tools),
             tool_choice: has_tools.then_some("auto"),
@@ -175,6 +178,7 @@ impl OpenAiCompatibleProvider {
             reasoning: reasoning_fields.reasoning,
             reasoning_effort: reasoning_fields.reasoning_effort,
             thinking: reasoning_fields.thinking,
+            chat_template_kwargs: reasoning_fields.chat_template_kwargs,
         })
     }
 

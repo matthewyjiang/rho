@@ -354,6 +354,7 @@ fn request_body(
 ) -> serde_json::Value {
     let provider_name = match dialect {
         OpenAiCompatibleDialect::Standard => "standard",
+        OpenAiCompatibleDialect::Poolside => "poolside",
         OpenAiCompatibleDialect::Moonshot => "moonshot",
         OpenAiCompatibleDialect::OpenRouter => "openrouter",
         OpenAiCompatibleDialect::KimiCode => "kimi-code",
@@ -415,6 +416,58 @@ fn identities_keep_custom_provider_names() {
     assert_eq!(
         openrouter.model_identity().model,
         "anthropic/claude-sonnet-4"
+    );
+}
+
+#[test]
+fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "poolside",
+        "laguna-m.1".into(),
+        OpenAiCompatibleDialect::Poolside,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://inference.poolside.ai/v1".into(),
+    );
+    let messages = [Message::user_text("hello")];
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Max,
+                prompt_cache_key: None,
+            },
+            /*stream*/ false,
+        )
+        .unwrap();
+
+    assert_eq!(provider.model_identity().model, "laguna-m.1");
+    assert_eq!(body.model, "poolside/laguna-m.1");
+    assert_eq!(body.chat_template_kwargs, None);
+
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                prompt_cache_key: None,
+            },
+            /*stream*/ false,
+        )
+        .unwrap();
+    assert_eq!(
+        body.chat_template_kwargs,
+        Some(crate::protocol::openai_chat::ChatTemplateKwargs {
+            enable_thinking: false,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(body).unwrap()["chat_template_kwargs"],
+        json!({"enable_thinking": false})
     );
 }
 
