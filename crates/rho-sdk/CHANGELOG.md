@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.1...rho-sdk-v1.7.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+* **tui:** report herdr blocked during questionnaire ([#500](https://github.com/matthewyjiang/rho/issues/500)) ([1dcdbe9](https://github.com/matthewyjiang/rho/commit/1dcdbe9e86bb61cf0cd55a705c28941d9dfcb241))
+
 ## [1.7.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.0...rho-sdk-v1.7.1) (2026-07-22)
 
 

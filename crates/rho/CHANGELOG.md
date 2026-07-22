@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.0...rho-coding-agent-v1.12.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **tools:** block private fetch targets with resolve-then-check SSRF guard ([#499](https://github.com/matthewyjiang/rho/issues/499)) ([5dbc11c](https://github.com/matthewyjiang/rho/commit/5dbc11c9f8692d9d46f9c1008b87de054c9fb3df))
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+* **tui:** report herdr blocked during questionnaire ([#500](https://github.com/matthewyjiang/rho/issues/500)) ([1dcdbe9](https://github.com/matthewyjiang/rho/commit/1dcdbe9e86bb61cf0cd55a705c28941d9dfcb241))
+* **tui:** sort slash commands and provider pickers alphabetically ([#498](https://github.com/matthewyjiang/rho/issues/498)) ([0e2c16c](https://github.com/matthewyjiang/rho/commit/0e2c16cd9b5ac6b5c9c28259a09c0428f64a72ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.1 to 1.7.2
+    * rho-providers bumped from 0.7.0 to 0.7.1
+
 ## [1.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.11.0...rho-coding-agent-v1.12.0) (2026-07-22)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.1...rho-agent-tools-v0.5.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.1 to 1.7.2
+
 ## [0.5.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.0...rho-agent-tools-v0.5.1) (2026-07-22)
 
 

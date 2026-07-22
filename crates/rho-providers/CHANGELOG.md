@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.7.0...rho-providers-v0.7.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+* **tui:** sort slash commands and provider pickers alphabetically ([#498](https://github.com/matthewyjiang/rho/issues/498)) ([0e2c16c](https://github.com/matthewyjiang/rho/commit/0e2c16cd9b5ac6b5c9c28259a09c0428f64a72ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.1 to 1.7.2
+
 ## [0.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.6.0...rho-providers-v0.7.0) (2026-07-22)
 
 
