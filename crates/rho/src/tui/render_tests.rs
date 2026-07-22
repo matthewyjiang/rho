@@ -406,16 +406,15 @@ fn visual_cursor_movement_preserves_ascii_wrapped_column() {
 fn session_header_update_notice_aligns_under_brand_without_label() {
     let notice = "update available: v1.11.0 (current v1.10.0)";
     let lines = session_header_lines(Some(notice), 80);
-    let brand = lines
-        .iter()
-        .find(|line| line_text(line).contains("rho"))
-        .expect("brand line");
-    let update = lines
-        .iter()
-        .find(|line| line_text(line).contains("update available"))
-        .expect("update notice line");
+    let version = env!("CARGO_PKG_VERSION");
 
-    assert!(line_text(brand).starts_with(' '));
-    assert_eq!(line_text(update), format!(" {notice}"));
-    assert!(!line_text(update).contains("update  update"));
+    assert_eq!(
+        lines.iter().map(line_text).collect::<Vec<_>>(),
+        vec![
+            String::new(),
+            format!(" rho  v{version}"),
+            format!(" {notice}"),
+            String::new(),
+        ]
+    );
 }
