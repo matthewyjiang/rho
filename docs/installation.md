@@ -3,13 +3,13 @@
 Install the latest prebuilt Rho binary on macOS and Linux:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
 The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windows installer writes to `%LOCALAPPDATA%\Programs\rho\bin` and adds that directory to your user `PATH`.
@@ -19,11 +19,11 @@ After installing the binary, Rho leaves the credential backend unset and uses th
 Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set os` or `rho credential-store set file`, to make this choice without the login picker:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_CREDENTIAL_STORE=file sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_CREDENTIAL_STORE=file sh
 ```
 
 ```powershell
-$env:RHO_CREDENTIAL_STORE = "file"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+$env:RHO_CREDENTIAL_STORE = "file"; irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
 For more detail, see [where credentials live](/authentication-and-models#where-credentials-live).
@@ -44,21 +44,21 @@ scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rh
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_INSTALL_DIR=/usr/local/bin sh
 ```
 
 ```powershell
-$env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+$env:RHO_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\rho\bin"; irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
 To install a specific release, set `RHO_VERSION`. Accepted forms include `v0.9.0`, `0.9.0`, and the full release tag `rho-coding-agent-v0.9.0`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_VERSION=v0.9.0 sh
+curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_VERSION=v0.9.0 sh
 ```
 
 ```powershell
-$env:RHO_VERSION = "v0.9.0"; irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex
+$env:RHO_VERSION = "v0.9.0"; irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
 If your platform has no prebuilt binary, install from crates.io with Cargo:

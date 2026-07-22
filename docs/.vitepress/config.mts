@@ -1,10 +1,61 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitepress'
+import type { Plugin } from 'vite'
+
+const configDir = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(configDir, '../..')
+const installScripts = ['install.sh', 'install.ps1'] as const
+
+/** Serve scripts/install.* at the docs site root (for example /rho/install.sh). */
+function installScriptsPlugin(): Plugin {
+  const scriptPath = (name: (typeof installScripts)[number]) =>
+    path.join(repoRoot, 'scripts', name)
+
+  const matchScript = (url: string | undefined) => {
+    const pathname = (url ?? '').split('?')[0] ?? ''
+    return installScripts.find(
+      (name) => pathname === `/${name}` || pathname.endsWith(`/${name}`),
+    )
+  }
+
+  return {
+    name: 'rho-install-scripts',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const name = matchScript(req.url)
+        if (!name) {
+          next()
+          return
+        }
+
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.end(fs.readFileSync(scriptPath(name)))
+      })
+    },
+    writeBundle(options) {
+      if (!options.dir) {
+        return
+      }
+
+      for (const name of installScripts) {
+        fs.copyFileSync(scriptPath(name), path.join(options.dir, name))
+      }
+    },
+  }
+}
 
 export default defineConfig({
   title: 'Rho',
   description: 'A lightweight agent harness inspired by Pi',
   base: '/rho/',
   cleanUrls: true,
+  vite: {
+    plugins: [installScriptsPlugin()],
+  },
   themeConfig: {
     nav: [
       { text: 'Getting started', link: '/getting-started' },
