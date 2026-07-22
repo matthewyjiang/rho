@@ -77,6 +77,8 @@ mod paste_burst;
 mod pending_input;
 mod permission_mode;
 mod picker;
+mod picker_input;
+mod picker_overlay;
 mod prompt_turn;
 mod provider_attempt;
 mod provider_picker;
@@ -888,6 +890,7 @@ impl App {
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
+                self.clamp_overlay_detail_scroll(terminal);
                 self.text_selection = None;
                 self.hovered_code_block_copy = None;
                 self.hide_history_scrollbar();
@@ -1580,83 +1583,6 @@ impl App {
         Ok(true)
     }
 
-    async fn handle_picker_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.composer, ComposerMode::Picker(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.select_previous();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Down) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.select_next();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.complete_filter();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.pop_filter_char();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite()?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                self.submit_picker_selection(terminal, agent).await?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.push_filter_char(ch);
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                self.submit_picker_selection(terminal, agent).await?;
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                self.handle_picker_escape(/*running*/ false)?;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
     async fn handle_command_palette_key(
         &mut self,
         key: KeyEvent,
@@ -2015,7 +1941,7 @@ impl App {
         if self.handle_running_config_text_key(key)? {
             return Ok(());
         }
-        if self.handle_running_picker_key(key)? {
+        if self.handle_running_picker_key(key, terminal)? {
             return Ok(());
         }
         if self.handle_running_command_palette_key(key, terminal)? {
@@ -2389,62 +2315,6 @@ impl App {
         }
     }
 
-    fn handle_running_picker_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.composer, ComposerMode::Picker(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.select_previous();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Down) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.select_next();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.complete_filter();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.pop_filter_char();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('p')) if self.model_picker_is_open() => {
-                self.toggle_selected_model_favorite()?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Char(' ')) if self.picker_space_confirms_selection() => {
-                self.submit_picker_selection_during_turn()?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::Picker(picker) = &mut self.composer {
-                    picker.push_filter_char(ch);
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                self.submit_picker_selection_during_turn()?;
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                self.handle_picker_escape(/*running*/ true)?;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
     fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.composer = ComposerMode::Input;
@@ -2777,6 +2647,7 @@ impl App {
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
+                    self.clamp_overlay_detail_scroll(terminal);
                     self.text_selection = None;
                     self.hovered_code_block_copy = None;
                     self.hide_history_scrollbar();

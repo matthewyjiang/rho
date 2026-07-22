@@ -71,10 +71,7 @@ pub(super) fn session_header_lines(
 }
 
 pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
-    match picker.layout {
-        super::PickerLayout::List => list_picker_lines(picker, width),
-        super::PickerLayout::MasterDetail => master_detail_picker_lines(picker, width),
-    }
+    list_picker_lines(picker, width)
 }
 
 fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
@@ -127,10 +124,11 @@ fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
         LineFill::Natural,
     ));
     lines.push(Line::raw(""));
-    if let Some(detail) = picker
-        .selected_item()
-        .and_then(|item| item.detail.as_deref())
-    {
+    if picker.items.iter().any(|item| item.detail.is_some()) {
+        let detail = picker
+            .selected_item()
+            .and_then(|item| item.detail.as_deref())
+            .unwrap_or_default();
         let detail = truncate_one_line(detail, width.saturating_sub(2));
         let detail = if width > 2 {
             format!("  {detail}")
@@ -147,121 +145,6 @@ fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
         LineFill::Natural,
     ));
     lines
-}
-
-fn master_detail_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
-    const TWO_COLUMN_MIN_WIDTH: usize = 64;
-
-    let matching_indices = picker.matching_indices();
-    if matching_indices.is_empty() {
-        return list_picker_lines(picker, width);
-    }
-
-    let mut lines = vec![picker_filter_line(picker, width), Line::raw("")];
-    let detail = picker
-        .selected_item()
-        .and_then(|item| item.detail.as_deref())
-        .unwrap_or_default();
-
-    if width < TWO_COLUMN_MIN_WIDTH {
-        lines.extend(detail_lines(detail, width.saturating_sub(2), "  "));
-        lines.push(Line::raw(""));
-        let start = visible_picker_match_start(picker, &matching_indices);
-        for index in matching_indices
-            .iter()
-            .copied()
-            .skip(start)
-            .take(MAX_PICKER_ITEMS)
-        {
-            let item = &picker.items[index];
-            lines.push(picker_item_line(
-                item,
-                index == picker.selected,
-                width.saturating_sub(2),
-                width,
-            ));
-        }
-    } else {
-        let start = visible_picker_match_start(picker, &matching_indices);
-        let visible = matching_indices
-            .iter()
-            .copied()
-            .skip(start)
-            .take(MAX_PICKER_ITEMS)
-            .collect::<Vec<_>>();
-        let left_width = picker_label_width(picker, width)
-            .saturating_add(2)
-            .clamp(18, 32);
-        let separator = " │ ";
-        let right_width = width.saturating_sub(left_width + display_width(separator));
-        let details = detail_lines(detail, right_width, "");
-        let row_count = visible.len().max(details.len());
-        for row in 0..row_count {
-            let left = visible.get(row).map_or_else(String::new, |index| {
-                let marker = if *index == picker.selected {
-                    "→"
-                } else {
-                    " "
-                };
-                let label =
-                    truncate_one_line(&picker.items[*index].label, left_width.saturating_sub(2));
-                format!("{marker} {label}")
-            });
-            let selected = visible
-                .get(row)
-                .is_some_and(|index| *index == picker.selected);
-            let left = format!(
-                "{left}{}",
-                " ".repeat(left_width.saturating_sub(display_width(&left)))
-            );
-            let right = details
-                .get(row)
-                .map(|line| line.spans.clone())
-                .unwrap_or_default();
-            let mut spans = vec![Span::styled(
-                left,
-                if selected {
-                    Theme::accent()
-                } else {
-                    Theme::text()
-                },
-            )];
-            spans.push(Span::styled(separator, Theme::dim()));
-            spans.extend(right);
-            lines.push(Line::from(spans));
-        }
-    }
-
-    lines.push(Line::raw(""));
-    lines.push(styled_line(
-        truncate_one_line(&picker_footer_text(picker), width),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
-    lines
-}
-
-fn detail_lines(detail: &str, width: usize, prefix: &str) -> Vec<Line<'static>> {
-    let content_width = width.saturating_sub(display_width(prefix)).max(1);
-    detail
-        .lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                vec![Line::raw("")]
-            } else {
-                wrap_line_at_whitespace(line, content_width)
-                    .into_iter()
-                    .map(|line| {
-                        Line::from(vec![
-                            Span::raw(prefix.to_string()),
-                            Span::styled(line, Theme::dim()),
-                        ])
-                    })
-                    .collect()
-            }
-        })
-        .collect()
 }
 
 fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
@@ -358,29 +241,7 @@ fn picker_item_line(
 }
 
 fn picker_footer_text(picker: &UiPicker) -> String {
-    let default_action = match picker.action {
-        super::PickerAction::Config => "change",
-        super::PickerAction::Doctor => "close",
-        super::PickerAction::ViewAgent
-            if picker
-                .selected_item()
-                .and_then(|item| item.badge.as_ref())
-                .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
-        {
-            "configure"
-        }
-        super::PickerAction::ViewAgent => "close",
-        super::PickerAction::SelectModel
-        | super::PickerAction::SelectInternalAgentModel
-        | super::PickerAction::LoginGroup
-        | super::PickerAction::LoginProvider
-        | super::PickerAction::LogoutProvider
-        | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ResumeSession
-        | super::PickerAction::SelectTreeNode => "select",
-        super::PickerAction::RefreshModelList => "refresh",
-    };
-    let action = picker.confirm_verb.as_deref().unwrap_or(default_action);
+    let action = picker.confirm_action_label();
     let pin = if picker.help.contains("ctrl-p") {
         " · Ctrl-P to pin/unpin"
     } else {
@@ -402,7 +263,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
     )
 }
 
-fn picker_badge_style(tone: PickerBadgeTone) -> Style {
+pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
         PickerBadgeTone::Internal => Theme::accent(),
         PickerBadgeTone::Selected => Theme::warning(),

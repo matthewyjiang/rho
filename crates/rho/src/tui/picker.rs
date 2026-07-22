@@ -29,6 +29,15 @@ struct PickerMatchCache {
     indices: Vec<usize>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct DetailWrapCache {
+    selected: usize,
+    width: usize,
+    detail_len: usize,
+    detail_ptr: usize,
+    lines: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct UiPicker {
     pub(super) title: String,
@@ -38,9 +47,13 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
+    /// Top visible detail line for overlay pickers.
+    pub(super) detail_scroll: usize,
     pub(super) confirm_verb: Option<String>,
+    pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
+    detail_wrap_cache: RefCell<DetailWrapCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -71,7 +84,13 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerLayout {
     #[default]
     List,
-    MasterDetail,
+    Overlay,
+}
+
+impl PickerLayout {
+    pub(super) fn is_overlay(self) -> bool {
+        matches!(self, Self::Overlay)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,15 +142,162 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
+            detail_scroll: 0,
             confirm_verb: None,
+            overlay_chrome: None,
             parent: None,
             matches: RefCell::default(),
+            detail_wrap_cache: RefCell::default(),
         }
     }
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
         self
+    }
+
+    pub(super) fn with_overlay_chrome(
+        mut self,
+        chrome: super::picker_overlay::OverlayChrome,
+    ) -> Self {
+        self.overlay_chrome = Some(chrome);
+        self
+    }
+
+    pub(super) fn is_overlay(&self) -> bool {
+        self.layout.is_overlay()
+    }
+
+    pub(super) fn has_scrollable_detail(&self) -> bool {
+        self.is_overlay()
+    }
+
+    pub(super) fn reset_detail_scroll(&mut self) {
+        self.detail_scroll = 0;
+    }
+
+    pub(super) fn scroll_detail_by(
+        &mut self,
+        delta: isize,
+        viewport: super::picker_overlay::DetailViewport,
+    ) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        self.detail_scroll = if delta < 0 {
+            self.detail_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.detail_scroll.saturating_add(delta as usize)
+        };
+        self.clamp_detail_scroll(viewport);
+    }
+
+    pub(super) fn scroll_detail_home(&mut self) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        self.reset_detail_scroll();
+    }
+
+    pub(super) fn scroll_detail_end(&mut self, viewport: super::picker_overlay::DetailViewport) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let line_count = self.detail_line_count(viewport.width);
+        self.detail_scroll = line_count.saturating_sub(viewport.rows.max(1));
+    }
+
+    pub(super) fn scroll_detail_page(
+        &mut self,
+        delta_pages: isize,
+        viewport: super::picker_overlay::DetailViewport,
+    ) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let rows = viewport.rows.max(1) as isize;
+        self.scroll_detail_by(delta_pages.saturating_mul(rows), viewport);
+    }
+
+    pub(super) fn clamp_detail_scroll(&mut self, viewport: super::picker_overlay::DetailViewport) {
+        if !self.has_scrollable_detail() {
+            return;
+        }
+        let line_count = self.detail_line_count(viewport.width);
+        self.detail_scroll = super::picker_overlay::clamp_detail_scroll(
+            self.detail_scroll,
+            line_count,
+            viewport.rows,
+        );
+    }
+
+    pub(super) fn detail_line_count(&self, detail_width: usize) -> usize {
+        self.wrapped_detail_lines(detail_width).len()
+    }
+
+    pub(super) fn wrapped_detail_lines(&self, detail_width: usize) -> Ref<'_, Vec<String>> {
+        let detail = self.selected_detail();
+        let detail_len = detail.len();
+        let detail_ptr = detail.as_ptr() as usize;
+        let width = detail_width.max(1);
+        let stale = {
+            let cache = self.detail_wrap_cache.borrow();
+            cache.selected != self.selected
+                || cache.width != width
+                || cache.detail_len != detail_len
+                || cache.detail_ptr != detail_ptr
+                || cache.lines.is_empty() && !detail.is_empty()
+        };
+        if stale {
+            let lines = super::picker_overlay::overlay_detail_lines(detail, width);
+            *self.detail_wrap_cache.borrow_mut() = DetailWrapCache {
+                selected: self.selected,
+                width,
+                detail_len,
+                detail_ptr,
+                lines,
+            };
+        }
+        Ref::map(self.detail_wrap_cache.borrow(), |cache| &cache.lines)
+    }
+
+    pub(super) fn selected_detail(&self) -> &str {
+        self.selected_item()
+            .and_then(|item| item.detail.as_deref())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn confirm_action_label(&self) -> &str {
+        if let Some(verb) = self.confirm_verb.as_deref() {
+            return verb;
+        }
+        match self.action {
+            PickerAction::Config => "change",
+            PickerAction::Doctor => "close",
+            PickerAction::ViewAgent
+                if self
+                    .selected_item()
+                    .and_then(|item| item.badge.as_ref())
+                    .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
+            {
+                "configure"
+            }
+            PickerAction::ViewAgent => "close",
+            PickerAction::SelectModel
+            | PickerAction::SelectInternalAgentModel
+            | PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode => "select",
+            PickerAction::RefreshModelList => "refresh",
+        }
+    }
+
+    pub(super) fn action_footer(&self) -> String {
+        let escape = if self.has_parent() { "back" } else { "close" };
+        format!("Enter {} · Esc {escape}", self.confirm_action_label())
     }
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
@@ -169,6 +335,7 @@ impl UiPicker {
             }
         };
         self.selected = next;
+        self.reset_detail_scroll();
     }
 
     pub(super) fn select_next(&mut self) {
@@ -184,16 +351,19 @@ impl UiPicker {
             matches[(position + 1) % matches.len()]
         };
         self.selected = next;
+        self.reset_detail_scroll();
     }
 
     pub(super) fn push_filter_char(&mut self, ch: char) {
         self.filter.push(ch);
         self.select_first_match();
+        self.reset_detail_scroll();
     }
 
     pub(super) fn pop_filter_char(&mut self) {
         self.filter.pop();
         self.select_first_match();
+        self.reset_detail_scroll();
     }
 
     pub(super) fn complete_filter(&mut self) {
@@ -384,6 +554,25 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
 }
 
 impl super::App {
+    pub(super) fn clamp_overlay_detail_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
+        let Ok(size) = terminal.size() else {
+            return;
+        };
+        let super::ComposerMode::Picker(picker) = &mut self.composer else {
+            return;
+        };
+        if !picker.is_overlay() {
+            return;
+        }
+        let layout = super::picker_overlay::picker_overlay_layout(ratatui::layout::Rect::new(
+            0,
+            0,
+            size.width,
+            size.height,
+        ));
+        picker.clamp_detail_scroll(layout.detail_viewport());
+    }
+
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {
         let previous = std::mem::replace(&mut self.composer, super::ComposerMode::Input);
         let super::ComposerMode::Picker(parent) = previous else {
