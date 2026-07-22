@@ -66,10 +66,9 @@ pub(super) fn internal_agent_model_picker(
         available_auths,
         PickerAction::SelectInternalAgentModel,
     );
-    let selected_model = picker
-        .items
-        .iter()
-        .position(|item| item.value == format!("{current_provider}/{current_model}"));
+    let selected_model = picker.items.iter().position(|item| {
+        item.value == rho_providers::provider::model_reference(current_provider, current_model)
+    });
     picker.items.insert(
         0,
         PickerItem {
@@ -110,7 +109,7 @@ fn model_picker_for_current(
         model: current_model,
         badge: selected_badge,
     } = current;
-    let current = format!("{current_provider}/{current_model}");
+    let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let items = favorites::reorder_models_by_favorites(
         catalog::available_models_for_auths(available_auths),
@@ -118,7 +117,7 @@ fn model_picker_for_current(
     )
     .into_iter()
     .map(|entry| {
-        let value = format!("{}/{}", entry.provider, entry.model);
+        let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
         let pinned = favorites
             .iter()
             .any(|favorite| favorite.matches(&entry.provider, &entry.model));
@@ -162,9 +161,51 @@ fn model_picker_for_current(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rho_providers::credentials::{
-        available_auth_modes, save_codex_tokens, MemoryCredentialStore,
+    use rho_providers::{
+        credentials::{
+            available_auth_modes, save_codex_tokens, save_provider_api_key, MemoryCredentialStore,
+        },
+        model::{
+            provider_models::{
+                replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+                ProviderModel,
+            },
+            ReasoningCapabilities,
+        },
     };
+
+    #[test]
+    fn poolside_picker_uses_clean_reference_for_namespaced_wire_model() {
+        let cache = tempfile::tempdir().unwrap();
+        with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+            replace_cached_provider_models_for_tests(
+                "poolside",
+                &[ProviderModel {
+                    provider: "poolside".into(),
+                    model: "poolside/laguna-m.1".into(),
+                    display_name: "Laguna M.1".into(),
+                    context_window: None,
+                    max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::NotConfigurable,
+                }],
+            )
+            .unwrap();
+            let store = MemoryCredentialStore::default();
+            save_provider_api_key(&store, "poolside", "test-key").unwrap();
+            let auths = available_auth_modes(&store);
+            let mut info = crate::tui::tests::test_bootstrap().runtime;
+            info.provider = "poolside".into();
+            info.model = "poolside/laguna-m.1".into();
+            info.auth = "poolside-api-key".into();
+
+            let picker = model_picker(&info, &auths);
+
+            assert_eq!(picker.items.len(), 1);
+            assert_eq!(picker.items[0].label, "poolside/laguna-m.1");
+            assert_eq!(picker.items[0].value, "poolside/laguna-m.1");
+            assert_eq!(picker.selected, 0);
+        });
+    }
 
     #[test]
     fn model_picker_orders_pinned_models_before_selected_model() {

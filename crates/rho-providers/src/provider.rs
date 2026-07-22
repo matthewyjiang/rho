@@ -11,6 +11,7 @@ pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens"
 pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
+pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
@@ -26,6 +27,7 @@ pub enum ProviderId {
     Xai,
     XaiOAuth,
     Moonshot,
+    Poolside,
     OpenRouter,
     OpenRouterOAuth,
     KimiCode,
@@ -40,6 +42,7 @@ pub enum RuntimeProviderId {
     GithubCopilot,
     Xai,
     Moonshot,
+    Poolside,
     OpenRouter,
     KimiCode,
 }
@@ -126,6 +129,27 @@ pub enum ProviderAuthKind {
 }
 
 impl ProviderDescriptor {
+    /// Formats a provider-qualified model reference for user input and display.
+    ///
+    /// Poolside's wire model IDs already carry the `poolside/` namespace, so
+    /// adding Rho's provider prefix again would produce a duplicate segment.
+    pub fn model_reference(&self, model: &str) -> String {
+        if self.runtime_id == RuntimeProviderId::Poolside && model.starts_with("poolside/") {
+            model.to_string()
+        } else {
+            format!("{}/{model}", self.name)
+        }
+    }
+
+    /// Converts a model reference suffix into the wire ID used by this provider.
+    pub fn model_id_from_reference(&self, model: &str) -> String {
+        if self.runtime_id == RuntimeProviderId::Poolside && !model.starts_with("poolside/") {
+            format!("poolside/{model}")
+        } else {
+            model.to_string()
+        }
+    }
+
     /// Resolves a provider-facing model ID to its models.dev catalog ID.
     ///
     /// Provider model discovery remains authoritative. This only bridges model
@@ -193,6 +217,7 @@ pub enum MissingCredential {
     Anthropic,
     Google,
     Moonshot,
+    Poolside,
     OpenRouter,
     Profile(&'static str),
     Xai,
@@ -332,6 +357,24 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
+        id: ProviderId::Poolside,
+        runtime_id: RuntimeProviderId::Poolside,
+        name: "poolside",
+        display_name: "Poolside",
+        auth: "poolside-api-key",
+        login_label: "Poolside API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "POOLSIDE_API_KEY",
+            account: POOLSIDE_API_KEY_ACCOUNT,
+            entry_label: "Poolside API key",
+            missing: MissingCredential::Poolside,
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        metadata_upstream: "poolside",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+    },
+    ProviderDescriptor {
         id: ProviderId::OpenRouter,
         runtime_id: RuntimeProviderId::OpenRouter,
         name: "openrouter",
@@ -429,6 +472,14 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
     providers()
         .iter()
         .find(|descriptor| descriptor.name == provider)
+}
+
+/// Formats a provider-qualified model reference for user input and display.
+pub fn model_reference(provider: &str, model: &str) -> String {
+    provider_descriptor(provider).map_or_else(
+        || format!("{provider}/{model}"),
+        |descriptor| descriptor.model_reference(model),
+    )
 }
 
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {

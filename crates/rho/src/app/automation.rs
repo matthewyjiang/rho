@@ -403,6 +403,7 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
                 | ModelError::MissingGoogleApiKey
                 | ModelError::MissingGithubCopilotAuth
                 | ModelError::MissingMoonshotApiKey
+                | ModelError::MissingPoolsideApiKey
                 | ModelError::MissingOpenRouterApiKey
                 | ModelError::MissingCredentialProfile(_)
                 | ModelError::MissingKimiAuth

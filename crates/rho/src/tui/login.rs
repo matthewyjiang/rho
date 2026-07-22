@@ -333,8 +333,12 @@ impl App {
         if self.using_unavailable_provider {
             if self.activate_provider_after_login(&target, agent)? {
                 self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {} and selected {}/{}",
-                    target.provider, self.info.runtime.provider, self.info.runtime.model
+                    "stored credentials for {} and selected {}",
+                    target.provider,
+                    rho_providers::provider::model_reference(
+                        &self.info.runtime.provider,
+                        &self.info.runtime.model,
+                    )
                 )));
             }
         } else if target.provider == self.info.runtime.provider {
@@ -415,7 +419,8 @@ impl App {
             Ok(reasoning) => Some(reasoning),
             Err(requested) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but reasoning level '{requested}' is not supported by {provider}/{model}"
+                    "stored credentials, but reasoning level '{requested}' is not supported by {}",
+                    rho_providers::provider::model_reference(&provider, &model)
                 )));
                 self.status = "login saved".into();
                 None
@@ -504,14 +509,20 @@ impl App {
         match self.save_current_config() {
             Ok(()) => {
                 self.status = format!(
-                    "model: {}/{}",
-                    self.info.runtime.provider, self.info.runtime.model
+                    "model: {}",
+                    rho_providers::provider::model_reference(
+                        &self.info.runtime.provider,
+                        &self.info.runtime.model,
+                    )
                 );
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "selected {}/{}, but saving config failed: {err}",
-                    self.info.runtime.provider, self.info.runtime.model
+                    "selected {}, but saving config failed: {err}",
+                    rho_providers::provider::model_reference(
+                        &self.info.runtime.provider,
+                        &self.info.runtime.model,
+                    )
                 )));
                 self.status = "config save failed".into();
             }

@@ -28,6 +28,8 @@ pub enum ModelError {
     MissingGithubCopilotAuth,
     #[error("missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override")]
     MissingMoonshotApiKey,
+    #[error("missing Poolside API key; run /login poolside in the TUI or set POOLSIDE_API_KEY as a CI/dev override")]
+    MissingPoolsideApiKey,
     #[error("missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override")]
     MissingOpenRouterApiKey,
     #[error("{0}")]

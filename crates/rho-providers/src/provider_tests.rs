@@ -32,10 +32,12 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).catalog_reasoning,
         CatalogReasoningPolicy::OffAsNone
     );
-    assert_eq!(
-        super::provider_descriptor_by_id(ProviderId::GithubCopilot).catalog_reasoning,
-        CatalogReasoningPolicy::NotConfigurable
-    );
+    for provider in [ProviderId::GithubCopilot, ProviderId::Poolside] {
+        assert_eq!(
+            super::provider_descriptor_by_id(provider).catalog_reasoning,
+            CatalogReasoningPolicy::NotConfigurable
+        );
+    }
     assert_eq!(
         super::provider_descriptor_by_id(ProviderId::Anthropic).catalog_reasoning,
         CatalogReasoningPolicy::Unknown
@@ -50,6 +52,24 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
             CatalogReasoningPolicy::OffByAdvertisedToggle
         );
     }
+}
+
+#[test]
+fn poolside_model_references_keep_one_namespace_and_restore_wire_ids() {
+    let poolside = super::provider_descriptor_by_id(super::ProviderId::Poolside);
+
+    assert_eq!(
+        poolside.model_reference("poolside/laguna-m.1"),
+        "poolside/laguna-m.1"
+    );
+    assert_eq!(
+        poolside.model_id_from_reference("laguna-m.1"),
+        "poolside/laguna-m.1"
+    );
+    assert_eq!(
+        poolside.model_id_from_reference("poolside/laguna-m.1"),
+        "poolside/laguna-m.1"
+    );
 }
 
 #[test]
@@ -120,6 +140,14 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     assert_eq!(
         moonshot.auth_kind.account(),
         Some(super::MOONSHOT_API_KEY_ACCOUNT)
+    );
+
+    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside);
+    assert_eq!(poolside.auth, "poolside-api-key");
+    assert_eq!(poolside.auth_kind.env_var(), Some("POOLSIDE_API_KEY"));
+    assert_eq!(
+        poolside.auth_kind.account(),
+        Some(super::POOLSIDE_API_KEY_ACCOUNT)
     );
 
     let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);

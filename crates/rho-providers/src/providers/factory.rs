@@ -82,6 +82,7 @@ fn clone_model_error(error: &ModelError) -> ModelError {
         ModelError::MissingXaiApiKey => ModelError::MissingXaiApiKey,
         ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,
         ModelError::MissingMoonshotApiKey => ModelError::MissingMoonshotApiKey,
+        ModelError::MissingPoolsideApiKey => ModelError::MissingPoolsideApiKey,
         ModelError::MissingOpenRouterApiKey => ModelError::MissingOpenRouterApiKey,
         ModelError::MissingCredentialProfile(message) => {
             ModelError::MissingCredentialProfile(message)

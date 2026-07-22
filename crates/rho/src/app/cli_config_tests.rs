@@ -1,3 +1,4 @@
+use clap::Parser;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use {
@@ -99,6 +100,19 @@ fn validate_cli_rejects_resume_with_update() {
     let err = validate(&cli).unwrap_err();
 
     assert!(err.to_string().contains("--resume is only supported"));
+}
+
+#[test]
+fn clean_poolside_model_override_persists_namespaced_wire_id() {
+    with_cached_provider_models("poolside", vec!["poolside/laguna-m.1"], || {
+        let mut config = Config::default();
+        let cli = Cli::try_parse_from(["rho", "--model", "poolside/laguna-m.1"]).unwrap();
+
+        assert!(apply_overrides(&mut config, &cli).unwrap());
+        assert_eq!(config.provider, "poolside");
+        assert_eq!(config.model, "poolside/laguna-m.1");
+        assert_eq!(config.auth, "poolside-api-key");
+    });
 }
 
 #[test]

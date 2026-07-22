@@ -15,11 +15,13 @@ impl FavoriteModel {
     }
 
     pub fn value(&self) -> String {
-        format!("{}/{}", self.provider, self.model)
+        crate::provider::model_reference(&self.provider, &self.model)
     }
 
     pub fn matches(&self, provider: &str, model: &str) -> bool {
-        self.provider == provider && self.model == model
+        self.provider == provider
+            && crate::provider::model_reference(provider, &self.model)
+                == crate::provider::model_reference(provider, model)
     }
 }
 
@@ -121,6 +123,18 @@ mod tests {
                 FavoriteModel::new("anthropic", "claude"),
             ]
         );
+    }
+
+    #[test]
+    fn poolside_favorites_normalize_to_clean_reference_and_match_wire_id() {
+        let favorites = normalized_favorite_models(&[
+            "poolside/poolside/laguna-m.1".into(),
+            "poolside/laguna-m.1".into(),
+        ]);
+
+        assert_eq!(favorites.len(), 1);
+        assert_eq!(favorites[0].value(), "poolside/laguna-m.1");
+        assert!(favorites[0].matches("poolside", "poolside/laguna-m.1"));
     }
 
     #[test]

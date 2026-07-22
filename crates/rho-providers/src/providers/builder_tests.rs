@@ -103,6 +103,21 @@ fn explicit_builder_constructs_google_provider() {
 }
 
 #[test]
+fn explicit_builder_constructs_poolside_provider() {
+    let options =
+        ProviderBuildOptions::new("poolside", "poolside/laguna-m.1", ReasoningLevel::Medium)
+            .unwrap();
+    let credential =
+        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
+
+    let provider = ProviderBuilder::new(options, credential).build().unwrap();
+
+    assert_eq!(provider.identity().provider, "poolside");
+    assert_eq!(provider.identity().api, "openai-chat-completions");
+    assert_eq!(provider.identity().model, "poolside/laguna-m.1");
+}
+
+#[test]
 fn explicit_builder_constructs_openrouter_provider() {
     let options = ProviderBuildOptions::new(
         "openrouter",
@@ -123,6 +138,17 @@ fn explicit_builder_constructs_openrouter_provider() {
 fn public_provider_objects_are_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Arc<dyn rho_sdk::provider::ModelProvider>>();
+}
+
+#[test]
+fn poolside_runtime_uses_standard_dialect_and_platform_default() {
+    assert_eq!(
+        crate::model::registry::provider_runtime("poolside"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
+            default_api_base: "https://inference.poolside.ai/v1",
+        })
+    );
 }
 
 #[test]

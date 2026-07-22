@@ -445,7 +445,7 @@ impl App {
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
-        let provider_model = format!("{provider}/{model}");
+        let provider_model = rho_providers::provider::model_reference(&provider, &model);
         let capabilities =
             rho_providers::model::models_dev::current_reasoning_capabilities(&provider, &model);
         let reasoning = match reasoning_metadata::resolve_model_switch_reasoning(
@@ -521,7 +521,9 @@ impl App {
     ) -> anyhow::Result<()> {
         let label = selection
             .as_ref()
-            .map(|selection| format!("{}/{}", selection.provider, selection.model))
+            .map(|selection| {
+                rho_providers::provider::model_reference(&selection.provider, &selection.model)
+            })
             .unwrap_or_else(|| "conversation model".into());
         match &selection {
             Some(selection) => {

@@ -102,6 +102,7 @@ pub fn login_groups() -> Vec<LoginGroup> {
             "Moonshot AI",
             &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
         ),
+        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
         (
             "openrouter",
             "OpenRouter",
@@ -371,7 +372,11 @@ fn resolve_model_selection_for_provider_from(
         });
     }
     if provider_uses_cached_models(provider) {
-        if let Some(entry) = provider_models::cached_provider_model(provider, model) {
+        let model_id = provider::provider_descriptor(provider).map_or_else(
+            || model.to_string(),
+            |descriptor| descriptor.model_id_from_reference(model),
+        );
+        if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
             return Ok(selection_from_provider_model(provider, &entry));
         }
         if builtin_default_model(provider).as_deref() == Some(model) {
@@ -478,6 +483,23 @@ mod tests {
             max_output_tokens: None,
             reasoning_capabilities: ReasoningCapabilities::Unknown,
         }
+    }
+
+    #[test]
+    fn resolves_clean_poolside_reference_to_namespaced_wire_model() {
+        with_cached_provider_models(
+            "poolside",
+            vec![provider_model("poolside", "poolside/laguna-m.1")],
+            || {
+                let clean = resolve_model_selection_for_provider("poolside", "laguna-m.1").unwrap();
+                let legacy =
+                    resolve_model_selection_for_provider("poolside", "poolside/laguna-m.1")
+                        .unwrap();
+
+                assert_eq!(clean.model, "poolside/laguna-m.1");
+                assert_eq!(legacy, clean);
+            },
+        );
     }
 
     #[test]

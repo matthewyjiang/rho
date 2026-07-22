@@ -95,7 +95,10 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             ),
             None => (models.provider, models.model, "conversation fallback"),
         };
-        format!("{provider}/{model}\nModel source: {source}")
+        format!(
+            "{}\nModel source: {source}",
+            rho_providers::provider::model_reference(provider, model)
+        )
     } else {
         match &definition.model {
             ModelPolicy::Inherit => "inherit".to_string(),
@@ -143,7 +146,7 @@ fn model_name(selection: &ModelSelection) -> String {
     selection
         .provider
         .as_ref()
-        .map(|provider| format!("{provider}/{}", selection.model))
+        .map(|provider| rho_providers::provider::model_reference(provider, &selection.model))
         .unwrap_or_else(|| selection.model.clone())
 }
 

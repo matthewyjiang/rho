@@ -1,4 +1,16 @@
-use super::{refresh_model_list_picker, ALL_REFRESHABLE_PROVIDERS};
+use super::{login_group_picker, refresh_model_list_picker, ALL_REFRESHABLE_PROVIDERS};
+
+#[test]
+fn login_picker_lists_poolside() {
+    let picker = login_group_picker();
+    let poolside = picker
+        .items
+        .iter()
+        .find(|item| item.value == "poolside")
+        .expect("Poolside should be available for login");
+
+    assert_eq!(poolside.label, "Poolside");
+}
 
 #[test]
 fn refresh_picker_lists_all_and_available_refreshable_providers() {
