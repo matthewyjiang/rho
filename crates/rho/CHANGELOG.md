@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.11.0...rho-coding-agent-v1.12.0) (2026-07-22)
+
+
+### Features
+
+* **auth:** choose credential store on first login ([#487](https://github.com/matthewyjiang/rho/issues/487)) ([d2e0cb7](https://github.com/matthewyjiang/rho/commit/d2e0cb75a32a7789df2010ad8eee7b96659dc105))
+* **providers:** add Poolside API platform ([#483](https://github.com/matthewyjiang/rho/issues/483)) ([4684de7](https://github.com/matthewyjiang/rho/commit/4684de700f4312a90fa6d3173343a1dcfe7ef44d))
+* **tui:** show basic controls under session header ([#485](https://github.com/matthewyjiang/rho/issues/485)) ([fb65596](https://github.com/matthewyjiang/rho/commit/fb65596fc06ca4f3d0312dce91d04465df80e34b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.0 to 1.7.1
+    * rho-providers bumped from 0.6.0 to 0.7.0
+
 ## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.10.0...rho-coding-agent-v1.11.0) (2026-07-22)
 
 
