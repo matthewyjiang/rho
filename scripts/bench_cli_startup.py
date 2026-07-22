@@ -224,11 +224,12 @@ def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
     label_w = 148
     value_w = 68
     gutter = 24
-    header_h = 54
+    # Title at y=24, subtitle at y=44, then clear air before panel headers/labels.
+    header_h = 68
     footer_h = 26
     row_h = 28
     bar_h = 11
-    panel_title_h = 16
+    panel_title_h = 18
 
     n = len(results)
     chart_h = n * row_h
