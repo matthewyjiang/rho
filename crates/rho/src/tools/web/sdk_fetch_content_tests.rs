@@ -76,7 +76,10 @@ async fn run_fetch(
         .provider(provider)
         .workspace(workspace)
         .workspace_policy(policy)
-        .tool(SdkFetchContent::new(12_000))
+        .tool(SdkFetchContent::new(
+            12_000,
+            super::super::guard::NetworkAccess::AllowPrivate,
+        ))
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();

@@ -155,6 +155,7 @@ pub(super) async fn item_content(
     client: &reqwest::Client,
     item: &SearchItem,
     include_content: bool,
+    access: super::guard::NetworkAccess,
 ) -> (String, &'static str) {
     if !include_content {
         return (item.snippet.clone(), "snippet");
@@ -162,7 +163,7 @@ pub(super) async fn item_content(
     let Some(url) = item.url.as_deref() else {
         return (item.snippet.clone(), "snippet");
     };
-    match fetch_url_text(client, url).await {
+    match fetch_url_text(client, url, access).await {
         Ok(content) => (content, "source_page"),
         Err(err) => {
             let warning = format!("content fetch failed for {url}: {err}");

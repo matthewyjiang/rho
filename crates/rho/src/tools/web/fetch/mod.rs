@@ -24,8 +24,9 @@ pub(super) async fn fetch_http_url(
     client: &reqwest::Client,
     url: &Url,
     prompt: Option<&str>,
+    access: super::guard::NetworkAccess,
 ) -> Result<FetchedTarget, ToolError> {
-    let content = fetch_url_text(client, url.as_str()).await?;
+    let content = fetch_url_text(client, url.as_str(), access).await?;
     let title = extract_title(&content);
     let markdown = html_to_text(&content);
     Ok(FetchedTarget {
@@ -44,20 +45,23 @@ pub(super) async fn fetch_http_url(
 pub(super) async fn fetch_url_text(
     client: &reqwest::Client,
     url: &str,
+    access: super::guard::NetworkAccess,
 ) -> Result<String, ToolError> {
-    fetch_url_text_with_auth(client, url, None).await
+    fetch_url_text_with_auth(client, url, None, access).await
 }
 
 async fn fetch_url_text_with_auth(
     client: &reqwest::Client,
     url: &str,
     bearer_token: Option<&str>,
+    access: super::guard::NetworkAccess,
 ) -> Result<String, ToolError> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(ToolError::Message(
             "only http and https URLs are supported".into(),
         ));
     }
+    super::guard::ensure_allowed_url(url, access)?;
     let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);

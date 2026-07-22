@@ -76,8 +76,9 @@ async fn search_item_content_preserves_snippet_when_fetch_fails() {
         snippet: "original snippet".into(),
     };
 
+    let access = super::guard::NetworkAccess::AllowPrivate;
     let (content, content_kind) =
-        search::item_content(&super::util::http_client(), &item, true).await;
+        search::item_content(&super::util::http_client(access), &item, true, access).await;
 
     assert_eq!(content_kind, "snippet_with_fetch_warning");
     assert!(content.contains("original snippet"));
@@ -153,7 +154,8 @@ fn tool_specs_and_fetch_security_preserve_public_contract() {
         super::access_tools(&Config::default()).spec().name,
         "web_search"
     );
-    let fetch_content = super::SdkFetchContent::new(12_000);
+    let fetch_content =
+        super::SdkFetchContent::new(12_000, super::guard::NetworkAccess::PublicOnly);
     assert_eq!(
         rho_sdk::tool::Tool::spec(&fetch_content).name,
         "fetch_content"
@@ -200,7 +202,9 @@ async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/big");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let result =
+        super::fetch::fetch_url_text(&client, &url, super::guard::NetworkAccess::AllowPrivate)
+            .await;
     server.join().unwrap();
 
     let content = result.expect("truncated fetch of valid UTF-8 must not fail");
@@ -239,7 +243,9 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/small");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let result =
+        super::fetch::fetch_url_text(&client, &url, super::guard::NetworkAccess::AllowPrivate)
+            .await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
@@ -277,8 +283,27 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{address}/exact-cap");
-    let result = super::fetch::fetch_url_text(&client, &url).await;
+    let result =
+        super::fetch::fetch_url_text(&client, &url, super::guard::NetworkAccess::AllowPrivate)
+            .await;
     server.join().unwrap();
 
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
+}
+
+#[tokio::test]
+async fn fetch_url_text_blocks_loopback_when_public_only() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let client = reqwest::Client::new();
+    let url = format!("http://{address}/secret");
+
+    let result =
+        super::fetch::fetch_url_text(&client, &url, super::guard::NetworkAccess::PublicOnly).await;
+
+    let error = result.expect_err("loopback fetch must be rejected by default");
+    assert!(error.to_string().contains("RHO_ALLOW_PRIVATE_NETWORK"));
+    drop(listener);
 }

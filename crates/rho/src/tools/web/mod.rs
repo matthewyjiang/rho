@@ -4,6 +4,7 @@ use rho_sdk::tool::Tool as SdkTool;
 
 mod adapters;
 mod fetch;
+mod guard;
 mod sdk_fetch_content;
 mod search;
 mod storage;
@@ -13,7 +14,8 @@ pub use adapters::{GetSearchContent, WebSearch};
 pub(super) use sdk_fetch_content::SdkFetchContent;
 
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
-    WebSearch::with_client(config, util::http_client())
+    let access = guard::NetworkAccess::from_env();
+    WebSearch::with_client(config, util::http_client(access), access)
 }
 
 pub(super) fn sdk_bundle(
@@ -33,7 +35,10 @@ pub(super) fn sdk_bundle(
         );
     }
     if capabilities.contains(&ToolCapability::FetchContent) {
-        tools.push(Arc::new(SdkFetchContent::new(config.max_output_bytes)));
+        tools.push(Arc::new(SdkFetchContent::new(
+            config.max_output_bytes,
+            guard::NetworkAccess::from_env(),
+        )));
     }
     if capabilities.contains(&ToolCapability::GetSearchContent) {
         tools.push(
