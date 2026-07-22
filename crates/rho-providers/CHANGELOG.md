@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.5.0...rho-providers-v0.6.0) (2026-07-22)
+
+
+### Features
+
+* **auth:** add configurable credential storage ([#478](https://github.com/matthewyjiang/rho/issues/478)) ([e778eda](https://github.com/matthewyjiang/rho/commit/e778edab71ec7e3c2f21137760f53bd0b8089469))
+* **auth:** add OpenRouter OAuth login ([#472](https://github.com/matthewyjiang/rho/issues/472)) ([42af8e7](https://github.com/matthewyjiang/rho/commit/42af8e7a95bc1d16245f89dd1ebe74e6c4f56b7b))
+* **cli:** add structured run output ([#467](https://github.com/matthewyjiang/rho/issues/467)) ([c4088bb](https://github.com/matthewyjiang/rho/commit/c4088bb03ef0e7e1b69de5e671773399755fe07b))
+* **providers:** add Ollama support ([#466](https://github.com/matthewyjiang/rho/issues/466)) ([3a5a6d2](https://github.com/matthewyjiang/rho/commit/3a5a6d2fbf9fddcd87fbbb996e22438436a87823))
+
+
+### Bug Fixes
+
+* **models:** reduce GPT-5.6 Codex context window ([#470](https://github.com/matthewyjiang/rho/issues/470)) ([2cf9cd6](https://github.com/matthewyjiang/rho/commit/2cf9cd6a74a1ab28798e08340b7ec2c731aab4f0))
+* **openai:** retry empty websocket responses ([#476](https://github.com/matthewyjiang/rho/issues/476)) ([04f3844](https://github.com/matthewyjiang/rho/commit/04f3844c79118e227b28bfee39b7af3f7c55b45e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.6.0 to 1.7.0
+
 ## [0.5.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.4.0...rho-providers-v0.5.0) (2026-07-21)
 
 

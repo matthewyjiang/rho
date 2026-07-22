@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.4.0...rho-agent-tools-v0.5.0) (2026-07-22)
+
+
+### Features
+
+* **auth:** add configurable credential storage ([#478](https://github.com/matthewyjiang/rho/issues/478)) ([e778eda](https://github.com/matthewyjiang/rho/commit/e778edab71ec7e3c2f21137760f53bd0b8089469))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.6.0 to 1.7.0
+
 ## [0.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.3.3...rho-agent-tools-v0.4.0) (2026-07-21)
 
 

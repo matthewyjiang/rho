@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.6.0...rho-sdk-v1.7.0) (2026-07-22)
+
+
+### Features
+
+* **sessions:** add conversation tree navigation ([#474](https://github.com/matthewyjiang/rho/issues/474)) ([8abb138](https://github.com/matthewyjiang/rho/commit/8abb1387a0c96dcf3142166d27b4db108d1c5181))
+
 ## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.5.0...rho-sdk-v1.6.0) (2026-07-21)
 
 

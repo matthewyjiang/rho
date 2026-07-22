@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.10.0...rho-coding-agent-v1.11.0) (2026-07-22)
+
+
+### Features
+
+* **auth:** add configurable credential storage ([#478](https://github.com/matthewyjiang/rho/issues/478)) ([e778eda](https://github.com/matthewyjiang/rho/commit/e778edab71ec7e3c2f21137760f53bd0b8089469))
+* **auth:** add OpenRouter OAuth login ([#472](https://github.com/matthewyjiang/rho/issues/472)) ([42af8e7](https://github.com/matthewyjiang/rho/commit/42af8e7a95bc1d16245f89dd1ebe74e6c4f56b7b))
+* **cli:** add structured run output ([#467](https://github.com/matthewyjiang/rho/issues/467)) ([c4088bb](https://github.com/matthewyjiang/rho/commit/c4088bb03ef0e7e1b69de5e671773399755fe07b))
+* **models:** resolve aliases in model command ([#463](https://github.com/matthewyjiang/rho/issues/463)) ([a74ee4d](https://github.com/matthewyjiang/rho/commit/a74ee4d6f01e544e077cbe6f8da8c3eeeca305c1))
+* **providers:** add Ollama support ([#466](https://github.com/matthewyjiang/rho/issues/466)) ([3a5a6d2](https://github.com/matthewyjiang/rho/commit/3a5a6d2fbf9fddcd87fbbb996e22438436a87823))
+* **sessions:** add conversation tree navigation ([#474](https://github.com/matthewyjiang/rho/issues/474)) ([8abb138](https://github.com/matthewyjiang/rho/commit/8abb1387a0c96dcf3142166d27b4db108d1c5181))
+* **tui:** add navigable agent popup ([#473](https://github.com/matthewyjiang/rho/issues/473)) ([f2d8726](https://github.com/matthewyjiang/rho/commit/f2d87260962a3a34f71b8fe886ffbb37fe30c7c8))
+* **tui:** show context tokens with compact K/M units ([#477](https://github.com/matthewyjiang/rho/issues/477)) ([52ec30d](https://github.com/matthewyjiang/rho/commit/52ec30d6328ac0a11b3412511aa0c2142c375c1f))
+* **tui:** show conversation tree in overlay popup ([#480](https://github.com/matthewyjiang/rho/issues/480)) ([635763d](https://github.com/matthewyjiang/rho/commit/635763d69b7a455494101d394819c79704c20873))
+* **tui:** show thought duration after reasoning ([#479](https://github.com/matthewyjiang/rho/issues/479)) ([7776f5a](https://github.com/matthewyjiang/rho/commit/7776f5aa0e126d74f8beff8b1540fb3b214c38ee))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.6.0 to 1.7.0
+    * rho-providers bumped from 0.5.0 to 0.6.0
+
 ## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.9.0...rho-coding-agent-v1.10.0) (2026-07-21)
 
 
