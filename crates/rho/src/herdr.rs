@@ -42,7 +42,7 @@ impl HerdrReporter {
         Self::from_env_vars(|key| env::var(key).ok())
     }
 
-    fn from_env_vars(mut get_var: impl FnMut(&str) -> Option<String>) -> Self {
+    pub(crate) fn from_env_vars(mut get_var: impl FnMut(&str) -> Option<String>) -> Self {
         let enabled = platform_supported() && get_var("HERDR_ENV").as_deref() == Some("1");
         let socket_path = get_var("HERDR_SOCKET_PATH").filter(|value| !value.is_empty());
         let pane_id = get_var("HERDR_PANE_ID").filter(|value| !value.is_empty());
@@ -187,6 +187,58 @@ async fn send_payload(socket_path: PathBuf, payload: Vec<u8>) -> std::io::Result
 #[cfg(not(unix))]
 async fn send_payload(_socket_path: PathBuf, _payload: Vec<u8>) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+pub(crate) mod test_support {
+    use std::path::Path;
+
+    use serde_json::Value;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::HerdrReporter;
+
+    pub(crate) fn reporter_for_socket(socket_path: &Path) -> HerdrReporter {
+        let socket_path = socket_path.to_string_lossy().to_string();
+        HerdrReporter::from_env_vars(|key| match key {
+            "HERDR_ENV" => Some("1".into()),
+            "HERDR_SOCKET_PATH" => Some(socket_path.clone()),
+            "HERDR_PANE_ID" => Some("w1:p1".into()),
+            _ => None,
+        })
+    }
+
+    pub(crate) struct TestHerdrServer {
+        requests: tokio::sync::mpsc::UnboundedReceiver<Value>,
+    }
+
+    impl TestHerdrServer {
+        pub(crate) async fn bind(socket_path: &Path) -> Self {
+            let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
+            let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((stream, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let mut stream = BufReader::new(stream);
+                        let mut line = String::new();
+                        stream.read_line(&mut line).await.unwrap();
+                        let request = serde_json::from_str(&line).unwrap();
+                        tx.send(request).unwrap();
+                        stream.get_mut().write_all(b"{}\n").await.unwrap();
+                    });
+                }
+            });
+            Self { requests }
+        }
+
+        pub(crate) async fn next_request(&mut self) -> Value {
+            self.requests.recv().await.unwrap()
+        }
+    }
 }
 
 #[cfg(test)]

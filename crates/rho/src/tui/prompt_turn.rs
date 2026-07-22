@@ -142,15 +142,7 @@ impl App {
         self.status = "running".into();
         self.running = true;
         self.activity_phase = ActivityPhase::Starting;
-        self.info
-            .services
-            .herdr
-            .report_state(
-                HerdrState::Working,
-                None,
-                self.info.session.session_id.as_deref(),
-            )
-            .await;
+        self.report_herdr_working().await;
         self.loading_spinner.start();
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
@@ -214,6 +206,9 @@ impl App {
                         RunningInputMode::Turn,
                     ) {
                         Ok(StreamControl::Interrupt) => agent.cancel(),
+                        Ok(StreamControl::ApprovalResolved) => {
+                            self.report_herdr_working().await;
+                        }
                         Ok(StreamControl::Continue | StreamControl::Resize) => {}
                         Err(error) => {
                             sdk_failure = Some(error.to_string());
@@ -248,6 +243,7 @@ impl App {
                     };
                     match reply {
                         QuestionnaireReply::Answer(response) => {
+                            self.report_herdr_working().await;
                             if let Err(error) = agent
                                 .respond(request_id, event_adapter::host_response(response))
                                 .await
@@ -276,7 +272,7 @@ impl App {
                     let event = match event {
                         RuntimeEvent::Approval(pending) => {
                             self.finish_streams();
-                            self.open_approval(pending);
+                            self.open_approval(pending).await;
                             self.draw_running_frame(terminal, &mut frame_scheduler)?;
                             continue;
                         }
@@ -309,16 +305,9 @@ impl App {
                                 /*questionnaire_active*/ pending_questionnaire.is_some(),
                             );
                             if interaction_available {
-                                let request_id = request.id().clone();
-                                let (reply_tx, reply_rx) = oneshot::channel();
-                                self.open_questionnaire(
-                                    QuestionAnswerRequest {
-                                        request: event_adapter::questionnaire_request(&request),
-                                        response: QuestionnaireResponseChannel::new(reply_tx),
-                                    },
-                                    terminal,
-                                )?;
-                                pending_questionnaire = Some((call_id, request_id, reply_rx));
+                                pending_questionnaire = Some(
+                                    self.begin_pending_questionnaire(call_id, request).await?,
+                                );
                                 interaction_ready = true;
                             } else {
                                 queued_questionnaires.push_back((call_id, request));
@@ -352,16 +341,8 @@ impl App {
                 )
             {
                 if let Some((call_id, request)) = queued_questionnaires.pop_front() {
-                    let request_id = request.id().clone();
-                    let (reply_tx, reply_rx) = oneshot::channel();
-                    self.open_questionnaire(
-                        QuestionAnswerRequest {
-                            request: event_adapter::questionnaire_request(&request),
-                            response: QuestionnaireResponseChannel::new(reply_tx),
-                        },
-                        terminal,
-                    )?;
-                    pending_questionnaire = Some((call_id, request_id, reply_rx));
+                    pending_questionnaire =
+                        Some(self.begin_pending_questionnaire(call_id, request).await?);
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
             }
@@ -483,6 +464,25 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
         frame_scheduler.rendered(Instant::now());
         Ok(())
+    }
+
+    async fn begin_pending_questionnaire(
+        &mut self,
+        call_id: rho_sdk::ToolCallId,
+        request: rho_sdk::HostInputRequest,
+    ) -> anyhow::Result<(
+        rho_sdk::ToolCallId,
+        rho_sdk::HostInputId,
+        oneshot::Receiver<QuestionnaireReply>,
+    )> {
+        let request_id = request.id().clone();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.open_questionnaire(QuestionAnswerRequest {
+            request: event_adapter::questionnaire_request(&request),
+            response: QuestionnaireResponseChannel::new(reply_tx),
+        })
+        .await?;
+        Ok((call_id, request_id, reply_rx))
     }
 
     fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {

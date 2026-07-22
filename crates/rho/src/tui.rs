@@ -116,7 +116,7 @@ mod workspace;
 
 use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
-use approval::{approval_lines, ApprovalComposer};
+use approval::{approval_lines, ApprovalComposer, ApprovalKeyOutcome};
 use clipboard::{ClipboardWriter, SystemClipboard};
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -1901,6 +1901,23 @@ impl App {
         Ok(())
     }
 
+    async fn report_herdr_state(&self, state: HerdrState, message: Option<&str>) {
+        self.info
+            .services
+            .herdr
+            .report_state(state, message, self.info.session.session_id.as_deref())
+            .await;
+    }
+
+    async fn report_herdr_working(&self) {
+        self.report_herdr_state(HerdrState::Working, None).await;
+    }
+
+    async fn report_herdr_waiting_for_user(&self, wait: HerdrUserWait) {
+        self.report_herdr_state(HerdrState::Blocked, Some(wait.message()))
+            .await;
+    }
+
     async fn report_resting_herdr_state(&self) {
         let goal_blocked_reason = self
             .goal
@@ -1918,11 +1935,7 @@ impl App {
         } else {
             HerdrState::Idle
         };
-        self.info
-            .services
-            .herdr
-            .report_state(state, message, self.info.session.session_id.as_deref())
-            .await;
+        self.report_herdr_state(state, message).await;
     }
 
     fn paste_clipboard_image(&mut self) {
@@ -1969,41 +1982,45 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         if self.handle_paste_burst_key(key) {
-            return Ok(());
+            return Ok(false);
         }
 
         if self.handle_pending_input_key(key) {
-            return Ok(());
+            return Ok(false);
         }
 
-        if self.handle_approval_key(key, terminal.size()?.width as usize)?
-            || self.handle_history_key(key, terminal)?
-        {
-            return Ok(());
+        match self.handle_approval_key(key, terminal.size()?.width as usize)? {
+            ApprovalKeyOutcome::Ignored => {}
+            ApprovalKeyOutcome::Handled => return Ok(false),
+            ApprovalKeyOutcome::Resolved => return Ok(true),
+        }
+
+        if self.handle_history_key(key, terminal)? {
+            return Ok(false);
         }
 
         if self.handle_questionnaire_key(key)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_running_config_number_key(key, terminal)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_running_config_text_key(key)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_running_picker_key(key, terminal)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_running_command_palette_key(key, terminal)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_running_file_palette_key(key)? {
-            return Ok(());
+            return Ok(false);
         }
         if self.handle_configurable_running_key(key, terminal)? {
-            return Ok(());
+            return Ok(false);
         }
 
         match (key.modifiers, key.code) {
@@ -2096,7 +2113,7 @@ impl App {
         }
         self.clamp_command_selection();
         self.clamp_file_selection();
-        Ok(())
+        Ok(false)
     }
 
     fn submit_during_turn(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
@@ -2683,6 +2700,7 @@ impl App {
         input_mode: RunningInputMode,
     ) -> Result<StreamControl, rho_providers::model::ModelError> {
         let mut control = StreamControl::Continue;
+        let mut approval_resolved = false;
         let mut next_event = Some(first_event);
         for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
             let event = match next_event.take() {
@@ -2722,9 +2740,11 @@ impl App {
                         );
                     }
                     if input_mode == RunningInputMode::Turn {
-                        self.handle_key_during_turn(key, terminal).map_err(|err| {
-                            rho_providers::model::ModelError::InvalidResponse(err.to_string())
-                        })?;
+                        let resolved =
+                            self.handle_key_during_turn(key, terminal).map_err(|err| {
+                                rho_providers::model::ModelError::InvalidResponse(err.to_string())
+                            })?;
+                        approval_resolved |= resolved;
                         if self.pending_input_action.is_some() {
                             break;
                         }
@@ -2762,7 +2782,11 @@ impl App {
             }
         }
         self.flush_due_paste_burst();
-        Ok(control)
+        if approval_resolved {
+            Ok(StreamControl::ApprovalResolved)
+        } else {
+            Ok(control)
+        }
     }
 
     fn running_escape_has_overlay_target(&self) -> bool {
@@ -3687,6 +3711,22 @@ enum StreamControl {
     Continue,
     Interrupt,
     Resize,
+    ApprovalResolved,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HerdrUserWait {
+    Approval,
+    Questionnaire,
+}
+
+impl HerdrUserWait {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Approval => "waiting for approval",
+            Self::Questionnaire => "waiting for your answers",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3713,6 +3753,8 @@ mod tests {
 
     #[path = "activity_phase_tests.rs"]
     mod activity_phase_tests;
+    #[path = "herdr_state_tests.rs"]
+    mod herdr_state_tests;
     #[path = "input_editing_tests.rs"]
     mod input_editing_tests;
     #[path = "layout_tests.rs"]
