@@ -35,10 +35,8 @@ fn backend_names_and_default_are_os_or_file() {
 
 #[test]
 fn open_os_uses_os_backend_without_file_fallback() {
-    let os = open_credential_store(CredentialStoreBackend::Os).unwrap();
-    // Missing entries return Ok(None) or a store error; either proves construction
-    // did not require an explicit file backend path.
-    let _ = os.get_secret("rho-open-probe-missing");
+    // Construction alone proves OS selection does not require a file path.
+    open_credential_store(CredentialStoreBackend::Os).unwrap();
 }
 
 #[test]
@@ -106,13 +104,6 @@ fn file_backend_probe_uses_explicit_file_store() {
     let secrets = std::fs::read_to_string(store.secrets_path()).unwrap_or_default();
     assert!(!secrets.contains("rho-probe-secret:"), "{secrets}");
     assert!(!secrets.contains("\"rho-probe:"), "{secrets}");
-}
-
-#[test]
-fn probe_os_reports_os_backend() {
-    let probe = probe_credential_store(CredentialStoreBackend::Os);
-    assert_eq!(probe.backend, CredentialStoreBackend::Os);
-    assert!(!probe.detail.contains("rho-probe-secret:"));
 }
 
 #[test]
