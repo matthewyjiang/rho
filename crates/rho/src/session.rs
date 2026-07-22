@@ -134,7 +134,7 @@ impl Session {
     ) -> anyhow::Result<tree::SessionTreeFacts> {
         let store = SessionStore::new(&session_root()?, cwd);
         let resolved = store.resolve(id_prefix)?;
-        Ok(tree::SessionTree::load(&resolved.path)?.facts())
+        Ok(resolved.tree()?.facts())
     }
 
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
@@ -148,7 +148,7 @@ impl Session {
     ) -> anyhow::Result<SessionExport> {
         let store = SessionStore::new(session_root, cwd);
         let resolved = store.resolve(id_prefix)?;
-        let record = resolved.summary(cwd)?;
+        let (record, tree) = resolved.summary_with_tree(cwd)?;
         let title = Self::list_in_root(session_root, cwd)
             .ok()
             .and_then(|summaries| {
@@ -158,7 +158,6 @@ impl Session {
                     .and_then(|summary| summary.title)
             });
 
-        let tree = resolved.tree()?;
         let mut messages = match tree.active_leaf_id() {
             Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
             None => Vec::new(),

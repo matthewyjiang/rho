@@ -100,8 +100,11 @@ impl ResolvedSession {
     pub(super) fn tree(&self) -> anyhow::Result<super::tree::SessionTree> {
         super::tree::SessionTree::load(&self.path)
     }
-    pub(super) fn summary(&self, cwd: &Path) -> anyhow::Result<SessionIndexRecord> {
-        summarize_session_file(&self.path, cwd)
+    pub(super) fn summary_with_tree(
+        &self,
+        cwd: &Path,
+    ) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
+        summarize_session_file_with_tree(&self.path, cwd)
     }
 }
 
@@ -461,6 +464,13 @@ pub(super) fn summarize_session_file(
     path: &Path,
     fallback_cwd: &Path,
 ) -> anyhow::Result<SessionIndexRecord> {
+    summarize_session_file_with_tree(path, fallback_cwd).map(|(record, _)| record)
+}
+
+fn summarize_session_file_with_tree(
+    path: &Path,
+    fallback_cwd: &Path,
+) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
     let id = session_id_from_path(path)
         .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
     let mut cwd = fallback_cwd.to_path_buf();
@@ -533,8 +543,9 @@ pub(super) fn summarize_session_file(
         Ok(())
     })?;
 
+    let tree = super::tree::SessionTree::load(path)?;
     if has_tree_records {
-        messages = super::tree::SessionTree::load(path)?
+        messages = tree
             .active_state()
             .map(|state| {
                 state
@@ -554,9 +565,8 @@ pub(super) fn summarize_session_file(
         created_at = updated_at;
     }
 
-    let tree = super::tree::SessionTree::load(path)?;
     let facts = tree.facts();
-    Ok(SessionIndexRecord {
+    let record = SessionIndexRecord {
         summary: SessionSummary {
             id,
             path: path.to_path_buf(),
@@ -574,7 +584,8 @@ pub(super) fn summarize_session_file(
         branch_count: facts.branch_count as u64,
         active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
         effective_format_version: tree.effective_format_version(),
-    })
+    };
+    Ok((record, tree))
 }
 
 fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {

@@ -454,7 +454,10 @@ impl SessionTree {
                 }
                 self.upgraded = true;
             }
-            legacy => {
+            legacy @ (SessionEntry::Message { .. }
+            | SessionEntry::ReplaceHistory { .. }
+            | SessionEntry::Snapshot { .. }
+            | SessionEntry::SnapshotDelta { .. }) => {
                 if self.version.is_none() {
                     anyhow::bail!("legacy record appears before the session header");
                 }
