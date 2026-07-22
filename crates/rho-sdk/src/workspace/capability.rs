@@ -178,11 +178,13 @@ impl fmt::Debug for ProcessInvocation {
 pub enum ProcessEnvironment {
     Empty,
     InheritAll,
-    /// Inherit the ambient environment after removing these variable names.
-    InheritExcept {
+    InheritListed {
         variable_names: Vec<String>,
     },
-    InheritListed {
+    /// Inherit the ambient environment after removing these variable names.
+    ///
+    /// Appended after existing variants so published discriminants stay stable.
+    InheritExcept {
         variable_names: Vec<String>,
     },
 }
