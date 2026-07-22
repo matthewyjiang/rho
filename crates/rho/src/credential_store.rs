@@ -166,12 +166,6 @@ pub(crate) fn initialize_from_config(
     Ok(())
 }
 
-/// Ensure the process-wide store is open (lazy init from remembered/default config).
-#[allow(dead_code)]
-pub(crate) fn initialize() -> CredentialResult<()> {
-    selected_store().map(|_| ())
-}
-
 /// Whether config still needs an explicit credential-store choice before login.
 pub(crate) fn needs_explicit_choice(config: &Config) -> bool {
     env_backend_override().is_none() && config.credential_store.is_none()

@@ -292,6 +292,7 @@ impl Config {
         Self::parse_file(path)
     }
 
+    #[cfg(test)]
     pub(crate) fn load_with_store(
         path: PathBuf,
         store: &dyn CredentialStore,
