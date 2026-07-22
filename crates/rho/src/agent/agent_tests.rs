@@ -109,13 +109,19 @@ fn project_definitions_require_explicit_trust() {
     )
     .unwrap();
 
-    let untrusted =
-        AgentCatalog::discover_with_home_and_trust(project.path(), None, ProjectTrust::Untrusted)
-            .unwrap();
+    let untrusted = AgentCatalog::discover_with_home_and_trust(
+        project.path(),
+        None,
+        crate::workspace::ProjectTrust::Untrusted,
+    )
+    .unwrap();
     assert!(untrusted.find("project").is_err());
-    let trusted =
-        AgentCatalog::discover_with_home_and_trust(project.path(), None, ProjectTrust::Trusted)
-            .unwrap();
+    let trusted = AgentCatalog::discover_with_home_and_trust(
+        project.path(),
+        None,
+        crate::workspace::ProjectTrust::Trusted,
+    )
+    .unwrap();
     assert_eq!(
         trusted.find("project").unwrap().metadata.origin,
         AgentOrigin::Project

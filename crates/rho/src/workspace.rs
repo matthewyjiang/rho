@@ -1,5 +1,24 @@
 use std::path::{Path, PathBuf};
 
+/// Whether repository-provided contributions (agents, skills) are trusted.
+/// Untrusted by default so cloning a repository cannot inject definitions or
+/// system-prompt text; opt in with `RHO_TRUST_PROJECT_AGENTS=1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectTrust {
+    Trusted,
+    Untrusted,
+}
+
+/// Reads the project-trust opt-in from the environment. One flag governs every
+/// project-provided contribution.
+pub fn project_trust() -> ProjectTrust {
+    if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        ProjectTrust::Trusted
+    } else {
+        ProjectTrust::Untrusted
+    }
+}
+
 pub fn project_ancestor_dirs(cwd: &Path) -> Vec<PathBuf> {
     let ancestors: Vec<_> = cwd.ancestors().map(Path::to_path_buf).collect();
     let Some(root_index) = ancestors.iter().position(|path| path.join(".git").exists()) else {

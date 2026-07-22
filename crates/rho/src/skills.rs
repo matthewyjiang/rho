@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::workspace::ProjectTrust;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillSource {
     BuiltIn,
@@ -32,25 +34,6 @@ const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
 ];
 
-/// Whether repository-provided skills are trusted. Project skills' descriptions
-/// are written into the system prompt, so an untrusted repository could inject
-/// instructions; this gates them the same way project agents are gated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectTrust {
-    Trusted,
-    Untrusted,
-}
-
-/// Reads the same signal that gates project agents, so one flag governs whether
-/// a project's agents and skills are trusted.
-pub fn project_trust() -> ProjectTrust {
-    if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref() == Some(std::ffi::OsStr::new("1")) {
-        ProjectTrust::Trusted
-    } else {
-        ProjectTrust::Untrusted
-    }
-}
-
 /// Discovers every skill, including project-provided ones. Used when a skill is
 /// invoked by explicit name; the system prompt uses
 /// [`discover_with_home_and_trust`] so untrusted project skills are not
@@ -67,7 +50,7 @@ pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
 }
 
 #[cfg(test)]
-pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
+fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
     discover_with_home_and_trust(cwd, home, ProjectTrust::Trusted)
 }
 

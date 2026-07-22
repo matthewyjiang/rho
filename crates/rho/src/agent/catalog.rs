@@ -18,11 +18,7 @@ const BUILTINS: &[(&str, &str)] = &[
     ("worker", include_str!("../builtin_agents/worker.md")),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectTrust {
-    Trusted,
-    Untrusted,
-}
+use crate::workspace::ProjectTrust;
 
 /// Source kind, ordered from lowest to highest discovery precedence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -58,14 +54,7 @@ impl AgentCatalog {
     /// `~/.rho/agents`, `~/.agents/agents`, then built-ins.
     pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
-        let trust = if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-            == Some(std::ffi::OsStr::new("1"))
-        {
-            ProjectTrust::Trusted
-        } else {
-            ProjectTrust::Untrusted
-        };
-        Self::discover_with_home_and_trust(cwd, home.as_deref(), trust)
+        Self::discover_with_home_and_trust(cwd, home.as_deref(), crate::workspace::project_trust())
     }
 
     #[cfg(test)]

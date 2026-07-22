@@ -36,14 +36,14 @@ pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> SystemPrompt {
 }
 
 fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
-    system_prompt_with_home_and_trust(tools, cwd, home, skills::project_trust())
+    system_prompt_with_home_and_trust(tools, cwd, home, crate::workspace::project_trust())
 }
 
 fn system_prompt_with_home_and_trust(
     tools: &[ToolSpec],
     cwd: &Path,
     home: Option<&Path>,
-    project_trust: skills::ProjectTrust,
+    project_trust: crate::workspace::ProjectTrust,
 ) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
     text.push_str(
@@ -421,7 +421,7 @@ mod tests {
             &[skill_tool_spec()],
             project.path(),
             Some(home.path()),
-            skills::ProjectTrust::Untrusted,
+            crate::workspace::ProjectTrust::Untrusted,
         )
         .text;
         assert!(
@@ -438,7 +438,7 @@ mod tests {
             &[skill_tool_spec()],
             project.path(),
             Some(home.path()),
-            skills::ProjectTrust::Trusted,
+            crate::workspace::ProjectTrust::Trusted,
         )
         .text;
         assert!(
