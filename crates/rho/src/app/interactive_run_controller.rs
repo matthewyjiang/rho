@@ -60,6 +60,10 @@ pub(crate) struct InteractiveRunController {
 }
 
 impl InteractiveRunController {
+    pub(crate) fn pending_turn(&self) -> Option<&PendingTurn> {
+        self.pending_turn.as_ref()
+    }
+
     pub(crate) fn is_active(&self) -> bool {
         self.active.is_some()
     }

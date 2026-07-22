@@ -244,6 +244,8 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         approval_receiver: None,
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
+        pending_persistence_error: None,
+        pending_persistence_checkpoint: None,
     }
 }
 

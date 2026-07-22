@@ -7,22 +7,16 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const INDEX_SCHEMA_VERSION: u32 = 1;
+const INDEX_SCHEMA_VERSION: u32 = 2;
 
 static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
     OnceLock::new();
-
-#[cfg(test)]
-use rho_providers::model::Message;
 
 use super::persistence::{
     clamp_u64_to_i64, session_dir_in_root, session_file_stats, session_id_from_path,
     set_private_dir_permissions, summarize_session_file, workspace_key,
 };
 use super::{Session, SessionIndexRecord, SessionSummary};
-
-#[cfg(test)]
-use super::persistence::{unix_timestamp_secs, user_message_text};
 
 pub(super) fn list_workspace_sessions(
     session_root: &Path,
@@ -156,6 +150,10 @@ pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Resu
         },
         file_size,
         file_mtime,
+        node_count: 0,
+        branch_count: 0,
+        active_leaf_id: None,
+        effective_format_version: super::persistence::SESSION_VERSION,
     };
     upsert_record(&connection, &session.workspace_key, &record)
 }
@@ -188,51 +186,7 @@ pub(super) fn set_title(
     }
 }
 
-#[cfg(test)]
-pub(super) fn record_message(session: &Session, message: &Message) -> anyhow::Result<()> {
-    let connection = open_index(&session.session_root)?;
-    let connection = connection
-        .lock()
-        .expect("session index connection poisoned");
-    let updated_at = clamp_u64_to_i64(unix_timestamp_secs());
-    let user_message = user_message_text(message);
-    let (file_size, file_mtime) = session_file_stats(&session.path);
-    let rows = connection.execute(
-        "update sessions
-         set updated_at = max(updated_at, ?3),
-             message_count = message_count + 1,
-             first_user_message = coalesce(first_user_message, ?4),
-             last_user_message = coalesce(?4, last_user_message),
-             file_size = ?5,
-             file_mtime = ?6
-         where workspace_key = ?1 and id = ?2",
-        params![
-            session.workspace_key.as_str(),
-            session.id.as_str(),
-            updated_at,
-            user_message,
-            file_size,
-            file_mtime
-        ],
-    )?;
-    if rows == 0 {
-        let record = summarize_session_file(&session.path, &session.cwd)?;
-        upsert_record(&connection, &session.workspace_key, &record)?;
-    }
-    Ok(())
-}
-
 pub(super) fn record_snapshot(session: &Session) -> anyhow::Result<()> {
-    let connection = open_index(&session.session_root)?;
-    let connection = connection
-        .lock()
-        .expect("session index connection poisoned");
-    let record = summarize_session_file(&session.path, &session.cwd)?;
-    upsert_record(&connection, &session.workspace_key, &record)
-}
-
-#[cfg(test)]
-pub(super) fn record_replaced(session: &Session) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
         .lock()
@@ -274,6 +228,9 @@ fn migrate_index_with_hook(
     }
 
     let transaction = connection.transaction()?;
+    if version > 0 {
+        validate_legacy_index_columns(&transaction)?;
+    }
     if version == 0 {
         transaction.execute_batch(
             "create table if not exists sessions (
@@ -289,11 +246,26 @@ fn migrate_index_with_hook(
             last_user_message text,
             file_size integer,
             file_mtime integer,
+            node_count integer not null default 0,
+            branch_count integer not null default 0,
+            active_leaf_id text,
+            effective_format_version integer not null default 1,
             primary key (workspace_key, id)
         );",
         )?;
         ensure_column(&transaction, "title text")?;
         ensure_column(&transaction, "first_user_message text")?;
+    }
+    ensure_column(&transaction, "node_count integer not null default 0")?;
+    ensure_column(&transaction, "branch_count integer not null default 0")?;
+    ensure_column(&transaction, "active_leaf_id text")?;
+    ensure_column(
+        &transaction,
+        "effective_format_version integer not null default 1",
+    )?;
+    if version < 2 {
+        // Force the next workspace sync to backfill tree facts for existing rows.
+        transaction.execute("update sessions set file_size = null", [])?;
     }
     validate_index_columns(&transaction)?;
     transaction.execute_batch(
@@ -305,6 +277,37 @@ fn migrate_index_with_hook(
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     before_commit(&transaction)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn validate_legacy_index_columns(connection: &Connection) -> anyhow::Result<()> {
+    const REQUIRED_COLUMNS: &[&str] = &[
+        "workspace_key",
+        "cwd",
+        "id",
+        "path",
+        "created_at",
+        "updated_at",
+        "message_count",
+        "last_user_message",
+        "file_size",
+        "file_mtime",
+    ];
+    let mut statement = connection.prepare("pragma table_info(sessions)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let missing = REQUIRED_COLUMNS
+        .iter()
+        .filter(|column| !columns.contains(**column))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "malformed session index schema: missing column(s): {}",
+            missing.join(", ")
+        );
+    }
     Ok(())
 }
 
@@ -322,6 +325,10 @@ fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
         "last_user_message",
         "file_size",
         "file_mtime",
+        "node_count",
+        "branch_count",
+        "active_leaf_id",
+        "effective_format_version",
     ];
     let mut statement = connection.prepare("pragma table_info(sessions)")?;
     let columns = statement
@@ -428,8 +435,12 @@ fn upsert_record(
             first_user_message,
             last_user_message,
             file_size,
-            file_mtime
-         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            file_mtime,
+            node_count,
+            branch_count,
+            active_leaf_id,
+            effective_format_version
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -440,7 +451,11 @@ fn upsert_record(
             first_user_message = excluded.first_user_message,
             last_user_message = excluded.last_user_message,
             file_size = excluded.file_size,
-            file_mtime = excluded.file_mtime",
+            file_mtime = excluded.file_mtime,
+            node_count = excluded.node_count,
+            branch_count = excluded.branch_count,
+            active_leaf_id = excluded.active_leaf_id,
+            effective_format_version = excluded.effective_format_version",
         params![
             workspace_key,
             cwd,
@@ -454,6 +469,10 @@ fn upsert_record(
             record.summary.last_user_message.as_deref(),
             record.file_size,
             record.file_mtime,
+            clamp_u64_to_i64(record.node_count),
+            clamp_u64_to_i64(record.branch_count),
+            record.active_leaf_id.as_deref(),
+            record.effective_format_version,
         ],
     )?;
     Ok(())
@@ -534,6 +553,14 @@ mod tests {
             assert_eq!(after, INDEX_SCHEMA_VERSION);
             if source_version == 1 {
                 assert_eq!(title.as_deref(), Some("fixture title"));
+                let file_size: Option<i64> = connection
+                    .query_row(
+                        "select file_size from sessions where id = 'fixture-session'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(file_size, None);
             }
             validate_index_columns(&connection).unwrap();
         }

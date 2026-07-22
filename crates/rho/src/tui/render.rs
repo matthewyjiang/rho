@@ -282,7 +282,7 @@ fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
 fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     let max_label_width = match picker.action {
         super::PickerAction::SelectModel | super::PickerAction::SelectInternalAgentModel => 60,
-        super::PickerAction::ResumeSession => 36,
+        super::PickerAction::ResumeSession | super::PickerAction::SelectTreeNode => 60,
         super::PickerAction::Config
         | super::PickerAction::Doctor
         | super::PickerAction::LoginGroup
@@ -376,7 +376,8 @@ fn picker_footer_text(picker: &UiPicker) -> String {
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
         | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ResumeSession => "select",
+        | super::PickerAction::ResumeSession
+        | super::PickerAction::SelectTreeNode => "select",
         super::PickerAction::RefreshModelList => "refresh",
     };
     let action = picker.confirm_verb.as_deref().unwrap_or(default_action);

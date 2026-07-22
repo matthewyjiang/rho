@@ -2,6 +2,7 @@ use std::ops::Deref;
 
 use tempfile::TempDir;
 
+use super::tree::{SessionNodeKind, StoredStateTransition};
 use super::*;
 use {
     rho_providers::model::{
@@ -167,13 +168,14 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
 
     let entries = read_entries(session.path()).unwrap();
     assert!(entries.iter().any(|entry| {
-        matches!(entry, SessionEntry::Message { message, .. }
-            if matches!(message, Message::User(blocks)
-                if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user")))
+        matches!(entry, SessionEntry::Node { node }
+            if matches!(&node.transition, StoredStateTransition::Snapshot { snapshot }
+                if snapshot.history().iter().any(|message| message == &Message::user_text("old user"))))
     }));
-    assert!(entries
-        .iter()
-        .any(|entry| matches!(entry, SessionEntry::ReplaceHistory { .. })));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        SessionEntry::Node { node } if node.kind == SessionNodeKind::Compaction
+    )));
 
     let (_session, histories) =
         Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
@@ -185,15 +187,17 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
     assert!(
         matches!(&histories.model[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
-    assert_eq!(histories.display.len(), 3);
+    assert_eq!(histories.display.len(), 4);
     assert!(
         matches!(&histories.display[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
     );
     assert!(
         matches!(&histories.display[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
     );
+    assert!(matches!(&histories.display[2], Message::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
     assert!(
-        matches!(&histories.display[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&histories.display[3], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
 }
 
@@ -209,9 +213,9 @@ fn replace_history_updates_session_summary() {
 
     let summaries = Session::list_in_root(&root, &cwd).unwrap();
 
-    assert_eq!(summaries[0].message_count, 2);
-    assert_eq!(summaries[0].first_user_message.as_deref(), Some("summary"));
-    assert_eq!(summaries[0].last_user_message.as_deref(), Some("latest"));
+    assert_eq!(summaries[0].message_count, 1);
+    assert_eq!(summaries[0].first_user_message.as_deref(), Some("old"));
+    assert_eq!(summaries[0].last_user_message.as_deref(), Some("old"));
 }
 
 #[test]
@@ -368,32 +372,44 @@ fn tolerates_only_truncated_final_json() {
 
 #[test]
 fn append_repairs_external_writes_despite_cached_cursor() {
-    for (tail, expected_messages) in [
-        // Torn record: truncated before the next append.
-        (b"{\"type\":\"message\"".as_slice(), 3),
-        // Complete record missing its newline: separator inserted, kept.
-        (
-            b"{\"type\":\"message\",\"timestamp\":\"1\",\"message\":{\"User\":[{\"Text\":\"external\"}]}}"
-                .as_slice(),
-            4,
-        ),
-    ] {
+    for torn in [true, false] {
         let root = temp_session_root();
         let cwd = temp_cwd();
         let session = Session::create_in_root(&root, &cwd).unwrap();
-        session.append_message(&Message::user_text("first")).unwrap();
-        session.append_message(&Message::user_text("second")).unwrap();
+        session
+            .append_message(&Message::user_text("first"))
+            .unwrap();
+        session
+            .append_message(&Message::user_text("second"))
+            .unwrap();
+        let tail = if torn {
+            b"{\"type\":\"set_leaf\"".to_vec()
+        } else {
+            let active_leaf_id = session
+                .session_tree()
+                .unwrap()
+                .active_leaf_id()
+                .unwrap()
+                .clone();
+            serde_json::to_vec(&SessionEntry::SetLeaf {
+                timestamp: "1".into(),
+                target_id: active_leaf_id,
+            })
+            .unwrap()
+        };
         OpenOptions::new()
             .append(true)
             .open(session.path())
             .unwrap()
-            .write_all(tail)
+            .write_all(&tail)
             .unwrap();
 
-        session.append_message(&Message::user_text("third")).unwrap();
+        session
+            .append_message(&Message::user_text("third"))
+            .unwrap();
 
         let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-        assert_eq!(messages.len(), expected_messages);
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages.last(), Some(&Message::user_text("third")));
     }
 }
@@ -587,9 +603,13 @@ fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
-    assert_eq!(export.messages.len(), 1);
+    assert_eq!(export.messages.len(), 2);
     assert!(
         matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "original"))
+    );
+    assert!(
+        matches!(&export.messages[1].message, Message::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
     );
 }
 
@@ -610,7 +630,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{timestamp}_{id}.jsonl"));
     let mut entries = vec![SessionEntry::Session {
-        version: SESSION_VERSION,
+        version: 3,
         id: id.into(),
         timestamp: timestamp.to_string(),
         cwd: cwd.to_path_buf(),

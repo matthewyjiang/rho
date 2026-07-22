@@ -85,6 +85,7 @@ pub(super) enum PickerAction {
     InsertSkillCommand,
     ViewAgent,
     ResumeSession,
+    SelectTreeNode,
     Config,
     Doctor,
 }
@@ -101,7 +102,8 @@ impl PickerAction {
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
-            | PickerAction::ResumeSession => false,
+            | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode => false,
         }
     }
 }
@@ -207,6 +209,7 @@ impl UiPicker {
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
+                | PickerAction::SelectTreeNode
                 | PickerAction::Config
                 | PickerAction::Doctor => regex::escape(&item.value),
             };
@@ -236,6 +239,7 @@ impl UiPicker {
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
+                | PickerAction::SelectTreeNode
                 | PickerAction::Config
                 | PickerAction::Doctor => (!filter.is_empty())
                     .then(|| {
@@ -257,6 +261,7 @@ impl UiPicker {
                 | PickerAction::InsertSkillCommand
                 | PickerAction::ViewAgent
                 | PickerAction::ResumeSession
+                | PickerAction::SelectTreeNode
                 | PickerAction::Config
                 | PickerAction::Doctor => {
                     picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())

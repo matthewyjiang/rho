@@ -105,6 +105,7 @@ mod text_selection;
 mod theme;
 mod tool_call_batch;
 mod tool_diff;
+mod tree_actions;
 mod turn_prompt;
 mod usage_cost;
 mod view;
@@ -2323,7 +2324,8 @@ impl App {
             | CommandId::Compact
             | CommandId::Login
             | CommandId::Logout
-            | CommandId::Resume => {
+            | CommandId::Resume
+            | CommandId::Tree => {
                 self.insert_entry(&Entry::Notice(format!(
                     "/{} is unavailable while a model turn is running",
                     invocation.name
@@ -2461,6 +2463,12 @@ impl App {
                 self.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
             }
+            PickerAction::ResumeSession | PickerAction::SelectTreeNode => {
+                self.insert_entry(&Entry::Notice(
+                    "session navigation is unavailable while a model turn is running".into(),
+                ));
+                self.status = "session navigation unavailable while running".into();
+            }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::Doctor | PickerAction::ViewAgent => {
                 self.status = "running".into();
@@ -2489,8 +2497,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
-            | PickerAction::RefreshModelList
-            | PickerAction::ResumeSession => {
+            | PickerAction::RefreshModelList => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
                 ));

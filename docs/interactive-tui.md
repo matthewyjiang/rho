@@ -74,6 +74,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
+| `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
 | `/config` | Open the [config](/configuration) category browser for models and reasoning, agent behavior, context limits, tools, providers, and updates. |
 | `/info` | Show the running Rho version, provider, model, reasoning level, and permission mode. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |

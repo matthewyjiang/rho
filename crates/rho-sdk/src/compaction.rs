@@ -318,7 +318,7 @@ pub enum CompactionTrigger {
 }
 
 /// Typed result of manual or automatic compaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CompactionOutcome {
     previous_messages: usize,
     current_messages: usize,
@@ -326,7 +326,42 @@ pub struct CompactionOutcome {
     current_tokens: u64,
     cost_usd_micros: Option<u64>,
     revision: Revision,
+    committed_snapshot: Option<Box<crate::SessionSnapshot>>,
 }
+
+impl std::fmt::Debug for CompactionOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompactionOutcome")
+            .field("previous_messages", &self.previous_messages)
+            .field("current_messages", &self.current_messages)
+            .field("previous_tokens", &self.previous_tokens)
+            .field("current_tokens", &self.current_tokens)
+            .field("cost_usd_micros", &self.cost_usd_micros)
+            .field("revision", &self.revision)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CompactionOutcome {
+    fn eq(&self, other: &Self) -> bool {
+        self.previous_messages == other.previous_messages
+            && self.current_messages == other.current_messages
+            && self.previous_tokens == other.previous_tokens
+            && self.current_tokens == other.current_tokens
+            && self.cost_usd_micros == other.cost_usd_micros
+            && self.revision == other.revision
+            && match (&self.committed_snapshot, &other.committed_snapshot) {
+                (None, None) => true,
+                (Some(left), Some(right)) => {
+                    left.session_id() == right.session_id() && left.revision() == right.revision()
+                }
+                _ => false,
+            }
+    }
+}
+
+impl Eq for CompactionOutcome {}
 
 impl CompactionOutcome {
     pub(crate) fn new(
@@ -344,7 +379,18 @@ impl CompactionOutcome {
             current_tokens,
             cost_usd_micros,
             revision,
+            committed_snapshot: None,
         }
+    }
+
+    pub(crate) fn with_committed_snapshot(mut self, snapshot: crate::SessionSnapshot) -> Self {
+        self.committed_snapshot = Some(Box::new(snapshot));
+        self
+    }
+
+    /// Exact committed state for an automatic compaction event.
+    pub fn committed_snapshot(&self) -> Option<&crate::SessionSnapshot> {
+        self.committed_snapshot.as_deref()
     }
 
     pub fn previous_messages(&self) -> usize {
