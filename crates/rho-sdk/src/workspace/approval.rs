@@ -330,11 +330,15 @@ impl ApprovalAuditLog {
 #[derive(Debug, Default)]
 pub(crate) struct SessionApprovals {
     exact_requests: Mutex<Vec<CapabilityRequest>>,
-    /// Serializes approval evaluation so an identical concurrent request observes
-    /// a session approval the first request recorded instead of prompting again.
-    /// ponytail: one gate serializes all approvals, not just identical ones — a
-    /// hung host approval blocks unrelated ones. Key the gate by request if a
-    /// host needs distinct approvals to prompt concurrently.
+    /// Serializes the miss path of approval evaluation: check remembered, prompt
+    /// the host if needed, then record `AllowForSession`. Waiters re-check under
+    /// the gate so an identical concurrent request observes the first decision
+    /// instead of prompting again.
+    ///
+    /// This is a session-wide prompt gate, not identical-only singleflight. A
+    /// slow host approval orders unrelated `RequireApproval` misses behind it.
+    /// Remembered hits stay outside the gate. Key by request if a host needs
+    /// distinct misses to prompt concurrently.
     approval_gate: tokio::sync::Mutex<()>,
 }
 
@@ -388,6 +392,18 @@ pub(crate) async fn authorize_for_call(
             ))
         }
         PolicyDecision::RequireApproval { reason } => {
+            if remembered.contains(&request) {
+                audit.record(
+                    capability,
+                    ApprovalAuditDecision::AllowedByRememberedApproval,
+                );
+                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
+            }
+
+            // Serialize only the miss path so a concurrent identical waiter
+            // observes AllowForSession recorded by the first prompt. Remembered
+            // hits above stay concurrent. AllowOnce/Deny still re-prompt after
+            // the holder finishes because nothing is remembered for them.
             let _gate = remembered.approval_gate.lock().await;
             if remembered.contains(&request) {
                 audit.record(
