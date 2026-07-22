@@ -5,7 +5,7 @@ mod process;
 mod session;
 mod write;
 
-pub use image::read_clipboard_image;
+pub use image::{image_from_paste_text, read_clipboard_image, PasteImageOutcome};
 pub use session::SessionKind;
 pub use write::{CopyOutcome, SystemClipboard};
 

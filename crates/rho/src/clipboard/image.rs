@@ -1,10 +1,12 @@
 use std::{
     env, fs,
-    path::PathBuf,
+    io::Read,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use rho_providers::model::ImageContent;
+use rho_tools::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 
 use super::{
     process::{command_available, command_output},
@@ -15,14 +17,108 @@ use super::{
 pub enum ClipboardImageError {
     #[error("no supported image found on clipboard")]
     NoImage,
+    #[error("image file exceeds the {0} byte paste limit")]
+    TooLarge(u64),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Result of interpreting a paste payload as an image attachment.
+#[derive(Debug)]
+pub enum PasteImageOutcome {
+    /// Paste text is not a single-line path to a supported image.
+    NotImage,
+    /// Loaded image content ready to attach.
+    Image(ImageContent),
+    /// Path looked like an image paste, but loading failed.
+    Failed(ClipboardImageError),
 }
 
 const SUPPORTED_IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
     read_clipboard_image_for_session(SessionKind::detect())
+}
+
+/// Loads a PNG, JPEG, GIF, or WebP file as pasteable image content.
+///
+/// Hosts such as Herdr paste clipboard images as filesystem paths. Rho treats a
+/// single-line paste of an image path as an attachment instead of plain text.
+pub fn read_image_file(path: &Path) -> Result<ImageContent, ClipboardImageError> {
+    read_image_file_with_limit(path, MAX_IMAGE_FILE_BYTES)
+}
+
+fn read_image_file_with_limit(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<ImageContent, ClipboardImageError> {
+    let file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ClipboardImageError::NoImage);
+    }
+    let mut bytes = Vec::new();
+    let mut limited = file.take(max_bytes.saturating_add(1));
+    limited.read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ClipboardImageError::TooLarge(max_bytes));
+    }
+    image_content_from_bytes(bytes)
+}
+
+/// When `text` is only a path to an existing supported image, load it.
+pub fn image_from_paste_text(text: &str, cwd: &Path) -> PasteImageOutcome {
+    let Some(path) = paste_text_as_image_path(text, cwd) else {
+        return PasteImageOutcome::NotImage;
+    };
+    match read_image_file(&path) {
+        Ok(image) => PasteImageOutcome::Image(image),
+        Err(ClipboardImageError::NoImage) => PasteImageOutcome::NotImage,
+        Err(error) => PasteImageOutcome::Failed(error),
+    }
+}
+
+pub(super) fn paste_text_as_image_path(text: &str, cwd: &Path) -> Option<PathBuf> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
+        return None;
+    }
+    let unquoted = strip_matching_quotes(trimmed);
+    if unquoted.is_empty() {
+        return None;
+    }
+    let candidate = PathBuf::from(unquoted);
+    let path = if candidate.is_absolute() {
+        candidate
+    } else {
+        cwd.join(candidate)
+    };
+    path.canonicalize().ok().filter(|path| path.is_file())
+}
+
+fn strip_matching_quotes(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &text[1..text.len() - 1];
+        }
+    }
+    text
+}
+
+fn image_content_from_bytes(bytes: Vec<u8>) -> Result<ImageContent, ClipboardImageError> {
+    if bytes.is_empty() {
+        return Err(ClipboardImageError::NoImage);
+    }
+    let Some(mime_type) = supported_image_mime_type(&bytes) else {
+        return Err(ClipboardImageError::NoImage);
+    };
+    Ok(ImageContent {
+        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
+        mime_type: mime_type.into(),
+    })
 }
 
 pub(super) fn read_clipboard_image_for_session(

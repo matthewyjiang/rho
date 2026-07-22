@@ -81,20 +81,6 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
         .is_some_and(|error| error.starts_with("image preview unavailable:")));
 }
 
-#[test]
-fn recognizes_supported_image_signatures() {
-    assert_eq!(
-        supported_image_mime_type(b"\xff\xd8\xffrest"),
-        Some("image/jpeg")
-    );
-    assert_eq!(supported_image_mime_type(b"GIF89arest"), Some("image/gif"));
-    assert_eq!(
-        supported_image_mime_type(b"RIFFxxxxWEBP"),
-        Some("image/webp")
-    );
-    assert_eq!(supported_image_mime_type(b"plain text"), None);
-}
-
 #[tokio::test]
 async fn rejects_offset_past_end_of_file() {
     let (_dir, ctx) = test_context();

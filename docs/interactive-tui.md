@@ -64,6 +64,8 @@ find where the TUI handles paste events
 
 Use a multiline prompt when you need to paste or write a longer request.
 
+Press `ctrl+v` to paste a clipboard image as an attachment when a supported host helper is available (`wl-paste`/`xclip` on Linux, `pngpaste` on macOS, or PowerShell on Windows/WSL). Hosts such as Herdr may paste clipboard images as a single filesystem path; Rho loads that path as an image attachment when it points to a PNG, JPEG, GIF, or WebP file.
+
 ## Commands
 
 Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.

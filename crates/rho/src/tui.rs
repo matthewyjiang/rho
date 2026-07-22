@@ -108,7 +108,6 @@ mod usage_cost;
 mod view;
 mod workspace;
 
-use crate::clipboard::read_clipboard_image;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer, ApprovalKeyOutcome};
 use clipboard::{ClipboardWriter, SystemClipboard};
@@ -236,6 +235,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
     let keyboard = keyboard_modes::Enabled::acquire();
     let mouse_capture_enabled = mouse_capture::enable().is_ok();
     let herdr = info.services.herdr.clone();
+    let herdr_graphics = herdr.graphics_capability().await;
     let initial_state = if info.services.auth_unavailable.is_some() {
         HerdrState::Blocked
     } else {
@@ -255,7 +255,11 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
         let injected: anyhow::Result<()> = Ok(());
 
         match injected {
-            Ok(()) => App::new(info).run(&mut terminal, agent).await,
+            Ok(()) => {
+                App::new(info, herdr_graphics)
+                    .run(&mut terminal, agent)
+                    .await
+            }
             Err(error) => Err(error),
         }
     };
@@ -651,20 +655,22 @@ impl StreamKind {
 }
 
 impl App {
-    fn new(info: TuiBootstrap) -> Self {
+    fn new(info: TuiBootstrap, herdr_graphics: crate::herdr::HerdrGraphicsCapability) -> Self {
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
+                herdr_graphics,
             );
         }
-        Self::new_with_credentials(info, Arc::new(AppCredentialStore))
+        Self::new_with_credentials(info, Arc::new(AppCredentialStore), herdr_graphics)
     }
 
     fn new_with_credentials(
         info: TuiBootstrap,
         credential_store: Arc<dyn CredentialStore>,
+        herdr_graphics: crate::herdr::HerdrGraphicsCapability,
     ) -> Self {
         let available_auths = available_auth_modes(credential_store.as_ref());
         let using_unavailable_provider = info.services.auth_unavailable.is_some();
@@ -702,7 +708,7 @@ impl App {
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
             tool_calls: ToolCallBatch::default(),
-            image_picker: picker_from_environment(),
+            image_picker: picker_from_environment(herdr_graphics),
             steering_prompts: VecDeque::new(),
             accepted_steering: VecDeque::new(),
             retracting_steering: None,
@@ -1922,31 +1928,10 @@ impl App {
         self.report_herdr_state(state, message).await;
     }
 
-    fn paste_clipboard_image(&mut self) {
-        if self.running {
-            self.notify_status("image paste is unavailable while a model turn is running");
-            return;
-        }
-        if !matches!(self.composer, ComposerMode::Input) {
-            self.notify_status("image paste is only available in the message box");
-            return;
-        }
-        match read_clipboard_image() {
-            Ok(image) => {
-                let summary = image_summary(&image);
-                self.pending_images.push(image);
-                self.notify_status(format!(
-                    "attached image {} ({summary})",
-                    self.pending_images.len()
-                ));
-            }
-            Err(err) => {
-                self.notify_status(format!("image paste failed: {err}"));
-            }
-        }
-    }
-
     fn insert_paste(&mut self, text: &str) {
+        if self.try_attach_pasted_image_path(text) {
+            return;
+        }
         match &mut self.composer {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
@@ -3789,7 +3774,11 @@ mod tests {
     pub(super) fn test_app() -> App {
         let store = Arc::new(MemoryCredentialStore::default());
         save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-        App::new_with_credentials(test_bootstrap(), store)
+        App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::herdr::HerdrGraphicsCapability::NotHerdr,
+        )
     }
 
     #[test]
@@ -4895,7 +4884,11 @@ mod tests {
         )
         .unwrap();
         save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
-        let mut app = App::new_with_credentials(test_bootstrap(), store);
+        let mut app = App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::herdr::HerdrGraphicsCapability::NotHerdr,
+        );
         app.refresh_available_auths();
 
         let models = catalog::available_models_for_auths(&app.available_auths);
@@ -5305,20 +5298,6 @@ mod tests {
                 .filter(|entry| matches!(entry, Entry::Notice(text) if text == "input cleared; press ctrl-c again to quit"))
                 .count(),
             1
-        );
-    }
-
-    #[test]
-    fn image_paste_is_unavailable_while_running() {
-        let mut app = test_app();
-        app.running = true;
-
-        app.paste_clipboard_image();
-
-        assert!(app.pending_images.is_empty());
-        assert_eq!(
-            app.status,
-            "image paste is unavailable while a model turn is running"
         );
     }
 
