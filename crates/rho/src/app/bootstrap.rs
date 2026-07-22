@@ -59,7 +59,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
     if let Some(Command::CredentialStore { command }) = &cli.command {
-        return run_credential_store_command(command);
+        return run_credential_store_command(command, cli.config.clone());
     }
     if let Some(Command::Attach { id }) = &cli.command {
         return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;
@@ -72,6 +72,11 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         device_auth,
     }) = &cli.command
     {
+        let config_path = cli.config.clone();
+        let mut config = ConfigRepository::new(config_path.clone()).load()?;
+        if crate::credential_store::needs_explicit_choice(&config) {
+            ensure_cli_credential_store_choice(&mut config, config_path.clone())?;
+        }
         crate::credential_store::initialize()?;
         return login::run(provider, *device_auth).await;
     }
@@ -207,7 +212,77 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     result
 }
 
-fn run_credential_store_command(command: &CredentialStoreCommand) -> anyhow::Result<()> {
+fn ensure_cli_credential_store_choice(
+    config: &mut crate::config::Config,
+    config_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    use rho_providers::credentials::CredentialStoreBackend;
+    use std::io::{self, IsTerminal, Write};
+
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        eprintln!(
+            "note: credential store is unset; using the OS store for this login. \
+Set it permanently with `rho credential-store set os|file` or behavior.credential_store in config.toml."
+        );
+        return Ok(());
+    }
+
+    let os_probe = crate::credential_store::probe(CredentialStoreBackend::Os);
+    let file_probe = crate::credential_store::probe(CredentialStoreBackend::File);
+    eprintln!("Choose where Rho stores provider credentials:");
+    if os_probe.available {
+        eprintln!("  [1] OS credential store (recommended)");
+    } else {
+        eprintln!(
+            "  [1] OS credential store (unavailable: {})",
+            os_probe.detail
+        );
+    }
+    if file_probe.available {
+        eprintln!("  [2] Local file under ~/.rho/credentials (not encrypted at rest)");
+    } else {
+        eprintln!("  [2] Local file (unavailable: {})", file_probe.detail);
+    }
+    eprint!("Choice [1/2] (default 1): ");
+    io::stderr().flush()?;
+
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let backend = match answer.trim() {
+        "" | "1" | "os" | "OS" => {
+            if !os_probe.available {
+                anyhow::bail!("OS credential store is unavailable: {}", os_probe.detail);
+            }
+            CredentialStoreBackend::Os
+        }
+        "2" | "file" | "FILE" => {
+            if !file_probe.available {
+                anyhow::bail!(
+                    "file credential store is unavailable: {}",
+                    file_probe.detail
+                );
+            }
+            CredentialStoreBackend::File
+        }
+        other => {
+            anyhow::bail!("unrecognized credential store choice '{other}'; expected 1/os or 2/file")
+        }
+    };
+
+    let path = crate::credential_store::set_backend(backend, config_path)?;
+    config.credential_store = Some(backend);
+    eprintln!(
+        "credential store set to {} in {}",
+        backend.as_str(),
+        path.display()
+    );
+    Ok(())
+}
+
+fn run_credential_store_command(
+    command: &CredentialStoreCommand,
+    config_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     match command {
         CredentialStoreCommand::Probe { backend } => {
             let result = crate::credential_store::probe(*backend);
@@ -219,15 +294,15 @@ fn run_credential_store_command(command: &CredentialStoreCommand) -> anyhow::Res
             }
         }
         CredentialStoreCommand::Status => {
-            // Installer contract: saved policy only (ignore RHO_CREDENTIAL_STORE).
-            match crate::credential_store::saved_policy_backend()? {
+            // Saved config policy only (ignore RHO_CREDENTIAL_STORE).
+            match crate::credential_store::saved_policy_backend(config_path.as_deref())? {
                 None => println!("unset"),
                 Some(backend) => println!("{}", backend.as_str()),
             }
             Ok(())
         }
         CredentialStoreCommand::Set { backend } => {
-            let path = crate::credential_store::set_backend(*backend)?;
+            let path = crate::credential_store::set_backend(*backend, config_path)?;
             println!(
                 "credential store set to {} in {}",
                 backend.as_str(),

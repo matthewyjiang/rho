@@ -36,7 +36,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
 | `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Add `--device-auth` for remote or headless sessions. |
 | `rho credential-store probe [os|file]` | Test a credential backend with a temporary secret. Defaults to `os`. |
-| `rho credential-store set <os|file>` | Save the credential backend used by Rho. |
+| `rho credential-store set <os|file>` | Save the credential backend in config (`behavior.credential_store`). |
 | `rho credential-store status` | Print the saved credential backend policy: `unset`, `os`, or `file`. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |

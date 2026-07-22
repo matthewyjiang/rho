@@ -172,7 +172,8 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::LogoutProvider
         | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ViewAgent => 30,
+        | super::PickerAction::ViewAgent
+        | super::PickerAction::SelectCredentialStore => 30,
     };
     let reserved_preview_width = width.saturating_sub(18);
     let available_width = if reserved_preview_width >= 12 {

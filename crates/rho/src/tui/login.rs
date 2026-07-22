@@ -76,6 +76,12 @@ pub(super) struct PendingOAuthLogin {
     pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
 }
 
+#[derive(Clone, Debug)]
+pub(super) enum PendingLoginAfterCredentialStore {
+    OpenPicker,
+    Provider(String),
+}
+
 impl App {
     pub(super) async fn execute_login_command(
         &mut self,
@@ -113,8 +119,88 @@ impl App {
     }
 
     pub(super) fn open_login_picker(&mut self) {
+        if self.open_credential_store_picker_before_login(None) {
+            return;
+        }
         self.composer = ComposerMode::Picker(provider_picker::login_group_picker());
         self.status = "select provider to login".into();
+    }
+
+    fn open_credential_store_picker_before_login(&mut self, provider: Option<String>) -> bool {
+        let config = match self.info.services.config_repository.load() {
+            Ok(config) => config,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not load config before login: {err}"
+                )));
+                self.status = "login failed".into();
+                return true;
+            }
+        };
+        if !crate::credential_store::needs_explicit_choice(&config) {
+            return false;
+        }
+        self.pending_login_after_credential_store = Some(match provider {
+            Some(provider) => PendingLoginAfterCredentialStore::Provider(provider),
+            None => PendingLoginAfterCredentialStore::OpenPicker,
+        });
+        self.composer = ComposerMode::Picker(provider_picker::credential_store_picker());
+        self.status = "choose credential store before login".into();
+        true
+    }
+
+    pub(super) async fn submit_credential_store_selection(
+        &mut self,
+        value: &str,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        use rho_providers::credentials::CredentialStoreBackend;
+
+        let backend = match CredentialStoreBackend::parse(value) {
+            Ok(backend) => backend,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "credential store selection failed".into();
+                self.pending_login_after_credential_store = None;
+                return Ok(());
+            }
+        };
+        let config_path = match self.info.services.config_repository.configured_path() {
+            Ok(path) => Some(path),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "credential store selection failed".into();
+                self.pending_login_after_credential_store = None;
+                return Ok(());
+            }
+        };
+        match crate::credential_store::set_backend(backend, config_path) {
+            Ok(path) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "credential store set to {} in {}",
+                    backend.as_str(),
+                    path.display()
+                )));
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.status = "credential store selection failed".into();
+                self.pending_login_after_credential_store = None;
+                return Ok(());
+            }
+        }
+
+        match self.pending_login_after_credential_store.take() {
+            Some(PendingLoginAfterCredentialStore::Provider(provider)) => {
+                self.start_login_for_provider(&provider, terminal, agent)
+                    .await
+            }
+            Some(PendingLoginAfterCredentialStore::OpenPicker) | None => {
+                self.open_login_picker();
+                Ok(())
+            }
+        }
     }
 
     pub(super) async fn start_login_for_provider(
@@ -123,6 +209,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.open_credential_store_picker_before_login(Some(provider.to_string())) {
+            return Ok(());
+        }
         let provider = provider.trim();
         if provider::provider_descriptor(provider)
             .is_some_and(|descriptor| descriptor.auth_kind == provider::ProviderAuthKind::None)

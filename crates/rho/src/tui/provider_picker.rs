@@ -94,6 +94,47 @@ pub(super) fn logout_provider_picker(
     ))
 }
 
+pub(super) fn credential_store_picker() -> UiPicker {
+    use rho_providers::credentials::{probe_credential_store, CredentialStoreBackend};
+
+    let os = probe_credential_store(CredentialStoreBackend::Os);
+    let file = probe_credential_store(CredentialStoreBackend::File);
+    let mut items = Vec::new();
+    if os.available {
+        items.push(PickerItem {
+            label: "OS credential store".into(),
+            detail: Some("Recommended. Uses the system keychain or secret service.".into()),
+            preview: None,
+            badge: None,
+            value: CredentialStoreBackend::Os.as_str().into(),
+        });
+    }
+    if file.available {
+        items.push(PickerItem {
+            label: "Local file".into(),
+            detail: Some("Owner-only file under ~/.rho/credentials. Not encrypted at rest.".into()),
+            preview: None,
+            badge: None,
+            value: CredentialStoreBackend::File.as_str().into(),
+        });
+    }
+    if items.is_empty() {
+        items.push(PickerItem {
+            label: "OS credential store unavailable".into(),
+            detail: Some(os.detail),
+            preview: None,
+            badge: None,
+            value: CredentialStoreBackend::Os.as_str().into(),
+        });
+    }
+    UiPicker::new(
+        "choose credential store",
+        "select where Rho saves login secrets before continuing",
+        items,
+        PickerAction::SelectCredentialStore,
+    )
+}
+
 fn provider_picker_for_targets(
     verb: &str,
     action: PickerAction,

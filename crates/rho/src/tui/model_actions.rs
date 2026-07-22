@@ -167,7 +167,10 @@ impl App {
         let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(
             action,
-            PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
+            PickerAction::Config
+                | PickerAction::LoginGroup
+                | PickerAction::ViewAgent
+                | PickerAction::SelectCredentialStore
         ) {
             self.composer = ComposerMode::Input;
         }
@@ -233,6 +236,10 @@ impl App {
             PickerAction::LoginProvider => {
                 self.start_login_for_provider(&value, terminal, agent).await
             }
+            PickerAction::SelectCredentialStore => {
+                self.submit_credential_store_selection(&value, terminal, agent)
+                    .await
+            }
             PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
@@ -265,9 +272,17 @@ impl App {
     }
 
     pub(super) fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
+        let clearing_credential_store = matches!(
+            &self.composer,
+            ComposerMode::Picker(picker)
+                if picker.action == PickerAction::SelectCredentialStore && !picker.has_parent()
+        );
         if !self.pop_picker_level() {
             self.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
+        }
+        if clearing_credential_store {
+            self.pending_login_after_credential_store = None;
         }
         Ok(())
     }
@@ -356,7 +371,8 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
-            | PickerAction::Doctor => return Ok(()),
+            | PickerAction::Doctor
+            | PickerAction::SelectCredentialStore => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
         self.composer = ComposerMode::Picker(picker);
@@ -417,7 +433,8 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
-            | PickerAction::Doctor => return None,
+            | PickerAction::Doctor
+            | PickerAction::SelectCredentialStore => return None,
         };
         match &mut self.composer {
             ComposerMode::Picker(picker) => {

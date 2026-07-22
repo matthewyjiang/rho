@@ -47,6 +47,7 @@ check_for_updates = true
 enable_subagents = true
 permission_mode = "auto" # auto, plan, or supervised
 rtk = true
+# credential_store = "os" # or "file"; omit until first /login chooses
 
 [prompt_templates]
 review = "Review this code for correctness, security, and maintainability."

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::BTreeMap, fmt, fs, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, fmt, fs, path::PathBuf, str::FromStr};
 
 use {
     crate::compaction::CompactionConfig,
@@ -9,7 +9,8 @@ use {
     crate::paths,
     crate::permission::PermissionMode,
     rho_providers::credentials::{
-        load_web_search_api_key, save_web_search_api_key, CredentialStore, WebSearchCredential,
+        load_web_search_api_key, save_web_search_api_key, CredentialStore, CredentialStoreBackend,
+        WebSearchCredential,
     },
     rho_providers::model::catalog,
     rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
@@ -20,10 +21,17 @@ use {
 #[path = "provider_config.rs"]
 mod provider_config;
 
+#[path = "config_format.rs"]
+mod format;
+use format::write_config;
+pub use format::InternalAgentModelConfig;
+#[cfg(test)]
+pub use format::{EffectiveModelConfig, EffectiveModelSource};
+
+use provider_config::PartialProviderConfigs;
 pub(crate) use provider_config::ProviderConfigs;
 #[cfg(test)]
 use provider_config::DEFAULT_OLLAMA_BASE_URL;
-use provider_config::{PartialProviderConfigs, PersistedProviderConfigs};
 
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
 
@@ -59,6 +67,8 @@ pub struct Config {
     pub check_for_updates: bool,
     pub enable_subagents: bool,
     pub permission_mode: PermissionMode,
+    /// Explicit credential backend. `None` means unset; runtime defaults to OS.
+    pub credential_store: Option<CredentialStoreBackend>,
     pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
     pub inline_shell: String,
@@ -101,6 +111,7 @@ impl Default for Config {
             check_for_updates: true,
             enable_subagents: true,
             permission_mode: PermissionMode::Auto,
+            credential_store: None,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
             inline_shell: default_inline_shell(),
@@ -259,192 +270,6 @@ impl LegacyWebSearchCredentials {
     }
 }
 
-fn write_config(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
-    let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
-    crate::config_writer::write_atomically(path, &serialized)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InternalAgentModelConfig {
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    model_alias: Option<String>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectiveModelConfig {
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    pub source: EffectiveModelSource,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EffectiveModelSource {
-    Conversation,
-    Override,
-}
-
-impl InternalAgentModelConfig {
-    pub fn new(provider: String, model: String, auth: String) -> Self {
-        Self {
-            provider,
-            model,
-            auth,
-            model_alias: None,
-        }
-    }
-
-    fn current_alias<'a>(&'a self, aliases: &'a ModelAliases) -> Option<&'a str> {
-        let name = self.model_alias.as_deref()?;
-        let target = aliases.get(name)?;
-        (target.model == self.model
-            && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
-            .then_some(name)
-    }
-}
-
-#[derive(Serialize)]
-struct GroupedConfig<'a> {
-    model: ModelConfig<'a>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    internal_agents: BTreeMap<&'a str, PersistedInternalAgentModelConfig<'a>>,
-    display: DisplayConfig,
-    output: OutputConfig,
-    compaction: CompactionSection,
-    web_search: WebSearchConfig<'a>,
-    behavior: BehaviorConfig<'a>,
-    keybindings: &'a Keybindings,
-    prompt_templates: &'a crate::prompt_templates::PromptTemplates,
-    providers: PersistedProviderConfigs<'a>,
-}
-
-#[derive(Serialize)]
-struct ModelConfig<'a> {
-    provider: &'a str,
-    model: Cow<'a, str>,
-    auth: &'a str,
-    reasoning: ReasoningLevel,
-    favorite_models: &'a [String],
-    #[serde(skip_serializing_if = "ModelAliases::is_empty")]
-    aliases: &'a ModelAliases,
-}
-
-#[derive(Serialize)]
-struct DisplayConfig {
-    show_reasoning_output: bool,
-    max_tool_output_lines: usize,
-}
-
-#[derive(Serialize)]
-struct OutputConfig {
-    max_output_bytes: usize,
-}
-
-#[derive(Serialize)]
-struct CompactionSection {
-    auto_compact: bool,
-    compact_threshold_percent: u8,
-    compact_target_percent: u8,
-}
-
-#[derive(Serialize)]
-struct PersistedInternalAgentModelConfig<'a> {
-    provider: &'a str,
-    model: Cow<'a, str>,
-    auth: &'a str,
-}
-
-#[derive(Serialize)]
-struct WebSearchConfig<'a> {
-    provider: SearchProvider,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    openai_api_key: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exa_api_key: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    brave_api_key: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct BehaviorConfig<'a> {
-    check_for_updates: bool,
-    enable_subagents: bool,
-    permission_mode: PermissionMode,
-    rtk: bool,
-    inline_shell: &'a str,
-}
-
-impl<'a> From<&'a Config> for GroupedConfig<'a> {
-    fn from(config: &'a Config) -> Self {
-        Self {
-            model: ModelConfig {
-                provider: &config.provider,
-                model: persisted_model_reference(config.current_model_alias(), &config.model),
-                auth: &config.auth,
-                reasoning: config.reasoning,
-                favorite_models: &config.favorite_models,
-                aliases: &config.model_aliases,
-            },
-            internal_agents: config
-                .internal_agents
-                .iter()
-                .map(|(id, selection)| {
-                    (
-                        id.as_str(),
-                        PersistedInternalAgentModelConfig {
-                            provider: &selection.provider,
-                            model: persisted_model_reference(
-                                selection.current_alias(&config.model_aliases),
-                                &selection.model,
-                            ),
-                            auth: &selection.auth,
-                        },
-                    )
-                })
-                .collect(),
-            display: DisplayConfig {
-                show_reasoning_output: config.show_reasoning_output,
-                max_tool_output_lines: config.max_tool_output_lines,
-            },
-            output: OutputConfig {
-                max_output_bytes: config.max_output_bytes,
-            },
-            compaction: CompactionSection {
-                auto_compact: config.auto_compact,
-                compact_threshold_percent: config.compact_threshold_percent,
-                compact_target_percent: config.compact_target_percent,
-            },
-            web_search: WebSearchConfig {
-                provider: config.web_search_provider,
-                openai_api_key: config.legacy_web_search_credentials.openai.as_deref(),
-                exa_api_key: config.legacy_web_search_credentials.exa.as_deref(),
-                brave_api_key: config.legacy_web_search_credentials.brave.as_deref(),
-            },
-            behavior: BehaviorConfig {
-                check_for_updates: config.check_for_updates,
-                enable_subagents: config.enable_subagents,
-                permission_mode: config.permission_mode,
-                rtk: config.rtk,
-                inline_shell: &config.inline_shell,
-            },
-            keybindings: &config.keybindings,
-            prompt_templates: &config.prompt_templates,
-            providers: PersistedProviderConfigs::from(&config.providers),
-        }
-    }
-}
-
-fn persisted_model_reference<'a>(alias: Option<&str>, model: &'a str) -> Cow<'a, str> {
-    match alias {
-        Some(alias) => Cow::Owned(format!("@{alias}")),
-        None => Cow::Borrowed(model),
-    }
-}
-
 impl Config {
     pub fn default_path() -> anyhow::Result<PathBuf> {
         Ok(paths::rho_dir()?.join("config.toml"))
@@ -452,14 +277,33 @@ impl Config {
 
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        Self::load_with_store(path, &AppCredentialStore)
+        let mut cfg = Self::load_settings_only(path.clone())?;
+        crate::credential_store::bootstrap_from_config(&mut cfg, &path)?;
+        Ok(cfg)
     }
 
-    fn load_with_store(path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<Self> {
+    /// Load config settings without opening the credential store.
+    pub(crate) fn load_settings_only(path: PathBuf) -> anyhow::Result<Self> {
         if !path.exists() {
-            Config::default().save_with_store(path.clone(), store)?;
+            let default = Config::default();
+            default.write_settings(path.clone())?;
+            return Ok(default);
         }
+        Self::parse_file(path)
+    }
 
+    pub(crate) fn load_with_store(
+        path: PathBuf,
+        store: &dyn CredentialStore,
+    ) -> anyhow::Result<Self> {
+        let mut cfg = Self::load_settings_only(path.clone())?;
+        if matches!(cfg.migrate_legacy_web_search_credentials(store), Ok(true)) {
+            let _cleanup_result = write_config(&path, &cfg);
+        }
+        Ok(cfg)
+    }
+
+    fn parse_file(path: PathBuf) -> anyhow::Result<Self> {
         let mut cfg = Config::default();
         let text = fs::read_to_string(&path)?;
         let file: PartialConfig = toml::from_str(&text)?;
@@ -655,6 +499,12 @@ impl Config {
             cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
             cfg.enable_subagents = group.enable_subagents.unwrap_or(cfg.enable_subagents);
             cfg.permission_mode = group.permission_mode.unwrap_or(cfg.permission_mode);
+            if let Some(value) = group.credential_store.as_deref() {
+                cfg.credential_store = Some(
+                    CredentialStoreBackend::parse(value)
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+                );
+            }
             cfg.rtk = group.rtk.unwrap_or(cfg.rtk);
             cfg.inline_shell = group
                 .inline_shell
@@ -664,9 +514,6 @@ impl Config {
         if let Some(keybindings) = file.keybindings {
             cfg.keybindings = keybindings;
         }
-        if matches!(cfg.migrate_legacy_web_search_credentials(store), Ok(true)) {
-            let _cleanup_result = write_config(&path, &cfg);
-        }
         Ok(cfg)
     }
 
@@ -675,7 +522,23 @@ impl Config {
         self.save_with_store(path, &AppCredentialStore)
     }
 
-    fn save_with_store(&self, path: PathBuf, store: &dyn CredentialStore) -> anyhow::Result<()> {
+    /// Write config without opening or migrating credentials.
+    pub(crate) fn write_settings(&self, path: PathBuf) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut config = self.clone();
+        config.normalize_compaction_percentages();
+        config.favorite_models =
+            favorite_model_values(&normalized_favorite_models(&config.favorite_models));
+        write_config(&path, &config)
+    }
+
+    pub(crate) fn save_with_store(
+        &self,
+        path: PathBuf,
+        store: &dyn CredentialStore,
+    ) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -824,7 +687,7 @@ impl Config {
         self.legacy_web_search_credentials.get(credential)
     }
 
-    fn migrate_legacy_web_search_credentials(
+    pub(crate) fn migrate_legacy_web_search_credentials(
         &mut self,
         store: &dyn CredentialStore,
     ) -> rho_providers::credentials::CredentialResult<bool> {
@@ -967,6 +830,7 @@ struct PartialBehaviorConfig {
     enable_subagents: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,
+    credential_store: Option<String>,
     rtk: Option<bool>,
     inline_shell: Option<String>,
 }

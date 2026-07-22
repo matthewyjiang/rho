@@ -108,6 +108,7 @@ pub(super) enum PickerAction {
     SelectTreeNode,
     Config,
     Doctor,
+    SelectCredentialStore,
 }
 
 impl PickerAction {
@@ -123,7 +124,8 @@ impl PickerAction {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
-            | PickerAction::SelectTreeNode => false,
+            | PickerAction::SelectTreeNode
+            | PickerAction::SelectCredentialStore => false,
         }
     }
 }
@@ -321,7 +323,8 @@ impl UiPicker {
             | PickerAction::LogoutProvider
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
-            | PickerAction::SelectTreeNode => "select",
+            | PickerAction::SelectTreeNode
+            | PickerAction::SelectCredentialStore => "select",
             PickerAction::RefreshModelList => "refresh",
         }
     }
@@ -410,7 +413,8 @@ impl UiPicker {
                 | PickerAction::ResumeSession
                 | PickerAction::SelectTreeNode
                 | PickerAction::Config
-                | PickerAction::Doctor => regex::escape(&item.value),
+                | PickerAction::Doctor
+                | PickerAction::SelectCredentialStore => regex::escape(&item.value),
             };
         }
     }
@@ -449,7 +453,8 @@ impl UiPicker {
                 | PickerAction::ResumeSession
                 | PickerAction::SelectTreeNode
                 | PickerAction::Config
-                | PickerAction::Doctor => (!filter.is_empty())
+                | PickerAction::Doctor
+                | PickerAction::SelectCredentialStore => (!filter.is_empty())
                     .then(|| {
                         RegexBuilder::new(filter)
                             .case_insensitive(true)
@@ -471,7 +476,8 @@ impl UiPicker {
                 | PickerAction::ResumeSession
                 | PickerAction::SelectTreeNode
                 | PickerAction::Config
-                | PickerAction::Doctor => {
+                | PickerAction::Doctor
+                | PickerAction::SelectCredentialStore => {
                     picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
                 }
             };

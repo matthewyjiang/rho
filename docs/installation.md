@@ -14,9 +14,9 @@ irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1
 
 The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windows installer writes to `%LOCALAPPDATA%\Programs\rho\bin` and adds that directory to your user `PATH`.
 
-After installing the binary, an interactive script install checks whether the native OS credential store works and asks which credential backend to use. The OS store is recommended when available. If it is unavailable, you can opt into a local file protected by filesystem permissions but not encrypted at rest. When no choice is saved, Rho uses the OS store only.
+After installing the binary, Rho leaves the credential backend unset and uses the OS store by default. The first interactive `/login` asks which backend to use. The OS store is recommended when available. You can also opt into a local file protected by filesystem permissions but not encrypted at rest.
 
-Set `RHO_CREDENTIAL_STORE=os|file` to make this choice without a prompt:
+Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set`, to make this choice without the login picker:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh | RHO_CREDENTIAL_STORE=file sh

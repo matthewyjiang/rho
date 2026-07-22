@@ -129,7 +129,7 @@ use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_shell::InlineShellMode;
-use login::{PendingOAuthLogin, SecretInput};
+use login::{PendingLoginAfterCredentialStore, PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
@@ -363,6 +363,7 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_oauth_login: Option<PendingOAuthLogin>,
+    pending_login_after_credential_store: Option<PendingLoginAfterCredentialStore>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     usage_limits_client: reqwest::Client,
     cumulative_usage: Option<ModelUsage>,
@@ -748,6 +749,7 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_oauth_login: None,
+            pending_login_after_credential_store: None,
             pending_usage_limits: None,
             usage_limits_client: reqwest::Client::new(),
             cumulative_usage: None,
@@ -2406,7 +2408,8 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
-            | PickerAction::RefreshModelList => {
+            | PickerAction::RefreshModelList
+            | PickerAction::SelectCredentialStore => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
                 ));
