@@ -32,6 +32,7 @@ pub(super) fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .build()
         .expect("HTTP client configuration must be valid")
 }

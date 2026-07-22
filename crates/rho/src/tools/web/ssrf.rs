@@ -134,12 +134,18 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_blocked_v6(ip: Ipv6Addr) -> bool {
-    let [a, b, ..] = ip.octets();
+    let segments = ip.segments();
     ip.is_unspecified()
         || ip.is_loopback()
-        || (a & 0xfe) == 0xfc // fc00::/7 unique local
-        || (a == 0xfe && (b & 0xc0) == 0x80) // fe80::/10 link-local
-        || a == 0xff // ff00::/8 multicast
+        || (segments[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        || (segments[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        || (segments[0] & 0xff00) == 0xff00 // ff00::/8 multicast
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8) // 2001:db8::/32 documentation
+        || (segments[0] == 0x2001 && segments[1] == 0x0002 && segments[2] == 0) // 2001:2::/48 benchmarking
+        || (segments[0] == 0x0100
+            && segments[1] == 0
+            && segments[2] == 0
+            && segments[3] == 0) // 100::/64 discard-only
 }
 
 /// IPv4 or IPv6 CIDR used to exempt addresses from the private-range block.

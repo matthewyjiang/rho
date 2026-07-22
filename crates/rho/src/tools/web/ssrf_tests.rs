@@ -18,6 +18,9 @@ fn blocks_loopback_link_local_private_and_reserved() {
         "fe80::1",
         "ff02::1",
         "::ffff:127.0.0.1",
+        "2001:db8::1",
+        "2001:2::1",
+        "100::1",
     ] {
         let ip: IpAddr = literal.parse().unwrap();
         assert!(is_blocked(ip), "{literal} should be blocked");
