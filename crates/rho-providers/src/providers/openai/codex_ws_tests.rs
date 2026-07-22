@@ -485,14 +485,11 @@ fn terminal_failure_uses_error_type_when_code_is_null() {
     ] {
         assert!(matches!(
             codex_ws_terminal_failure(&event, /*events_emitted*/ false),
-            Some(CodexWsFailure::Model {
-                error: ModelError::ProviderReported {
-                    kind,
-                    error_type,
-                    ..
-                },
-                events_emitted: false,
-            }) if kind == expected_kind && error_type == expected_type
+            Some(CodexWsFailure::Model(ModelError::ProviderReported {
+                kind,
+                error_type,
+                ..
+            })) if kind == expected_kind && error_type == expected_type
         ));
     }
 }

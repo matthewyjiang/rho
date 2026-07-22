@@ -65,10 +65,28 @@ enum CodexWsFailure {
         message: String,
         events_emitted: bool,
     },
-    Model {
-        error: ModelError,
-        events_emitted: bool,
-    },
+    Model(ModelError),
+}
+
+impl CodexWsFailure {
+    fn into_turn(self) -> Result<CodexWsTurn, ModelError> {
+        match self {
+            Self::BeforeRequest { .. } => Ok(CodexWsTurn::FullSseFallback {
+                request_submitted: false,
+            }),
+            Self::Transport {
+                events_emitted: false,
+                ..
+            } => Ok(CodexWsTurn::FullSseFallback {
+                request_submitted: true,
+            }),
+            Self::Transport {
+                message,
+                events_emitted: true,
+            } => Err(ModelError::StreamFailedAfterOutput { message }),
+            Self::Model(error) => Err(error),
+        }
+    }
 }
 
 impl CodexWsTransport {
@@ -123,45 +141,10 @@ impl CodexWsTransport {
                     .record_success(&candidate, continuation_response);
                 Ok(CodexWsTurn::Completed(response.response))
             }
-            Err(CodexWsFailure::BeforeRequest { .. }) => {
+            Err(failure) => {
                 state.connection = None;
                 state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: false,
-                })
-            }
-            Err(CodexWsFailure::Transport {
-                events_emitted: false,
-                ..
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: true,
-                })
-            }
-            Err(CodexWsFailure::Transport {
-                message,
-                events_emitted: true,
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Err(ModelError::StreamFailedAfterOutput { message })
-            }
-            Err(CodexWsFailure::Model {
-                error: ModelError::InvalidResponse(_),
-                events_emitted: false,
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: true,
-                })
-            }
-            Err(CodexWsFailure::Model { error, .. }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Err(error)
+                failure.into_turn()
             }
         }
     }
@@ -201,45 +184,10 @@ impl CodexWsTransport {
                     .record_success(&candidate, continuation_response);
                 Ok(CodexWsTurn::Completed(response.response))
             }
-            Err(CodexWsFailure::BeforeRequest { .. }) => {
+            Err(failure) => {
                 state.connection = None;
                 state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: false,
-                })
-            }
-            Err(CodexWsFailure::Transport {
-                events_emitted: false,
-                ..
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: true,
-                })
-            }
-            Err(CodexWsFailure::Transport {
-                message,
-                events_emitted: true,
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Err(ModelError::StreamFailedAfterOutput { message })
-            }
-            Err(CodexWsFailure::Model {
-                error: ModelError::InvalidResponse(_),
-                ..
-            }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Ok(CodexWsTurn::FullSseFallback {
-                    request_submitted: true,
-                })
-            }
-            Err(CodexWsFailure::Model { error, .. }) => {
-                state.connection = None;
-                state.continuation.reset();
-                Err(error)
+                failure.into_turn()
             }
         }
     }
@@ -419,10 +367,7 @@ async fn collect_codex_ws_response(
         if completed {
             let response = state
                 .into_response()
-                .map_err(|error| CodexWsFailure::Model {
-                    error,
-                    events_emitted,
-                })?;
+                .map_err(|error| classify_model_error(error, events_emitted))?;
             return Ok(CodexWsCompleted {
                 response,
                 server_output_items,
@@ -486,10 +431,7 @@ async fn collect_codex_ws_response_silent(
         if completed {
             let response = state
                 .into_response()
-                .map_err(|error| CodexWsFailure::Model {
-                    error,
-                    events_emitted: false,
-                })?;
+                .map_err(|error| classify_model_error(error, /*events_emitted*/ false))?;
             return Ok(CodexWsCompleted {
                 response,
                 server_output_items,
@@ -503,6 +445,19 @@ async fn collect_codex_ws_response_silent(
         message: "websocket ended before response.completed".into(),
         events_emitted: false,
     })
+}
+
+fn classify_model_error(error: ModelError, events_emitted: bool) -> CodexWsFailure {
+    // Empty completed responses fail as InvalidResponse before any caller-visible
+    // output. Treat that as a retryable transport failure so the existing
+    // FullSseFallback path can resubmit the full Responses body over SSE.
+    match error {
+        ModelError::InvalidResponse(message) if !events_emitted => CodexWsFailure::Transport {
+            message,
+            events_emitted: false,
+        },
+        error => CodexWsFailure::Model(error),
+    }
 }
 
 fn handle_codex_ws_value(
@@ -526,10 +481,7 @@ fn handle_codex_ws_value(
         state,
         &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
     )
-    .map_err(|error| CodexWsFailure::Model {
-        error,
-        events_emitted: *events_emitted,
-    })?;
+    .map_err(|error| classify_model_error(error, *events_emitted))?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),
@@ -545,10 +497,8 @@ fn handle_codex_ws_value_silent(
         return Err(failure);
     }
     let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
-    handle_codex_sse_value(value, state, &mut on_event).map_err(|error| CodexWsFailure::Model {
-        error,
-        events_emitted: false,
-    })?;
+    handle_codex_sse_value(value, state, &mut on_event)
+        .map_err(|error| classify_model_error(error, /*events_emitted*/ false))?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),
@@ -643,14 +593,11 @@ fn protocol_terminal_failure(
         "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
         _ => ProviderReportedErrorKind::InvalidResponse,
     };
-    CodexWsFailure::Model {
-        error: ModelError::ProviderReported {
-            kind,
-            error_type: error_type.to_string(),
-            message,
-        },
-        events_emitted,
-    }
+    CodexWsFailure::Model(ModelError::ProviderReported {
+        kind,
+        error_type: error_type.to_string(),
+        message,
+    })
 }
 
 fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
