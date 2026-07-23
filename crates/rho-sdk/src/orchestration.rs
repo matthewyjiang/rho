@@ -168,6 +168,7 @@ pub(crate) async fn execute_run(
             content,
             provenance: Some(runtime.provider.identity()),
             reasoning_summary,
+            portable_fallback: None,
             provider_context,
         };
         history.push(Message::assistant(assistant));

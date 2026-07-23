@@ -3,8 +3,9 @@ use std::{num::NonZeroU64, sync::Arc};
 use rho_sdk::{
     model::{ContentBlock, ModelRequest, ModelResponse},
     provider::ModelProvider,
-    CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error, Rho,
-    SystemPrompt, Workspace, WorkspacePolicy,
+    CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error,
+    ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
+    ProviderRequestUsageRecording, Rho, SystemPrompt, Workspace, WorkspacePolicy,
 };
 
 use {
@@ -28,7 +29,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) context_window: Option<u64>,
     pub(crate) usage_purpose: &'static str,
     pub(crate) usage_parent_session_id: Option<rho_sdk::SessionId>,
-    pub(crate) usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    pub(crate) usage_recording: ProviderRequestUsageRecording,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -103,7 +104,7 @@ pub(crate) fn build_compaction(
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
-    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    usage_recording: ProviderRequestUsageRecording,
 ) -> (ModelCompactor, Option<CompactionPolicy>) {
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -134,7 +135,7 @@ pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
 
 pub(crate) struct ModelCompactor {
     provider: Arc<dyn ModelProvider>,
-    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    usage_recording: ProviderRequestUsageRecording,
     tool_specs: Vec<rho_sdk::model::ToolSpec>,
     reasoning: rho_sdk::ReasoningLevel,
     config: CompactionConfig,
@@ -144,10 +145,8 @@ pub(crate) struct ModelCompactor {
 impl Compactor for ModelCompactor {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
         Box::pin(async move {
-            let mut usage_context = rho_sdk::ProviderRequestUsageContext::for_purpose(
-                self.provider.identity(),
-                "compaction",
-            );
+            let mut usage_context =
+                ProviderRequestUsageContext::for_purpose(self.provider.identity(), "compaction");
             if let Some(session_id) = request.session_id() {
                 usage_context = usage_context.with_session_id(session_id.clone());
             }
@@ -164,23 +163,25 @@ impl Compactor for ModelCompactor {
                 usage_context = usage_context.with_workspace_path(workspace_path.to_path_buf());
             }
             let cancellation = request.cancellation().clone();
-            let messages = request.messages().to_vec();
+            let mut next_attempt_index = 1usize;
 
-            if let Some(native) = try_native_compaction(
-                self.provider.as_ref(),
-                &messages,
-                &self.tool_specs,
-                self.reasoning,
-                cancellation.clone(),
-                request.session_id().map(|id| id.to_string()),
-                usage_context.clone(),
-                self.usage_recording.clone(),
-            )
-            .await
+            match self
+                .try_native_compaction(
+                    request.messages(),
+                    cancellation.clone(),
+                    usage_context.clone(),
+                    &mut next_attempt_index,
+                )
+                .await
             {
-                return native;
+                NativeCompactionResult::Success(output) => return Ok(output),
+                NativeCompactionResult::Cancelled => return Err(Error::Cancelled),
+                // Explicit fallback to portable text-summary compaction.
+                NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
             }
 
+            // Clone only after native compact is unavailable or failed and fallback needs ownership.
+            let messages = request.messages().to_vec();
             let target_tokens = self
                 .context_window
                 .map(|window| self.config.target_tokens(window))
@@ -196,13 +197,15 @@ impl Compactor for ModelCompactor {
                 tools: &[],
                 cancellation: cancellation.clone(),
                 reasoning_level: self.reasoning,
+                // CompactionRequest has no canonical prompt cache key; keep None.
                 prompt_cache_key: None,
             };
-            let (response, usage) = match crate::usage::send_recorded(
+            let (response, usage) = match crate::usage::send_recorded_from_attempt(
                 self.provider.as_ref(),
                 model_request,
                 usage_context,
                 self.usage_recording.clone(),
+                next_attempt_index,
             )
             .await
             {
@@ -236,48 +239,73 @@ impl Compactor for ModelCompactor {
     }
 }
 
-async fn try_native_compaction(
-    provider: &dyn ModelProvider,
-    messages: &[rho_sdk::model::Message],
-    tools: &[rho_sdk::model::ToolSpec],
-    reasoning: rho_sdk::ReasoningLevel,
-    cancellation: rho_sdk::CancellationToken,
-    prompt_cache_key: Option<String>,
-    usage_context: rho_sdk::ProviderRequestUsageContext,
-    usage_recording: rho_sdk::ProviderRequestUsageRecording,
-) -> Option<Result<CompactionOutput, Error>> {
-    let model_request = ModelRequest {
-        messages,
-        tools,
-        cancellation: cancellation.clone(),
-        reasoning_level: reasoning,
-        prompt_cache_key: prompt_cache_key.as_deref(),
-    };
-    let future = provider.native_compact(model_request)?;
-    let result = future.await;
-    let outcome = match &result {
-        Ok(_) => rho_sdk::ProviderRequestOutcome::Completed,
-        Err(_) if cancellation.is_cancelled() => rho_sdk::ProviderRequestOutcome::Cancelled,
-        Err(error) => rho_sdk::ProviderRequestOutcome::Failed(error.kind()),
-    };
-    let usage = result
-        .as_ref()
-        .map(|output| output.usage().clone())
-        .unwrap_or_default();
-    usage_recording
-        .record(rho_sdk::ProviderRequestUsageEvent::observed(
-            usage_context.with_attempt_index(1),
-            usage,
-            outcome,
-        ))
-        .await;
-    Some(match result {
-        Ok(output) => {
-            let (messages, usage) = output.into_parts();
-            CompactionOutput::with_usage(messages, usage)
-        }
-        Err(_) if cancellation.is_cancelled() => Err(Error::Cancelled),
-        // Fall back to the portable text summary path.
-        Err(_) => return None,
-    })
+#[derive(Debug)]
+enum NativeCompactionResult {
+    Success(CompactionOutput),
+    Failed,
+    Unavailable,
+    Cancelled,
 }
+
+impl ModelCompactor {
+    async fn try_native_compaction(
+        &self,
+        messages: &[rho_sdk::model::Message],
+        cancellation: rho_sdk::CancellationToken,
+        usage_context: ProviderRequestUsageContext,
+        next_attempt_index: &mut usize,
+    ) -> NativeCompactionResult {
+        let model_request = ModelRequest {
+            messages,
+            // Native compact requests do not advertise tools.
+            tools: &[],
+            cancellation: cancellation.clone(),
+            reasoning_level: self.reasoning,
+            // CompactionRequest has no canonical prompt cache key; keep None.
+            prompt_cache_key: None,
+        };
+        let Some(future) = self.provider.native_compact(model_request) else {
+            return NativeCompactionResult::Unavailable;
+        };
+        let response = future.await;
+        let (result, failed_attempts) = response.into_parts();
+        for attempt in failed_attempts {
+            self.usage_recording
+                .record(ProviderRequestUsageEvent::observed(
+                    usage_context
+                        .clone()
+                        .with_attempt_index(*next_attempt_index),
+                    attempt.usage,
+                    ProviderRequestOutcome::Failed(attempt.kind),
+                ))
+                .await;
+            *next_attempt_index += 1;
+        }
+        let outcome = match &result {
+            Ok(_) => ProviderRequestOutcome::Completed,
+            Err(_) if cancellation.is_cancelled() => ProviderRequestOutcome::Cancelled,
+            Err(error) => ProviderRequestOutcome::Failed(error.kind()),
+        };
+        let usage = result
+            .as_ref()
+            .map(|output| output.usage().clone())
+            .unwrap_or_default();
+        self.usage_recording
+            .record(ProviderRequestUsageEvent::observed(
+                usage_context.with_attempt_index(*next_attempt_index),
+                usage,
+                outcome,
+            ))
+            .await;
+        *next_attempt_index += 1;
+        match result {
+            Ok(output) => NativeCompactionResult::Success(output),
+            Err(_) if cancellation.is_cancelled() => NativeCompactionResult::Cancelled,
+            Err(_) => NativeCompactionResult::Failed,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "runtime_builder_tests.rs"]
+mod tests;

@@ -96,6 +96,7 @@ pub(crate) fn split_system_and_messages(
                     content,
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
+                    portable_fallback: None,
                     provider_context: message.provider_context,
                 };
                 enriched
@@ -421,6 +422,7 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(source.clone()),
                 reasoning_summary: Some("verified it".into()),
+                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: source,
                     kind: "openai_response_output_item".into(),
@@ -449,6 +451,7 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: None,
+                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: target.clone(),
                     kind: "anthropic_content_block".into(),
@@ -480,6 +483,7 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: Some("safe summary".into()),
+                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: target.clone(),
                     kind: "anthropic_content_block".into(),

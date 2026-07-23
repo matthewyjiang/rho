@@ -70,6 +70,7 @@ async fn simple_completion_and_streaming_share_one_history_path() {
                 content: vec![ContentBlock::Text("hello".into())],
                 provenance: Some(identity()),
                 reasoning_summary: None,
+                portable_fallback: None,
                 provider_context: Vec::new(),
             }),
         ]
@@ -249,6 +250,7 @@ async fn reset_preserves_prompt_policy_and_provider_replacement_reports_handoff(
         content: vec![ContentBlock::Text("prior".into())],
         provenance: Some(source.clone()),
         reasoning_summary: None,
+        portable_fallback: None,
         provider_context: vec![crate::model::ProviderContextBlock {
             identity: source,
             kind: "opaque".into(),
@@ -761,6 +763,7 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
                 content: vec![ContentBlock::Text("draft".into())],
                 provenance: Some(identity()),
                 reasoning_summary: None,
+                portable_fallback: None,
                 provider_context: Vec::new(),
             }),
             Message::user_text("keep first"),

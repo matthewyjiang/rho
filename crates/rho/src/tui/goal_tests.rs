@@ -105,6 +105,7 @@ fn transcript_omits_opaque_provider_context() {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(identity.clone()),
             reasoning_summary: Some("safe summary".into()),
+            portable_fallback: None,
             provider_context: vec![rho_providers::model::ProviderContextBlock {
                 identity,
                 kind: "anthropic_content_block".into(),

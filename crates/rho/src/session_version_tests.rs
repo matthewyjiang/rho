@@ -319,6 +319,7 @@ fn resumed_snapshot_reports_and_filters_incompatible_provider_context() {
         Revision::from_u64(1),
         vec![Message::assistant(AssistantMessage {
             content: vec![ContentBlock::Text("portable answer".into())],
+            portable_fallback: None,
             provider_context: vec![ProviderContextBlock {
                 identity: source.clone(),
                 kind: "source_native_context".into(),

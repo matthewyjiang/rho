@@ -112,6 +112,11 @@ pub struct AssistantMessage {
     /// Provider-produced reasoning summary. Raw reasoning must never be stored here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<String>,
+    /// Portable text used only when opaque [`Self::provider_context`] cannot replay
+    /// to the target model (for example a foreign provider after server-side
+    /// compaction). Exact-target handoff keeps this out of the request body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_fallback: Option<String>,
     /// Opaque provider data retained only for exact provider/API/model replay.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_context: Vec<ProviderContextBlock>,

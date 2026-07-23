@@ -136,6 +136,7 @@ pub(crate) fn codex_input_items_for_target(
                     content: aborted_content_as_non_executable(&message),
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
+                    portable_fallback: None,
                     provider_context: message.provider_context,
                 };
                 enriched
@@ -162,15 +163,9 @@ fn append_codex_prepared_assistant(
     prepared: PreparedAssistant,
 ) -> Result<(), ModelError> {
     let mut assistant_items = Vec::new();
-    // Portable summary text on a remote-compaction marker is for non-Codex
-    // handoff only. Compatible Codex turns replay the opaque compaction item.
-    let has_remote_compaction = prepared.replay_context.iter().any(|block| {
-        block.kind == "openai_response_output_item"
-            && block.data.get("type").and_then(|value| value.as_str()) == Some("compaction")
-    });
-    if !has_remote_compaction {
-        append_codex_assistant(&mut assistant_items, prepared.content)?;
-    }
+    // `prepare_assistant` already suppresses portable fallback when opaque
+    // context can replay, so converters only append the lowered content.
+    append_codex_assistant(&mut assistant_items, prepared.content)?;
     insert_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
@@ -280,6 +275,7 @@ pub(crate) fn to_openai_message_for_target(
                 content: aborted_content_as_non_executable(&message),
                 provenance: message.provenance,
                 reasoning_summary: message.reasoning_summary,
+                portable_fallback: None,
                 provider_context: message.provider_context,
             };
             enriched
@@ -485,6 +481,7 @@ mod handoff_tests {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source),
             reasoning_summary: Some("verified it".into()),
+            portable_fallback: None,
             provider_context: Vec::new(),
         });
 
@@ -511,6 +508,7 @@ mod handoff_tests {
             ],
             provenance: Some(source.clone()),
             reasoning_summary: None,
+            portable_fallback: None,
             provider_context: vec![crate::model::ProviderContextBlock {
                 identity: source.clone(),
                 kind: "openai_response_output_item".into(),
@@ -532,9 +530,10 @@ mod handoff_tests {
         let source =
             crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
         let message = Message::assistant(crate::model::AssistantMessage {
-            content: vec![ContentBlock::Text("portable summary".into())],
+            content: Vec::new(),
             provenance: Some(source.clone()),
             reasoning_summary: None,
+            portable_fallback: Some("portable summary".into()),
             provider_context: vec![crate::model::ProviderContextBlock {
                 identity: source.clone(),
                 kind: "openai_response_output_item".into(),
@@ -576,6 +575,7 @@ mod handoff_tests {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source.clone()),
             reasoning_summary: Some("verified it".into()),
+            portable_fallback: None,
             provider_context: vec![crate::model::ProviderContextBlock {
                 identity: source.clone(),
                 kind: "openai_response_output_item".into(),

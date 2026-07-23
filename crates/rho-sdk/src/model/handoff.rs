@@ -22,9 +22,10 @@ pub struct PreparedAssistant {
 
 /// Lowers a canonical assistant message for a target model.
 ///
-/// Provider-produced summaries are portable and become tagged assistant text.
 /// Opaque provider context is replayed only to the exact provider/API/model that
-/// produced it. Raw reasoning must be represented only as opaque context.
+/// produced it. When that context cannot replay, portable fallback text (then
+/// reasoning summaries) is appended so foreign targets still receive a usable
+/// handoff. Raw reasoning must be represented only as opaque context.
 pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> PreparedAssistant {
     let mut content = message.content;
     let replay_context = message
@@ -33,7 +34,12 @@ pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> P
         .filter(|block| block.is_replayable_to(target))
         .collect::<Vec<_>>();
     if replay_context.is_empty() {
-        if let Some(summary) = message
+        if let Some(fallback) = message
+            .portable_fallback
+            .filter(|text| !text.trim().is_empty())
+        {
+            content.push(ContentBlock::Text(fallback));
+        } else if let Some(summary) = message
             .reasoning_summary
             .filter(|summary| !summary.trim().is_empty())
         {

@@ -16,6 +16,17 @@ pub(crate) async fn send_recorded(
     context: ProviderRequestUsageContext,
     recording: ProviderRequestUsageRecording,
 ) -> Result<(ModelResponse, ModelUsage), ProviderError> {
+    send_recorded_from_attempt(provider, request, context, recording, 1).await
+}
+
+/// Like [`send_recorded`], but continues attempt indexes after earlier physical requests.
+pub(crate) async fn send_recorded_from_attempt(
+    provider: &dyn ModelProvider,
+    request: ModelRequest<'_>,
+    context: ProviderRequestUsageContext,
+    recording: ProviderRequestUsageRecording,
+    first_attempt_index: usize,
+) -> Result<(ModelResponse, ModelUsage), ProviderError> {
     let cancellation = request.cancellation.clone();
     let (events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(EVENT_CAPACITY).expect("capacity is nonzero"));
@@ -53,7 +64,7 @@ pub(crate) async fn send_recorded(
         Err(_) if cancellation.is_cancelled() => ProviderRequestOutcome::Cancelled,
         Err(error) => ProviderRequestOutcome::Failed(error.kind()),
     };
-    let mut next_attempt_index = 1;
+    let mut next_attempt_index = first_attempt_index.max(1);
     for (kind, usage) in failed_attempts {
         recording
             .record(ProviderRequestUsageEvent::observed(

@@ -522,7 +522,7 @@ pub(crate) fn handle_codex_sse_value(
     Ok(true)
 }
 
-fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
+pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
     let usage = value.get("usage")?;
     let raw_input_tokens = usage
         .get("input_tokens")

@@ -66,6 +66,7 @@ pub fn build_request(
                         content: aborted_content_blocks(message, target),
                         provenance: message.provenance.clone(),
                         reasoning_summary: message.reasoning_summary.clone(),
+                        portable_fallback: None,
                         provider_context: message.provider_context.clone(),
                     },
                     target,

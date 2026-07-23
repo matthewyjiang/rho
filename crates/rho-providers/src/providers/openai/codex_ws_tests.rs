@@ -256,7 +256,7 @@ async fn responses_lite_websocket_request_sets_lite_client_metadata() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::ResponsesLite,
+            ResponsesRequestMode::ResponsesLite,
             &mut on_event,
         )
         .await
@@ -279,7 +279,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::ResponsesLite,
+            ResponsesRequestMode::ResponsesLite,
             &mut on_event,
         )
         .await
@@ -292,7 +292,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
-            CodexRequestMode::ResponsesLite,
+            ResponsesRequestMode::ResponsesLite,
             &mut on_event,
         )
         .await
@@ -321,7 +321,7 @@ async fn first_websocket_request_sends_full_input_without_previous_response_id()
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -345,7 +345,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -358,7 +358,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -389,7 +389,7 @@ async fn websocket_connection_failure_reports_that_no_model_request_was_submitte
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -414,7 +414,7 @@ async fn stalled_websocket_falls_back_instead_of_blocking_the_turn() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -439,7 +439,7 @@ async fn websocket_keep_alive_frames_do_not_reset_the_idle_timeout() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -535,7 +535,7 @@ async fn continuation_error_before_output_returns_immediate_full_sse_fallback() 
             json!({"role":"user","content":"two"}),
         ]),
         &tokens(),
-        CodexRequestMode::Standard,
+        ResponsesRequestMode::Standard,
         &mut on_event,
     ))
     .await
@@ -583,7 +583,7 @@ async fn response_failed_after_delta_returns_immediately_without_replay() {
         immediate(transport.send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         ))
         .await
@@ -615,7 +615,7 @@ async fn silent_response_incomplete_returns_immediate_model_error() {
     let error = immediate(transport.send_responses_turn_silent(
         body(vec![json!({"role":"user","content":"one"})]),
         &tokens(),
-        CodexRequestMode::Standard,
+        ResponsesRequestMode::Standard,
     ))
     .await
     .unwrap_err();
@@ -640,7 +640,7 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -653,7 +653,7 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
                 json!({"role":"user","content":"two"}),
             ]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -673,7 +673,7 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
                 json!({"role":"user","content":"two"}),
             ]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -692,7 +692,7 @@ async fn empty_websocket_completion_before_output_falls_back_to_sse() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -717,7 +717,7 @@ async fn empty_websocket_completion_after_output_uses_streamed_output() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -748,7 +748,7 @@ async fn websocket_emits_delta_before_response_completes() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            CodexRequestMode::Standard,
+            ResponsesRequestMode::Standard,
             &mut on_event,
         )
         .await
@@ -775,7 +775,7 @@ async fn websocket_failure_after_delta_does_not_replay_request() {
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
-                CodexRequestMode::Standard,
+                ResponsesRequestMode::Standard,
                 &mut on_event,
             )
             .await

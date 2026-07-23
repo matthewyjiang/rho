@@ -1,109 +1,267 @@
-//! OpenAI Responses compaction v2 (server-side).
+//! OpenAI server-side compaction via `POST /responses/compact`.
 //!
-//! Mirrors OpenAI's remote compaction path for both Codex and direct API-key
-//! OpenAI: POST `/responses` with a trailing `compaction_trigger`, retain recent
-//! user messages, and store the opaque `compaction` item for later compatible
-//! turns.
+//! Both Codex and direct API-key OpenAI use the unary compact endpoint. The
+//! server returns replacement output items (retained user messages plus one
+//! encrypted compaction item). Subsequent compatible turns must use the
+//! Responses API so the compaction item can be replayed.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::model::{
-    context::estimate_message_tokens, AssistantMessage, Message, ModelError, ModelIdentity,
-    ModelRequest, ProviderContextBlock,
+    AssistantMessage, ContentBlock, Message, ModelError, ModelIdentity, ModelRequest, ModelUsage,
+    ProviderContextBlock,
 };
 
-use super::codex_request::{build_responses_body_with_profile, CodexRequestMode};
+use super::auth::Auth;
+use super::codex_request::{build_responses_compact_body, ResponsesProfile};
+use super::codex_ws::CodexWsTransport;
 use super::reasoning::OpenAiReasoningProfile;
-
-/// Matches Codex's retained-message default for remote compaction v2.
-pub(super) const RETAINED_MESSAGE_TOKEN_BUDGET: u64 = 64_000;
+use super::responses_http::{
+    ResponsesEndpoint, ResponsesFailedAttempt, ResponsesFailedAttemptKind, ResponsesHttpTransport,
+};
 
 pub(super) const COMPACTION_OUTPUT_ITEM_KIND: &str = "openai_response_output_item";
 
-const PORTABLE_SUMMARY_PLACEHOLDER: &str = "\
-Context compacted with OpenAI server-side compaction. Compatible OpenAI turns reuse \
-the encrypted compaction artifact. Other models see this notice plus retained recent \
-user messages.";
+/// Portable notice shown when the encrypted compaction artifact cannot replay
+/// (model/provider/API switch). Server-returned user messages remain in history.
+const PORTABLE_HANDOFF_NOTICE: &str = "\
+Context was compacted with OpenAI server-side compaction. Prior assistant replies \
+and tool results live in an encrypted artifact that only compatible OpenAI Responses \
+turns can read. Retained recent user messages are kept below.";
 
-pub(super) fn supports_remote_compaction(identity: &ModelIdentity) -> bool {
-    match (identity.provider.as_str(), identity.api.as_str()) {
-        ("openai-codex", "openai-responses") => true,
-        ("openai", "openai-chat-completions") => true,
-        _ => false,
+fn native_failed_attempts(
+    attempts: Vec<ResponsesFailedAttempt>,
+) -> Vec<rho_sdk::provider::NativeCompactionFailedAttempt> {
+    attempts
+        .into_iter()
+        .map(|attempt| {
+            let kind = match attempt.kind {
+                ResponsesFailedAttemptKind::Authentication => {
+                    rho_sdk::ProviderErrorKind::Authentication
+                }
+            };
+            rho_sdk::provider::NativeCompactionFailedAttempt::new(kind, ModelUsage::default())
+        })
+        .collect()
+}
+
+fn failure_response(
+    error: ModelError,
+    failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
+) -> rho_sdk::provider::NativeCompactionResponse {
+    rho_sdk::provider::NativeCompactionResponse::failure(
+        crate::providers::sdk_contract::provider_error_from_model_error(error),
+    )
+    .with_failed_attempts(failed_attempts)
+}
+
+/// Runs native compaction through the shared Responses HTTP transport.
+pub(super) async fn compact_with_http(
+    auth: &Auth,
+    profile: &ResponsesProfile,
+    reasoning_profile: &OpenAiReasoningProfile,
+    http: &ResponsesHttpTransport<'_>,
+    codex_ws: &CodexWsTransport,
+    request: ModelRequest<'_>,
+) -> rho_sdk::provider::NativeCompactionResponse {
+    let cancellation = request.cancellation.clone();
+    let identity = profile.identity().clone();
+    // Only system messages are preserved from the source history; capture those
+    // alone so the full conversation is not cloned across the HTTP round-trip.
+    let retained_system_messages = request
+        .messages
+        .iter()
+        .filter(|message| matches!(message, Message::System(_)))
+        .cloned()
+        .collect::<Vec<_>>();
+    let body = match build_compact_request_body(profile, reasoning_profile, request) {
+        Ok(body) => body,
+        Err(error) => return failure_response(error, Vec::new()),
+    };
+
+    let http_result = http
+        .post_json(auth, ResponsesEndpoint::Compact, &body, Some(&cancellation))
+        .await;
+    let failed_attempts = native_failed_attempts(http_result.failed_attempts);
+    let response = match http_result.response {
+        Ok(response) => response,
+        Err(error) => return failure_response(error, failed_attempts),
+    };
+    if !response.status().is_success() {
+        return rho_sdk::provider::NativeCompactionResponse::failure(
+            crate::providers::sdk_contract::provider_error_from_model_error(
+                crate::provider_backend::http_error::from_response(response).await,
+            ),
+        )
+        .with_failed_attempts(failed_attempts);
     }
-}
 
-pub(super) fn responses_mode_for_identity(identity: &ModelIdentity) -> CodexRequestMode {
-    if identity.provider == "openai-codex" {
-        CodexRequestMode::for_model(&identity.model)
-    } else {
-        // Direct OpenAI API-key Responses stays on the standard shape.
-        CodexRequestMode::Standard
+    let body = tokio::select! {
+        result = response.json::<Value>() => match result {
+            Ok(body) => body,
+            Err(error) => {
+                return failure_response(ModelError::from(error), failed_attempts);
+            }
+        },
+        () = cancellation.cancelled() => {
+            return failure_response(ModelError::Interrupted, failed_attempts);
+        }
+    };
+
+    // History shape changed; drop any live previous_response_id baseline.
+    if matches!(auth, Auth::Codex { .. }) {
+        codex_ws.reset().await;
     }
+
+    let (messages, usage) = match parse_compact_response(identity, &retained_system_messages, &body)
+    {
+        Ok(parsed) => parsed,
+        Err(error) => return failure_response(error, failed_attempts),
+    };
+    let output = match rho_sdk::CompactionOutput::with_usage(messages, usage) {
+        Ok(output) => output,
+        Err(error) => {
+            return failure_response(
+                ModelError::InvalidResponse(error.to_string()),
+                failed_attempts,
+            );
+        }
+    };
+    rho_sdk::provider::NativeCompactionResponse::success(output)
+        .with_failed_attempts(failed_attempts)
 }
 
-pub(super) fn history_has_remote_compaction(
-    messages: &[Message],
-    identity: &ModelIdentity,
-) -> bool {
-    messages.iter().any(|message| {
-        let blocks = match message {
-            Message::EnrichedAssistant(message) => message.provider_context.as_slice(),
-            Message::AbortedAssistant(message) => message.provider_context.as_slice(),
-            Message::System(_)
-            | Message::User(_)
-            | Message::Assistant(_)
-            | Message::ToolResult(_) => return false,
-        };
-        blocks
-            .iter()
-            .any(|block| is_replayable_compaction_item(block, identity))
-    })
-}
-
-fn is_replayable_compaction_item(block: &ProviderContextBlock, identity: &ModelIdentity) -> bool {
-    block.is_replayable_to(identity)
-        && block.kind == COMPACTION_OUTPUT_ITEM_KIND
-        && block.data.get("type").and_then(Value::as_str) == Some("compaction")
-}
-
-pub(super) fn build_remote_compaction_body(
-    identity: &ModelIdentity,
+/// Builds a unary `/responses/compact` request body from the live turn snapshot.
+pub(super) fn build_compact_request_body(
+    profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    let provider = static_provider_name(identity)?;
-    let mode = responses_mode_for_identity(identity);
-    let mut body = build_responses_body_with_profile(
-        provider,
-        &identity.model,
-        identity,
-        reasoning_profile,
-        request,
-        mode,
-    )?;
-    let input = body
-        .get_mut("input")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| ModelError::InvalidResponse("Responses body missing input".into()))?;
-    input.push(json!({ "type": "compaction_trigger" }));
-    body["store"] = json!(false);
-    body["stream"] = json!(true);
-    body["include"] = json!(["reasoning.encrypted_content"]);
-    if body.get("parallel_tool_calls").is_none() && mode == CodexRequestMode::Standard {
-        body["parallel_tool_calls"] = json!(true);
-    }
-    Ok(body)
+    build_responses_compact_body(profile, reasoning_profile, request)
 }
 
-fn static_provider_name(identity: &ModelIdentity) -> Result<&'static str, ModelError> {
-    match identity.provider.as_str() {
-        "openai-codex" => Ok("openai-codex"),
-        "openai" => Ok("openai"),
-        other => Err(ModelError::InvalidResponse(format!(
-            "remote compaction is not supported for provider '{other}'"
-        ))),
+/// Parses a unary `/responses/compact` JSON body into replacement history + usage.
+pub(super) fn parse_compact_response(
+    identity: ModelIdentity,
+    retained_system_messages: &[Message],
+    body: &Value,
+) -> Result<(Vec<Message>, ModelUsage), ModelError> {
+    let output = body
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ModelError::InvalidResponse("compact response missing output array".into())
+        })?;
+    let usage = crate::protocol::openai_responses::extract_usage(body).unwrap_or_default();
+    let messages = replacement_from_compact_output(identity, retained_system_messages, output)?;
+    Ok((messages, usage))
+}
+
+pub(super) fn replacement_from_compact_output<'a>(
+    identity: ModelIdentity,
+    retained_system_messages: impl IntoIterator<Item = &'a Message>,
+    output_items: &[Value],
+) -> Result<Vec<Message>, ModelError> {
+    let compaction_item = extract_compaction_item(output_items)?;
+    let mut replacement = Vec::new();
+
+    // System prompts stay host-owned; the compact endpoint returns conversation
+    // items, not the instructions channel.
+    for message in retained_system_messages {
+        debug_assert!(
+            matches!(message, Message::System(_)),
+            "retained_system_messages must only contain system messages"
+        );
+        if matches!(message, Message::System(_)) {
+            replacement.push(message.clone());
+        }
     }
+
+    for item in output_items {
+        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+        match item_type {
+            "compaction" => {}
+            "message" if item.get("role").and_then(Value::as_str) == Some("user") => {
+                if let Some(message) = user_message_from_output_item(item) {
+                    replacement.push(message);
+                }
+            }
+            // Older compact payloads may omit type and only set role=user.
+            _ if item.get("role").and_then(Value::as_str) == Some("user") => {
+                if let Some(message) = user_message_from_output_item(item) {
+                    replacement.push(message);
+                }
+            }
+            // Drop assistant/tool/reasoning items from compact output; the
+            // encrypted compaction item is the server's compressed substitute.
+            _ => {}
+        }
+    }
+
+    replacement.push(Message::assistant(AssistantMessage {
+        content: Vec::new(),
+        provenance: Some(identity.clone()),
+        reasoning_summary: None,
+        portable_fallback: Some(PORTABLE_HANDOFF_NOTICE.into()),
+        provider_context: vec![ProviderContextBlock {
+            identity,
+            kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
+            position: Some(0),
+            data: compaction_item,
+        }],
+    }));
+
+    if replacement
+        .iter()
+        .all(|message| matches!(message, Message::System(_)))
+    {
+        return Err(ModelError::InvalidResponse(
+            "compact response produced no conversation replacement".into(),
+        ));
+    }
+    Ok(replacement)
+}
+
+fn user_message_from_output_item(item: &Value) -> Option<Message> {
+    let content = item.get("content")?;
+    let mut blocks = Vec::new();
+    match content {
+        Value::String(text) if !text.is_empty() => {
+            blocks.push(ContentBlock::Text(text.clone()));
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+                match part_type {
+                    "input_text" | "output_text" | "text" => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                blocks.push(ContentBlock::Text(text.to_string()));
+                            }
+                        }
+                    }
+                    "input_image" | "image_url" => {
+                        // Image payloads in compact output are rare; keep a textual
+                        // placeholder so the turn stays valid without re-fetching.
+                        if let Some(url) = part
+                            .get("image_url")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .or_else(|| value.get("url").and_then(Value::as_str))
+                            })
+                            .filter(|url| !url.is_empty())
+                        {
+                            blocks.push(ContentBlock::Text(format!("[image: {url}]")));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    (!blocks.is_empty()).then_some(Message::User(blocks))
 }
 
 pub(super) fn extract_compaction_item(output_items: &[Value]) -> Result<Value, ModelError> {
@@ -120,116 +278,19 @@ pub(super) fn extract_compaction_item(output_items: &[Value]) -> Result<Value, M
                 .filter(|content| !content.is_empty());
             if encrypted.is_none() {
                 return Err(ModelError::InvalidResponse(
-                    "remote compaction item missing encrypted_content".into(),
+                    "compact response compaction item missing encrypted_content".into(),
                 ));
             }
             Ok(item.clone())
         }
         [] => Err(ModelError::InvalidResponse(
-            "remote compaction v2 returned no compaction item".into(),
+            "compact response returned no compaction item".into(),
         )),
         _ => Err(ModelError::InvalidResponse(format!(
-            "remote compaction v2 expected exactly one compaction item, got {}",
+            "compact response expected exactly one compaction item, got {}",
             compaction_items.len()
         ))),
     }
-}
-
-pub(super) fn build_remote_compaction_replacement(
-    identity: ModelIdentity,
-    messages: &[Message],
-    compaction_item: Value,
-    portable_summary: Option<String>,
-) -> Result<Vec<Message>, ModelError> {
-    let mut leading = Vec::new();
-    let mut retained_candidates = Vec::new();
-    for message in messages {
-        match message {
-            Message::System(_) => leading.push(message.clone()),
-            Message::User(_) => retained_candidates.push(message.clone()),
-            Message::Assistant(_)
-            | Message::EnrichedAssistant(_)
-            | Message::AbortedAssistant(_)
-            | Message::ToolResult(_) => {}
-        }
-    }
-
-    let retained_users =
-        retain_recent_user_messages(retained_candidates, RETAINED_MESSAGE_TOKEN_BUDGET);
-    let summary = portable_summary
-        .map(|summary| summary.trim().to_string())
-        .filter(|summary| !summary.is_empty())
-        .unwrap_or_else(|| PORTABLE_SUMMARY_PLACEHOLDER.to_string());
-
-    let mut replacement = leading;
-    replacement.extend(retained_users);
-    replacement.push(Message::assistant(AssistantMessage {
-        content: vec![crate::model::ContentBlock::Text(summary)],
-        provenance: Some(identity.clone()),
-        reasoning_summary: None,
-        provider_context: vec![ProviderContextBlock {
-            identity,
-            kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
-            position: Some(0),
-            data: compaction_item,
-        }],
-    }));
-    Ok(replacement)
-}
-
-fn retain_recent_user_messages(messages: Vec<Message>, max_tokens: u64) -> Vec<Message> {
-    let mut remaining = max_tokens;
-    let mut retained_reversed = Vec::new();
-    for message in messages.into_iter().rev() {
-        if remaining == 0 {
-            break;
-        }
-        if !matches!(message, Message::User(_)) {
-            continue;
-        }
-        let tokens = estimate_message_tokens(&message).max(1);
-        if tokens <= remaining {
-            remaining = remaining.saturating_sub(tokens);
-            retained_reversed.push(message);
-            continue;
-        }
-        if let Some(truncated) = truncate_user_message_to_token_budget(message, remaining) {
-            retained_reversed.push(truncated);
-        }
-        break;
-    }
-    retained_reversed.reverse();
-    retained_reversed
-}
-
-fn truncate_user_message_to_token_budget(message: Message, max_tokens: u64) -> Option<Message> {
-    let Message::User(blocks) = message else {
-        return Some(message);
-    };
-    let mut remaining_chars = max_tokens.saturating_mul(4);
-    let mut truncated = Vec::new();
-    for block in blocks {
-        match block {
-            crate::model::ContentBlock::Image(image) => {
-                truncated.push(crate::model::ContentBlock::Image(image));
-            }
-            crate::model::ContentBlock::Text(text) => {
-                if remaining_chars == 0 {
-                    continue;
-                }
-                let clipped = text
-                    .chars()
-                    .take(remaining_chars as usize)
-                    .collect::<String>();
-                remaining_chars = remaining_chars.saturating_sub(clipped.chars().count() as u64);
-                if !clipped.is_empty() {
-                    truncated.push(crate::model::ContentBlock::Text(clipped));
-                }
-            }
-            crate::model::ContentBlock::ToolCall(_) => {}
-        }
-    }
-    (!truncated.is_empty()).then_some(Message::User(truncated))
 }
 
 #[cfg(test)]

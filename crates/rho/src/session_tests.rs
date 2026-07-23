@@ -69,6 +69,7 @@ fn enriched_assistant_context_round_trips_for_resume() {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(identity.clone()),
             reasoning_summary: Some("verified the result".into()),
+            portable_fallback: None,
             provider_context: vec![ProviderContextBlock {
                 identity,
                 kind: "openai_response_output_item".into(),
@@ -333,6 +334,7 @@ fn drops_incomplete_enriched_tool_call_tail_on_load() {
                 "gpt-test",
             )),
             reasoning_summary: None,
+            portable_fallback: None,
             provider_context: Vec::new(),
         }))
         .unwrap();

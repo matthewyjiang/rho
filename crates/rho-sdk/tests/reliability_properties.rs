@@ -90,6 +90,7 @@ fn message(rng: &mut DeterministicRng) -> Message {
             content: content_list(rng),
             provenance: Some(model_identity(rng)),
             reasoning_summary: rng.optional_string(),
+            portable_fallback: None,
             provider_context: vec![ProviderContextBlock {
                 identity: model_identity(rng),
                 kind: rng.string(16),

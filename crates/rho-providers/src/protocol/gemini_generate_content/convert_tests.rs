@@ -23,6 +23,7 @@ fn request_maps_system_tools_results_and_thought_signatures() {
                 arguments: json!({"command":"pwd"}),
             })],
             provenance: Some(identity.clone()),
+            portable_fallback: None,
             provider_context: vec![
                 ProviderContextBlock {
                     identity: identity.clone(),

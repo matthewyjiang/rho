@@ -299,7 +299,9 @@ where
 /// channel's async backpressure before polling the provider again.
 ///
 /// Pass `native_compact` as a second argument when the transport also exposes
-/// `native_compact_turn`.
+/// an inherent `native_compact_turn` method returning
+/// `Result<NativeCompactionResponse, ModelError>` or
+/// `Result<CompactionOutput, ModelError>` converted by the adapter.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
@@ -372,7 +374,16 @@ macro_rules! impl_sdk_model_provider {
             &'a self,
             request: ::rho_sdk::model::ModelRequest<'a>,
         ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
-            self.try_native_compact(request)
+            ::std::option::Option::Some(::std::boxed::Box::pin(async move {
+                match self.native_compact_turn(request).await {
+                    ::std::result::Result::Ok(response) => response.into(),
+                    ::std::result::Result::Err(error) => {
+                        ::rho_sdk::provider::NativeCompactionResponse::failure(
+                            $crate::providers::sdk_contract::provider_error_from_model_error(error),
+                        )
+                    }
+                }
+            }))
         }
     };
 }

@@ -26,6 +26,7 @@ fn enriched_assistant_history_round_trips_provider_context() {
         content: vec![ContentBlock::Text("answer".into())],
         provenance: Some(ModelIdentity::new("openai", "responses", "gpt-5")),
         reasoning_summary: Some("summary".into()),
+        portable_fallback: None,
         provider_context: vec![ProviderContextBlock {
             identity: ModelIdentity::new("openai", "responses", "gpt-5"),
             kind: "reasoning".into(),

@@ -139,7 +139,7 @@ fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
 }
 
 #[test]
-fn chat_completions_body_uses_each_request_reasoning_level() {
+fn api_responses_body_uses_each_request_reasoning_level() {
     let provider = OpenAiProvider::new_with_auth(
         "rho-request-reasoning-test".into(),
         Auth::ApiKey("test-key".into()),
@@ -147,34 +147,35 @@ fn chat_completions_body_uses_each_request_reasoning_level() {
     );
     let messages = [Message::user_text("hello")];
     let low = provider
-        .chat_completions_request(
-            ModelRequest {
-                messages: &messages,
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::Low,
-                prompt_cache_key: None,
-            },
-            /*stream*/ false,
-        )
+        .openai_api_responses_body(ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Low,
+            prompt_cache_key: None,
+        })
         .unwrap();
     let high = provider
-        .chat_completions_request(
-            ModelRequest {
-                messages: &messages,
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::High,
-                prompt_cache_key: None,
-            },
-            /*stream*/ true,
-        )
+        .openai_api_responses_body(ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: None,
+        })
         .unwrap();
 
-    assert_eq!(low.reasoning_effort.as_deref(), Some("low"));
-    assert_eq!(high.reasoning_effort.as_deref(), Some("high"));
-    assert!(!low.stream);
-    assert!(high.stream);
+    assert_eq!(
+        low["reasoning"],
+        json!({"effort": "low", "summary": "auto"})
+    );
+    assert_eq!(
+        high["reasoning"],
+        json!({"effort": "high", "summary": "auto"})
+    );
+    assert_eq!(low["stream"], true);
+    assert_eq!(high["stream"], true);
+    assert_eq!(low["include"], json!(["reasoning.encrypted_content"]));
 }
 
 #[test]
@@ -276,28 +277,25 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
 }
 
 #[test]
-fn chat_completions_request_does_not_serialize_prompt_cache_key() {
-    let body = serde_json::to_value(ChatRequest {
-        model: "gpt-4.1".into(),
-        messages: vec![crate::protocol::openai_chat::OpenAiMessage {
-            role: "user".into(),
-            content: Some("hello".into()),
-            tool_calls: None,
-            tool_call_id: None,
-        }],
-        tools: None,
-        tool_choice: None,
-        stream: false,
-        stream_options: None,
-        reasoning: None,
-        reasoning_effort: Some("high".into()),
-        thinking: None,
-        chat_template_kwargs: None,
-    })
-    .unwrap();
+fn api_responses_body_includes_prompt_cache_key_when_present() {
+    let provider = OpenAiProvider::new_with_auth(
+        "gpt-4.1".into(),
+        Auth::ApiKey("test-key".into()),
+        std::sync::Arc::new(crate::credentials::MemoryCredentialStore::default()),
+    );
+    let body = provider
+        .openai_api_responses_body(ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: Some("rho:session-1"),
+        })
+        .unwrap();
 
-    assert!(body.get("prompt_cache_key").is_none());
-    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["prompt_cache_key"], "rho:session-1");
+    assert_eq!(body["stream"], true);
+    assert!(body.get("reasoning").is_some());
 }
 
 #[test]

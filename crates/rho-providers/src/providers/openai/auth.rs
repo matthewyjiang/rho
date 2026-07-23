@@ -34,8 +34,27 @@ pub async fn refresh_codex_token(
     source: CodexAuthSource,
     previous: &CodexTokens,
 ) -> Result<CodexTokens, ModelError> {
+    refresh_codex_token_at(
+        client,
+        store,
+        refresh_token,
+        source,
+        previous,
+        "https://auth.openai.com/oauth/token",
+    )
+    .await
+}
+
+pub(super) async fn refresh_codex_token_at(
+    client: &reqwest::Client,
+    store: &dyn CredentialStore,
+    refresh_token: &str,
+    source: CodexAuthSource,
+    previous: &CodexTokens,
+    token_url: &str,
+) -> Result<CodexTokens, ModelError> {
     let response: RefreshResponse = client
-        .post("https://auth.openai.com/oauth/token")
+        .post(token_url)
         .form(&[
             ("client_id", "app_EMoamEEZ73f0CkXaXp7hrann"),
             ("grant_type", "refresh_token"),
