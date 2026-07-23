@@ -7,28 +7,12 @@ use rho_providers::{
 };
 
 use super::{
-    catalog, config_picker, favorites, model_picker, provider, provider_picker, reasoning_metadata,
-    App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceKeyOutcome,
-    InlineChoiceOption, InteractiveModelSelection, InteractiveRuntime, ModelSelection,
-    PickerAction, UiPicker,
+    catalog, config_picker, context_handoff, favorites, model_picker, provider, provider_picker,
+    reasoning_metadata, App, CommandInvocation, ComposerMode, Entry, InteractiveModelSelection,
+    InteractiveRuntime, ModelSelection, PickerAction, UiPicker,
 };
 
-const HANDOFF_COMPACT: &str = "compact";
-const HANDOFF_DIRECT: &str = "direct";
-
-#[derive(Debug)]
-pub(super) struct ModelHandoffChoice {
-    pub(super) choice: InlineChoice,
-    selection: InteractiveModelSelection,
-    continuation: HandoffContinuation,
-    return_picker: Option<(Box<UiPicker>, String)>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HandoffContinuation {
-    None,
-    PendingTurnWork,
-}
+pub(super) use context_handoff::{ModelHandoffChoice, OmissionSurface};
 
 impl App {
     pub(super) fn resolve_model_selection(
@@ -458,151 +442,11 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    pub(super) fn request_model_selection(
-        &mut self,
-        selection: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.prepare_model_selection(selection, HandoffContinuation::None, agent)
-    }
-
-    pub(super) fn request_model_selection_after_turn(
-        &mut self,
-        selection: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.prepare_model_selection(selection, HandoffContinuation::PendingTurnWork, agent)
-    }
-
-    fn prepare_model_selection(
-        &mut self,
-        selection: InteractiveModelSelection,
-        continuation: HandoffContinuation,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let target = &selection.selection;
-        if !should_offer_model_handoff(
-            &self.info.runtime,
-            target,
-            /*cache_warm*/ self.model_cache_warm,
-            /*history_compactable*/ agent.can_compact(),
-        ) {
-            return self.select_model(selection, agent);
-        }
-
-        let current = rho_providers::provider::model_reference(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
-        );
-        let target = rho_providers::provider::model_reference(&target.provider, &target.model);
-        let choice = InlineChoice::new(
-            format!("How should Rho switch to {target}?"),
-            "Compacting uses the current model and may reduce the context sent to the new model.",
-            vec![
-                InlineChoiceOption::available(
-                    HANDOFF_COMPACT,
-                    '1',
-                    "Compact and switch",
-                    format!("Compact with {current}, then switch."),
-                ),
-                InlineChoiceOption::available(
-                    HANDOFF_DIRECT,
-                    '2',
-                    "Switch directly",
-                    "Keep the full conversation context and switch now.",
-                ),
-            ],
-        )?;
-        self.composer = ComposerMode::ModelHandoffChoice(ModelHandoffChoice {
-            choice,
-            selection,
-            continuation,
-            return_picker: None,
-        });
-        self.status = "choose model handoff".into();
-        Ok(())
-    }
-
-    pub(super) async fn handle_model_handoff_choice_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let outcome = match &mut self.composer {
-            ComposerMode::ModelHandoffChoice(choice) => choice.choice.handle_key(key),
-            _ => return Ok(false),
-        };
-        let (resolved, continuation, return_picker) = match outcome {
-            InlineChoiceKeyOutcome::Selected(value) => {
-                let ComposerMode::ModelHandoffChoice(choice) =
-                    std::mem::replace(&mut self.composer, ComposerMode::Input)
-                else {
-                    unreachable!("model handoff choice checked above");
-                };
-                let switch_result = if value == HANDOFF_COMPACT {
-                    match self.execute_compact_command(terminal, agent).await {
-                        Ok(true) => self.select_model(choice.selection, agent),
-                        Ok(false) => {
-                            self.insert_entry(&Entry::Notice(
-                                "model unchanged because context was not compacted".into(),
-                            ));
-                            Ok(())
-                        }
-                        Err(err) => Err(err),
-                    }
-                } else {
-                    debug_assert_eq!(value, HANDOFF_DIRECT);
-                    self.select_model(choice.selection, agent)
-                };
-                if let Err(err) = switch_result {
-                    self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
-                    self.status = "model handoff failed".into();
-                }
-                (true, choice.continuation, choice.return_picker)
-            }
-            InlineChoiceKeyOutcome::Cancelled => {
-                let ComposerMode::ModelHandoffChoice(choice) =
-                    std::mem::replace(&mut self.composer, ComposerMode::Input)
-                else {
-                    unreachable!("model handoff choice checked above");
-                };
-                self.status = "model switch cancelled".into();
-                (true, choice.continuation, choice.return_picker)
-            }
-            InlineChoiceKeyOutcome::Handled => (false, HandoffContinuation::None, None),
-        };
-        self.paste_burst.clear();
-        self.ctrl_c_streak = 0;
-        if let Some((picker, selected_value)) = return_picker {
-            self.open_main_config_picker(&selected_value, picker.filter)?;
-        }
-        if resolved && continuation == HandoffContinuation::PendingTurnWork {
-            self.continue_after_model_handoff(terminal, agent).await?;
-        }
-        Ok(true)
-    }
-
-    async fn continue_after_model_handoff(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.queued_prompts.pop_front() {
-            self.restore_pending_prompt(prompt);
-            return self.submit(terminal, agent).await;
-        }
-        if self.goal.is_some() && !self.should_quit {
-            self.continue_goal(terminal, agent, std::collections::VecDeque::new())
-                .await?;
-        }
-        Ok(())
-    }
-
     pub(super) fn select_model(
         &mut self,
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
+        omission_surface: OmissionSurface,
     ) -> anyhow::Result<()> {
         let InteractiveModelSelection { selection, alias } = resolved;
         let provider = selection.provider;
@@ -640,8 +484,8 @@ impl App {
         };
 
         let handoff = agent.replace_provider(new_provider, reasoning.effective)?;
-        if handoff.has_omissions() {
-            let kinds = handoff.omitted_kinds.join(", ");
+        if handoff.has_omissions() && omission_surface == OmissionSurface::Notice {
+            let kinds = context_handoff::format_omission_kinds(&handoff);
             self.insert_entry(&Entry::Notice(format!(
                 "model handoff omitted {} nonportable provider context block(s): {kinds}; assistant text, tool history, and reasoning summaries were preserved",
                 handoff.omitted_provider_context
@@ -741,19 +585,6 @@ impl App {
     pub(super) fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
-}
-
-fn should_offer_model_handoff(
-    current: &super::RuntimeModelView,
-    target: &ModelSelection,
-    cache_warm: bool,
-    history_compactable: bool,
-) -> bool {
-    cache_warm
-        && history_compactable
-        && (target.provider != current.provider
-            || target.model != current.model
-            || target.auth != current.auth)
 }
 
 #[cfg(test)]

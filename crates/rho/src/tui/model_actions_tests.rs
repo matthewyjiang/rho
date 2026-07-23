@@ -79,38 +79,3 @@ fn reports_undefined_alias_in_interactive_model_lookup() {
         "model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
     );
 }
-
-fn target(provider: &str, model: &str, auth: &str) -> ModelSelection {
-    ModelSelection {
-        provider: provider.into(),
-        model: model.into(),
-        auth: auth.into(),
-        from_catalog: true,
-    }
-}
-
-#[test]
-fn handoff_requires_warm_cache_and_compactable_history() {
-    let current = crate::tui::tests::test_bootstrap().runtime;
-    let target = target("other-provider", "other-model", "other-auth");
-
-    assert!(!super::should_offer_model_handoff(
-        &current, &target, false, true
-    ));
-    assert!(!super::should_offer_model_handoff(
-        &current, &target, true, false
-    ));
-    assert!(super::should_offer_model_handoff(
-        &current, &target, true, true
-    ));
-}
-
-#[test]
-fn handoff_is_not_offered_for_current_selection() {
-    let current = crate::tui::tests::test_bootstrap().runtime;
-    let target = target(&current.provider, &current.model, &current.auth);
-
-    assert!(!super::should_offer_model_handoff(
-        &current, &target, true, true
-    ));
-}

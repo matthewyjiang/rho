@@ -293,16 +293,38 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn can_compact(&self) -> bool {
+        self.can_compact_messages(&self.sessions.history())
+    }
+
+    pub(crate) fn can_compact_messages(&self, messages: &[Message]) -> bool {
         let target_tokens = self
             .context_window
             .map(|window| self.compaction.target_tokens(window))
             .unwrap_or(u64::MAX / 2);
         crate::compaction::partition_messages_for_compaction(
-            &self.sessions.history(),
+            messages,
             &self.tools.specs(),
             target_tokens,
         )
         .is_some()
+    }
+
+    pub(crate) fn provider_identity(&self) -> rho_sdk::model::ModelIdentity {
+        self.provider.provider().identity()
+    }
+
+    pub(crate) fn provider_context_omissions(
+        &self,
+        target: &rho_sdk::model::ModelIdentity,
+    ) -> rho_sdk::model::handoff::HandoffReport {
+        rho_sdk::model::handoff::report_message_omissions(&self.sessions.history(), target)
+    }
+
+    pub(crate) fn provider_context_omissions_for_messages(
+        messages: &[Message],
+        target: &rho_sdk::model::ModelIdentity,
+    ) -> rho_sdk::model::handoff::HandoffReport {
+        rho_sdk::model::handoff::report_message_omissions(messages, target)
     }
 
     pub(crate) fn session_id(&self) -> &SessionId {

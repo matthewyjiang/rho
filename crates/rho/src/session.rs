@@ -8,9 +8,9 @@ use std::{
 #[cfg(test)]
 use uuid::Uuid;
 
-use rho_providers::model::Message;
 #[cfg(test)]
-use rho_providers::model::{ContentBlock, ModelIdentity};
+use rho_providers::model::ContentBlock;
+use rho_providers::model::{Message, ModelIdentity};
 #[cfg(test)]
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
@@ -185,6 +185,14 @@ impl Session {
 
     pub(crate) fn stored_agent_identity(&self) -> anyhow::Result<Option<(String, String)>> {
         persistence::read_agent_identity(&self.path)
+    }
+
+    /// Provider/API/model identity stored on the session snapshot, when present.
+    pub(crate) fn stored_provider_identity(&self) -> anyhow::Result<Option<ModelIdentity>> {
+        Ok(persistence::read_session_state(&self.path)?
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.provider().clone()))
     }
 
     pub(crate) fn validate_agent_identity(

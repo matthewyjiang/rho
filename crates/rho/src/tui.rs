@@ -40,6 +40,7 @@ mod composer;
 mod config_actions;
 mod config_editor;
 mod config_picker;
+mod context_handoff;
 mod copy_interaction;
 mod doctor;
 mod event_adapter;
@@ -789,6 +790,7 @@ impl App {
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
+        self.maybe_offer_loaded_session_context_handoff(agent)?;
         if self.info.session.open_resume_picker {
             self.open_resume_picker()?;
         }
@@ -2284,7 +2286,7 @@ impl App {
         if after_successful_turn {
             self.request_model_selection_after_turn(pending, agent)
         } else {
-            self.select_model(pending, agent)
+            self.select_model(pending, agent, model_actions::OmissionSurface::Notice)
         }
     }
 
@@ -3056,7 +3058,7 @@ impl App {
         }
     }
 
-    fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
+    pub(super) fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
         for notice in agent.take_notices() {
             self.insert_entry(&Entry::Notice(notice));
         }
