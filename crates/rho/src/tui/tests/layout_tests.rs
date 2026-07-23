@@ -52,7 +52,7 @@ fn pageup_enters_manual_scroll_and_ctrl_g_returns_to_bottom() {
             &mut terminal,
         )
         .unwrap());
-    assert!(matches!(app.history_scroll, HistoryScroll::Manual { .. }));
+    assert!(matches!(app.history.scroll(), HistoryScroll::Manual { .. }));
     assert!(app.should_show_jump_to_bottom(40, 12, Instant::now()));
 
     assert!(app
@@ -61,7 +61,7 @@ fn pageup_enters_manual_scroll_and_ctrl_g_returns_to_bottom() {
             &mut terminal,
         )
         .unwrap());
-    assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    assert_eq!(app.history.scroll(), HistoryScroll::Bottom);
     assert!(!app.should_show_jump_to_bottom(40, 12, Instant::now()));
 }
 
@@ -75,14 +75,14 @@ fn small_scroll_to_rendered_bottom_resumes_bottom_following() {
     let history_len = app.history_len(40, Instant::now());
     let rendered_bottom_start =
         history_len.saturating_sub(app.history_height_for_screen(40, 12, Instant::now()));
-    app.history_scroll = HistoryScroll::Manual {
+    app.history.set_scroll(HistoryScroll::Manual {
         top_line: rendered_bottom_start.saturating_sub(1),
-    };
+    });
 
     app.handle_mouse_event(MouseEventKind::ScrollDown, 0, 0, &mut terminal)
         .unwrap();
 
-    assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    assert_eq!(app.history.scroll(), HistoryScroll::Bottom);
     assert!(!app.should_show_jump_to_bottom(40, 12, Instant::now()));
 }
 
@@ -99,7 +99,7 @@ fn pagedown_moves_manual_scroll_toward_bottom() {
         &mut terminal,
     )
     .unwrap();
-    let before = match app.history_scroll {
+    let before = match app.history.scroll() {
         HistoryScroll::Manual { top_line } => top_line,
         HistoryScroll::Bottom => panic!("expected manual scroll"),
     };
@@ -110,7 +110,7 @@ fn pagedown_moves_manual_scroll_toward_bottom() {
     )
     .unwrap();
 
-    match app.history_scroll {
+    match app.history.scroll() {
         HistoryScroll::Manual { top_line } => assert!(top_line > before),
         HistoryScroll::Bottom => {}
     }
@@ -119,8 +119,8 @@ fn pagedown_moves_manual_scroll_toward_bottom() {
 #[test]
 fn jump_button_renders_above_composer_only_when_scrolled_up() {
     let mut app = test_app();
-    app.input = "draft".into();
-    app.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft".into();
+    app.input_ui.cursor = app.input_char_len();
     for index in 0..20 {
         app.push_transcript_entry(Entry::User(format!("message {index}")));
     }
@@ -210,7 +210,8 @@ fn spinner_offsets_bottom_following_but_not_manual_scroll() {
         )
     );
 
-    app.history_scroll = HistoryScroll::Manual { top_line: 3 };
+    app.history
+        .set_scroll(HistoryScroll::Manual { top_line: 3 });
     let manual = app.screen_layout(area, Instant::now());
     assert_eq!(manual.history_content, manual.history);
     assert_eq!(manual.activity_gap, None);
@@ -296,7 +297,7 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
                 .is_some_and(|line| !line_text(line).trim().is_empty())
         })
         .unwrap();
-    app.history_scroll = HistoryScroll::Manual { top_line };
+    app.history.set_scroll(HistoryScroll::Manual { top_line });
     let layout = app.screen_layout(Rect::new(0, 0, width, height), now);
     let button = layout.jump_to_bottom.unwrap();
     let expected = app
@@ -431,7 +432,8 @@ fn jump_button_uses_activity_rail_background() {
     for index in 0..20 {
         app.push_transcript_entry(Entry::Assistant(format!("later message {index}")));
     }
-    app.history_scroll = HistoryScroll::Manual { top_line: 0 };
+    app.history
+        .set_scroll(HistoryScroll::Manual { top_line: 0 });
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
     let button = layout.jump_to_bottom.unwrap();
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -467,7 +469,7 @@ fn mouse_wheel_scrolls_history_and_clicking_jump_button_returns_to_bottom() {
 
     app.handle_mouse_event(MouseEventKind::ScrollUp, 0, 0, &mut terminal)
         .unwrap();
-    assert!(matches!(app.history_scroll, HistoryScroll::Manual { .. }));
+    assert!(matches!(app.history.scroll(), HistoryScroll::Manual { .. }));
 
     let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
     let button = layout.jump_to_bottom.unwrap();
@@ -480,7 +482,7 @@ fn mouse_wheel_scrolls_history_and_clicking_jump_button_returns_to_bottom() {
     )
     .unwrap();
 
-    assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    assert_eq!(app.history.scroll(), HistoryScroll::Bottom);
 }
 
 #[test]
@@ -565,10 +567,10 @@ fn dragging_scrollbar_updates_history_scroll() {
     )
     .unwrap();
     assert!(matches!(
-        app.history_scrollbar_drag,
+        app.history.scrollbar_drag(),
         Some(HistoryScrollbarDrag::Thumb { .. })
     ));
-    let before = match app.history_scroll {
+    let before = match app.history.scroll() {
         HistoryScroll::Manual { top_line } => top_line,
         HistoryScroll::Bottom => panic!("expected manual scroll"),
     };
@@ -582,7 +584,7 @@ fn dragging_scrollbar_updates_history_scroll() {
         &mut terminal,
     )
     .unwrap();
-    let after = match app.history_scroll {
+    let after = match app.history.scroll() {
         HistoryScroll::Manual { top_line } => top_line,
         HistoryScroll::Bottom => usize::MAX,
     };
@@ -595,7 +597,7 @@ fn dragging_scrollbar_updates_history_scroll() {
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.history_scrollbar_drag, None);
+    assert_eq!(app.history.scrollbar_drag(), None);
 }
 
 #[test]
@@ -617,7 +619,7 @@ fn clicking_scrollbar_track_jumps_history_scroll() {
     )
     .unwrap();
 
-    assert_eq!(app.history_scroll, HistoryScroll::Bottom);
+    assert_eq!(app.history.scroll(), HistoryScroll::Bottom);
 }
 
 #[test]
@@ -630,7 +632,7 @@ fn clicking_hidden_scrollbar_does_not_scroll_history() {
     app.scroll_history_page_up(40, 12, Instant::now());
     let layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
     let scrollbar = layout.history_scrollbar.unwrap();
-    let before = app.history_scroll;
+    let before = app.history.scroll();
 
     app.handle_mouse_event(
         MouseEventKind::Down(MouseButton::Left),
@@ -643,8 +645,8 @@ fn clicking_hidden_scrollbar_does_not_scroll_history() {
     )
     .unwrap();
 
-    assert_eq!(app.history_scroll, before);
-    assert_eq!(app.history_scrollbar_drag, None);
+    assert_eq!(app.history.scroll(), before);
+    assert_eq!(app.history.scrollbar_drag(), None);
 }
 
 #[test]
@@ -663,7 +665,7 @@ fn clamping_bottom_scroll_preserves_scrollbar_hover() {
 
     app.clamp_history_scroll(40, 12, Instant::now());
 
-    assert!(app.history_scrollbar_hovered);
+    assert!(app.history.scrollbar_hovered());
     assert!(app.should_render_history_scrollbar(Instant::now()));
 }
 
@@ -757,7 +759,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
         .all(|line| !line_text(line).contains("Thinking...")));
     assert!(
         matches!(
-            app.transcript.as_slice(),
+            app.history.entries(),
             [
                 Entry::Reasoning(ReasoningEntry {
                     text,
@@ -767,7 +769,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
             ] if text.is_empty() && answer == "answer"
         ),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 }
 
@@ -789,7 +791,7 @@ fn shown_reasoning_appends_thought_summary_after_reasoning() {
 
     assert!(
         matches!(
-            app.transcript.as_slice(),
+            app.history.entries(),
             [
                 Entry::Reasoning(ReasoningEntry {
                     text: reasoning,
@@ -799,7 +801,7 @@ fn shown_reasoning_appends_thought_summary_after_reasoning() {
             ] if reasoning == "because reasons" && answer == "answer"
         ),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 }
 
@@ -815,9 +817,9 @@ fn thinking_without_reasoning_deltas_skips_thought_summary() {
     app.finish_streams();
 
     assert!(
-        matches!(app.transcript.as_slice(), [Entry::Assistant(answer)] if answer == "answer"),
+        matches!(app.history.entries(), [Entry::Assistant(answer)] if answer == "answer"),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 }
 
@@ -837,12 +839,12 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
     .unwrap();
     assert!(
         matches!(
-            app.transcript.as_slice(),
+            app.history.entries(),
             [Entry::Reasoning(ReasoningEntry { text, thought_for: None })]
                 if text.contains("visible first")
         ),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 
     app.info.runtime.show_reasoning_output = false;
@@ -864,7 +866,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
 
     assert!(
         matches!(
-            app.transcript.as_slice(),
+            app.history.entries(),
             [
                 Entry::Reasoning(ReasoningEntry {
                     text: reasoning,
@@ -876,7 +878,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
                 && answer == "answer"
         ),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 }
 
@@ -914,7 +916,7 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
 
     assert!(
         matches!(
-            app.transcript.as_slice(),
+            app.history.entries(),
             [
                 Entry::Reasoning(ReasoningEntry {
                     text: reasoning,
@@ -924,7 +926,7 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
             ] if reasoning == "visible later" && answer == "answer"
         ),
         "{:?}",
-        app.transcript
+        app.history.entries()
     );
 }
 
@@ -979,7 +981,7 @@ fn web_search_api_key_editor_preserves_parent_picker() {
     .unwrap()
     .with_parent(root);
     App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
-    app.composer = ComposerMode::Picker(parent);
+    app.input_ui.composer = ComposerMode::Picker(parent);
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
     app.open_child_picker(child);
 
@@ -989,7 +991,7 @@ fn web_search_api_key_editor_preserves_parent_picker() {
         .unwrap();
     app.handle_picker_escape(/*running*/ false).unwrap();
 
-    let ComposerMode::Picker(picker) = &app.composer else {
+    let ComposerMode::Picker(picker) = &app.input_ui.composer else {
         panic!("expected parent picker after API-key editor escape");
     };
     assert_eq!(
@@ -1017,7 +1019,7 @@ fn config_toggle_keeps_its_category_open() {
         .unwrap();
     app.toggle_check_for_updates().unwrap();
 
-    let ComposerMode::Picker(picker) = &app.composer else {
+    let ComposerMode::Picker(picker) = &app.input_ui.composer else {
         panic!("expected config category picker");
     };
     assert_eq!(picker.title, "Config / Updates");

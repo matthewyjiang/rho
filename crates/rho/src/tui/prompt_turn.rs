@@ -157,7 +157,7 @@ impl App {
             failed_turn.attach_notification_context(batch_model);
         }
         let model_input = failed_turn.model_input()?;
-        self.current_turn_start = Some(self.transcript.len());
+        self.current_turn_start = Some(self.history.len());
         self.reset_streams();
         self.reasoning_phase
             .begin_step(self.info.runtime.show_reasoning_output);
@@ -222,7 +222,8 @@ impl App {
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             let interaction_available = interaction_slot_available(
-                /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                /*approval_active*/
+                matches!(self.input_ui.composer, ComposerMode::Approval(_)),
                 /*questionnaire_active*/ pending_questionnaire.is_some(),
             );
             let approval_ready = approval_receiver_open && interaction_available;
@@ -330,7 +331,7 @@ impl App {
                         ViewEvent::Questionnaire { call_id, request } => {
                             let interaction_available = interaction_slot_available(
                                 /*approval_active*/ matches!(
-                                    self.composer,
+                                    self.input_ui.composer,
                                     ComposerMode::Approval(_)
                                 ),
                                 /*questionnaire_active*/ pending_questionnaire.is_some(),
@@ -367,7 +368,8 @@ impl App {
             if !questionnaire_cancelled_by_user
                 && sdk_failure.is_none()
                 && interaction_slot_available(
-                    /*approval_active*/ matches!(self.composer, ComposerMode::Approval(_)),
+                    /*approval_active*/
+                    matches!(self.input_ui.composer, ComposerMode::Approval(_)),
                     /*questionnaire_active*/ pending_questionnaire.is_some(),
                 )
             {
@@ -379,7 +381,7 @@ impl App {
             }
             if pending_input_request.is_none()
                 && sdk_failure.is_none()
-                && !self.steering_prompts.is_empty()
+                && !self.pending.steering_prompts.is_empty()
             {
                 pending_input_request = self.start_pending_input_request(agent);
                 self.pending_input_changed();
@@ -432,12 +434,12 @@ impl App {
                 self.insert_final_answer_suffix(outcome.text());
                 self.reset_streams();
                 self.current_turn_start = None;
-                self.status = if self.queued_prompts.is_empty() {
+                self.status = if !self.pending.has_follow_ups() {
                     "ready".into()
                 } else {
                     format!(
                         "running next queued message ({})",
-                        self.queued_prompts.len()
+                        self.pending.follow_up_len()
                     )
                 };
                 TurnOutcome::Completed

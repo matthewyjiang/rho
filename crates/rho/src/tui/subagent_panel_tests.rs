@@ -155,7 +155,7 @@ fn text_selection_uses_rendered_history_window_with_active_subagents() {
     .unwrap();
 
     assert_eq!(
-        app.text_selection.unwrap().selected_line_range(),
+        app.history.text_selection().unwrap().selected_line_range(),
         target_line..target_line + 1
     );
 }

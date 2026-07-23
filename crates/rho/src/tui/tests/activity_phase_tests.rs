@@ -70,7 +70,7 @@ fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
     app.activity_phase = ActivityPhase::RunningTool;
-    app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+    app.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
         QuestionnaireRequest {
             title: None,
             reason: None,
@@ -94,7 +94,7 @@ fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
     app.handle_questionnaire_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
 
-    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     assert!(reply_rx.try_recv().is_ok());
     assert!(rendered_activity(&app).contains("running tool"));
 }

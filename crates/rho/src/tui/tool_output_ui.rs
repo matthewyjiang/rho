@@ -40,7 +40,7 @@ impl App {
             return Ok(());
         }
 
-        let Some(index) = self.transcript.iter().rposition(|entry| {
+        let Some(index) = self.history.entries().iter().rposition(|entry| {
             expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
         }) else {
             self.status = "no truncated tool output".into();
@@ -52,10 +52,9 @@ impl App {
     }
 
     pub(super) fn toggle_transcript_tool_output(&mut self, index: usize) {
-        let expand =
-            !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
+        let expand = !matches!(self.history.get(index), Some(Entry::Tool(tool)) if tool.expanded);
         let mut dirty_from = index;
-        for (entry_index, entry) in self.transcript.iter_mut().enumerate() {
+        for (entry_index, entry) in self.history.entries_mut().iter_mut().enumerate() {
             if let Entry::Tool(tool) = entry {
                 if tool.expanded {
                     dirty_from = dirty_from.min(entry_index);
@@ -63,9 +62,9 @@ impl App {
                 tool.expanded = false;
             }
         }
-        if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
+        if let Some(Entry::Tool(tool)) = self.history.get_mut(index) {
             tool.expanded = expand;
-            self.history_lines.invalidate_from(dirty_from);
+            self.history.lines_mut().invalidate_from(dirty_from);
         }
         self.status = if expand {
             "tool output expanded".into()

@@ -92,7 +92,7 @@ impl App {
                 || self.pending_oauth_login.is_some()
                 || self.pending_usage_limits.is_some()
                 || !self.pending_inline_shells.is_empty()
-                || self.markdown_images.has_pending()
+                || self.history.images().has_pending()
             {
                 Duration::from_millis(100)
             } else if subagents_active {
@@ -159,20 +159,20 @@ impl App {
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.text_selection = None;
+                self.history.clear_text_selection();
                 self.handle_key(key, terminal, agent).await?;
             }
             Event::Paste(text) => {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
                 self.insert_paste(&text);
-                self.paste_burst.clear();
+                self.input_ui.paste_burst.clear();
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
                 self.clamp_overlay_detail_scroll(terminal);
-                self.text_selection = None;
-                self.hovered_code_block_copy = None;
+                self.history.clear_text_selection();
+                self.history.set_hovered_code_block_copy(None);
                 self.hide_history_scrollbar();
                 self.clamp_history_scroll_for_terminal(terminal)?;
             }
@@ -192,16 +192,17 @@ impl App {
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
         let now = Instant::now();
-        let timeout = self.paste_burst.poll_timeout(now, idle_timeout);
+        let timeout = self.input_ui.paste_burst.poll_timeout(now, idle_timeout);
         let timeout = self
-            .copy_notice
-            .as_ref()
+            .history
+            .copy_notice()
             .and_then(|notice| notice.visible_until().checked_duration_since(now))
             .map_or(timeout, |remaining| remaining.min(timeout));
-        if self.history_scrollbar_hovered || self.history_scrollbar_drag.is_some() {
+        if self.history.scrollbar_hovered() || self.history.scrollbar_drag().is_some() {
             return timeout;
         }
-        self.history_scrollbar_visible_until
+        self.history
+            .scrollbar_visible_until()
             .and_then(|visible_until| visible_until.checked_duration_since(now))
             .map_or(timeout, |remaining| remaining.min(timeout))
     }
@@ -210,13 +211,14 @@ impl App {
         self.loading_active()
             || self.subagent_panel.is_active()
             || self
-                .copy_notice
-                .as_ref()
+                .history
+                .copy_notice()
                 .is_some_and(|notice| now < notice.visible_until())
-            || self.history_scrollbar_hovered
-            || self.history_scrollbar_drag.is_some()
+            || self.history.scrollbar_hovered()
+            || self.history.scrollbar_drag().is_some()
             || self
-                .history_scrollbar_visible_until
+                .history
+                .scrollbar_visible_until()
                 .is_some_and(|until| now < until)
     }
 
@@ -258,7 +260,7 @@ impl App {
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {
-        let phase = match self.composer {
+        let phase = match self.input_ui.composer {
             ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
             ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,
             _ => self.activity_phase,

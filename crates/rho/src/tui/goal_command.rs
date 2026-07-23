@@ -143,7 +143,7 @@ impl App {
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
         self.status = "goal active".into();
-        let images = std::mem::take(&mut self.pending_images);
+        let images = std::mem::take(&mut self.input_ui.pending_images);
         let outcome = self
             .run_prompt_turn(
                 TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
@@ -264,7 +264,7 @@ impl App {
     ) -> anyhow::Result<()> {
         while !self.should_quit
             && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked())
-            && !self.composer.blocks_auto_continue()
+            && !self.input_ui.composer.blocks_auto_continue()
         {
             if !self.wait_for_goal_subagents(terminal, agent).await? {
                 break;

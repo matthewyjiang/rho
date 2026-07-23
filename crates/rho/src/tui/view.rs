@@ -11,26 +11,18 @@ use ratatui::{
 };
 
 use super::{
-    activity, file_picker, history_cache::HistoryLineSlice, inline_shell, App, CachedCodeBlock,
-    CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, HistoryScroll, HistoryScrollbar,
-    LineFill, SessionHeaderCache, StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
-    MAX_COMMAND_SUGGESTIONS, MIN_COMMAND_DESCRIPTION_WIDTH, RECOVERED_HISTORY_LINE_LIMIT,
+    activity, history_cache::HistoryLineSlice, App, CachedCodeBlock, CodeBlockCopyTarget,
+    ComposerMode, Entry, GoalStatus, HistoryScroll, HistoryScrollbar, LineFill, SessionHeaderCache,
+    StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
-    approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
-    display_width, highlight_selection,
-    inline_choice::inline_choice_lines,
-    input_cursor_position, input_lines_with_images, labeled_divider_line,
-    login::{oauth_pending_lines, secret_input_lines},
+    highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
-    picker_lines,
     picker_overlay::picker_overlay_frame,
-    questionnaire_cursor_position, questionnaire_lines,
     render::{pad_display_line, padded_content_width},
     render_copy_notice, scroll_state_for_top_line, session_header_lines, styled_line,
     tool_entry_lines,
     tool_output_ui::is_tool_entry,
-    truncate_one_line,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -66,7 +58,7 @@ impl App {
             Paragraph::new(history_visible).style(Style::default()),
             layout.history_content,
         );
-        if let Some(selection) = self.text_selection {
+        if let Some(selection) = self.history.text_selection() {
             highlight_selection(
                 frame.buffer_mut(),
                 layout.history_content,
@@ -74,7 +66,7 @@ impl App {
                 selection,
             );
         }
-        if let Some(hovered_line) = self.hovered_code_block_copy {
+        if let Some(hovered_line) = self.history.hovered_code_block_copy() {
             let code_block_copy_targets = self.code_block_copy_targets(width);
             if let Some(target) = code_block_copy_targets
                 .iter()
@@ -113,7 +105,7 @@ impl App {
             .history_scrollbar
             .filter(|_| self.should_render_history_scrollbar(now))
         {
-            scrollbar.render(frame, self.history_scrollbar_drag.is_some());
+            scrollbar.render(frame, self.history.scrollbar_drag().is_some());
         }
         if let Some(activity) = layout.activity {
             frame.render_widget(
@@ -206,11 +198,11 @@ impl App {
             .style(Style::default()),
             layout.commands,
         );
-        if let Some(notice) = &self.copy_notice {
+        if let Some(notice) = &self.history.copy_notice() {
             render_copy_notice(frame, area, notice, now);
         }
 
-        let popup_cursor = if let ComposerMode::Picker(picker) = &self.composer {
+        let popup_cursor = if let ComposerMode::Picker(picker) = &self.input_ui.composer {
             picker_overlay_frame(picker, area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(
@@ -343,36 +335,6 @@ impl App {
         ActiveFrame { lines }
     }
 
-    fn divider_line(&self, width: usize, shell_label: bool) -> Line<'static> {
-        let width = width.max(1);
-        let (style, labels) = match &self.composer {
-            ComposerMode::Input => {
-                let labels = shell_label
-                    .then_some(self.shell_mode)
-                    .flatten()
-                    .map(inline_shell::mode_divider_labels);
-                (
-                    Theme::reasoning_input_border(self.info.runtime.reasoning),
-                    labels,
-                )
-            }
-            ComposerMode::Picker(_)
-            | ComposerMode::Questionnaire(_)
-            | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => (Theme::input_prompt(), None),
-            ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
-            | ComposerMode::OAuthPending(_) => (Theme::dim(), None),
-        };
-        if let Some(labels) = labels {
-            if let Some(line) = labeled_divider_line(labels, style, width) {
-                return line;
-            }
-        }
-        Line::styled("─".repeat(width), style)
-    }
-
     #[cfg(test)]
     pub(super) fn history_lines(&mut self, width: usize, now: Instant) -> Vec<Line<'static>> {
         let history_len = self.history_len(width, now);
@@ -382,17 +344,18 @@ impl App {
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
         let update_notice = self.info.services.update_notice.clone();
         let stale = self
-            .session_header_cache
-            .as_ref()
+            .history
+            .session_header_cache()
             .is_none_or(|cache| cache.width != width || cache.update_notice != update_notice);
         if stale {
-            self.session_header_cache = Some(SessionHeaderCache {
-                width,
-                update_notice,
-                lines: session_header_lines(self.info.services.update_notice.as_deref(), width),
-            });
+            self.history
+                .set_session_header_cache(Some(SessionHeaderCache {
+                    width,
+                    update_notice,
+                    lines: session_header_lines(self.info.services.update_notice.as_deref(), width),
+                }));
         }
-        &self.session_header_cache.as_ref().unwrap().lines
+        &self.history.session_header_cache().unwrap().lines
     }
 
     pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
@@ -434,18 +397,22 @@ impl App {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
             let cwd = self.info.runtime.cwd.clone();
-            let markdown_images = &self.markdown_images;
-            self.history_lines.extend_visible_lines(
-                &self.transcript,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                HistoryLineSlice {
-                    start: transcript_start,
-                    count: transcript_count,
-                },
-                &mut lines,
-                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-            );
+            self.history
+                .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                    history_lines.extend_visible_lines(
+                        entries,
+                        width,
+                        self.info.runtime.max_tool_output_lines,
+                        HistoryLineSlice {
+                            start: transcript_start,
+                            count: transcript_count,
+                        },
+                        &mut lines,
+                        &|entry_index, sources| {
+                            markdown_images.ready_images(entry_index, sources, &cwd)
+                        },
+                    );
+                });
         }
 
         let static_len = header_len.saturating_add(self.cached_transcript_line_count(width));
@@ -469,41 +436,51 @@ impl App {
 
     pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
         let cwd = self.info.runtime.cwd.clone();
-        let markdown_images = &self.markdown_images;
-        self.history_lines.line_count(
-            &self.transcript,
-            width,
-            self.info.runtime.max_tool_output_lines,
-            &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-        )
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        self.history
+            .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                history_lines.line_count(
+                    entries,
+                    width,
+                    max_tool_output_lines,
+                    &|entry_index, sources| {
+                        markdown_images.ready_images(entry_index, sources, &cwd)
+                    },
+                )
+            })
     }
 
     pub(super) fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
         let header_len = self.session_header_lines(width).len();
         let cwd = self.info.runtime.cwd.clone();
-        let markdown_images = &self.markdown_images;
-        self.history_lines
-            .code_blocks(
-                &self.transcript,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-            )
-            .iter()
-            .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
-                line: header_len.saturating_add(block.line),
-                columns: block.copy_columns.clone(),
-                text: Arc::clone(&block.text),
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        self.history
+            .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                history_lines
+                    .code_blocks(
+                        entries,
+                        width,
+                        max_tool_output_lines,
+                        &|entry_index, sources| {
+                            markdown_images.ready_images(entry_index, sources, &cwd)
+                        },
+                    )
+                    .iter()
+                    .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
+                        line: header_len.saturating_add(block.line),
+                        columns: block.copy_columns.clone(),
+                        text: Arc::clone(&block.text),
+                    })
+                    .collect()
             })
-            .collect()
     }
 
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for pending in self.running_inline_shell_entries() {
             if !lines.is_empty()
-                || self.last_inserted_was_tool
-                || self.transcript.last().is_some_and(is_tool_entry)
+                || self.history.last_inserted_was_tool()
+                || self.history.last().is_some_and(is_tool_entry)
             {
                 lines.push(Line::raw(""));
             }
@@ -514,7 +491,9 @@ impl App {
             ));
         }
         for pending in self.tool_calls.live_entries() {
-            if self.last_inserted_was_tool || self.transcript.last().is_some_and(is_tool_entry) {
+            if self.history.last_inserted_was_tool()
+                || self.history.last().is_some_and(is_tool_entry)
+            {
                 lines.push(Line::raw(""));
             }
             lines.extend(tool_entry_lines(
@@ -551,7 +530,7 @@ impl App {
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
         let max_start = history_len.saturating_sub(height);
-        match self.history_scroll {
+        match self.history.scroll() {
             HistoryScroll::Bottom => max_start,
             HistoryScroll::Manual { top_line } => top_line.min(max_start),
         }
@@ -572,8 +551,7 @@ impl App {
     }
 
     pub(super) fn scroll_history_to_bottom(&mut self) {
-        self.history_scroll = HistoryScroll::Bottom;
-        self.hide_history_scrollbar();
+        self.history.scroll_to_bottom();
     }
 
     pub(super) fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
@@ -608,28 +586,24 @@ impl App {
         let max_start = history_len.saturating_sub(content_height);
         let current = self.visible_history_start(history_len, content_height);
         let next = current.saturating_add_signed(delta).min(max_start);
-        self.history_scroll = scroll_state_for_top_line(history_len, content_height, next);
-        if matches!(self.history_scroll, HistoryScroll::Bottom) {
+        self.history
+            .set_scroll(scroll_state_for_top_line(history_len, content_height, next));
+        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
             self.hide_history_scrollbar();
         }
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
-        self.history_scrollbar_visible_until = Some(now + HISTORY_SCROLLBAR_REVEAL_DURATION);
+        self.history
+            .reveal_scrollbar(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
     }
 
     pub(super) fn hide_history_scrollbar(&mut self) {
-        self.history_scrollbar_drag = None;
-        self.history_scrollbar_visible_until = None;
-        self.history_scrollbar_hovered = false;
+        self.history.hide_scrollbar();
     }
 
     pub(super) fn should_render_history_scrollbar(&self, now: Instant) -> bool {
-        self.history_scrollbar_drag.is_some()
-            || self.history_scrollbar_hovered
-            || self
-                .history_scrollbar_visible_until
-                .is_some_and(|visible_until| now < visible_until)
+        self.history.should_render_scrollbar(now)
     }
 
     pub(super) fn update_history_scrollbar_hover(
@@ -638,13 +612,14 @@ impl App {
         column: u16,
         row: u16,
     ) {
-        self.history_scrollbar_hovered =
-            scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row));
+        self.history.set_scrollbar_hovered(
+            scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row)),
+        );
     }
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        if matches!(self.history_scroll, HistoryScroll::Bottom) {
-            self.history_scrollbar_drag = None;
+        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            self.history.set_scrollbar_drag(None);
             return;
         }
         let history_len = self.history_len(width, now);
@@ -656,10 +631,13 @@ impl App {
             command_line_count,
         ));
         let max_start = history_len.saturating_sub(content_height);
-        if let HistoryScroll::Manual { top_line } = self.history_scroll {
-            self.history_scroll =
-                scroll_state_for_top_line(history_len, content_height, top_line.min(max_start));
-            if matches!(self.history_scroll, HistoryScroll::Bottom) {
+        if let HistoryScroll::Manual { top_line } = self.history.scroll() {
+            self.history.set_scroll(scroll_state_for_top_line(
+                history_len,
+                content_height,
+                top_line.min(max_start),
+            ));
+            if matches!(self.history.scroll(), HistoryScroll::Bottom) {
                 self.hide_history_scrollbar();
             }
         }
@@ -700,7 +678,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
         if matches!(
-            &self.composer,
+            &self.input_ui.composer,
             ComposerMode::Picker(picker) if picker.is_overlay()
         ) {
             return Ok(false);
@@ -712,47 +690,27 @@ impl App {
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
                 self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_up(width, height, now);
-                self.paste_burst.clear();
+                self.input_ui.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (_, KeyCode::PageDown) => {
                 self.reveal_history_scrollbar(now);
-                self.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_down(width, height, now);
-                self.paste_burst.clear();
+                self.input_ui.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             _ if self.info.runtime.keybindings.jump_to_bottom.matches(key) => {
                 self.scroll_history_to_bottom();
-                self.paste_burst.clear();
+                self.input_ui.paste_burst.clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             _ => Ok(false),
-        }
-    }
-
-    pub(super) fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
-        match &self.composer {
-            ComposerMode::Input => {
-                let focused_paste = self
-                    .focused_paste_segment()
-                    .map(|segment| segment.start..segment.end());
-                input_lines_with_images(&self.input, &self.pending_images, width, focused_paste)
-            }
-            ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
-            ComposerMode::Picker(picker) => picker_lines(picker, width),
-            ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
-            ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
-            ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
-            ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
-            ComposerMode::InlineChoice(modal) => inline_choice_lines(&modal.choice, width),
-            ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
-            ComposerMode::Approval(approval) => approval_lines(approval, width),
         }
     }
 
@@ -778,132 +736,6 @@ impl App {
         let goal = self.goal_status();
         self.refresh_statusline_state();
         self.statusline.lines(width, goal)
-    }
-
-    pub(super) fn composer_cursor_position(&self, width: usize) -> Position {
-        match &self.composer {
-            ComposerMode::Input => {
-                let mut position = input_cursor_position(&self.input, self.input_cursor, width);
-                position.y = position.y.saturating_add(self.pending_images.len() as u16);
-                position
-            }
-            ComposerMode::SecretInput(secret) => Position {
-                x: char_prefix_display_width(&secret.value, secret.cursor).min(width.max(1)) as u16,
-                y: 1,
-            },
-            ComposerMode::ConfigNumberInput(input) => Position {
-                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
-                y: 1,
-            },
-            ComposerMode::ConfigTextInput(input) => Position {
-                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
-                y: 1,
-            },
-            ComposerMode::Questionnaire(questionnaire) => {
-                questionnaire_cursor_position(questionnaire, width)
-            }
-            ComposerMode::OAuthPending(_)
-            | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => Position { x: 0, y: 0 },
-            ComposerMode::Picker(picker) => Position {
-                x: display_width(&picker.filter)
-                    .saturating_add(2)
-                    .min(width.saturating_sub(1)) as u16,
-                y: 0,
-            },
-        }
-    }
-
-    pub(super) fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
-        if self.command_palette_visible() {
-            let matches = self.command_matches();
-            let selected_index = self.command_selection.min(matches.len().saturating_sub(1));
-            let start = selected_index
-                .saturating_add(1)
-                .saturating_sub(MAX_COMMAND_SUGGESTIONS);
-
-            let usage_width = matches
-                .iter()
-                .skip(start)
-                .take(MAX_COMMAND_SUGGESTIONS)
-                .map(|command| display_width(&command.usage))
-                .max()
-                .unwrap_or(1)
-                .min(
-                    width
-                        .saturating_sub(MIN_COMMAND_DESCRIPTION_WIDTH + 3)
-                        .max(1),
-                );
-
-            return matches
-                .into_iter()
-                .enumerate()
-                .skip(start)
-                .take(MAX_COMMAND_SUGGESTIONS)
-                .map(|(index, command)| {
-                    let selected = index == selected_index;
-                    let marker = if selected { ">" } else { " " };
-                    let description_width = width.saturating_sub(usage_width + 3).max(1);
-                    let usage = truncate_one_line(&command.usage, usage_width);
-                    let description = truncate_one_line(&command.description, description_width);
-                    let usage_padding =
-                        " ".repeat(usage_width.saturating_sub(display_width(&usage)));
-                    let text = format!("{marker} {usage}{usage_padding} {description}");
-                    let style = if selected {
-                        Theme::brand()
-                    } else {
-                        Theme::dim()
-                    };
-                    styled_line(text, width.max(1), style, LineFill::Natural)
-                })
-                .collect();
-        }
-
-        if !self.file_palette_visible() {
-            return Vec::new();
-        }
-
-        let matches = self.file_matches();
-        let selected_index = self.file_selection.min(matches.len().saturating_sub(1));
-        let (start, above, below) = file_picker::file_palette_scroll_counts(
-            matches.len(),
-            selected_index,
-            MAX_COMMAND_SUGGESTIONS,
-        );
-
-        let mut lines = matches
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(MAX_COMMAND_SUGGESTIONS)
-            .map(|(index, path)| {
-                let selected = index == selected_index;
-                let marker = if selected { ">" } else { " " };
-                let text = format!("{marker} @{path}");
-                let style = if selected {
-                    Theme::brand()
-                } else {
-                    Theme::dim()
-                };
-                styled_line(
-                    truncate_one_line(&text, width.max(1)),
-                    width.max(1),
-                    style,
-                    LineFill::Natural,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        if let Some(footer) = file_picker::file_palette_scroll_footer(above, below, matches.len()) {
-            lines.push(styled_line(
-                truncate_one_line(&footer, width.max(1)),
-                width.max(1),
-                Theme::dim(),
-                LineFill::Natural,
-            ));
-        }
-
-        lines
     }
 
     pub(super) fn insert_session_intro(
@@ -941,21 +773,24 @@ impl App {
             )));
         }
         transcript.extend(visible_entries);
-        self.transcript = transcript;
-        self.markdown_images.clear();
-        self.mark_markdown_images_dirty_from(0);
-        self.history_lines.invalidate_from(0);
-        self.last_status_notice = self.transcript.iter().rev().find_map(|entry| match entry {
-            Entry::Notice(text) => Some(text.clone()),
-            Entry::User(_)
-            | Entry::Assistant(_)
-            | Entry::Reasoning(_)
-            | Entry::RuntimeInfo(_)
-            | Entry::UsageLimits(_)
-            | Entry::Tool(_)
-            | Entry::Error(_) => None,
-        });
-        self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
+        self.history.set_entries(transcript);
+        self.history.images_mut().clear();
+        self.history.invalidate_from(0);
+        self.history
+            .set_last_status_notice(self.history.entries().iter().rev().find_map(
+                |entry| match entry {
+                    Entry::Notice(text) => Some(text.clone()),
+                    Entry::User(_)
+                    | Entry::Assistant(_)
+                    | Entry::Reasoning(_)
+                    | Entry::RuntimeInfo(_)
+                    | Entry::UsageLimits(_)
+                    | Entry::Tool(_)
+                    | Entry::Error(_) => None,
+                },
+            ));
+        self.history
+            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         Ok(())
     }
 }

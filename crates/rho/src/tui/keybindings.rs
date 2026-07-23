@@ -37,7 +37,7 @@ impl App {
         } else {
             return Ok(false);
         }
-        self.paste_burst.clear();
+        self.input_ui.paste_burst.clear();
         self.ctrl_c_streak = 0;
         Ok(true)
     }
@@ -82,7 +82,7 @@ impl App {
         } else {
             return Ok(false);
         }
-        self.paste_burst.clear();
+        self.input_ui.paste_burst.clear();
         self.ctrl_c_streak = 0;
         Ok(true)
     }

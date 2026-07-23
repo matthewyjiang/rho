@@ -27,7 +27,7 @@ impl App {
             self.notify_status("image paste is unavailable while a model turn is running");
             return;
         }
-        if !matches!(self.composer, ComposerMode::Input) {
+        if !matches!(self.input_ui.composer, ComposerMode::Input) {
             self.notify_status("image paste is only available in the message box");
             return;
         }
@@ -41,7 +41,7 @@ impl App {
 
     /// Returns true when the paste was consumed as an image path attach attempt.
     pub(super) fn try_attach_pasted_image_path(&mut self, text: &str) -> bool {
-        if self.is_ui_busy() || !matches!(self.composer, ComposerMode::Input) {
+        if self.is_ui_busy() || !matches!(self.input_ui.composer, ComposerMode::Input) {
             return false;
         }
         match image_from_paste_text(text, &self.info.runtime.cwd) {
@@ -59,10 +59,10 @@ impl App {
 
     fn attach_pending_image(&mut self, image: ImageContent) {
         let summary = image_summary(&image);
-        self.pending_images.push(image);
+        self.input_ui.pending_images.push(image);
         self.notify_status(format!(
             "attached image {} ({summary})",
-            self.pending_images.len()
+            self.input_ui.pending_images.len()
         ));
     }
 }

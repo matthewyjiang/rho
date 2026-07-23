@@ -61,7 +61,10 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
         blocked["params"]["agent_session_id"],
         "session-questionnaire"
     );
-    assert!(matches!(app.composer, ComposerMode::Questionnaire(_)));
+    assert!(matches!(
+        app.input_ui.composer,
+        ComposerMode::Questionnaire(_)
+    ));
 
     app.report_herdr_working().await;
     let working = server.next_request().await;
@@ -85,13 +88,13 @@ async fn resolving_approval_reports_blocked_then_signals_resume() {
     let blocked = server.next_request().await;
     assert_eq!(blocked["params"]["state"], "blocked");
     assert_eq!(blocked["params"]["message"], "waiting for approval");
-    assert!(matches!(app.composer, ComposerMode::Approval(_)));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Approval(_)));
 
     let outcome = app
         .handle_approval_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 80)
         .unwrap();
     assert_eq!(outcome, ApprovalKeyOutcome::Resolved);
-    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     assert_eq!(decision_rx.try_recv(), Ok(ApprovalDecision::AllowOnce));
 
     // prompt_turn maps ApprovalResolved onto this resume report.
@@ -111,7 +114,7 @@ async fn esc_approval_resolves_without_requiring_working_resume() {
         .handle_approval_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 80)
         .unwrap();
     assert_eq!(outcome, ApprovalKeyOutcome::Resolved);
-    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     assert_eq!(
         decision_rx.try_recv(),
         Ok(ApprovalDecision::Deny {

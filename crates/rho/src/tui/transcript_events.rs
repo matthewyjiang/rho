@@ -228,7 +228,7 @@ impl App {
                 self.usage.usage_before_current_step = self.usage.current_run_usage.clone();
                 self.usage.usage_before_current_attempt = None;
                 self.reset_streams();
-                self.provider_attempt.begin(self.transcript.len());
+                self.provider_attempt.begin(self.history.len());
                 self.reasoning_phase
                     .begin_step(self.info.runtime.show_reasoning_output);
                 self.begin_provider_turn_ui();
@@ -358,44 +358,46 @@ impl App {
     pub(super) fn push_transcript_entry(&mut self, entry: Entry) {
         match entry {
             Entry::Assistant(text) => {
-                let index = if matches!(self.transcript.last(), Some(Entry::Assistant(_))) {
-                    self.transcript.len().saturating_sub(1)
+                let index = if matches!(self.history.last(), Some(Entry::Assistant(_))) {
+                    self.history.len().saturating_sub(1)
                 } else {
-                    self.transcript.len()
+                    self.history.len()
                 };
-                match self.transcript.last_mut() {
+                match self.history.last_mut() {
                     Some(Entry::Assistant(previous)) => {
                         previous.push_str(&text);
-                        self.history_lines.assistant_appended(index);
+                        self.history.lines_mut().assistant_appended(index);
                     }
                     _ => {
-                        self.history_lines.invalidate_from(index);
-                        self.transcript.push(Entry::Assistant(text));
+                        self.history.lines_mut().invalidate_from(index);
+                        self.history.push(Entry::Assistant(text));
                     }
                 }
                 self.mark_markdown_images_dirty_from(index);
             }
-            Entry::Reasoning(reasoning) => match self.transcript.last_mut() {
+            Entry::Reasoning(reasoning) => match self.history.last_mut() {
                 Some(Entry::Reasoning(previous)) if previous.thought_for.is_none() => {
                     previous.text.push_str(&reasoning.text);
                     if reasoning.thought_for.is_some() {
                         previous.thought_for = reasoning.thought_for;
                     }
-                    self.history_lines
-                        .invalidate_from(self.transcript.len().saturating_sub(1));
+                    let index = self.history.len().saturating_sub(1);
+                    self.history.lines_mut().invalidate_from(index);
                 }
                 _ => {
-                    self.history_lines.invalidate_from(self.transcript.len());
-                    self.transcript.push(Entry::Reasoning(reasoning));
+                    let index = self.history.len();
+                    self.history.lines_mut().invalidate_from(index);
+                    self.history.push(Entry::Reasoning(reasoning));
                 }
             },
             other => {
-                self.last_status_notice = match &other {
+                self.history.set_last_status_notice(match &other {
                     Entry::Notice(text) => Some(text.clone()),
                     _ => None,
-                };
-                self.history_lines.invalidate_from(self.transcript.len());
-                self.transcript.push(other);
+                });
+                let index = self.history.len();
+                self.history.lines_mut().invalidate_from(index);
+                self.history.push(other);
             }
         }
     }
@@ -414,11 +416,11 @@ impl App {
         let Some(elapsed) = self.reasoning_phase.finalize() else {
             return false;
         };
-        match self.transcript.last_mut() {
+        match self.history.last_mut() {
             Some(Entry::Reasoning(reasoning)) if reasoning.thought_for.is_none() => {
                 reasoning.thought_for = Some(elapsed);
-                self.history_lines
-                    .invalidate_from(self.transcript.len().saturating_sub(1));
+                let index = self.history.len().saturating_sub(1);
+                self.history.lines_mut().invalidate_from(index);
                 true
             }
             _ => {
@@ -478,7 +480,7 @@ impl App {
                 StreamKind::Reasoning => &mut self.streams.reasoning_stream_code_fence,
             };
             update_code_block_state(render_text, code_fence);
-            self.last_inserted_was_tool = false;
+            self.history.set_last_inserted_was_tool(false);
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
@@ -487,7 +489,8 @@ impl App {
     pub(super) fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
         let start = self.current_turn_start.unwrap_or(0);
         let assistant_indices = self
-            .transcript
+            .history
+            .entries()
             .iter()
             .enumerate()
             .skip(start)
@@ -499,14 +502,13 @@ impl App {
             return;
         };
 
-        if let Entry::Assistant(text) = &mut self.transcript[*first] {
+        if let Entry::Assistant(text) = &mut self.history.entries_mut()[*first] {
             *text = answer.to_string();
         }
-        self.markdown_images.clear();
-        self.mark_markdown_images_dirty_from(*first);
-        self.history_lines.invalidate_from(*first);
+        self.history.images_mut().clear();
+        self.history.invalidate_from(*first);
         for index in stale.iter().rev() {
-            self.transcript.remove(*index);
+            self.history.entries_mut().remove(*index);
         }
     }
 
@@ -517,14 +519,14 @@ impl App {
     pub(super) fn notify_status(&mut self, status: impl Into<String>) {
         let status = status.into();
         self.status = status.clone();
-        if self.last_status_notice.as_deref() == Some(status.as_str()) {
+        if self.history.last_status_notice() == Some(status.as_str()) {
             return;
         }
         self.insert_entry(&Entry::Notice(status));
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        self.last_status_notice = match &entry {
+        self.history.set_last_status_notice(match &entry {
             Entry::Notice(text) => Some(text.clone()),
             Entry::User(_)
             | Entry::Assistant(_)
@@ -533,8 +535,9 @@ impl App {
             | Entry::UsageLimits(_)
             | Entry::Tool(_)
             | Entry::Error(_) => None,
-        };
-        self.last_inserted_was_tool = is_tool_entry(&entry);
+        });
+        self.history
+            .set_last_inserted_was_tool(is_tool_entry(&entry));
         self.push_transcript_entry(entry);
     }
 
@@ -589,10 +592,12 @@ impl App {
     pub(super) fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
         self.tool_calls.clear();
-        if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
-            self.markdown_images.clear();
-            self.mark_markdown_images_dirty_from(start);
-            self.history_lines.invalidate_from(start);
+        if let Some(start) = self
+            .provider_attempt
+            .reset_output(self.history.entries_mut())
+        {
+            self.history.images_mut().clear();
+            self.history.invalidate_from(start);
         }
         self.status = "retrying provider response".into();
     }

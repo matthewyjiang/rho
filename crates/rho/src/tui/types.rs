@@ -103,8 +103,9 @@ pub(super) enum InputSubmissionMode {
     Prompt,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) enum ComposerMode {
+    #[default]
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
@@ -219,10 +220,13 @@ impl TurnOutcome {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum HistoryScroll {
+    #[default]
     Bottom,
-    Manual { top_line: usize },
+    Manual {
+        top_line: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

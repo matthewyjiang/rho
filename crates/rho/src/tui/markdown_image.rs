@@ -332,10 +332,11 @@ async fn read_image_bytes(path: &Path) -> Option<Vec<u8>> {
 
 impl super::App {
     pub(super) fn mark_markdown_images_dirty_from(&mut self, entry_index: usize) {
-        self.markdown_images_dirty_from = Some(
-            self.markdown_images_dirty_from
+        self.history.set_images_dirty_from(Some(
+            self.history
+                .images_dirty_from()
                 .map_or(entry_index, |dirty| dirty.min(entry_index)),
-        );
+        ));
     }
 
     /// Starts loads only for transcript entries changed since the previous
@@ -344,23 +345,35 @@ impl super::App {
         let picker = self.image_picker.clone();
         let cwd = self.info.runtime.cwd.clone();
         let mut changed = false;
-        if let Some(dirty_from) = self.markdown_images_dirty_from.take() {
-            for (index, entry) in self.transcript.iter().enumerate().skip(dirty_from) {
-                let Entry::Assistant(text) = entry else {
-                    continue;
-                };
-                let sources = collect_markdown_image_sources(text);
-                if sources.is_empty() {
-                    continue;
-                }
+        if let Some(dirty_from) = self.history.take_images_dirty_from() {
+            let loads = self
+                .history
+                .entries()
+                .iter()
+                .enumerate()
+                .skip(dirty_from)
+                .filter_map(|(index, entry)| {
+                    let Entry::Assistant(text) = entry else {
+                        return None;
+                    };
+                    let sources = collect_markdown_image_sources(text);
+                    if sources.is_empty() {
+                        None
+                    } else {
+                        Some((index, sources))
+                    }
+                })
+                .collect::<Vec<_>>();
+            for (index, sources) in loads {
                 changed |=
-                    self.markdown_images
+                    self.history
+                        .images_mut()
                         .ensure_loads(index, &sources, &cwd, picker.as_ref());
             }
         }
-        changed |= self.markdown_images.poll();
+        changed |= self.history.images_mut().poll();
         if changed {
-            self.history_lines.invalidate_from(0);
+            self.history.lines_mut().invalidate_from(0);
         }
         changed
     }

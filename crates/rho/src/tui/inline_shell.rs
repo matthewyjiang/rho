@@ -306,7 +306,7 @@ impl super::App {
 
     /// Leave shell mode and restore a normal composer, keeping the typed command text.
     pub(super) fn exit_shell_mode(&mut self) -> bool {
-        if self.shell_mode.take().is_none() {
+        if self.input_ui.shell_mode.take().is_none() {
             return false;
         }
         self.status = self.busy_status_label().into();
@@ -318,20 +318,20 @@ impl super::App {
     /// Shell mode is explicit App state. The composer stores only the command
     /// text, so cursor/home/delete/word/paste coordinates stay ordinary.
     pub(super) fn try_enter_shell_mode_from_bang(&mut self) -> bool {
-        if !matches!(self.composer, super::ComposerMode::Input)
-            || self.input_cursor != 0
-            || !self.input.is_empty()
-            || !self.paste_segments.is_empty()
+        if !matches!(self.input_ui.composer, super::ComposerMode::Input)
+            || self.input_ui.cursor != 0
+            || !self.input_ui.text.is_empty()
+            || !self.input_ui.paste_segments.is_empty()
         {
             return false;
         }
-        match self.shell_mode {
+        match self.input_ui.shell_mode {
             None => {
-                self.shell_mode = Some(InlineShellMode::IncludeInContext);
+                self.input_ui.shell_mode = Some(InlineShellMode::IncludeInContext);
                 true
             }
             Some(InlineShellMode::IncludeInContext) => {
-                self.shell_mode = Some(InlineShellMode::ExcludeFromContext);
+                self.input_ui.shell_mode = Some(InlineShellMode::ExcludeFromContext);
                 true
             }
             Some(InlineShellMode::ExcludeFromContext) => true,
@@ -339,10 +339,11 @@ impl super::App {
     }
 
     pub(super) fn shell_submission(&self) -> Option<(InlineShellMode, String)> {
-        if let Some(mode) = self.shell_mode {
-            return Some((mode, self.input.trim().to_string()));
+        if let Some(mode) = self.input_ui.shell_mode {
+            return Some((mode, self.input_ui.text.trim().to_string()));
         }
-        InlineShellMode::parse(self.input.trim()).map(|(mode, command)| (mode, command.to_string()))
+        InlineShellMode::parse(self.input_ui.text.trim())
+            .map(|(mode, command)| (mode, command.to_string()))
     }
 
     /// Restore composer text that may still use the historical `!` / `!!` prefix form.
@@ -354,20 +355,20 @@ impl super::App {
     ) {
         if paste_segments.is_empty() {
             if let Some((mode, command)) = InlineShellMode::parse(text.trim_end()) {
-                self.shell_mode = Some(mode);
-                self.input = command.to_string();
-                self.paste_segments.clear();
-                self.input_submission_mode = submission_mode;
-                self.input_cursor = self.input_char_len();
+                self.input_ui.shell_mode = Some(mode);
+                self.input_ui.text = command.to_string();
+                self.input_ui.paste_segments.clear();
+                self.input_ui.submission_mode = submission_mode;
+                self.input_ui.cursor = self.input_char_len();
                 self.input_changed();
                 return;
             }
         }
-        self.shell_mode = None;
-        self.input = text;
-        self.paste_segments = paste_segments;
-        self.input_submission_mode = submission_mode;
-        self.input_cursor = self.input_char_len();
+        self.input_ui.shell_mode = None;
+        self.input_ui.text = text;
+        self.input_ui.paste_segments = paste_segments;
+        self.input_ui.submission_mode = submission_mode;
+        self.input_ui.cursor = self.input_char_len();
         self.input_changed();
     }
 
@@ -483,10 +484,7 @@ impl super::App {
     }
 
     pub(super) fn clear_submitted_input(&mut self) {
-        self.input.clear();
-        self.paste_segments.clear();
-        self.shell_mode = None;
-        self.input_cursor = 0;
+        self.input_ui.clear_submitted();
         self.clamp_command_selection();
     }
 }

@@ -120,7 +120,7 @@ impl App {
             config.reasoning = reasoning;
         });
         if matches!(
-            &self.composer,
+            &self.input_ui.composer,
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             let config = self
