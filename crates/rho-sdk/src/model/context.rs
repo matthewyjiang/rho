@@ -28,7 +28,7 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
         Message::EnrichedAssistant(message) => assistant_message_tokens(
             &message.content,
             message.reasoning_summary.as_deref(),
-            message.portable_fallback.as_deref(),
+            message.portable_fallback(),
             &message.provider_context,
         ),
         Message::AbortedAssistant(message) => assistant_message_tokens(
@@ -54,6 +54,7 @@ fn assistant_message_tokens(
     let portable_tokens = summary_tokens.saturating_add(fallback_tokens);
     let replay_tokens = provider_context
         .iter()
+        .filter(|block| !block.is_portable_fallback())
         .map(|block| json_tokens(&block.data))
         .sum::<u64>();
     MESSAGE_OVERHEAD_TOKENS

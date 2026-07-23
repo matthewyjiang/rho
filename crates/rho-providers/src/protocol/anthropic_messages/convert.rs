@@ -60,7 +60,7 @@ pub(crate) fn split_system_and_messages(
             Message::EnrichedAssistant(message) => {
                 let mut message = *message;
                 if provider_context_replay == ProviderContextReplay::Disabled {
-                    message.provider_context.clear();
+                    message.retain_portable_context();
                 }
                 let prepared = prepare_assistant(message, target);
                 let mut content = prepared
@@ -96,14 +96,13 @@ pub(crate) fn split_system_and_messages(
                     content,
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
-                    portable_fallback: None,
                     provider_context: message.provider_context,
                 };
                 enriched
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
                 if provider_context_replay == ProviderContextReplay::Disabled {
-                    enriched.provider_context.clear();
+                    enriched.retain_portable_context();
                 }
                 let prepared = prepare_assistant(enriched, target);
                 let mut content = prepared
@@ -422,7 +421,6 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(source.clone()),
                 reasoning_summary: Some("verified it".into()),
-                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: source,
                     kind: "openai_response_output_item".into(),
@@ -444,6 +442,35 @@ mod tests {
     }
 
     #[test]
+    fn disabled_replay_preserves_foreign_portable_fallback() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let message = crate::model::AssistantMessage {
+            provenance: Some(source.clone()),
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: source,
+                kind: "openai_response_output_item".into(),
+                position: Some(0),
+                data: json!({"type": "compaction", "encrypted_content": "signed"}),
+            }],
+            ..crate::model::AssistantMessage::default()
+        }
+        .with_portable_fallback("portable notice");
+
+        let (_, messages) = split_system_and_messages(
+            vec![Message::assistant(message)],
+            &target(),
+            ProviderContextReplay::Disabled,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            messages[0].content.as_slice(),
+            [AnthropicContentBlock::Text { text, .. }] if text == "portable notice"
+        ));
+    }
+
+    #[test]
     fn exact_anthropic_handoff_replays_signed_thinking_in_original_position() {
         let target = target();
         let (_, messages) = split_system_and_messages(
@@ -451,7 +478,6 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: None,
-                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: target.clone(),
                     kind: "anthropic_content_block".into(),
@@ -483,7 +509,6 @@ mod tests {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: Some("safe summary".into()),
-                portable_fallback: None,
                 provider_context: vec![crate::model::ProviderContextBlock {
                     identity: target.clone(),
                     kind: "anthropic_content_block".into(),

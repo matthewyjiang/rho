@@ -66,7 +66,6 @@ fn includes_provider_replay_context() {
         content: vec![ContentBlock::Text("answer".into())],
         provenance: Some(identity),
         reasoning_summary: None,
-        portable_fallback: None,
         provider_context: vec![context.clone()],
     });
 

@@ -14,7 +14,6 @@ fn reasoning_summaries_are_portable_but_opaque_context_is_not() {
         content: vec![ContentBlock::Text("answer".into())],
         provenance: Some(source.clone()),
         reasoning_summary: Some("checked the arithmetic".into()),
-        portable_fallback: None,
         provider_context: vec![ProviderContextBlock {
             identity: source,
             kind: "openai_response_output_item".into(),
@@ -85,7 +84,6 @@ fn handoff_report_names_every_omitted_context_kind() {
     let source = identity("openai-codex", "openai-responses", "gpt-test");
     let target = identity("anthropic", "anthropic-messages", "claude-test");
     let messages = [AssistantMessage {
-        portable_fallback: None,
         provider_context: vec![
             ProviderContextBlock {
                 identity: source.clone(),
@@ -116,7 +114,6 @@ fn portable_fallback_is_sent_only_when_opaque_context_cannot_replay() {
     let message = AssistantMessage {
         content: Vec::new(),
         provenance: Some(source.clone()),
-        portable_fallback: Some("portable notice".into()),
         provider_context: vec![ProviderContextBlock {
             identity: source.clone(),
             kind: "openai_response_output_item".into(),
@@ -124,7 +121,8 @@ fn portable_fallback_is_sent_only_when_opaque_context_cannot_replay() {
             data: json!({"type": "compaction", "encrypted_content": "blob"}),
         }],
         ..AssistantMessage::default()
-    };
+    }
+    .with_portable_fallback("portable notice");
 
     let exact = prepare_assistant(message.clone(), &source);
     let foreign_prepared = prepare_assistant(message, &foreign);
@@ -144,7 +142,6 @@ fn portable_fallback_takes_priority_over_reasoning_summary_on_foreign_handoff() 
     let foreign = identity("anthropic", "anthropic-messages", "claude-test");
     let message = AssistantMessage {
         content: Vec::new(),
-        portable_fallback: Some("portable notice".into()),
         reasoning_summary: Some("checked the arithmetic".into()),
         provider_context: vec![ProviderContextBlock {
             identity: source,
@@ -153,7 +150,8 @@ fn portable_fallback_takes_priority_over_reasoning_summary_on_foreign_handoff() 
             data: json!({"type": "compaction", "encrypted_content": "blob"}),
         }],
         ..AssistantMessage::default()
-    };
+    }
+    .with_portable_fallback("portable notice");
 
     let prepared = prepare_assistant(message, &foreign);
 

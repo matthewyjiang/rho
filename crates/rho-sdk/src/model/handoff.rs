@@ -27,17 +27,15 @@ pub struct PreparedAssistant {
 /// reasoning summaries) is appended so foreign targets still receive a usable
 /// handoff. Raw reasoning must be represented only as opaque context.
 pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> PreparedAssistant {
+    let portable_fallback = message.portable_fallback().map(str::to_owned);
     let mut content = message.content;
     let replay_context = message
         .provider_context
         .into_iter()
-        .filter(|block| block.is_replayable_to(target))
+        .filter(|block| !block.is_portable_fallback() && block.is_replayable_to(target))
         .collect::<Vec<_>>();
     if replay_context.is_empty() {
-        if let Some(fallback) = message
-            .portable_fallback
-            .filter(|text| !text.trim().is_empty())
-        {
+        if let Some(fallback) = portable_fallback.filter(|text| !text.trim().is_empty()) {
             content.push(ContentBlock::Text(fallback));
         } else if let Some(summary) = message
             .reasoning_summary
@@ -94,6 +92,9 @@ fn collect_omissions(
     report: &mut HandoffReport,
 ) {
     for block in blocks {
+        if block.is_portable_fallback() {
+            continue;
+        }
         if !block.is_replayable_to(target) {
             report.omitted_provider_context += 1;
             if !report.omitted_kinds.contains(&block.kind) {

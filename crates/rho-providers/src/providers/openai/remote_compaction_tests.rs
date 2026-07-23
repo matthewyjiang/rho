@@ -154,12 +154,14 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
     assert_eq!(marker.provenance.as_ref(), Some(&identity));
     assert!(marker.content.is_empty());
     assert!(marker
-        .portable_fallback
-        .as_deref()
+        .portable_fallback()
         .is_some_and(|text| text.contains("server-side")));
-    assert_eq!(marker.provider_context.len(), 1);
-    assert_eq!(marker.provider_context[0].kind, COMPACTION_OUTPUT_ITEM_KIND);
-    assert_eq!(marker.provider_context[0].data["encrypted_content"], "blob");
+    let native_context = marker
+        .provider_context
+        .iter()
+        .find(|block| block.kind == COMPACTION_OUTPUT_ITEM_KIND)
+        .expect("compaction context");
+    assert_eq!(native_context.data["encrypted_content"], "blob");
     assert!(!replacement
         .iter()
         .any(|message| matches!(message, Message::Assistant(_))));

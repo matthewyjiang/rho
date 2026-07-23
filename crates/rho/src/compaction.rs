@@ -266,7 +266,6 @@ mod tests {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source),
             reasoning_summary: Some("verified it".into()),
-            portable_fallback: None,
             provider_context: Vec::new(),
         })];
 
@@ -381,7 +380,6 @@ mod tests {
                 })],
                 provenance: Some(identity),
                 reasoning_summary: None,
-                portable_fallback: None,
                 provider_context: Vec::new(),
             }),
             Message::ToolResult(ToolResult {

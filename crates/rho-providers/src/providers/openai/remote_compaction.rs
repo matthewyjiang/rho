@@ -198,18 +198,20 @@ pub(super) fn replacement_from_compact_output<'a>(
         }
     }
 
-    replacement.push(Message::assistant(AssistantMessage {
-        content: Vec::new(),
-        provenance: Some(identity.clone()),
-        reasoning_summary: None,
-        portable_fallback: Some(PORTABLE_HANDOFF_NOTICE.into()),
-        provider_context: vec![ProviderContextBlock {
-            identity,
-            kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
-            position: Some(0),
-            data: compaction_item,
-        }],
-    }));
+    replacement.push(Message::assistant(
+        AssistantMessage {
+            content: Vec::new(),
+            provenance: Some(identity.clone()),
+            reasoning_summary: None,
+            provider_context: vec![ProviderContextBlock {
+                identity,
+                kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
+                position: Some(0),
+                data: compaction_item,
+            }],
+        }
+        .with_portable_fallback(PORTABLE_HANDOFF_NOTICE),
+    ));
 
     if replacement
         .iter()

@@ -136,7 +136,6 @@ pub(crate) fn codex_input_items_for_target(
                     content: aborted_content_as_non_executable(&message),
                     provenance: message.provenance,
                     reasoning_summary: message.reasoning_summary,
-                    portable_fallback: None,
                     provider_context: message.provider_context,
                 };
                 enriched
@@ -275,7 +274,6 @@ pub(crate) fn to_openai_message_for_target(
                 content: aborted_content_as_non_executable(&message),
                 provenance: message.provenance,
                 reasoning_summary: message.reasoning_summary,
-                portable_fallback: None,
                 provider_context: message.provider_context,
             };
             enriched
@@ -481,7 +479,6 @@ mod handoff_tests {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source),
             reasoning_summary: Some("verified it".into()),
-            portable_fallback: None,
             provider_context: Vec::new(),
         });
 
@@ -508,7 +505,6 @@ mod handoff_tests {
             ],
             provenance: Some(source.clone()),
             reasoning_summary: None,
-            portable_fallback: None,
             provider_context: vec![crate::model::ProviderContextBlock {
                 identity: source.clone(),
                 kind: "openai_response_output_item".into(),
@@ -529,18 +525,20 @@ mod handoff_tests {
     fn codex_remote_compaction_marker_replays_item_without_portable_text() {
         let source =
             crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let message = Message::assistant(crate::model::AssistantMessage {
-            content: Vec::new(),
-            provenance: Some(source.clone()),
-            reasoning_summary: None,
-            portable_fallback: Some("portable summary".into()),
-            provider_context: vec![crate::model::ProviderContextBlock {
-                identity: source.clone(),
-                kind: "openai_response_output_item".into(),
-                position: Some(0),
-                data: json!({"type": "compaction", "encrypted_content": "blob"}),
-            }],
-        });
+        let message = Message::assistant(
+            crate::model::AssistantMessage {
+                content: Vec::new(),
+                provenance: Some(source.clone()),
+                reasoning_summary: None,
+                provider_context: vec![crate::model::ProviderContextBlock {
+                    identity: source.clone(),
+                    kind: "openai_response_output_item".into(),
+                    position: Some(0),
+                    data: json!({"type": "compaction", "encrypted_content": "blob"}),
+                }],
+            }
+            .with_portable_fallback("portable summary"),
+        );
 
         let exact =
             codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
@@ -575,7 +573,6 @@ mod handoff_tests {
             content: vec![ContentBlock::Text("answer".into())],
             provenance: Some(source.clone()),
             reasoning_summary: Some("verified it".into()),
-            portable_fallback: None,
             provider_context: vec![crate::model::ProviderContextBlock {
                 identity: source.clone(),
                 kind: "openai_response_output_item".into(),

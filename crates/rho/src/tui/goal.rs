@@ -225,7 +225,7 @@ fn evaluation_transcript(messages: &[Message]) -> String {
 fn safe_transcript_message(message: &Message) -> Message {
     let mut message = message.clone();
     match &mut message {
-        Message::EnrichedAssistant(assistant) => assistant.provider_context.clear(),
+        Message::EnrichedAssistant(assistant) => assistant.retain_portable_context(),
         Message::AbortedAssistant(assistant) => assistant.provider_context.clear(),
         Message::System(_) | Message::User(_) | Message::Assistant(_) | Message::ToolResult(_) => {}
     }
