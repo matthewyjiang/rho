@@ -222,7 +222,7 @@ impl App {
                 self.provider_attempt.begin(self.transcript.len());
                 self.reasoning_phase
                     .begin_step(self.info.runtime.show_reasoning_output);
-                self.running = true;
+                self.begin_provider_turn_ui();
                 self.tool_calls.clear();
                 self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
@@ -540,7 +540,7 @@ impl App {
         // Keep the Thinking... placeholder while this step is still waiting for
         // or streaming reasoning. Later phases (response, tools) stay clear.
         self.reasoning_phase.set_hidden_placeholder(
-            self.running
+            self.is_ui_busy()
                 && (self.reasoning_phase.has_started()
                     || matches!(
                         self.activity_phase,

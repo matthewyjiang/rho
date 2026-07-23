@@ -68,7 +68,7 @@ impl App {
         self.steering_prompts.clear();
         self.pending_input_changed();
         self.status = "compacting context".into();
-        self.running = true;
+        self.begin_compact_ui();
         self.activity_phase = ActivityPhase::Compacting;
         self.loading_spinner.start();
         terminal.draw(|frame| self.draw(frame))?;
@@ -106,7 +106,7 @@ impl App {
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
-        self.running = false;
+        self.end_busy_ui();
         self.loading_spinner.stop();
 
         let succeeded = match compacted {
@@ -160,7 +160,7 @@ impl App {
         self.steering_prompts.clear();
         self.clear_accepted_steering();
         self.reset_streams();
-        self.running = false;
+        self.end_busy_ui();
         self.tool_calls.clear();
         self.reset_usage();
         self.current_context = None;

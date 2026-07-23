@@ -3,7 +3,7 @@ use super::super::tests::test_app;
 #[test]
 fn image_paste_is_unavailable_while_running() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
 
     app.paste_clipboard_image();
 

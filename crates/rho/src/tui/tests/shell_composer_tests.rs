@@ -161,7 +161,7 @@ fn slash_prefixed_shell_commands_do_not_open_the_command_palette() {
         Some((InlineShellMode::IncludeInContext, "/help".into()))
     );
 
-    app.running = true;
+    app.begin_provider_turn_ui();
     assert!(!app.command_palette_visible());
     assert_eq!(
         app.shell_submission(),

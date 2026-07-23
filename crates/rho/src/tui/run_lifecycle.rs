@@ -1,15 +1,50 @@
 use super::{App, InputSubmissionMode, InteractiveRuntime};
 
+/// TUI session phase distinct from provider run controller state.
+///
+/// `ProviderTurn` should stay aligned with `InteractiveRuntime::is_run_active`
+/// except for brief setup before `start` succeeds. `Compacting` is UI-only busy
+/// work with no active provider run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SessionUiPhase {
+    #[default]
+    Idle,
+    ProviderTurn,
+    Compacting,
+}
+
+impl SessionUiPhase {
+    pub(super) const fn is_busy(self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
 impl App {
-    /// Debug-only check that TUI turn UI state matches the runtime run controller
-    /// after a model turn starts or ends. Compaction sets `running` without an
-    /// active run, so callers must only use this around real start/finish paths.
-    pub(super) fn debug_assert_turn_run_sync(&self, agent: &InteractiveRuntime) {
+    pub(super) fn is_ui_busy(&self) -> bool {
+        self.session_ui.is_busy()
+    }
+
+    pub(super) fn begin_provider_turn_ui(&mut self) {
+        self.session_ui = SessionUiPhase::ProviderTurn;
+    }
+
+    pub(super) fn begin_compact_ui(&mut self) {
+        self.session_ui = SessionUiPhase::Compacting;
+    }
+
+    pub(super) fn end_busy_ui(&mut self) {
+        self.session_ui = SessionUiPhase::Idle;
+    }
+
+    /// After a successful provider start or terminal finish, provider-turn UI
+    /// must match the run controller. Compaction uses [`Self::begin_compact_ui`]
+    /// and must not call this.
+    pub(super) fn debug_assert_provider_turn_sync(&self, agent: &InteractiveRuntime) {
         debug_assert_eq!(
-            self.running,
+            self.session_ui == SessionUiPhase::ProviderTurn,
             agent.is_run_active(),
-            "App.running={} but InteractiveRuntime.is_run_active()={}",
-            self.running,
+            "session_ui={:?} but InteractiveRuntime.is_run_active()={}",
+            self.session_ui,
             agent.is_run_active()
         );
     }
@@ -51,6 +86,11 @@ impl App {
         self.reset_input_history_navigation();
         self.input_changed();
         self.pending_input_changed();
+    }
+
+    pub(super) fn clear_transient_key_state(&mut self) {
+        self.paste_burst.clear();
+        self.ctrl_c_streak = 0;
     }
 }
 

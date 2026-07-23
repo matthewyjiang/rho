@@ -140,7 +140,7 @@ impl App {
         self.reasoning_phase
             .begin_step(self.info.runtime.show_reasoning_output);
         self.status = "running".into();
-        self.running = true;
+        self.begin_provider_turn_ui();
         self.activity_phase = ActivityPhase::Starting;
         self.report_herdr_working().await;
         self.loading_spinner.start();
@@ -148,19 +148,27 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
 
         self.tool_calls.clear();
-        match failed_turn.initial_tool_call.clone() {
+        let start_result = match failed_turn.initial_tool_call.clone() {
             Some(call) => {
                 agent
                     .start_with_tool_call(model_input, failed_turn.display_user.clone(), call)
-                    .await?;
+                    .await
             }
             None => {
                 agent
                     .start(model_input, failed_turn.display_user.clone())
-                    .await?;
+                    .await
             }
+        };
+        if let Err(error) = start_result {
+            self.end_busy_ui();
+            self.loading_spinner.stop();
+            self.current_turn_start = None;
+            self.activity_phase = ActivityPhase::default();
+            self.status = "ready".into();
+            return Err(error.into());
         }
-        self.debug_assert_turn_run_sync(agent);
+        self.debug_assert_provider_turn_sync(agent);
         self.insert_runtime_notices(agent);
         if let Some(context) = agent.take_context_usage() {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
@@ -391,12 +399,12 @@ impl App {
                         .to_string(),
                     failed_turn,
                 );
-                self.debug_assert_turn_run_sync(agent);
+                self.debug_assert_provider_turn_sync(agent);
                 outcome
             }
             Ok(outcome) if sdk_failure.is_none() => {
-                self.running = false;
-                self.debug_assert_turn_run_sync(agent);
+                self.end_busy_ui();
+                self.debug_assert_provider_turn_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
@@ -413,8 +421,8 @@ impl App {
                 TurnOutcome::Completed
             }
             _ if questionnaire_cancelled_by_user => {
-                self.running = false;
-                self.debug_assert_turn_run_sync(agent);
+                self.end_busy_ui();
+                self.debug_assert_provider_turn_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 let notice = if self.goal.is_some() {
@@ -435,8 +443,8 @@ impl App {
                 ) =>
             {
                 self.restore_pending_work_to_input();
-                self.running = false;
-                self.debug_assert_turn_run_sync(agent);
+                self.end_busy_ui();
+                self.debug_assert_provider_turn_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
@@ -451,7 +459,7 @@ impl App {
                     Err(error) => error.to_string(),
                 });
                 let outcome = self.finalize_failed_turn(message, failed_turn);
-                self.debug_assert_turn_run_sync(agent);
+                self.debug_assert_provider_turn_sync(agent);
                 outcome
             }
         };
@@ -503,7 +511,7 @@ impl App {
         self.finish_streams();
         self.reset_streams();
         self.current_turn_start = None;
-        self.running = false;
+        self.end_busy_ui();
         self.loading_spinner.stop();
         self.insert_entry(&Entry::Error(message));
         self.status = "error".into();

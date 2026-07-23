@@ -68,7 +68,7 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
 fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.activity_phase = ActivityPhase::RunningTool;
     app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
         QuestionnaireRequest {

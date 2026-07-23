@@ -86,7 +86,7 @@ impl App {
     pub(super) fn clear_goal(&mut self) {
         if self.goal.take().is_some() {
             self.insert_entry(&Entry::Notice("goal cleared".into()));
-            self.status = if self.running {
+            self.status = if self.is_ui_busy() {
                 "running"
             } else {
                 "goal cleared"
@@ -94,7 +94,12 @@ impl App {
             .into();
         } else {
             self.insert_entry(&Entry::Notice("no active goal".into()));
-            self.status = if self.running { "running" } else { "ready" }.into();
+            self.status = if self.is_ui_busy() {
+                "running"
+            } else {
+                "ready"
+            }
+            .into();
         }
     }
 

@@ -341,13 +341,15 @@ impl App {
 
         self.refresh_available_auths();
         let mut picker = match action {
-            PickerAction::SelectModel if self.running => model_picker::model_picker_during_run(
-                &self.info.runtime,
-                self.pending_model_selection
-                    .as_ref()
-                    .map(|pending| &pending.selection),
-                &self.available_auths,
-            ),
+            PickerAction::SelectModel if self.is_ui_busy() => {
+                model_picker::model_picker_during_run(
+                    &self.info.runtime,
+                    self.pending_model_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                    &self.available_auths,
+                )
+            }
             PickerAction::SelectModel => {
                 model_picker::model_picker(&self.info.runtime, &self.available_auths)
             }

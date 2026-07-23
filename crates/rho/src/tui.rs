@@ -325,7 +325,7 @@ struct App {
     current_turn_start: Option<usize>,
     provider_attempt: ProviderAttempt,
     reasoning_phase: reasoning_phase::ReasoningPhase,
-    running: bool,
+    session_ui: run_lifecycle::SessionUiPhase,
     activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
@@ -717,7 +717,7 @@ impl App {
             needs_redraw |= self.poll_limits_command().await?;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
-            if !self.running {
+            if !self.is_ui_busy() {
                 self.insert_deferred_inline_shell_context(agent)?;
             }
             needs_redraw |= shell_changed;
@@ -1292,7 +1292,7 @@ impl App {
     }
 
     fn loading_active(&self) -> bool {
-        self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
+        self.is_ui_busy() || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
     }
 
     fn handle_queued_agent_event(
@@ -2289,7 +2289,7 @@ mod tests {
     #[test]
     fn active_lines_do_not_render_pending_stream_text() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.assistant_stream.push_delta("hello");
         app.reasoning_stream.push_delta("thinking");
         let lines = app.active_lines(40);
@@ -2357,7 +2357,7 @@ mod tests {
     #[test]
     fn active_lines_for_height_uses_actual_viewport_height() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
 
         let small_lines = app.active_lines_for_height(40, 4);
         let default_lines = app.active_lines_for_height(40, DEFAULT_TUI_HEIGHT as usize);
@@ -2381,7 +2381,7 @@ mod tests {
     #[test]
     fn spinner_is_anchored_immediately_above_composer_divider() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.tool_calls
             .preview(0, None, vec!["bash".into(), "cargo test".into()]);
         let width = 40;
@@ -3216,7 +3216,7 @@ mod tests {
             text: "partial answer".into(),
             include_leading_blank: true,
         });
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.loading_spinner.start();
 
         let rendered = app

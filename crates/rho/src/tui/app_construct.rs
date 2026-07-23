@@ -83,7 +83,7 @@ impl App {
             current_turn_start: None,
             provider_attempt: ProviderAttempt::default(),
             reasoning_phase: reasoning_phase::ReasoningPhase::default(),
-            running: false,
+            session_ui: Default::default(),
             activity_phase: ActivityPhase::default(),
             loading_spinner: LoadingSpinner::default(),
             tool_calls: ToolCallBatch::default(),

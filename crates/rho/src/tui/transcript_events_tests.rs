@@ -42,6 +42,6 @@ fn step_started_clears_stream_state() {
 
     assert!(app.assistant_stream.is_empty());
     assert!(app.reasoning_stream.is_empty());
-    assert!(app.running);
+    assert!(app.is_ui_busy());
     assert_eq!(app.status, "running step 2");
 }

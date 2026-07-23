@@ -40,7 +40,12 @@ impl App {
                 };
                 match modal.pending {
                     InlineChoicePending::CredentialStore { .. } => {
-                        self.status = if self.running { "running" } else { "ready" }.into();
+                        self.status = if self.is_ui_busy() {
+                            "running"
+                        } else {
+                            "ready"
+                        }
+                        .into();
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)

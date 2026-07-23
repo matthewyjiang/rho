@@ -23,7 +23,7 @@ impl ClipboardWriter for SystemClipboard {
 
 impl App {
     pub(super) fn paste_clipboard_image(&mut self) {
-        if self.running {
+        if self.is_ui_busy() {
             self.notify_status("image paste is unavailable while a model turn is running");
             return;
         }
@@ -41,7 +41,7 @@ impl App {
 
     /// Returns true when the paste was consumed as an image path attach attempt.
     pub(super) fn try_attach_pasted_image_path(&mut self, text: &str) -> bool {
-        if self.running || !matches!(self.composer, ComposerMode::Input) {
+        if self.is_ui_busy() || !matches!(self.composer, ComposerMode::Input) {
             return false;
         }
         match image_from_paste_text(text, &self.info.runtime.cwd) {

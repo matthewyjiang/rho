@@ -56,7 +56,7 @@ impl App {
     pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
         let (tree, tree_error) = match self.info.session.session_id.as_deref() {
-            Some(_) if self.running => (
+            Some(_) if self.is_ui_busy() => (
                 None,
                 Some("tree facts are available after the current model turn".into()),
             ),

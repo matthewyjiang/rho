@@ -158,7 +158,7 @@ fn spinner_overlays_last_history_row_without_reducing_layout_height() {
     let area = Rect::new(0, 0, 40, 12);
     let idle = app.screen_layout(area, Instant::now());
 
-    app.running = true;
+    app.begin_provider_turn_ui();
     let loading = app.screen_layout(area, Instant::now());
 
     assert_eq!(idle.history, loading.history);
@@ -192,7 +192,7 @@ fn spinner_overlays_last_history_row_without_reducing_layout_height() {
 #[test]
 fn spinner_offsets_bottom_following_but_not_manual_scroll() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     let area = Rect::new(0, 0, 40, 12);
 
     let bottom = app.screen_layout(area, Instant::now());
@@ -223,7 +223,7 @@ fn spinner_offsets_bottom_following_but_not_manual_scroll() {
 #[test]
 fn spinner_and_jump_button_share_activity_row_with_jump_right_aligned() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     for index in 0..20 {
         app.push_transcript_entry(Entry::User(format!("message {index}")));
     }
@@ -241,7 +241,7 @@ fn spinner_and_jump_button_share_activity_row_with_jump_right_aligned() {
 #[test]
 fn bottom_following_renders_last_message_above_spinner_overlay() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     for index in 0..20 {
         app.push_transcript_entry(Entry::Assistant(format!("message {index}")));
     }
@@ -326,7 +326,7 @@ fn activity_rail_has_a_solid_full_width_background() {
     let mut app = test_app();
     let width = 40;
     let height = 12;
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.push_transcript_entry(test_tool_entry(
         true,
         &[
@@ -385,7 +385,7 @@ fn activity_rail_clears_inherited_text_modifiers() {
     for index in 0..20 {
         app.push_transcript_entry(Entry::Notice(format!("italic status {index}")));
     }
-    app.running = true;
+    app.begin_provider_turn_ui();
     let layout = app.screen_layout(Rect::new(0, 0, width, height), Instant::now());
     let rail = layout.activity_rail.unwrap();
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -826,7 +826,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     app.info.runtime.show_reasoning_output = true;
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
         .unwrap();
     // Trailing newline makes the first stretch drain into the transcript.
@@ -885,7 +885,7 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     app.info.runtime.show_reasoning_output = false;
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.handle_agent_event(ViewModelEvent::StepStarted(1), &mut terminal)
         .unwrap();
     app.handle_agent_event(

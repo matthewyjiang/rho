@@ -4,7 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    config_editor::ConfigNumberSave, config_picker, App, ComposerMode, Entry, InteractiveRuntime,
+    config_editor::{ConfigNumberInput, ConfigNumberSave, ConfigTextInput},
+    config_picker, App, ComposerMode, Entry, InteractiveRuntime,
 };
 
 impl App {
@@ -13,24 +14,20 @@ impl App {
             return Ok(false);
         }
 
-        match key.code {
-            KeyCode::Esc => {
-                let provider = if let Some(pending) = self.pending_oauth_login.take() {
-                    let provider = pending.target.provider;
-                    pending.handle.abort();
-                    provider
-                } else {
-                    "OAuth".into()
-                };
-                self.composer = ComposerMode::Input;
-                self.status = "login cancelled".into();
-                self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(true),
+        if key.code == KeyCode::Esc {
+            let provider = if let Some(pending) = self.pending_oauth_login.take() {
+                let provider = pending.target.provider;
+                pending.handle.abort();
+                provider
+            } else {
+                "OAuth".into()
+            };
+            self.composer = ComposerMode::Input;
+            self.status = "login cancelled".into();
+            self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
+            self.clear_transient_key_state();
         }
+        Ok(true)
     }
 
     pub(super) async fn handle_secret_key(
@@ -43,69 +40,56 @@ impl App {
             return Ok(false);
         };
 
-        match (key.modifiers, key.code) {
+        let submit = match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 let target = secret.target.clone();
                 let value = secret.value.trim().to_string();
                 self.composer = ComposerMode::Input;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                self.submit_api_key_login(target, value, terminal, agent)
-                    .await?;
-                Ok(true)
+                Some((target, value))
             }
             (_, KeyCode::Esc) => {
                 self.composer = ComposerMode::Input;
                 self.status = "login cancelled".into();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::Backspace) => {
                 secret.backspace();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::Delete) => {
                 secret.delete();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::Left) => {
                 secret.cursor = secret.cursor.saturating_sub(1);
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::Right) => {
                 secret.cursor = (secret.cursor + 1).min(secret.char_len());
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::Home) => {
                 secret.cursor = 0;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (_, KeyCode::End) => {
                 secret.cursor = secret.char_len();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 secret.insert_char(ch);
-                self.ctrl_c_streak = 0;
-                Ok(true)
+                None
             }
-            _ => Ok(true),
+            _ => None,
+        };
+        self.clear_transient_key_state();
+        if let Some((target, value)) = submit {
+            self.submit_api_key_login(target, value, terminal, agent)
+                .await?;
         }
+        Ok(true)
     }
 
     pub(super) fn handle_config_number_key(
@@ -174,39 +158,27 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.backspace();
-                }
+                self.with_config_number_mut(ConfigNumberInput::backspace);
                 Ok(true)
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.insert_char(ch);
-                }
+                self.with_config_number_mut(|input| input.insert_char(ch));
                 Ok(true)
             }
             (_, KeyCode::Left) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_left();
-                }
+                self.with_config_number_mut(ConfigNumberInput::move_cursor_left);
                 Ok(true)
             }
             (_, KeyCode::Right) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_right();
-                }
+                self.with_config_number_mut(ConfigNumberInput::move_cursor_right);
                 Ok(true)
             }
             (_, KeyCode::Home) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_home();
-                }
+                self.with_config_number_mut(ConfigNumberInput::move_cursor_home);
                 Ok(true)
             }
             (_, KeyCode::End) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_end();
-                }
+                self.with_config_number_mut(ConfigNumberInput::move_cursor_end);
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
@@ -251,45 +223,31 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.backspace();
-                }
+                self.with_config_text_mut(ConfigTextInput::backspace);
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Delete) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.delete();
-                }
+                self.with_config_text_mut(ConfigTextInput::delete);
                 Ok(true)
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.insert_char(ch);
-                }
+                self.with_config_text_mut(|input| input.insert_char(ch));
                 Ok(true)
             }
             (_, KeyCode::Left) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_left();
-                }
+                self.with_config_text_mut(ConfigTextInput::move_cursor_left);
                 Ok(true)
             }
             (_, KeyCode::Right) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_right();
-                }
+                self.with_config_text_mut(ConfigTextInput::move_cursor_right);
                 Ok(true)
             }
             (_, KeyCode::Home) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_home();
-                }
+                self.with_config_text_mut(ConfigTextInput::move_cursor_home);
                 Ok(true)
             }
             (_, KeyCode::End) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_end();
-                }
+                self.with_config_text_mut(ConfigTextInput::move_cursor_end);
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
@@ -316,8 +274,7 @@ impl App {
         }
 
         self.cycle_reasoning(agent)?;
-        self.paste_burst.clear();
-        self.ctrl_c_streak = 0;
+        self.clear_transient_key_state();
         Ok(true)
     }
 
@@ -337,5 +294,17 @@ impl App {
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
+    }
+
+    fn with_config_number_mut(&mut self, f: impl FnOnce(&mut ConfigNumberInput)) {
+        if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
+            f(input);
+        }
+    }
+
+    fn with_config_text_mut(&mut self, f: impl FnOnce(&mut ConfigTextInput)) {
+        if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
+            f(input);
+        }
     }
 }

@@ -114,7 +114,7 @@ fn text_selection_uses_rendered_history_window_with_active_subagents() {
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
     let mut app = crate::tui::tests::test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.subagent_panel = SubagentPanel {
         agents: vec![
             agent("a1b2c3", "explorer", RunState::Running, None, 3),
@@ -165,7 +165,7 @@ fn subagent_only_activity_reserves_bottom_follow_inset() {
     use ratatui::layout::Rect;
 
     let mut app = crate::tui::tests::test_app();
-    app.running = false;
+    app.end_busy_ui();
     app.subagent_panel = SubagentPanel {
         agents: vec![agent("a1b2c3", "explorer", RunState::Running, None, 3)],
     };
@@ -189,7 +189,7 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
     use ratatui::{backend::TestBackend, Terminal};
 
     let mut app = crate::tui::tests::test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.subagent_panel = SubagentPanel {
         agents: vec![
             agent("a1b2c3", "explorer", RunState::Running, None, 3),
