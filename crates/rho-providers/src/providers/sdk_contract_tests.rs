@@ -84,6 +84,66 @@ impl FakeProvider {
 
 crate::impl_sdk_model_provider!(FakeProvider);
 
+/// Fake provider whose `native_compact_turn` returns bare `CompactionOutput`.
+/// Compiles against the macro dual-return path (`response.into()`).
+#[derive(Clone)]
+struct FakeNativeCompactProvider {
+    identity: ModelIdentity,
+    response: ModelResponse,
+    compact_messages: Vec<Message>,
+}
+
+impl FakeNativeCompactProvider {
+    fn new(response: ModelResponse, compact_messages: Vec<Message>) -> Self {
+        Self {
+            identity: ModelIdentity::new("fake", "test", "native-compact"),
+            response,
+            compact_messages,
+        }
+    }
+
+    fn model_identity(&self) -> ModelIdentity {
+        self.identity.clone()
+    }
+
+    async fn complete_turn(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        if request.cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        Ok(self.response.clone())
+    }
+
+    async fn stream_turn(
+        &self,
+        request: ModelRequest<'_>,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let response = self.complete_turn(request).await?;
+        let ModelResponse::Assistant(blocks) = &response;
+        for block in blocks {
+            if let ContentBlock::Text(text) = block {
+                on_event(ModelEvent::OutputDelta(text.clone()))?;
+            }
+        }
+        Ok(response)
+    }
+
+    async fn native_compact_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<rho_sdk::CompactionOutput, ModelError> {
+        if request.cancellation.is_cancelled() {
+            return Err(ModelError::Interrupted);
+        }
+        rho_sdk::CompactionOutput::new(self.compact_messages.clone())
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))
+    }
+}
+
+crate::impl_sdk_model_provider!(FakeNativeCompactProvider, native_compact);
+
 /// Emits one event per await so bridge backpressure can stall further progress.
 #[derive(Clone)]
 struct YieldingProvider {
@@ -614,8 +674,33 @@ async fn concrete_openai_provider_implements_sdk_model_provider() {
 
     assert_eq!(
         sdk.identity(),
-        ModelIdentity::new("openai", "openai-chat-completions", "gpt-4.1")
+        ModelIdentity::new("openai", "openai-responses", "gpt-4.1")
     );
+}
+
+#[tokio::test]
+async fn fake_native_compact_provider_returns_compaction_output_through_sdk() {
+    use std::sync::Arc;
+
+    let compact_messages = vec![Message::System("system".into()), Message::user_text("kept")];
+    let provider = FakeNativeCompactProvider::new(
+        ModelResponse::Assistant(vec![ContentBlock::Text("ok".into())]),
+        compact_messages.clone(),
+    );
+    let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider);
+    let messages = [Message::user_text("compact me")];
+    let response = sdk
+        .native_compact(request(
+            &messages,
+            CancellationToken::new(),
+            ReasoningLevel::default(),
+        ))
+        .expect("native compact advertised")
+        .await;
+    let (result, failed_attempts) = response.into_parts();
+    assert!(failed_attempts.is_empty());
+    let output = result.expect("compaction output");
+    assert_eq!(output.messages(), compact_messages.as_slice());
 }
 
 #[test]

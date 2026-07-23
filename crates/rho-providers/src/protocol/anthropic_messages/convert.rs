@@ -60,7 +60,7 @@ pub(crate) fn split_system_and_messages(
             Message::EnrichedAssistant(message) => {
                 let mut message = *message;
                 if provider_context_replay == ProviderContextReplay::Disabled {
-                    message.provider_context.clear();
+                    message.retain_portable_context();
                 }
                 let prepared = prepare_assistant(message, target);
                 let mut content = prepared
@@ -102,7 +102,7 @@ pub(crate) fn split_system_and_messages(
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));
                 if provider_context_replay == ProviderContextReplay::Disabled {
-                    enriched.provider_context.clear();
+                    enriched.retain_portable_context();
                 }
                 let prepared = prepare_assistant(enriched, target);
                 let mut content = prepared
@@ -438,6 +438,35 @@ mod tests {
             messages[0].content.as_slice(),
             [AnthropicContentBlock::Text { text: answer, .. }, AnthropicContentBlock::Text { text: summary, .. }]
                 if answer == "answer" && summary.contains("<reasoning_summary>") && summary.contains("verified it")
+        ));
+    }
+
+    #[test]
+    fn disabled_replay_preserves_foreign_portable_fallback() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let message = crate::model::AssistantMessage {
+            provenance: Some(source.clone()),
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: source,
+                kind: "openai_response_output_item".into(),
+                position: Some(0),
+                data: json!({"type": "compaction", "encrypted_content": "signed"}),
+            }],
+            ..crate::model::AssistantMessage::default()
+        }
+        .with_portable_fallback("portable notice");
+
+        let (_, messages) = split_system_and_messages(
+            vec![Message::assistant(message)],
+            &target(),
+            ProviderContextReplay::Disabled,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            messages[0].content.as_slice(),
+            [AnthropicContentBlock::Text { text, .. }] if text == "portable notice"
         ));
     }
 

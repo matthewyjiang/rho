@@ -7,7 +7,7 @@ mod recorder;
 mod sdk;
 mod sqlite;
 
-pub(crate) use model_request::send_recorded;
+pub(crate) use model_request::{send_recorded, send_recorded_from_attempt};
 pub(crate) use sdk::default_recording;
 
 pub use event::{RequestOutcome, UsageEvent};

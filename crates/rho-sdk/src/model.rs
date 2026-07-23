@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
+
 use crate::CancellationToken;
 
 pub mod context;
@@ -99,12 +101,18 @@ pub struct ProviderContextBlock {
 
 impl ProviderContextBlock {
     pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
-        self.identity == *target
+        !self.is_portable_fallback() && self.identity == *target
+    }
+
+    pub(crate) fn is_portable_fallback(&self) -> bool {
+        self.kind == PORTABLE_FALLBACK_CONTEXT_KIND
+            && self.position.is_none()
+            && self.data.is_string()
     }
 }
 
 /// Completed assistant output with portable and provider-native context.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AssistantMessage {
     pub content: Vec<ContentBlock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,6 +131,74 @@ impl AssistantMessage {
             content,
             ..Self::default()
         }
+    }
+
+    /// Adds portable text to use only when opaque provider context cannot replay.
+    ///
+    /// The fallback is stored as SDK metadata in [`Self::provider_context`] to
+    /// preserve compatibility with existing `AssistantMessage` struct literals.
+    /// It is never replayed as provider-native context.
+    pub fn with_portable_fallback(mut self, fallback: impl Into<String>) -> Self {
+        self.provider_context
+            .retain(|block| !block.is_portable_fallback());
+        let identity = self
+            .provenance
+            .clone()
+            .unwrap_or_else(|| ModelIdentity::new("", "", ""));
+        self.provider_context.push(ProviderContextBlock {
+            identity,
+            kind: PORTABLE_FALLBACK_CONTEXT_KIND.into(),
+            position: None,
+            data: Value::String(fallback.into()),
+        });
+        self
+    }
+
+    /// Returns portable fallback text attached by [`Self::with_portable_fallback`].
+    pub fn portable_fallback(&self) -> Option<&str> {
+        self.provider_context
+            .iter()
+            .find(|block| block.is_portable_fallback())
+            .and_then(|block| block.data.as_str())
+    }
+
+    /// Removes provider-native context while retaining portable SDK metadata.
+    pub fn retain_portable_context(&mut self) {
+        self.provider_context
+            .retain(ProviderContextBlock::is_portable_fallback);
+    }
+}
+
+#[derive(Deserialize)]
+struct AssistantMessageRepr {
+    #[serde(default)]
+    content: Vec<ContentBlock>,
+    #[serde(default)]
+    provenance: Option<ModelIdentity>,
+    #[serde(default)]
+    reasoning_summary: Option<String>,
+    #[serde(default)]
+    portable_fallback: Option<String>,
+    #[serde(default)]
+    provider_context: Vec<ProviderContextBlock>,
+}
+
+impl<'de> Deserialize<'de> for AssistantMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = AssistantMessageRepr::deserialize(deserializer)?;
+        let message = Self {
+            content: repr.content,
+            provenance: repr.provenance,
+            reasoning_summary: repr.reasoning_summary,
+            provider_context: repr.provider_context,
+        };
+        Ok(match repr.portable_fallback {
+            Some(fallback) => message.with_portable_fallback(fallback),
+            None => message,
+        })
     }
 }
 

@@ -15,7 +15,7 @@ use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, Stre
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
-use super::codex_request::CodexRequestMode;
+use super::codex_request::ResponsesRequestMode;
 use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
@@ -109,7 +109,7 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        mode: CodexRequestMode,
+        mode: ResponsesRequestMode,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
@@ -153,7 +153,7 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        mode: CodexRequestMode,
+        mode: ResponsesRequestMode,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
@@ -608,7 +608,7 @@ fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
     }
 }
 
-fn response_create_frame(mut body: Value, mode: CodexRequestMode) -> Value {
+fn response_create_frame(mut body: Value, mode: ResponsesRequestMode) -> Value {
     if mode.uses_responses_lite() {
         body["client_metadata"] = json!({
             "ws_request_header_x_openai_internal_codex_responses_lite": "true",

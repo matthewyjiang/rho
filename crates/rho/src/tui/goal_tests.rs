@@ -121,6 +121,28 @@ fn transcript_omits_opaque_provider_context() {
 }
 
 #[test]
+fn transcript_preserves_portable_fallback_without_opaque_context() {
+    let identity =
+        rho_providers::model::ModelIdentity::new("openai", "openai-responses", "gpt-test");
+    let assistant = rho_providers::model::AssistantMessage {
+        provenance: Some(identity.clone()),
+        provider_context: vec![rho_providers::model::ProviderContextBlock {
+            identity,
+            kind: "openai_response_output_item".into(),
+            position: Some(0),
+            data: serde_json::json!({"encrypted_content": "secret-ciphertext"}),
+        }],
+        ..rho_providers::model::AssistantMessage::default()
+    }
+    .with_portable_fallback("portable notice");
+
+    let transcript = evaluation_transcript(&[Message::assistant(assistant)]);
+
+    assert!(transcript.contains("portable notice"));
+    assert!(!transcript.contains("secret-ciphertext"));
+}
+
+#[test]
 fn transcript_tail_is_unicode_safe() {
     assert_eq!(
         tail_chars("a项目bc", 3),

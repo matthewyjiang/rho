@@ -19,7 +19,7 @@ use tokio::{
 use tokio_tungstenite::{accept_async, tungstenite::Message as WsMessage};
 
 #[tokio::test]
-async fn chat_completion_stream_accepts_data_without_space_after_colon() {
+async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api_base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
@@ -27,11 +27,11 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
         let mut request = [0; 4096];
         let bytes = stream.read(&mut request).await.unwrap();
         let request = String::from_utf8_lossy(&request[..bytes]);
-        assert!(request.starts_with("POST /chat/completions HTTP/1.1"));
+        assert!(request.starts_with("POST /responses HTTP/1.1"));
 
         let body = concat!(
-            "data:{\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
-            "data:[DONE]\n\n"
+            "data:{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            "data:{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output_text\":\"hello\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{body}",
@@ -72,10 +72,9 @@ async fn chat_completion_stream_accepts_data_without_space_after_colon() {
         ModelResponse::Assistant(blocks)
             if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello")
     ));
-    assert!(matches!(
-        events.as_slice(),
-        [ModelEvent::OutputDelta(delta)] if delta == "hello"
-    ));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, ModelEvent::OutputDelta(delta) if delta == "hello")));
 }
 
 #[tokio::test]

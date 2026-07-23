@@ -185,7 +185,7 @@ pub struct CompactionRequest {
 }
 
 impl CompactionRequest {
-    pub(crate) fn new(messages: Vec<Message>, cancellation: CancellationToken) -> Self {
+    pub fn new(messages: Vec<Message>, cancellation: CancellationToken) -> Self {
         Self {
             messages,
             cancellation,

@@ -106,3 +106,57 @@ fn handoff_report_names_every_omitted_context_kind() {
     assert_eq!(report.omitted_provider_context, 2);
     assert_eq!(report.omitted_kinds, ["alpha", "zeta"]);
 }
+
+#[test]
+fn portable_fallback_is_sent_only_when_opaque_context_cannot_replay() {
+    let source = identity("openai-codex", "openai-responses", "gpt-test");
+    let foreign = identity("anthropic", "anthropic-messages", "claude-test");
+    let message = AssistantMessage {
+        content: Vec::new(),
+        provenance: Some(source.clone()),
+        provider_context: vec![ProviderContextBlock {
+            identity: source.clone(),
+            kind: "openai_response_output_item".into(),
+            position: Some(0),
+            data: json!({"type": "compaction", "encrypted_content": "blob"}),
+        }],
+        ..AssistantMessage::default()
+    }
+    .with_portable_fallback("portable notice");
+
+    let exact = prepare_assistant(message.clone(), &source);
+    let foreign_prepared = prepare_assistant(message, &foreign);
+
+    assert!(exact.content.is_empty());
+    assert_eq!(exact.replay_context.len(), 1);
+    assert!(foreign_prepared.replay_context.is_empty());
+    assert!(matches!(
+        foreign_prepared.content.as_slice(),
+        [ContentBlock::Text(text)] if text == "portable notice"
+    ));
+}
+
+#[test]
+fn portable_fallback_takes_priority_over_reasoning_summary_on_foreign_handoff() {
+    let source = identity("openai", "openai-responses", "gpt-test");
+    let foreign = identity("anthropic", "anthropic-messages", "claude-test");
+    let message = AssistantMessage {
+        content: Vec::new(),
+        reasoning_summary: Some("checked the arithmetic".into()),
+        provider_context: vec![ProviderContextBlock {
+            identity: source,
+            kind: "openai_response_output_item".into(),
+            position: None,
+            data: json!({"type": "compaction", "encrypted_content": "blob"}),
+        }],
+        ..AssistantMessage::default()
+    }
+    .with_portable_fallback("portable notice");
+
+    let prepared = prepare_assistant(message, &foreign);
+
+    assert!(matches!(
+        prepared.content.as_slice(),
+        [ContentBlock::Text(text)] if text == "portable notice"
+    ));
+}

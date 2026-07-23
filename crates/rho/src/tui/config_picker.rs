@@ -215,7 +215,7 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Compact target",
-                    "Post-compaction target percent. The recent verbatim tail uses the remaining token budget.",
+                    "Post-compaction target percent for text-summary compaction. Providers with native compaction use this budget only if that path falls back.",
                     Some(format!("{}%", config.compact_target_percent)),
                     COMPACT_TARGET_PERCENT_VALUE,
                 ),
